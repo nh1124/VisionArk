@@ -1,0 +1,23 @@
+{
+  "LBS": "Load Balancing System - cognitive load calculation engine",
+  "Hub": "Central orchestration agent with PM role",
+  "Spoke": "Project-specific execution agent",
+  "CAP": "Daily capacity limit (default: 8.0)",
+  "Context": "Project identifier / Spoke name",
+  "meta-action": "XML-formatted message for Spoke-to-Hub communication",
+  "Inbox": "Async message buffer (pending.jsonl)",
+  "Push Protocol": "Explicit information sharing mechanism",
+  "ALPHA": "Urgency multiplier coefficient",
+  "BETA": "Task count penalty exponent",
+  "SWITCH_COST": "Context switching penalty per additional context",
+  "RAG": "Retrieval-Augmented Generation for refs/ directories",
+  "Artifacts": "Generated outputs (drafts, code, diagrams)",
+  "Refs": "Reference materials (PDFs, papers, data)",
+  "ONCE": "Single occurrence task rule",
+  "WEEKLY": "Recurring task on specific weekdays",
+  "EVERY_N_DAYS": "Task recurring every N days",
+  "MONTHLY_DAY": "Task on specific day of month",
+  "SKIP": "Exception type: cancel task occurrence",
+  "OVERRIDE_LOAD": "Exception type: change load score for specific date",
+  "FORCE_DO": "Exception type: add task on non-scheduled date"
+}
