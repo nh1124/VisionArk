@@ -5,26 +5,7 @@ Implements spoke-specific prompt loading and log paths
 from pathlib import Path
 from typing import List
 from agents.base_agent import BaseAgent
-from utils.paths import get_spoke_dir
-from models.message import AttachedFile
-
-
-class SpokeAgent(BaseAgent):
-    """Spoke agent with Spoke-specific logic"""
-    
-    def __init__(self, spoke_name: str):
-        # Set spoke_name and spoke_dir BEFORE calling super().__init__()
-        # because _load_history_from_log() needs them
-        self.spoke_name = spoke_name
-        self.spoke_dir = get_spoke_dir(spoke_name)
-"""
-Spoke Agent - Project-specific execution agent
-Implements spoke-specific prompt loading and log paths
-"""
-from pathlib import Path
-from typing import List
-from agents.base_agent import BaseAgent
-from utils.paths import get_spoke_dir
+from utils.paths import get_spoke_dir, get_global_prompt
 from models.message import AttachedFile
 
 
@@ -44,8 +25,6 @@ class SpokeAgent(BaseAgent):
         Loads from spokes/{spoke_name}/system_prompt.md
         Prepends global system prompt for shared guidelines
         """
-        from utils.paths import get_global_prompt
-        
         # Start with global prompt
         global_prompt = get_global_prompt()
         separator = f"\n\n---\n\n# {self.spoke_name.replace('_', ' ').title()} (Role-Specific Instructions)\n\n" if global_prompt else ""
@@ -66,7 +45,7 @@ Focus on delivering high-quality work within this context.
 
 **IMPORTANT: You can use these commands DIRECTLY in your responses. Just include the command.**
 
-- `/report "message"` - Send progress updates to Hub
+- `/report \"message\"` - Send progress updates to Hub
 - `/archive` - Archive conversation and start fresh  
 - `/kill` - Delete this spoke (use with caution)
 
@@ -78,7 +57,7 @@ When you complete a milestone or have important updates, **just use the /report 
 ```
 I've completed the analysis. Here are the findings...
 
-/report "Analysis phase completed. Key findings: X, Y, Z."
+/report \"Analysis phase completed. Key findings: X, Y, Z.\"
 ```
 
 **Don't ask permission - just do it when appropriate!**
