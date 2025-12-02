@@ -13,9 +13,11 @@ class SpokeAgent(BaseAgent):
     """Spoke agent with Spoke-specific logic"""
     
     def __init__(self, spoke_name: str):
-        super().__init__()
+        # Set spoke_name and spoke_dir BEFORE calling super().__init__()
+        # because _load_history_from_log() needs them
         self.spoke_name = spoke_name
         self.spoke_dir = get_spoke_dir(spoke_name)
+        super().__init__()
     
     def load_system_prompt(self) -> str:
         """

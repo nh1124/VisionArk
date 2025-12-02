@@ -14,8 +14,10 @@ class HubAgent(BaseAgent):
     """Hub agent with Hub-specific logic and LBS integration"""
     
     def __init__(self):
-        super().__init__()
+        # Set hub_dir BEFORE calling super().__init__() 
+        # because _load_history_from_log() needs it
         self.hub_dir = get_hub_dir()
+        super().__init__()
     
     def load_system_prompt(self) -> str:
         """
