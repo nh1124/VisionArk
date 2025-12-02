@@ -31,3 +31,20 @@ def get_hub_dir() -> Path:
     """Get hub data directory path"""
     HUB_DATA_DIR.mkdir(parents=True, exist_ok=True)
     return HUB_DATA_DIR
+
+
+def get_global_prompt() -> str:
+    """
+    Load the global system prompt shared by all agents
+    Returns empty string if file doesn't exist
+    """
+    global_prompt_path = GLOBAL_ASSETS_DIR / "system_prompt_global.md"
+    
+    if global_prompt_path.exists():
+        try:
+            return global_prompt_path.read_text(encoding='utf-8')
+        except Exception as e:
+            print(f"⚠️ Failed to load global prompt: {e}")
+            return ""
+    
+    return ""
