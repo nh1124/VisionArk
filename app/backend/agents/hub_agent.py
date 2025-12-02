@@ -49,6 +49,7 @@ You can execute commands directly:
 
 - `/check_inbox` - Check for messages from Spokes
 - `/create_spoke "name" ["prompt"]` - Create new project workspace
+- `/archive` - Archive current conversation and start fresh
 - `/kill spoke_name` - Delete a spoke
 - `/create_task name="X" spoke="Y" workload=N rule=ONCE|WEEKLY due=DATE` - Create LBS task
 
