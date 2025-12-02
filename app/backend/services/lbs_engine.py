@@ -27,7 +27,11 @@ class LBSEngine:
         """
         Expand task rules into daily cache for the given date range
         F3: Expansion Algorithm from BLUEPRINT
+        OPTIMIZED: Batch-loads exceptions, early exits for ONCE tasks
         """
+        import time
+        start_time = time.time()
+        
         # Clear existing cache for the date range
         self.session.query(LBSDailyCache).filter(
             LBSDailyCache.target_date >= start_date,
@@ -37,34 +41,81 @@ class LBSEngine:
         # Get all active tasks
         tasks = self.session.query(Task).filter(Task.active == True).all()
         
+        # ✅ OPTIMIZATION 1: Batch-load ALL exceptions for the date range (single query)
+        exceptions_query = self.session.query(TaskException).filter(
+            TaskException.target_date >= start_date,
+            TaskException.target_date <= end_date
+        ).all()
+        
+        # Build lookup dictionary for O(1) exception access
+        exceptions_dict = {
+            (exc.task_id, exc.target_date): exc 
+            for exc in exceptions_query
+        }
+        
+        print(f"[LBS] Loaded {len(exceptions_dict)} exceptions for range {start_date} to {end_date}", flush=True)
+        
+        # Prepare cache entries for bulk insert
+        cache_entries = []
+        
+        # ✅ OPTIMIZATION 2: Separate ONCE tasks from recurring tasks
+        once_tasks = [t for t in tasks if t.rule_type == RuleType.ONCE]
+        recurring_tasks = [t for t in tasks if t.rule_type != RuleType.ONCE]
+        
+        # Process ONCE tasks efficiently (no need to iterate all days)
+        for task in once_tasks:
+            if task.due_date and start_date <= task.due_date <= end_date:
+                # Check exception using dict lookup (O(1))
+                exception = exceptions_dict.get((task.task_id, task.due_date))
+                
+                if exception and exception.exception_type == ExceptionType.SKIP:
+                    continue
+                
+                load = task.base_load_score
+                if exception and exception.exception_type == ExceptionType.OVERRIDE_LOAD:
+                    load = exception.override_load_value
+                
+                cache_entries.append(LBSDailyCache(
+                    target_date=task.due_date,
+                    task_id=task.task_id,
+                    calculated_load=load,
+                    rule_type_snapshot=task.rule_type,
+                    status="planned"
+                ))
+        
+        # Process recurring tasks (need to check each day)
         current_date = start_date
         while current_date <= end_date:
-            for task in tasks:
+            for task in recurring_tasks:
                 if self._should_task_occur(task, current_date):
-                    # Check for exceptions
-                    exception = self._get_exception(task.task_id, current_date)
+                    # Check exception using dict lookup (O(1)) instead of DB query
+                    exception = exceptions_dict.get((task.task_id, current_date))
                     
                     if exception and exception.exception_type == ExceptionType.SKIP:
-                        continue  # Skip this occurrence
+                        continue
                     
-                    # Calculate load (base or override)
                     load = task.base_load_score
                     if exception and exception.exception_type == ExceptionType.OVERRIDE_LOAD:
                         load = exception.override_load_value
                     
-                    # Create cache entry
-                    cache_entry = LBSDailyCache(
+                    cache_entries.append(LBSDailyCache(
                         target_date=current_date,
                         task_id=task.task_id,
                         calculated_load=load,
                         rule_type_snapshot=task.rule_type,
                         status="planned"
-                    )
-                    self.session.add(cache_entry)
+                    ))
             
             current_date += timedelta(days=1)
         
+        # ✅ OPTIMIZATION 3: Bulk insert all cache entries at once
+        if cache_entries:
+            self.session.bulk_save_objects(cache_entries)
+        
         self.session.commit()
+        
+        elapsed = time.time() - start_time
+        print(f"[LBS] Expansion complete: {len(cache_entries)} entries in {elapsed:.3f}s", flush=True)
         
         # Calculate overflow flags
         self._update_overflow_flags(start_date, end_date)
