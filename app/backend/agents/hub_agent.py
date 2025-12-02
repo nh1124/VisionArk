@@ -18,22 +18,8 @@ class HubAgent(BaseAgent):
         # because _load_history_from_log() needs it
         self.hub_dir = get_hub_dir()
         super().__init__()
-    
-    def load_system_prompt(self) -> str:
-        """
-        Hub-specific prompt loading with full command and LBS documentation
-        Prepends global system prompt for shared guidelines
-        """
-        # Start with global prompt
-        global_prompt = get_global_prompt()
-        separator = "\n\n---\n\n# Hub Agent (Role-Specific Instructions)\n\n" if global_prompt else ""
-        
-        # Load Hub-specific prompt
-        prompt_path = self.hub_dir / "system_prompt.md"
-        if prompt_path.exists():
-            hub_specific = prompt_path.read_text(encoding='utf-8')
-            return global_prompt + separator + hub_specific
-        
+
+    def _get_default_hub_prompt(self) -> str:
         # Default Hub prompt with commands and LBS info
         hub_default = """# Hub Agent (Project Manager Role)
 
@@ -90,7 +76,25 @@ Attention:
 - Proactive (warn about bottlenecks before they occur)
 - Use commands when appropriate
 """
-        return global_prompt + separator + hub_default
+        return hub_default
+    
+    def load_system_prompt(self) -> str:
+        """
+        Hub-specific prompt loading with full command and LBS documentation
+        Prepends global system prompt for shared guidelines
+        """
+        # Start with global prompt
+        global_prompt = get_global_prompt()
+        separator = "\n\n---\n\n# Hub Agent (Role-Specific Instructions)\n\n" if global_prompt else ""
+        
+        # Load Hub-specific prompt
+        prompt_path = self.hub_dir / "system_prompt.md"
+        hub_prompt = prompt_path.read_text(encoding='utf-8') if prompt_path.exists() else self._get_default_hub_prompt()
+        
+        # Load Past Archive Summary (This is to keep track of past)
+        # ToDo: should be implemented
+
+        return global_prompt + separator + hub_prompt
     
     def get_chat_log_path(self) -> Path:
         """Hub-specific log path"""

@@ -45,7 +45,7 @@ Focus on delivering high-quality work within this context.
 
 **IMPORTANT: You can use these commands DIRECTLY in your responses. Just include the command.**
 
-- `/report \"message\"` - Send progress updates to Hub
+- `/report "message"` - Send progress updates to Hub
 - `/archive` - Archive conversation and start fresh  
 - `/kill` - Delete this spoke (use with caution)
 
@@ -57,7 +57,7 @@ When you complete a milestone or have important updates, **just use the /report 
 ```
 I've completed the analysis. Here are the findings...
 
-/report \"Analysis phase completed. Key findings: X, Y, Z.\"
+/report "Analysis phase completed. Key findings: X, Y, Z."
 ```
 
 **Don't ask permission - just do it when appropriate!**
