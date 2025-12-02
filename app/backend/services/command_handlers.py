@@ -439,14 +439,20 @@ def handle_create_task(args: List[str], session: Session = None, context_name: s
         session.commit()
         session.refresh(new_task)
         
-        # Expand LBS cache
+        print(f"✅ [CREATE_TASK] Created task_id={new_task.task_id}, rule={rule_type}, due_date={getattr(new_task, 'due_date', None)}")
+        
+        #Expand LBS cache
         from datetime import timedelta
+        start_expand = date.today()
+        end_expand = date.today() + timedelta(days=90)
+        print(f"📊 [LBS] Expanding cache from {start_expand} to {end_expand}")
         engine = LBSEngine(session)
-        engine.expand_tasks(date.today(), date.today() + timedelta(days=90))
+        engine.expand_tasks(start_expand, end_expand)
+        print(f"✅ [LBS] Cache expansion complete")
         
         return CommandResult(
             success=True,
-            message=f"✅ Created task: {parsed['name']} (ID: {new_task.task_id}, Spoke: {spoke}, Workload: {workload})",
+            message=f"Created task: {parsed['name']} (ID: {new_task.task_id}, Spoke: {spoke}, Workload: {workload})",
             data={
                 "task_id": new_task.task_id,
                 "task_name": new_task.task_name,
