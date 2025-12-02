@@ -439,16 +439,27 @@ def handle_create_task(args: List[str], session: Session = None, context_name: s
         session.commit()
         session.refresh(new_task)
         
-        print(f"✅ [CREATE_TASK] Created task_id={new_task.task_id}, rule={rule_type}, due_date={getattr(new_task, 'due_date', None)}")
+        print(f"✅ [CREATE_TASK] Created task_id={new_task.task_id}, rule={rule_type}, due_date={getattr(new_task, 'due_date', None)}", flush=True)
+        import sys
+        sys.stdout.flush()
         
         #Expand LBS cache
         from datetime import timedelta
+        # Start from task's due date if it exists and is in the past, otherwise today
         start_expand = date.today()
-        end_expand = date.today() + timedelta(days=90)
-        print(f"📊 [LBS] Expanding cache from {start_expand} to {end_expand}")
+        if rule_type == "ONCE" and new_task.due_date and new_task.due_date < date.today():
+            start_expand = new_task.due_date
+        elif rule_type == "ONCE" and new_task.due_date:
+            start_expand = min(date.today(), new_task.due_date)
+        
+        end_expand = max(date.today() + timedelta(days=90), new_task.due_date if (rule_type == "ONCE" and new_task.due_date) else date.today())
+        
+        print(f"📊 [LBS] Expanding cache from {start_expand} to {end_expand}", flush=True)
+        sys.stdout.flush()
         engine = LBSEngine(session)
         engine.expand_tasks(start_expand, end_expand)
-        print(f"✅ [LBS] Cache expansion complete")
+        print(f"✅ [LBS] Cache expansion complete", flush=True)
+        sys.stdout.flush()
         
         return CommandResult(
             success=True,
