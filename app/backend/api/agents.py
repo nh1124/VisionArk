@@ -104,6 +104,7 @@ async def chat_with_hub(
             file_metadata.append(attached_file.format_for_display())
     
     # Check if user directly sent a command
+    command_context = None
     if message.strip().startswith('/'):
         cmd = parse_command(message.strip())
         if cmd:
@@ -121,8 +122,9 @@ async def chat_with_hub(
                     "message": cmd_result.message
                 })
                 
-                if cmd_result.success and cmd_result.data and cmd_result.data.get("has_messages"):
-                    user_message = cmd_result.message
+                # ✅ Pass command result to AI as context
+                if cmd_result.success:
+                    command_context = f"[Command Result: {cmd_result.message}]"
                 
             except Exception as e:
                 executed_commands.append({
@@ -133,7 +135,13 @@ async def chat_with_hub(
     
     # Get Hub's response using new chat method with AttachedFile objects
     hub = get_hub_agent(db)
-    response = hub.chat(message, attached_files)
+    
+    # ✅ Include command result in context if command was executed
+    if command_context:
+        user_message_with_context = f"{message}\n\n{command_context}"
+        response = hub.chat_with_context(user_message_with_context, db)
+    else:
+        response = hub.chat(message, attached_files)
     
     # Check if Hub's response contains commands
     lines = response.split('\n')
