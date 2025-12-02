@@ -1,218 +1,134 @@
 """
-Hub Agent - Central orchestration and LBS management
-PM role with strategic decision-making and command execution
+Hub Agent - Central orchestration agent
+Implements hub-specific prompt loading, log paths, and LBS integration
 """
-from datetime import date, timedelta, datetime
-from sqlalchemy.orm import Session
 from pathlib import Path
-
+from typing import List
 from agents.base_agent import BaseAgent
-from services.lbs_engine import LBSEngine
 from utils.paths import get_hub_dir
+from models.message import Message, MessageRole, AttachedFile
+from datetime import date
 
 
 class HubAgent(BaseAgent):
-    """Hub orchestration agent with LBS awareness and command execution"""
+    """Hub agent with Hub-specific logic and LBS integration"""
     
-    def __init__(self, db_session: Session):
-        super().__init__(agent_type="hub", context_name="hub")
-        self.db = db_session
-        self.lbs_engine = LBSEngine(db_session)
-        
-        # Ensure hub_data directory exists and set up chat log
-        hub_dir = get_hub_dir()
-        hub_dir.mkdir(parents=True, exist_ok=True)
-        self.chat_log_path = hub_dir / "chat.log"
-        
-        # Load conversation history if exists
-        self._load_history()
+    def __init__(self):
+        super().__init__()
+        self.hub_dir = get_hub_dir()
     
-    def _get_hub_prompt(self) -> str:
+    def load_system_prompt(self) -> str:
         """
-        Override base Hub prompt with enhanced LBS management capabilities
-        Per BLUEPRINT.md Section 2.3.B.3 (Processing)
+        Hub-specific prompt loading with full command and LBS documentation
         """
-        return f"""# Hub Agent - Strategic Task Orchestrator
+        prompt_path = self.hub_dir / "system_prompt.md"
+        if prompt_path.exists():
+            return prompt_path.read_text(encoding='utf-8')
+        
+        # Full Hub prompt with commands and LBS info
+        return """# Hub Agent (Project Manager Role)
 
-You are the **Hub Agent**, the central coordinator of the AI TaskManagement OS. Your primary role is to:
+You are the central orchestration agent (Hub) responsible for:
+- Managing the LBS (Load Balancing System) across all projects
+- Processing reports from Spoke agents
+- Making strategic resource allocation decisions
+- Preventing cognitive overload
 
-1. **Manage the LBS (Load Balancing System)**: Create and optimize tasks using commands
-2. **Process Inbox Messages**: Review and act on reports from Spokes about progress, blockers, and needs
-3. **Make Strategic Decisions**: Balance workload, adjust priorities, and reallocate resources
-4. **Coordinate Between Spokes**: Facilitate information flow and dependencies
-
-## Task Management via Commands
-
-You can NOW create tasks directly using the `/create_task` command!
-
-### Example Task Creation:
-User: "Add a weekly meeting every Monday, workload 2.0"
-You: "I'll create that task for you.
-
-/create_task name="Weekly Meeting" spoke="meetings" workload=2.0 rule=WEEKLY days=mon
-
-Done! The task is now in your schedule."
-
-User: "I need to write my thesis chapter by December 15th, it's a lot of work"
-You: "I'll add that high-priority task.
-
-/create_task name="Thesis Chapter" spoke="research" workload=8.0 rule=ONCE due=2025-12-15
-
-Created! This is a major task (8.0 workload) - I recommend not scheduling other heavy tasks that week."
-
-## Strategic Resource Allocation (BLUEPRINT Requirement)
-
-When a Spoke reports "need more time for experiment":
-1. Analyze current LBS schedule (I provide auto-injected load data)
-2. Identify low-priority tasks that could be deferred  
-3. Propose trade-offs: "I recommend deferring Life Admin tasks next week (freeing 4.0 load) to accommodate the experiment"
-4. **Execute adjustments** using `/create_task` or guide user to Tasks page
+## Your Responsibilities
+1. Monitor daily and weekly load scores
+2. Warn when capacity (CAP) is approaching or exceeded
+3. Suggest task rescheduling when necessary
+4. Process Inbox messages from Spokes
+5. Provide high-level strategic guidance
 
 ## Available Commands
 
-### Spoke Management:
-1. `/create_spoke <name>` - Create new project Spoke
-2. `/check_inbox` - Review pending Spoke messages
-3. `/send_message <spoke_name> <message>` - Send message to Spoke
-4. `/kill <spoke_name>` - Delete Spoke permanently
-5. `/archive [spoke_name]` - Archive Spoke or Hub conversation
+You can execute commands directly:
 
-### Task Management (NEW!):
-1. `/create_task name="X" spoke="Y" workload=N [parameters]` - Create LBS task directly!
-   - Required: name, workload (0-10)
-   - Optional: spoke (defaults to context), rule (ONCE/WEEKLY/EVERY_N_DAYS/MONTHLY_DAY)
-   - For ONCE: due=YYYY-MM-DD
-   - For WEEKLY: days=mon,tue,wed,thu,fri,sat,sun
-   - For EVERY_N_DAYS: interval=N
-   - For MONTHLY_DAY: day=1-31
+- `/check_inbox` - Check for messages from Spokes
+- `/create_spoke "name" ["prompt"]` - Create new project workspace
+- `/kill spoke_name` - Delete a spoke
+- `/create_task name="X" spoke="Y" workload=N rule=ONCE|WEEKLY due=DATE` - Create LBS task
 
-**When user asks to create a task, USE THIS COMMAND!**
+## LBS (Load Balancing System) Parameters
+
+**Load Score Calculation:**
+- Each task has `base_load_score` (0-10 scale)
+- Daily load = sum of all tasks due that day
+- Weekly load = sum of all tasks in week
+- **Capacity (CAP):** Default 10.0 (adjustable)
+
+**Warning Levels:**
+- Load 8-10: Approaching capacity
+- Load > 10: Over capacity (reschedule needed!)
+
+**Task Rules:**
+1. `ONCE` - Single deadline (use `due_date`)
+2. `WEEKLY` - Recurring on specific days (mon, tue, wed, thu, fri, sat, sun)
+3. `EVERY_N_DAYS` - Recurring every N days (use `interval_days`, `anchor_date`)
+4. `MONTHLY_DAY` - Specific day each month (use `month_day`)
 
 ## Communication Style
-
-You are a strategic advisor and coordinator. When user asks about tasks or schedule:
-1. **Create** tasks using `/create_task` command
-2. **Analyze** current LBS status (auto-injected in context)
-3. **Suggest** optimizations and trade-offs
-4. **Execute** approved changes immediately
-
-Example Strategic Response:
-User: "I'm overwhelmed this week"
-You: "Looking at your LBS data, this week averages 8.5/10 capacity - that's high! 
-I can create a 'Recovery Day' task for Friday to ensure you don't overload:
-
-/create_task name="Recovery Day" spoke="wellness" workload=0.5 rule=ONCE due=2025-12-06
-
-Or I can defer your 'Literature Review' to next week. Which would you prefer?"
-
-Current Date: {datetime.now().strftime("%Y-%m-%d")}
-
-Remember: You can CREATE tasks directly now! Use the command when users ask for task management!
+- Strategic and meta-level (don't get into project details)
+- Data-driven (cite load scores, capacities)
+- Proactive (warn about bottlenecks before they occur)
+- Use commands when appropriate
 """
     
-    def _load_history(self):
-        """Load conversation history from chat.log"""
-        if not self.chat_log_path.exists():
-            return
-        
-        try:
-            with open(self.chat_log_path, 'r', encoding='utf-8') as f:
-                current_role = None
-                current_content = []
-                
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("User:"):
-                        if current_role:
-                            self.conversation_history.append({
-                                "role": current_role,
-                                "content": "\n".join(current_content)
-                            })
-                        current_role = "user"
-                        current_content = [line[5:].strip()]
-                    elif line.startswith("Assistant:"):
-                        if current_role:
-                            self.conversation_history.append({
-                                "role": current_role,
-                                "content": "\n".join(current_content)
-                            })
-                        current_role = "assistant"
-                        current_content = [line[10:].strip()]
-                    elif line and current_role:
-                        current_content.append(line)
-                
-                # Add last message
-                if current_role and current_content:
-                    self.conversation_history.append({
-                        "role": current_role,
-                        "content": "\n".join(current_content)
-                    })
-        except Exception as e:
-            print(f"Failed to load history: {e}")
+    def get_chat_log_path(self) -> Path:
+        """Hub-specific log path"""
+        return self.hub_dir / "chat.log"
     
-    def _save_history(self):
-        """Save conversation history to chat.log"""
-        try:
-            with open(self.chat_log_path, 'w', encoding='utf-8') as f:
-                for msg in self.conversation_history:
-                    role_label = "User" if msg["role"] == "user" else "Assistant"
-                    f.write(f"{role_label}: {msg['content']}\n\n")
-        except Exception as e:
-            print(f"Failed to save history: {e}")
-    
-    def chat_with_context(self, user_message: str) -> str:
+    def chat_with_context(self, user_message: str, db_session=None) -> str:
         """
-        Chat with automatic LBS context injection and history persistence
+        Hub-specific chat with LBS context
+        Adds meta_info about current load scores as formatted string
         """
-        # Get current LBS status
-        today = date.today()
-        today_load = self.lbs_engine.calculate_daily_load(today)
-        weekly_stats = self.lbs_engine.get_weekly_stats(today - timedelta(days=today.weekday()))
+        from services.lbs_engine import LBSEngine
         
-        # Build enhanced context
-        context_info = f"""
-## Current LBS Status (Auto-injected)
-- **Today ({today})**: Load {today_load['adjusted_load']:.1f} / {today_load['cap']} ({today_load['level']})
-- **Today Task Count**: {today_load['task_count']} tasks across {today_load['unique_contexts']} contexts
-- **Weekly Average**: {weekly_stats['average_load']:.1f}
-- **Over-capacity Days This Week**: {weekly_stats['over_days']}
-- **Recovery Rate**: {weekly_stats['recovery_rate']:.1f}%
-
-----
-
-User Message: {user_message}
-"""
+        # Build LBS context as formatted string
+        meta_info_str = None
+        if db_session:
+            try:
+                engine = LBSEngine(db_session)
+                today = date.today()
+                
+                # Get daily load
+                daily_load = engine.get_daily_load(today)
+                
+                # Build formatted meta_info string
+                meta_info_str = f"Load: {daily_load:.1f}/10.0 | Capacity: 10.0"
+                
+            except Exception as e:
+                print(f"[Hub] Failed to load LBS context: {e}")
         
-        # Use chat() which maintains conversation history
-        response = self.chat(context_info)
+        # Create message with meta_info string
+        msg = Message(
+            role=MessageRole.USER,
+            content=user_message,
+            meta_info=meta_info_str  # String, not dict!
+        )
         
-        # Save history after each exchange
-        self._save_history()
+        # Add to history
+        self.conversation_history.append(msg)
         
-        return response
-    
-    def analyze_inbox(self, inbox_count: int) -> str:
-        """Analyze pending inbox messages"""
-        prompt = f"""You have {inbox_count} unprocessed messages in the Inbox from Spokes.
+        # Get LLM response
+        if not self.system_prompt:
+            self.system_prompt = self.load_system_prompt()
         
-Please advise:
-1. Should I review the Inbox now or later?
-2. Any anticipated risks from delayed processing?
-"""
-        return self.chat(prompt)
-    
-    def suggest_reschedule(self, overloaded_date: date) -> str:
-        """Suggest rescheduling for an overloaded date"""
-        load_data = self.lbs_engine.calculate_daily_load(overloaded_date)
+        llm_messages = [m.to_llm_message() for m in self.conversation_history]
+        messages = self.llm.format_messages(self.system_prompt, llm_messages)
+        response = self.llm.complete(messages)
         
-        prompt = f"""Date {overloaded_date} is overloaded:
-- Adjusted Load: {load_data['adjusted_load']:.1f} / {load_data['cap']}
-- Status: {load_data['level']}
-- Tasks: {load_data['task_count']}
-
-Tasks for that day:
-{chr(10).join(f"- [{t['context']}] {t['task_name']} (Load: {t['load']})" for t in load_data['tasks'])}
-
-Please suggest which tasks should be rescheduled and to which dates.
-"""
-        return self.chat(prompt)
+        # Create assistant message
+        assistant_msg = Message(
+            role=MessageRole.ASSISTANT,
+            content=response.content
+        )
+        self.conversation_history.append(assistant_msg)
+        
+        # Save to log
+        self._save_to_log(msg)
+        self._save_to_log(assistant_msg)
+        
+        return response.content

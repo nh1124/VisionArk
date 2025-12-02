@@ -1,150 +1,182 @@
 """
-Base agent class for Hub and Spoke agents
-Implements system prompt composition and context management from BLUEPRINT Section 4.3
-Now with multi-LLM provider support
+Base agent class - now abstract with proper separation of concerns
+Removes 10-message limit to use full Gemini context
 """
-from typing import List, Dict
+from abc import ABC, abstractmethod
+from typing import List
 from pathlib import Path
-from datetime import datetime
 
 from llm import get_provider
-from llm.base_provider import Message
-from utils.paths import get_spoke_dir, get_hub_dir
+from models.message import Message, MessageRole, AttachedFile
 
 
-class BaseAgent:
-    """Base class for all AI agents in the system"""
+class BaseAgent(ABC):
+    """Abstract base class for all AI agents"""
     
-    def __init__(self, agent_type: str, context_name: str = "hub"):
-        self.agent_type = agent_type  # "hub" or "spoke"
-        self.context_name = context_name
-        self.conversation_history: List[Dict[str, str]] = []
-        
-        # Get LLM provider from factory (supports Gemini, OpenAI, etc.)
+    def __init__(self):
+        self.conversation_history: List[Message] = []
         self.llm = get_provider()
+        self.system_prompt = None
         
-        # Build system prompt
-        self.system_prompt = self._build_system_prompt()
+        # Load conversation history from log if exists
+        self._load_history_from_log()
     
-    def _build_system_prompt(self) -> str:
+    @abstractmethod
+    def load_system_prompt(self) -> str:
         """
-        F4.3.2: Prompt Composition Logic
-        Layer 1 (Global) + Layer 2 (Agent-specific) + Layer 3 (Context-specific)
+        Each agent type implements its own prompt loading logic
+        Hub loads from hub_data/system_prompt.md
+        Spoke loads from spokes/{name}/system_prompt.md
         """
-        prompt_parts = []
-        
-        # Layer 1: Global assets
-        global_prompt_path = Path("global_assets/system_prompt_global.md")
-        if global_prompt_path.exists():
-            prompt_parts.append(global_prompt_path.read_text())
-        else:
-            prompt_parts.append(self._get_default_global_prompt())
-        
-        # Layer 2: Agent-specific (Hub vs Spoke)
-        if self.agent_type == "hub":
-            prompt_parts.append(self._get_hub_prompt())
-        elif self.agent_type == "spoke":
-            prompt_parts.append(self._get_spoke_prompt())
-        
-        # Layer 3: Context-specific (for Spokes)
-        if self.agent_type == "spoke":
-            spoke_prompt_path = get_spoke_dir(self.context_name) / "system_prompt.md"
-            if spoke_prompt_path.exists():
-                prompt_parts.append(spoke_prompt_path.read_text())
-        
-        return "\n\n---\n\n".join(prompt_parts)
+        pass
     
-    def _get_default_global_prompt(self) -> str:
-        """Default global prompt if file doesn't exist"""
-        return """# AI TaskManagement OS - Global System Prompt
-
-You are an AI agent within the Antigravity OS, a sophisticated task management system designed to minimize cognitive load.
-
-## Core Principles
-1. **Explicit Control**: Never make assumptions. Always ask for confirmation before major actions.
-2. **State over Memory**: Important information is stored in the database, not just in conversation.
-3. **Clarity**: Be concise, precise, and action-oriented.
-
-## Output Format
-- Use clear, professional language
-- When citing tasks, use their IDs (T-xxxxx)
-- Format dates as YYYY-MM-DD
-- Always explain your reasoning briefly
-"""
-    
-    def _get_hub_prompt(self) -> str:
-        """Hub-specific prompt"""
-        return """# Hub Agent (Project Manager Role)
-
-You are the central orchestration agent (Hub) responsible for:
-- Managing the LBS (Load Balancing System) across all projects
-- Processing reports from Spoke agents
-- Making strategic resource allocation decisions
-- Preventing cognitive overload
-
-## Your Responsibilities
-1. Monitor daily and weekly load scores
-2. Warn when capacity (CAP) is approaching or exceeded
-3. Suggest task rescheduling when necessary
-4. Process Inbox messages from Spokes
-5. Provide high-level strategic guidance
-
-## Communication Style
-- Strategic and meta-level (don't get into project details)
-- Data-driven (cite load scores, capacities)
-- Proactive (warn about bottlenecks before they occur)
-"""
-    
-    def _get_spoke_prompt(self) -> str:
-        """Spoke-specific prompt"""
-        return """# Spoke Agent (Execution Role)
-
-You are a project-specific execution agent (Spoke) responsible for:
-- Managing tasks within your assigned project context
-- Executing detailed work
-- Reporting progress to Hub when milestones are reached
-
-## Your Responsibilities
-1. Help with project-specific work
-2. Track task completion
-3. Generate <meta-action> reports for Hub when appropriate
-4. Stay focused on your project domain
-
-## Communication Style
-- Detail-oriented and hands-on
-- Project-specific expertise
-- Collaborative and supportive
-"""
-    
-    def chat(self, user_message: str) -> str:
+    @abstractmethod
+    def get_chat_log_path(self) -> Path:
         """
-        Send a message and get a response
-        Maintains conversation history
+        Each agent defines where to save conversation logs
+        Hub: hub_data/chat.log
+        Spoke: spokes/{name}/chat.log
         """
-        # Add user message to history
-        self.conversation_history.append({
-            "role": "user",
-            "content": user_message
-        })
+        pass
+    
+    def chat(self, user_message: str, attached_files: List[AttachedFile] = None) -> str:
+        """
+        Generic chat logic - same for all agents
+        NOW SENDS ALL MESSAGES
+        """
+        # Load system prompt if not loaded
+        if not self.system_prompt:
+            self.system_prompt = self.load_system_prompt()
         
-        # Format messages for LLM
-        messages = self.llm.format_messages(
-            self.system_prompt,
-            self.conversation_history[-10:]  # Keep last 10 messages
+        # Create structured message
+        msg = Message(
+            role=MessageRole.USER,
+            content=user_message,
+            attached_files=attached_files or []
         )
         
-        # Get response from LLM (now provider-agnostic!)
+        # Add to history
+        self.conversation_history.append(msg)
+        
+        # Convert ALL messages to LLM format (NO LIMIT!)
+        llm_messages = [m.to_llm_message() for m in self.conversation_history]
+        
+        # Format for LLM provider
+        messages = self.llm.format_messages(
+            self.system_prompt,
+            llm_messages  # ✅ ALL messages, not just last 10!
+        )
+        
+        # Get response from LLM
         response = self.llm.complete(messages)
-        assistant_message = response.content
         
-        # Add assistant response to history
-        self.conversation_history.append({
-            "role": "assistant",
-            "content": assistant_message
-        })
+        # Create assistant message
+        assistant_msg = Message(
+            role=MessageRole.ASSISTANT,
+            content=response.content
+        )
         
-        return assistant_message
+        # Add to history
+        self.conversation_history.append(assistant_msg)
+        
+        # Save both messages to log (metadata only)
+        self._save_to_log(msg)
+        self._save_to_log(assistant_msg)
+        
+        return response.content
+    
+    def _save_to_log(self, message: Message):
+        """
+        Save message to log file
+        Uses format_for_log() which stores metadata only (not file contents)
+        """
+        log_path = self.get_chat_log_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write(message.format_for_log() + "\n\n")
+    
+    def _load_history_from_log(self):
+        """
+        Load conversation history from log file
+        Parses log entries back into Message objects
+        """
+        log_path = self.get_chat_log_path()
+        if not log_path.exists():
+            return
+        
+        try:
+            with open(log_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Split by double newline (message separator)
+            entries = content.strip().split('\n\n')
+            
+            for entry in entries:
+                if not entry.strip():
+                    continue
+                
+                lines = entry.split('\n')
+                if not lines:
+                    continue
+                
+                # Parse first line: "Role [timestamp]:"
+                first_line = lines[0]
+                if '[' not in first_line or ']:' not in first_line:
+                    continue
+                
+                # Extract role
+                role_str = first_line.split('[')[0].strip().lower()
+                if role_str == "user":
+                    role = MessageRole.USER
+                elif role_str == "assistant":
+                    role = MessageRole.ASSISTANT
+                else:
+                    continue
+                
+                # Extract timestamp
+                try:
+                    timestamp_str = first_line.split('[')[1].split(']')[0]
+                    from datetime import datetime
+                    timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+                except:
+                    timestamp = datetime.now()
+                
+                # Extract content (everything after "Role [timestamp]:")
+                content_start = first_line.index(']:') + 2
+                content_lines = [first_line[content_start:].strip()] if content_start < len(first_line) else []
+                content_lines.extend(lines[1:])
+                
+                # Filter out file metadata lines (📎)
+                message_content = []
+                attached_files = []
+                
+                for line in content_lines:
+                    if line.startswith('📎'):
+                        # Parse file metadata: "📎 filename.pdf (2.45MB)"
+                        # For now, just note that file was attached
+                        # Full file reconstruction would need file storage
+                        pass
+                    else:
+                        message_content.append(line)
+                
+                content = '\n'.join(message_content)
+                
+                # Create Message object
+                msg = Message(
+                    role=role,
+                    content=content,
+                    timestamp=timestamp,
+                    attached_files=attached_files  # File contents not in log
+                )
+                
+                self.conversation_history.append(msg)
+        
+        except Exception as e:
+            print(f"Failed to load history from log: {e}")
+            import traceback
+            traceback.print_exc()
     
     def clear_history(self):
-        """Clear conversation history (for context rotation)"""
+        """Clear conversation history"""
         self.conversation_history = []

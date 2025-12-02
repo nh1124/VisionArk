@@ -57,7 +57,7 @@ def get_hub_agent(db: Session) -> HubAgent:
     """Get or create Hub agent"""
     global _hub_agent
     if _hub_agent is None:
-        _hub_agent = HubAgent(db)
+        _hub_agent = HubAgent()
     return _hub_agent
 
 
@@ -79,33 +79,29 @@ async def chat_with_hub(
     """Chat with the Hub agent (supports file attachments)"""
     from services.command_parser import parse_command, execute_command
     from utils.file_helper import process_file_content
+    from models.message import AttachedFile
     
     executed_commands = []
-    user_message = message
+    attached_files = []
     file_metadata = []
     
-    # Process uploaded files and extract content
+    # Process uploaded files - create AttachedFile objects
     if files:
-        processed_contents = []
         for file in files:
             content = await file.read()
             
-            # Store metadata
-            file_info = {
-                "name": file.filename,
-                "size": len(content),
-                "type": file.content_type or "application/octet-stream"
-            }
-            file_metadata.append(file_info)
-            
             # Extract file content
             file_text = await process_file_content(content, file.filename, file.content_type)
-            processed_contents.append(file_text)
-        
-        # Add file content to message
-        if processed_contents:
-            files_section = "\n\n".join(processed_contents)
-            user_message = f"{message}\n\n**Attached Files Content:**\n{files_section}"
+            
+            # Create AttachedFile object
+            attached_file = AttachedFile(
+                filename=file.filename,
+                file_type=file.content_type or "application/octet-stream",
+                size_bytes=len(content),
+                content=file_text
+            )
+            attached_files.append(attached_file)
+            file_metadata.append(attached_file.format_for_display())
     
     # Check if user directly sent a command
     if message.strip().startswith('/'):
@@ -135,9 +131,9 @@ async def chat_with_hub(
                     "message": f"Command failed: {str(e)}"
                 })
     
-    # Get Hub's response
+    # Get Hub's response using new chat method with AttachedFile objects
     hub = get_hub_agent(db)
-    response = hub.chat_with_context(user_message)
+    response = hub.chat(message, attached_files)
     
     # Check if Hub's response contains commands
     lines = response.split('\n')
@@ -289,9 +285,9 @@ async def chat_with_spoke(
                     attached_files=file_metadata
                 )
     
-    # Get Spoke's response
+    # Get Spoke's response using new chat method with AttachedFile objects
     spoke = get_spoke_agent(spoke_name)
-    response = spoke.chat_with_artifacts(user_message)
+    response = spoke.chat(message, attached_files)
     
     # Check if Spoke's response contains commands
     lines = response.split('\n')
@@ -306,6 +302,7 @@ async def chat_with_spoke(
                         context="spoke",
                         context_type="spoke",
                         context_name=spoke_name,
+                        spoke_name=spoke_name,  # Add this parameter!
                         session=db
                     )
                     executed_commands.append({
@@ -319,6 +316,7 @@ async def chat_with_spoke(
                         "success": False,
                         "message": f"Command failed: {str(e)}"
                     })
+
     
     # Extract meta-actions
     meta_actions = extract_meta_actions_from_chat(response)
@@ -366,10 +364,38 @@ def create_spoke(spoke: CreateSpoke, db: Session = Depends(get_db)):
     if spoke.custom_prompt:
         (spoke_dir / "system_prompt.md").write_text(spoke.custom_prompt)
     else:
-        default_prompt = f"""# {spoke.spoke_name.replace('_', ' ').title()} Project
+        default_prompt = f"""# {spoke.spoke_name.replace('_', ' ').title()}
 
-You are the execution agent for the {spoke.spoke_name} project.
-Help with planning, execution, and progress tracking for this context.
+You are a specialized execution agent for the {spoke.spoke_name} project.
+Focus on delivering high-quality work within this context.
+
+## Available Commands
+
+**IMPORTANT: You can use these commands DIRECTLY in your responses. Just include the command.**
+
+- `/report "message"` - Send progress updates to Hub
+- `/archive` - Archive conversation and start fresh  
+- `/kill` - Delete this spoke (use with caution)
+
+## How to Send Messages to Hub
+
+When you complete a milestone or have important updates, **just use the /report command directly**:
+
+**Correct:**
+```
+I've completed the analysis. Here are the findings...
+
+/report "Analysis phase completed. Key findings: X, Y, Z."
+```
+
+**Don't ask permission - just do it when appropriate!**
+
+## Reference Files
+
+Files in your reference library are automatically loaded in your context.
+Use them to provide informed, accurate responses.
+
+Work efficiently and communicate proactively with the Hub.
 """
         (spoke_dir / "system_prompt.md").write_text(default_prompt)
     

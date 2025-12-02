@@ -1,102 +1,66 @@
 """
 Spoke Agent - Project-specific execution agent
-Handles task management within a specific project context
+Implements spoke-specific prompt loading and log paths
 """
 from pathlib import Path
-from datetime import datetime
-
+from typing import List
 from agents.base_agent import BaseAgent
 from utils.paths import get_spoke_dir
+from models.message import AttachedFile
 
 
 class SpokeAgent(BaseAgent):
-    """Spoke agent for project-specific work"""
+    """Spoke agent with Spoke-specific logic"""
+    
     def __init__(self, spoke_name: str):
-        super().__init__(agent_type="spoke", context_name=spoke_name)
+        super().__init__()
         self.spoke_name = spoke_name
         self.spoke_dir = get_spoke_dir(spoke_name)
-        
-        # Set up chat log path
-        self.chat_log_path = self.spoke_dir / "chat.log"
-        
-        # Load conversation history if exists
-        self._load_history()
     
-    def _load_history(self):
-        """Load conversation history from chat.log"""
-        if not self.chat_log_path.exists():
-            return
-        
-        try:
-            with open(self.chat_log_path, 'r', encoding='utf-8') as f:
-                current_role = None
-                current_content = []
-                
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("User:"):
-                        if current_role:
-                            self.conversation_history.append({
-                                "role": current_role,
-                                "content": "\n".join(current_content)
-                            })
-                        current_role = "user"
-                        current_content = [line[5:].strip()]
-                    elif line.startswith("Assistant:"):
-                        if current_role:
-                            self.conversation_history.append({
-                                "role": current_role,
-                                "content": "\n".join(current_content)
-                            })
-                        current_role = "assistant"
-                        current_content = [line[10:].strip()]
-                    elif line and current_role:
-                        current_content.append(line)
-                
-                # Add last message
-                if current_role and current_content:
-                    self.conversation_history.append({
-                        "role": current_role,
-                        "content": "\n".join(current_content)
-                    })
-        except Exception as e:
-            print(f"Failed to load history: {e}")
-    
-    def _save_history(self):
-        """Save conversation history to chat.log"""
-        try:
-            with open(self.chat_log_path, 'w', encoding='utf-8') as f:
-                for msg in self.conversation_history:
-                    role_label = "User" if msg["role"] == "user" else "Assistant"
-                    f.write(f"{role_label}: {msg['content']}\n\n")
-        except Exception as e:
-            print(f"Failed to save history: {e}")
-    
-    def chat_with_artifacts(self, user_message: str) -> str:
+    def load_system_prompt(self) -> str:
         """
-        Chat with context about project artifacts
+        Spoke-specific prompt loading
+        Loads from spokes/{spoke_name}/system_prompt.md
         """
-        # List available artifacts
-        artifacts_dir = self.spoke_dir / "artifacts"
-        refs_dir = self.spoke_dir / "refs"
+        prompt_path = self.spoke_dir / "system_prompt.md"
+        if prompt_path.exists():
+            return prompt_path.read_text(encoding='utf-8')
         
-        artifacts = list(artifacts_dir.glob("*")) if artifacts_dir.exists() else []
-        refs = list(refs_dir.glob("*")) if refs_dir.exists() else []
-        
-        context_info = f"""
-## Project Artifacts Available
-- **Artifacts**: {len(artifacts)} files
-- **References**: {len(refs)} files
+        # Default Spoke prompt
+        return f"""# {self.spoke_name.replace('_', ' ').title()}
 
----
+You are a specialized execution agent for the {self.spoke_name} project.
+Focus on delivering high-quality work within this context.
 
-User Message: {user_message}
+## Available Commands
+
+**IMPORTANT: You can use these commands DIRECTLY in your responses. Just include the command.**
+
+- `/report "message"` - Send progress updates to Hub
+- `/archive` - Archive conversation and start fresh  
+- `/kill` - Delete this spoke (use with caution)
+
+## How to Send Messages to Hub
+
+When you complete a milestone or have important updates, **just use the /report command directly**:
+
+**Correct:**
+```
+I've completed the analysis. Here are the findings...
+
+/report "Analysis phase completed. Key findings: X, Y, Z."
+```
+
+**Don't ask permission - just do it when appropriate!**
+
+## Reference Files
+
+Files in your reference library are automatically loaded in your context.
+Use them to provide informed, accurate responses.
+
+Work efficiently and communicate proactively with the Hub.
 """
-        
-        # Use parent chat() method
-        response = self.chat(context_info)
-        
-        # Save history after each exchange
-        self._save_history()
-        
-        return response
+    
+    def get_chat_log_path(self) -> Path:
+        """Spoke-specific log path"""
+        return self.spoke_dir / "chat.log"
