@@ -53,6 +53,12 @@ You can execute commands directly:
 - `/kill spoke_name` - Delete a spoke
 - `/create_task name="X" spoke="Y" workload=N rule=ONCE|WEEKLY due=DATE` - Create LBS task
 
+Example:
+- /create_task name="Task 1" spoke="Spoke 1" workload=5 rule=ONCE due=2025-12-05
+
+Attention: 
+- Don't use quotes before backslash
+
 ## LBS (Load Balancing System) Parameters
 
 **Load Score Calculation:**
