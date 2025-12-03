@@ -47,9 +47,26 @@ class TaskCreate(BaseModel):
 
 class TaskUpdate(BaseModel):
     task_name: Optional[str] = None
+    context: Optional[str] = None
     base_load_score: Optional[float] = None
     active: Optional[bool] = None
+    rule_type: Optional[str] = None
+    due_date: Optional[date] = None
     notes: Optional[str] = None
+    # Weekly recurrence fields
+    mon: Optional[bool] = None
+    tue: Optional[bool] = None
+    wed: Optional[bool] = None
+    thu: Optional[bool] = None
+    fri: Optional[bool] = None
+    sat: Optional[bool] = None
+    sun: Optional[bool] = None
+    # Other recurrence fields
+    interval_days: Optional[int] = None
+    anchor_date: Optional[date] = None
+    month_day: Optional[int] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
 
 
 class ExceptionCreate(BaseModel):
@@ -89,11 +106,41 @@ def get_dashboard_data(
         daily_data.append(daily)
         current += timedelta(days=1)
     
+    
+    # Calculate consecutive overload days (for analytics)
+    # Use the month of start_date
+    cap = engine.config.get("CAP", 8.0)
+    max_consecutive = 0
+    current_consecutive = 0
+    
+    # Calculate for the month containing start_date
+    from calendar import monthrange
+    year = start_date.year
+    month = start_date.month
+    _, last_day = monthrange(year, month)
+    
+    month_start = date(year, month, 1)
+    month_end = date(year, month, last_day)
+    
+    check_date = month_start
+    while check_date <= month_end:
+        daily_load_data = engine.calculate_daily_load(check_date)
+        if daily_load_data["adjusted_load"] > cap:
+            current_consecutive += 1
+            max_consecutive = max(max_consecutive, current_consecutive)
+        else:
+            current_consecutive = 0
+        check_date += timedelta(days=1)
+    
     return {
         "today": today,
         "weekly": weekly,
         "daily_breakdown": daily_data,
-        "config": engine.config
+        "config": engine.config,
+        # Analytics stats
+        "weekly_avg_load": weekly["average_load"],
+        "overload_consecutive_days": max_consecutive,
+        "recovery_day_percentage": weekly["recovery_rate"]
     }
 
 
@@ -132,9 +179,23 @@ def create_task(task: TaskCreate, db: Session = Depends(get_db)):
     # Log what was actually stored
     print(f"[CREATE TASK] Stored in DB - task_id: {new_task.task_id}, due_date: {new_task.due_date}")
     
-    # Expand tasks for next 90 days
+    # Expand tasks using the task's date range (with defaults)
     engine = LBSEngine(db)
-    engine.expand_tasks(date.today(), date.today() + timedelta(days=90))
+    if new_task.start_date:
+        expand_start = new_task.start_date
+    elif new_task.due_date:
+        expand_start = new_task.due_date
+    else:
+        expand_start = date.today()
+    
+    if new_task.end_date:
+        expand_end = new_task.end_date
+    elif new_task.due_date:
+        expand_end = new_task.due_date
+    else:
+        expand_end = date.today() + timedelta(days=90)
+    
+    engine.expand_tasks(expand_start, expand_end)
     
     return {"task_id": new_task.task_id, "message": "Task created successfully"}
 
@@ -146,21 +207,72 @@ def update_task(task_id: str, task: TaskUpdate, db: Session = Depends(get_db)):
     if not db_task:
         raise HTTPException(status_code=404, detail="Task not found")
     
+    # Update basic fields
     if task.task_name is not None:
         db_task.task_name = task.task_name
+    if task.context is not None:
+        db_task.context = task.context
     if task.base_load_score is not None:
         db_task.base_load_score = task.base_load_score
     if task.active is not None:
         db_task.active = task.active
+    if task.rule_type is not None:
+        db_task.rule_type = task.rule_type
     if task.notes is not None:
         db_task.notes = task.notes
+    
+    # Update rule-specific fields
+    if task.due_date is not None:
+        db_task.due_date = task.due_date
+    
+    # Update weekly recurrence fields
+    if task.mon is not None:
+        db_task.mon = task.mon
+    if task.tue is not None:
+        db_task.tue = task.tue
+    if task.wed is not None:
+        db_task.wed = task.wed
+    if task.thu is not None:
+        db_task.thu = task.thu
+    if task.fri is not None:
+        db_task.fri = task.fri
+    if task.sat is not None:
+        db_task.sat = task.sat
+    if task.sun is not None:
+        db_task.sun = task.sun
+    
+    # Update other recurrence fields
+    if task.interval_days is not None:
+        db_task.interval_days = task.interval_days
+    if task.anchor_date is not None:
+        db_task.anchor_date = task.anchor_date
+    if task.month_day is not None:
+        db_task.month_day = task.month_day
+    if task.start_date is not None:
+        db_task.start_date = task.start_date
+    if task.end_date is not None:
+        db_task.end_date = task.end_date
     
     db_task.updated_at = datetime.utcnow()
     db.commit()
     
-    # Re-expand tasks
+    # Re-expand tasks using the task's date range (with defaults)
     engine = LBSEngine(db)
-    engine.expand_tasks(date.today(), date.today() + timedelta(days=90))
+    if db_task.start_date:
+        expand_start = db_task.start_date
+    elif db_task.due_date:
+        expand_start = db_task.due_date
+    else:
+        expand_start = date.today()
+    
+    if db_task.end_date:
+        expand_end = db_task.end_date
+    elif db_task.due_date:
+        expand_end = db_task.due_date
+    else:
+        expand_end = date.today() + timedelta(days=90)
+    
+    engine.expand_tasks(expand_start, expand_end)
     
     return {"message": "Task updated successfully"}
 
