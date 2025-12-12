@@ -295,7 +295,22 @@ async def chat_with_spoke(
     
     # Get Spoke's response using new chat method with AttachedFile objects
     spoke = get_spoke_agent(spoke_name)
-    response = spoke.chat(message, attached_files)
+    
+    # Create AttachedFile objects if files were uploaded
+    attached_file_objects = []
+    if files:
+        from models.message import AttachedFile
+        for file_info in file_metadata:
+            # Note: We already extracted content earlier
+            # For now, pass empty content since it's in user_message
+            attached_file_objects.append(AttachedFile(
+                filename=file_info["name"],
+                file_type=file_info["type"],
+                size_bytes=file_info["size"],
+                content=""  # Content already in user_message
+            ))
+    
+    response = spoke.chat(user_message, attached_file_objects)
     
     # Check if Spoke's response contains commands
     lines = response.split('\n')
@@ -419,16 +434,31 @@ Work efficiently and communicate proactively with the Hub.
 
 @router.get("/spoke/list")
 def list_spokes():
-    """List all existing Spokes"""
+    """List all existing Spokes with counts"""
     if not SPOKES_DIR.exists():
         return {"spokes": []}
     
     spokes = []
     for spoke_dir in SPOKES_DIR.iterdir():
         if spoke_dir.is_dir():
+            # Count artifacts
+            artifacts_dir = spoke_dir / "artifacts"
+            artifact_count = len(list(artifacts_dir.iterdir())) if artifacts_dir.exists() else 0
+            
+            # Count references
+            refs_dir = spoke_dir / "refs"
+            ref_count = len(list(refs_dir.iterdir())) if refs_dir.exists() else 0
+            
+            # Check if has custom prompt
+            prompt_file = spoke_dir / "system_prompt.md"
+            has_custom_prompt = prompt_file.exists()
+            
             spokes.append({
                 "name": spoke_dir.name,
-                "path": str(spoke_dir)
+                "path": str(spoke_dir),
+                "artifact_count": artifact_count,
+                "ref_count": ref_count,
+                "has_custom_prompt": has_custom_prompt
             })
     
     return {"spokes": spokes}
