@@ -7,12 +7,18 @@ echo ========================================
 echo.
 
 echo Starting Next.js development server...
-echo Frontend will be available at http://localhost:3000
+set FRONTEND_PORT=3000
+if exist .env (
+    for /f "tokens=1,2 delims==" %%a in (.env) do (
+        if "%%a"=="FRONTEND_PORT" set FRONTEND_PORT=%%b
+    )
+)
+echo Frontend will be available at http://localhost:%FRONTEND_PORT%
 echo.
-echo Make sure backend is running at http://localhost:8000
+echo Make sure backend is running...
 echo.
 echo Press Ctrl+C to stop the server
 echo.
 
 cd app\frontend
-npm run dev
+npm run dev -- -p %FRONTEND_PORT%

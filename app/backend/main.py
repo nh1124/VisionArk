@@ -9,6 +9,8 @@ from contextlib import asynccontextmanager
 from models.database import init_database
 from api import lbs, inbox, agents, commands, rag, context, files
 
+from config import settings
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -31,7 +33,11 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],  # Next.js dev server
+    allow_origins=[
+        f"http://localhost:{settings.frontend_port}",
+        "http://localhost:3000",
+        "http://localhost:3001"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -65,4 +71,4 @@ def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host=settings.host, port=settings.backend_port, reload=True)
