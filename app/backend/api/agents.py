@@ -463,9 +463,14 @@ def list_spokes(
     identity: Identity = Depends(resolve_identity)
 ):
     """List all existing Spokes for this user"""
+    # Debug: show which user is being queried
+    print(f"[DEBUG] list_spokes called for user_id={identity.user_id}, auth_method={identity.auth_method}")
+    
     user_spokes_dir = get_user_spokes_dir(identity.user_id)
+    print(f"[DEBUG] Looking in directory: {user_spokes_dir}")
     
     if not user_spokes_dir.exists():
+        print(f"[DEBUG] Directory does not exist, returning empty list")
         return {"spokes": []}
     
     spokes = []

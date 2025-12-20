@@ -22,6 +22,7 @@ python-jose[cryptography]>=3.3.0  # JWT tokens
 # Phase 2.2: RAG System
 chromadb>=0.4.22  # Vector database
 pypdf>=3.17.0  # PDF text extraction
+PyPDF2>=3.0.0  # PDF file processing (alternative)
 pdfplumber>=0.10.3  # Advanced PDF parsing (tables, layout)
 langchain-core>=0.2.0  # For tool decorators
 
