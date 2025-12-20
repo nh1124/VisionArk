@@ -1,12 +1,14 @@
 @echo off
-REM Quick start script for frontend
+REM Quick start script for frontend (local development)
 
 echo ========================================
 echo AI TaskManagement OS - Frontend
 echo ========================================
 echo.
+echo Mode: Local Development
+echo For Docker mode, use start_docker.bat
+echo.
 
-echo Starting Next.js development server...
 set FRONTEND_PORT=3000
 set BACKEND_PORT=8000
 if exist .env (
@@ -15,8 +17,11 @@ if exist .env (
         if "%%a"=="BACKEND_PORT" set BACKEND_PORT=%%b
     )
 )
-echo Frontend will be available at http://localhost:%FRONTEND_PORT%
-echo Using backend at http://localhost:%BACKEND_PORT%
+
+echo Starting Next.js development server...
+echo.
+echo Frontend: http://localhost:%FRONTEND_PORT%
+echo Backend:  http://localhost:%BACKEND_PORT%
 echo.
 echo Make sure backend is running...
 echo.

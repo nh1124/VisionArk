@@ -69,14 +69,20 @@ class APIKey(Base):
 def get_engine(db_url: str = None):
     """Get database engine with automatic path detection"""
     if db_url is None:
-        # Use centralized path management
-        from utils.paths import HUB_DATA_DIR
+        # Check config for database_url first
+        from config import settings
         
-        db_dir = HUB_DATA_DIR
-        db_dir.mkdir(parents=True, exist_ok=True)
-        
-        db_path = db_dir / "hub_master.db"
-        db_url = f"sqlite:///{db_path}"
+        if settings.database_url:
+            db_url = settings.database_url
+        else:
+            # Fallback to SQLite for local dev
+            from utils.paths import HUB_DATA_DIR
+            
+            db_dir = HUB_DATA_DIR
+            db_dir.mkdir(parents=True, exist_ok=True)
+            
+            db_path = db_dir / "hub_master.db"
+            db_url = f"sqlite:///{db_path}"
     
     return create_engine(db_url, echo=False)
 
@@ -92,3 +98,4 @@ def get_session(engine):
     """Get database session"""
     SessionLocal = sessionmaker(bind=engine)
     return SessionLocal()
+

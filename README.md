@@ -11,48 +11,51 @@ A Hub-Spoke architecture task management system with LBS (Load Balancing System)
 
 ## 🚀 Quick Start
 
-### 1. Install Dependencies
+### Option A: Docker (Recommended)
 
+```bash
+# 1. Copy environment file
+cp .env.example .env
+# Edit .env to add your GEMINI_API_KEY
+
+# 2. Start all services
+.\start_docker.bat
+# Or on Linux/Mac: docker-compose up
+
+# 3. Visit http://localhost:3000
+```
+
+Services:
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:8000
+- PostgreSQL: localhost:5432
+
+---
+
+### Option B: Local Development (SQLite)
+
+**1. Install dependencies:**
 ```bash
 cd app/backend
 pip install -r requirements.txt
 ```
 
-### 2. Set Environment Variables
-
-The `.env` file should already contain:
-```
-GEMINI_API_KEY=your_gemini_api_key
-```
-
-### 3. Run Demo Script
-
-Test the backend with sample data and AI agents:
-
+**2. Set environment variables:**
 ```bash
-cd app/backend
-python demo.py
+cp .env.example .env
+# Edit .env to add your GEMINI_API_KEY
 ```
 
-This will:
-- Initialize the database with LBS configuration
-- Create sample tasks (research, finance, thesis)
-- Expand tasks and calculate load scores
-- Test Hub and Spoke AI agents
-
-### 4. Start API Server
-
+**3. Start servers:**
 ```bash
-cd app/backend
-python main.py
+# Terminal 1: Backend
+.\start_server.bat
+
+# Terminal 2: Frontend
+.\start_frontend.bat
 ```
 
-Or with uvicorn:
-```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
-
-Visit **http://localhost:8000/docs** for interactive API documentation.
+Visit **http://localhost:8000/docs** for API documentation.
 
 ## 🔐 Authentication
 
