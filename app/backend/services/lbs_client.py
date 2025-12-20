@@ -10,7 +10,7 @@ class LBSClient:
     Delegates all load balancing logic to the standalone service.
     """
     def __init__(self, base_url: str = None, api_key: str = None, user_id: str = "dev_user"):
-        self.base_url = base_url or os.getenv("LBS_SERVICE_URL", "http://localhost:8001/api/v1")
+        self.base_url = base_url or os.getenv("LBS_SERVICE_URL", "http://localhost:8300/api/v1")
         self.api_key = api_key or os.getenv("LBS_API_KEY")
         self.user_id = user_id
         
