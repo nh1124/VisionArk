@@ -32,21 +32,29 @@ Services:
 
 ---
 
-### Option B: Local Development (SQLite)
+### Option B: Local Development (PostgreSQL)
 
-**1. Install dependencies:**
+**1. Start PostgreSQL** (or use Docker):
+```bash
+docker run -d --name atmos-db -p 5432:5432 \
+  -e POSTGRES_USER=atmos -e POSTGRES_PASSWORD=atmos_secret -e POSTGRES_DB=atmos \
+  postgres:16-alpine
+```
+
+**2. Install dependencies:**
 ```bash
 cd app/backend
 pip install -r requirements.txt
 ```
 
-**2. Set environment variables:**
+**3. Set environment variables:**
 ```bash
 cp .env.example .env
 # Edit .env to add your GEMINI_API_KEY
+# DATABASE_URL is already set for local PostgreSQL
 ```
 
-**3. Start servers:**
+**4. Start servers:**
 ```bash
 # Terminal 1: Backend
 .\start_server.bat

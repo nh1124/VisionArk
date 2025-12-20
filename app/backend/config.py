@@ -18,8 +18,8 @@ class Settings(BaseSettings):
     atmos_default_user_id: str = "00000000-0000-0000-0000-000000000001"  # Dev fallback user
     atmos_api_key_pepper: str = "dev_pepper_change_in_prod"  # HMAC secret (MUST change in prod)
     
-    # Database Settings
-    database_url: str = ""  # PostgreSQL: postgresql://user:pass@host:5432/dbname, empty = SQLite
+    # Database Settings (PostgreSQL required)
+    database_url: str = ""  # postgresql://user:pass@host:5432/dbname
     
     # Model configuration
     model_config = SettingsConfigDict(

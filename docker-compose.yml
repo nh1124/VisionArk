@@ -39,7 +39,6 @@ services:
     volumes:
       - ./spokes:/app/spokes
       - ./global_assets:/app/global_assets
-      - ./hub_data:/app/hub_data
 
   # Frontend UI
   frontend:

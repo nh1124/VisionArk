@@ -67,28 +67,22 @@ class APIKey(Base):
 
 # Database setup utilities
 def get_engine(db_url: str = None):
-    """Get database engine with automatic path detection"""
+    """Get database engine - requires DATABASE_URL to be set"""
     if db_url is None:
-        # Check config for database_url first
         from config import settings
         
-        if settings.database_url:
-            db_url = settings.database_url
-        else:
-            # Fallback to SQLite for local dev
-            from utils.paths import HUB_DATA_DIR
-            
-            db_dir = HUB_DATA_DIR
-            db_dir.mkdir(parents=True, exist_ok=True)
-            
-            db_path = db_dir / "hub_master.db"
-            db_url = f"sqlite:///{db_path}"
+        if not settings.database_url:
+            raise ValueError(
+                "DATABASE_URL is required. Set it in .env file.\n"
+                "Example: DATABASE_URL=postgresql://user:pass@localhost:5432/atmos"
+            )
+        db_url = settings.database_url
     
     return create_engine(db_url, echo=False)
 
 
 def init_database(database_url: str = None):
-    """Initialize Hub database"""
+    """Initialize database tables"""
     engine = get_engine(database_url)
     Base.metadata.create_all(engine)
     return engine
@@ -98,4 +92,3 @@ def get_session(engine):
     """Get database session"""
     SessionLocal = sessionmaker(bind=engine)
     return SessionLocal()
-
