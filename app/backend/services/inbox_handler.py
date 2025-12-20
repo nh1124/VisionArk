@@ -13,10 +13,11 @@ from services.lbs_client import LBSClient
 
 
 class InboxHandler:
-    """Handle <meta-action> messages from Spokes to Hub"""
+    """Handle <meta-action> messages from Spokes to Hub (per-user)"""
     
-    def __init__(self, db_session: Session):
+    def __init__(self, db_session: Session, user_id: str = None):
         self.session = db_session
+        self.user_id = user_id
     
     def parse_meta_action(self, xml_string: str) -> Optional[Dict]:
         """
@@ -83,6 +84,7 @@ class InboxHandler:
         message_type = parsed.get("type", "share_update")
         
         inbox_msg = InboxQueue(
+            user_id=self.user_id,  # Include user_id for filtering
             source_spoke=source_spoke,
             message_type=message_type,
             payload=parsed,
@@ -96,10 +98,13 @@ class InboxHandler:
         return inbox_msg.id
     
     def get_pending_messages(self) -> List[InboxQueue]:
-        """Fetch all unprocessed messages from inbox"""
-        return self.session.query(InboxQueue).filter(
+        """Fetch all unprocessed messages from inbox for this user"""
+        query = self.session.query(InboxQueue).filter(
             InboxQueue.is_processed == False
-        ).order_by(InboxQueue.received_at.desc()).all()
+        )
+        if self.user_id:
+            query = query.filter(InboxQueue.user_id == self.user_id)
+        return query.order_by(InboxQueue.received_at.desc()).all()
     
     def process_message(self, message_id: int, action: str, user_edits: Optional[Dict] = None) -> bool:
         """

@@ -3,21 +3,29 @@ Spoke Agent - Project-specific execution agent
 Implements spoke-specific prompt loading and log paths
 """
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from agents.base_agent import BaseAgent
-from utils.paths import get_spoke_dir, get_global_prompt
+from utils.paths import get_spoke_dir, get_user_global_prompt, get_global_prompt, SPOKES_DIR
 from models.message import AttachedFile
 from utils.file_tools import ARTIFACT_TOOLS
 
 
 class SpokeAgent(BaseAgent):
-    """Spoke agent with Spoke-specific logic and file operation tools"""
+    """Spoke agent with Spoke-specific logic and file operation tools (per-user)"""
     
-    def __init__(self, spoke_name: str):
-        # Set spoke_name and spoke_dir BEFORE calling super().__init__()
-        # because _load_history_from_log() needs them
+    def __init__(self, spoke_name: str, user_id: Optional[str] = None):
+        # Store user_id for user-scoped operations
+        self.user_id = user_id
         self.spoke_name = spoke_name
-        self.spoke_dir = get_spoke_dir(spoke_name)
+        
+        # Set spoke_dir BEFORE calling super().__init__()
+        # because _load_history_from_log() needs it
+        if user_id:
+            self.spoke_dir = get_spoke_dir(user_id, spoke_name)
+        else:
+            # Legacy fallback for dev mode
+            self.spoke_dir = SPOKES_DIR / spoke_name
+        
         super().__init__()
         
         # Add file operation tools after base initialization

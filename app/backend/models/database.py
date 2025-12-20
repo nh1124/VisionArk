@@ -36,10 +36,11 @@ class TaskStatus(str, Enum):
 
 
 class InboxQueue(Base):
-    """Async message buffer from Spokes to Hub"""
+    """Async message buffer from Spokes to Hub (per-user)"""
     __tablename__ = "inbox_queue"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), nullable=False, index=True)  # Owner user
     source_spoke = Column(String, nullable=False)
     message_type = Column(String, nullable=False)  # share, complete, alert
     payload = Column(JSON, nullable=False)  # Structured <meta-action> data

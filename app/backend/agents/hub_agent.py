@@ -3,20 +3,28 @@ Hub Agent - Central orchestration agent
 Implements hub-specific prompt loading, log paths, and LBS integration
 """
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from agents.base_agent import BaseAgent
-from utils.paths import get_hub_dir, get_global_prompt
+from utils.paths import get_user_hub_dir, get_user_global_prompt, get_global_prompt
 from models.message import Message, MessageRole, AttachedFile
 from datetime import date
 
 
 class HubAgent(BaseAgent):
-    """Hub agent with Hub-specific logic and LBS integration"""
+    """Hub agent with Hub-specific logic and LBS integration (per-user)"""
     
-    def __init__(self):
+    def __init__(self, user_id: Optional[str] = None):
+        # Store user_id for user-scoped operations
+        self.user_id = user_id
         # Set hub_dir BEFORE calling super().__init__() 
         # because _load_history_from_log() needs it
-        self.hub_dir = get_hub_dir()
+        if user_id:
+            self.hub_dir = get_user_hub_dir(user_id)
+        else:
+            # Legacy fallback for dev mode
+            from utils.paths import HUB_DATA_DIR
+            self.hub_dir = HUB_DATA_DIR
+            self.hub_dir.mkdir(parents=True, exist_ok=True)
         super().__init__()
 
     def _get_default_hub_prompt(self) -> str:

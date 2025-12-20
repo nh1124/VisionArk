@@ -32,8 +32,8 @@ def get_pending_messages(
     identity: Identity = Depends(resolve_identity),
     db: Session = Depends(get_db)
 ):
-    """Fetch all unprocessed inbox messages"""
-    handler = InboxHandler(db)
+    """Fetch all unprocessed inbox messages for this user"""
+    handler = InboxHandler(db, user_id=identity.user_id)
     messages = handler.get_pending_messages()
     
     return [
@@ -59,7 +59,7 @@ def push_message(
     Push a <meta-action> message from Spoke to Hub inbox
     Internal endpoint used by Spoke agents
     """
-    handler = InboxHandler(db)
+    handler = InboxHandler(db, user_id=identity.user_id)
     queue_id = handler.push_to_inbox(msg.source_spoke, msg.meta_action_xml)
     
     if queue_id is None:
@@ -75,7 +75,7 @@ def process_message(
     db: Session = Depends(get_db)
 ):
     """Process an inbox message (accept/reject/edit)"""
-    handler = InboxHandler(db)
+    handler = InboxHandler(db, user_id=identity.user_id)
     
     # Get the message before processing to read its content
     from models.database import InboxQueue
@@ -104,7 +104,7 @@ def process_message(
                 notification += f"\n*Request:* {request}"
             
             # Send to Hub and get response
-            hub = get_hub_agent(db)
+            hub = get_hub_agent(identity.user_id, db)
             hub_response = hub.chat_with_context(notification)
             
             return {
@@ -125,7 +125,7 @@ def accept_all_messages(
     db: Session = Depends(get_db)
 ):
     """Accept all pending inbox messages at once"""
-    handler = InboxHandler(db)
+    handler = InboxHandler(db, user_id=identity.user_id)
     pending = handler.get_pending_messages()
     
     if not pending:
@@ -162,7 +162,7 @@ def accept_all_messages(
                 notification += "\n"
             
             # Send to Hub and get response
-            hub = get_hub_agent(db)
+            hub = get_hub_agent(identity.user_id, db)
             hub_response = hub.chat_with_context(notification)
             
         except Exception as e:
@@ -182,6 +182,9 @@ def get_unread_count(
     identity: Identity = Depends(resolve_identity),
     db: Session = Depends(get_db)
 ):
-    """Get count of unread inbox messages"""
-    count = db.query(InboxQueue).filter(InboxQueue.is_processed == False).count()
+    """Get count of unread inbox messages for this user"""
+    count = db.query(InboxQueue).filter(
+        InboxQueue.user_id == identity.user_id,
+        InboxQueue.is_processed == False
+    ).count()
     return {"unread_count": count}

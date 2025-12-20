@@ -11,7 +11,8 @@ from agents.hub_agent import HubAgent
 from agents.spoke_agent import SpokeAgent
 from services.inbox_handler import InboxHandler, extract_meta_actions_from_chat
 from services.auth import resolve_identity, Identity, get_db
-from utils.paths import get_spoke_dir, SPOKES_DIR
+from utils.paths import get_spoke_dir, get_user_spokes_dir, validate_name, SPOKES_DIR
+from utils.agent_cache import get_hub_agent_cache, get_spoke_agent_cache
 
 router = APIRouter(prefix="/api/agents", tags=["Agents"])
 
@@ -37,25 +38,34 @@ class UpdatePrompt(BaseModel):
     content: str
 
 
-# In-memory agent instances
-_hub_agent = None
-_spoke_agents = {}
+# Per-user agent cache instances (TTL/LRU managed)
+_hub_cache = get_hub_agent_cache()
+_spoke_cache = get_spoke_agent_cache()
 
 
-def get_hub_agent(db: Session) -> HubAgent:
-    """Get or create Hub agent"""
-    global _hub_agent
-    if _hub_agent is None:
-        _hub_agent = HubAgent()
-    return _hub_agent
+def get_hub_agent(user_id: str, db: Session) -> HubAgent:
+    """Get or create per-user Hub agent with TTL/LRU caching"""
+    cached = _hub_cache.get(user_id)
+    if cached:
+        return cached
+    
+    # Create new hub agent for this user
+    agent = HubAgent(user_id=user_id)
+    _hub_cache.set(user_id, agent)
+    return agent
 
 
-def get_spoke_agent(spoke_name: str) -> SpokeAgent:
-    """Get or create Spoke agent"""
-    global _spoke_agents
-    if spoke_name not in _spoke_agents:
-        _spoke_agents[spoke_name] = SpokeAgent(spoke_name)
-    return _spoke_agents[spoke_name]
+def get_spoke_agent(user_id: str, spoke_name: str) -> SpokeAgent:
+    """Get or create per-user Spoke agent with TTL/LRU caching"""
+    cache_key = f"{user_id}:{spoke_name}"
+    cached = _spoke_cache.get(cache_key)
+    if cached:
+        return cached
+    
+    # Create new spoke agent for this user
+    agent = SpokeAgent(spoke_name, user_id=user_id)
+    _spoke_cache.set(cache_key, agent)
+    return agent
 
 
 # Endpoints
@@ -124,7 +134,7 @@ async def chat_with_hub(
                 })
     
     # Get Hub's response using new chat method with AttachedFile objects
-    hub = get_hub_agent(db)
+    hub = get_hub_agent(identity.user_id, db)
     
     # ✅ Include command result in context if command was executed
     if command_context:
@@ -180,7 +190,7 @@ def get_hub_history(
 ):
     """Get Hub conversation history"""
     try:
-        hub = get_hub_agent(db)
+        hub = get_hub_agent(identity.user_id, db)
         return {
             "history": hub.conversation_history,
             "message_count": len(hub.conversation_history)
@@ -198,7 +208,12 @@ async def chat_with_spoke(
     db: Session = Depends(get_db)
 ):
     """Chat with a specific Spoke agent (supports file attachments)"""
-    spoke_dir = get_spoke_dir(spoke_name)
+    # Validate spoke name
+    valid, error = validate_name(spoke_name, "spoke_name")
+    if not valid:
+        raise HTTPException(status_code=400, detail=error)
+    
+    spoke_dir = get_spoke_dir(identity.user_id, spoke_name)
     if not spoke_dir.exists():
         raise HTTPException(status_code=404, detail=f"Spoke '{spoke_name}' not found")
     
@@ -288,7 +303,7 @@ async def chat_with_spoke(
                 )
     
     # Get Spoke's response using new chat method with AttachedFile objects
-    spoke = get_spoke_agent(spoke_name)
+    spoke = get_spoke_agent(identity.user_id, spoke_name)
     
     # Create AttachedFile objects if files were uploaded
     attached_file_objects = []
@@ -357,8 +372,13 @@ def get_spoke_history(
     identity: Identity = Depends(resolve_identity)
 ):
     """Get Spoke conversation history"""
+    # Validate spoke name
+    valid, error = validate_name(spoke_name, "spoke_name")
+    if not valid:
+        raise HTTPException(status_code=400, detail=error)
+    
     try:
-        spoke = get_spoke_agent(spoke_name)
+        spoke = get_spoke_agent(identity.user_id, spoke_name)
         return {
             "history": spoke.conversation_history,
             "message_count": len(spoke.conversation_history)
@@ -373,8 +393,13 @@ def create_spoke(
     identity: Identity = Depends(resolve_identity),
     db: Session = Depends(get_db)
 ):
-    """Create a new Spoke (project workspace)"""
-    spoke_dir = get_spoke_dir(spoke.spoke_name)
+    """Create a new Spoke (project workspace for this user)"""
+    # Validate spoke name
+    valid, error = validate_name(spoke.spoke_name, "spoke_name")
+    if not valid:
+        raise HTTPException(status_code=400, detail=error)
+    
+    spoke_dir = get_spoke_dir(identity.user_id, spoke.spoke_name)
     
     if spoke_dir.exists():
         raise HTTPException(status_code=400, detail=f"Spoke '{spoke.spoke_name}' already exists")
@@ -437,12 +462,14 @@ Work efficiently and communicate proactively with the Hub.
 def list_spokes(
     identity: Identity = Depends(resolve_identity)
 ):
-    """List all existing Spokes with counts"""
-    if not SPOKES_DIR.exists():
+    """List all existing Spokes for this user"""
+    user_spokes_dir = get_user_spokes_dir(identity.user_id)
+    
+    if not user_spokes_dir.exists():
         return {"spokes": []}
     
     spokes = []
-    for spoke_dir in SPOKES_DIR.iterdir():
+    for spoke_dir in user_spokes_dir.iterdir():
         if spoke_dir.is_dir():
             # Count artifacts
             artifacts_dir = spoke_dir / "artifacts"
@@ -473,7 +500,12 @@ def get_system_prompt(
     identity: Identity = Depends(resolve_identity)
 ):
     """Get system prompt for a spoke"""
-    spoke_dir = get_spoke_dir(spoke_name)
+    # Validate spoke name
+    valid, error = validate_name(spoke_name, "spoke_name")
+    if not valid:
+        raise HTTPException(status_code=400, detail=error)
+    
+    spoke_dir = get_spoke_dir(identity.user_id, spoke_name)
     if not spoke_dir.exists():
         raise HTTPException(status_code=404, detail=f"Spoke '{spoke_name}' not found")
     
@@ -491,17 +523,20 @@ def update_system_prompt(
     identity: Identity = Depends(resolve_identity)
 ):
     """Update system prompt for a spoke"""
-    spoke_dir = get_spoke_dir(spoke_name)
+    # Validate spoke name
+    valid, error = validate_name(spoke_name, "spoke_name")
+    if not valid:
+        raise HTTPException(status_code=400, detail=error)
+    
+    spoke_dir = get_spoke_dir(identity.user_id, spoke_name)
     if not spoke_dir.exists():
         raise HTTPException(status_code=404, detail=f"Spoke '{spoke_name}' not found")
     
     prompt_file = spoke_dir / "system_prompt.md"
     prompt_file.write_text(update.content, encoding='utf-8')
     
-    # Clear cached spoke agent if it exists
-    global _spoke_agents
-    if spoke_name in _spoke_agents:
-        del _spoke_agents[spoke_name]
+    # Clear cached spoke agent so it reloads the new prompt
+    cache_key = f"{identity.user_id}:{spoke_name}"
+    _spoke_cache.remove(cache_key)
     
     return {"success": True, "message": "System prompt updated successfully"}
-
