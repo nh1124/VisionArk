@@ -19,4 +19,5 @@ openai>=1.0.0  # For OpenAI provider (optional)
 chromadb>=0.4.22  # Vector database
 pypdf>=3.17.0  # PDF text extraction
 pdfplumber>=0.10.3  # Advanced PDF parsing (tables, layout)
+langchain-core>=0.2.0  # For tool decorators
 

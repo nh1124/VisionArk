@@ -14,8 +14,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [2/3] Building containers...
-docker-compose build
+echo [2/3] Building containers (this may take a while on first run)...
+docker-compose build --no-cache
 if errorlevel 1 (
     echo ERROR: Failed to build containers
     pause
