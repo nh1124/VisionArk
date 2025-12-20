@@ -54,6 +54,61 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 Visit **http://localhost:8000/docs** for interactive API documentation.
 
+## 🔐 Authentication
+
+All API endpoints require authentication via API Key (in dev mode, a fallback is provided).
+
+### Create an API Key
+
+```bash
+cd app/backend
+python create_api_key.py create --user-id 00000000-0000-0000-0000-000000000001 --client-id my-client --name "My API Key"
+```
+
+**Save the generated key** - it's only shown once!
+
+### Using the API Key
+
+Include the `X-API-KEY` header in all requests:
+
+```bash
+curl -H "X-API-KEY: atmos_your_key_here" http://localhost:8200/api/lbs/tasks
+```
+
+### Dev Mode (Default)
+
+- `ATMOS_REQUIRE_API_KEY=false` - API key optional, falls back to default user
+- Warnings are logged when fallback is used
+
+### Production Mode
+
+Set in `.env`:
+```
+ATMOS_ENV=prod
+ATMOS_REQUIRE_API_KEY=true
+ATMOS_API_KEY_PEPPER=your-secure-random-secret
+```
+
+### Key Management
+
+```bash
+# List all keys
+python create_api_key.py list
+
+# Revoke a key
+python create_api_key.py revoke <key-id>
+```
+
+### Frontend Auth UI
+
+The web UI includes built-in authentication:
+
+- **Sign In** (`/auth/signin`) - Enter your API key
+- **Sign Up** (`/auth/signup`) - Create account and get new API key
+- **Sign Out** - Button in top-right corner
+
+On first visit, you'll be redirected to sign in. Create an account to get your API key.
+
 ## 📡 API Endpoints
 
 ### LBS (Load Balancing System)

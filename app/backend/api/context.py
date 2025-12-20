@@ -7,20 +7,10 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import Optional, List
 
-from models.database import get_session, get_engine
 from services.context_manager import ContextManager
+from services.auth import resolve_identity, Identity, get_db
 
 router = APIRouter(prefix="/api/context", tags=["Context Management"])
-
-
-# Dependency
-def get_db():
-    engine = get_engine()
-    session = get_session(engine)
-    try:
-        yield session
-    finally:
-        session.close()
 
 
 # Pydantic models
@@ -49,6 +39,7 @@ class ContextStats(BaseModel):
 @router.post("/archive/hub", response_model=ArchiveResponse)
 async def archive_hub_context(
     req: ArchiveRequest,
+    identity: Identity = Depends(resolve_identity),
     db: Session = Depends(get_db)
 ):
     """
@@ -72,6 +63,7 @@ async def archive_hub_context(
 async def archive_spoke_context(
     spoke_name: str,
     req: ArchiveRequest,
+    identity: Identity = Depends(resolve_identity),
     db: Session = Depends(get_db)
 ):
     """
@@ -92,7 +84,10 @@ async def archive_spoke_context(
 
 
 @router.get("/stats/hub", response_model=ContextStats)
-async def get_hub_context_stats(db: Session = Depends(get_db)):
+async def get_hub_context_stats(
+    identity: Identity = Depends(resolve_identity),
+    db: Session = Depends(get_db)
+):
     """Get Hub context statistics"""
     try:
         manager = ContextManager("hub", "hub", db)
@@ -105,6 +100,7 @@ async def get_hub_context_stats(db: Session = Depends(get_db)):
 @router.get("/stats/spoke/{spoke_name}", response_model=ContextStats)
 async def get_spoke_context_stats(
     spoke_name: str,
+    identity: Identity = Depends(resolve_identity),
     db: Session = Depends(get_db)
 ):
     """Get Spoke context statistics"""
@@ -117,7 +113,10 @@ async def get_spoke_context_stats(
 
 
 @router.get("/summary/hub")
-async def get_hub_latest_summary(db: Session = Depends(get_db)):
+async def get_hub_latest_summary(
+    identity: Identity = Depends(resolve_identity),
+    db: Session = Depends(get_db)
+):
     """Get the latest Hub context summary"""
     try:
         manager = ContextManager("hub", "hub", db)
@@ -136,6 +135,7 @@ async def get_hub_latest_summary(db: Session = Depends(get_db)):
 @router.get("/summary/spoke/{spoke_name}")
 async def get_spoke_latest_summary(
     spoke_name: str,
+    identity: Identity = Depends(resolve_identity),
     db: Session = Depends(get_db)
 ):
     """Get the latest Spoke context summary"""
@@ -156,6 +156,7 @@ async def get_spoke_latest_summary(
 @router.get("/history/spoke/{spoke_name}")
 async def get_spoke_archive_history(
     spoke_name: str,
+    identity: Identity = Depends(resolve_identity),
     db: Session = Depends(get_db)
 ):
     """Get archive history for a Spoke"""

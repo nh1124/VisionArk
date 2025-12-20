@@ -105,23 +105,21 @@ Attention:
         Hub-specific chat with LBS context
         Adds meta_info about current load scores as formatted string
         """
-        from services.lbs_engine import LBSEngine
+        from services.lbs_client import LBSClient
         
         # Build LBS context as formatted string
         meta_info_str = None
-        if db_session:
-            try:
-                engine = LBSEngine(db_session)
-                today = date.today()
-                
-                # Get daily load
-                daily_load = engine.get_daily_load(today)
-                
-                # Build formatted meta_info string
-                meta_info_str = f"Load: {daily_load:.1f}/10.0 | Capacity: 10.0"
-                
-            except Exception as e:
-                print(f"[Hub] Failed to load LBS context: {e}")
+        try:
+            client = LBSClient(user_id="dev_user")
+            # Get daily load data
+            daily_data = client.calculate_load(date.today())
+            load = daily_data.get("adjusted_load", 0.0)
+            
+            # Build formatted meta_info string
+            meta_info_str = f"Load: {load:.1f}/10.0 | Capacity: 10.0"
+            
+        except Exception as e:
+            print(f"[Hub] Failed to load LBS context from microservice: {e}")
         
         # Create message with meta_info string
         msg = Message(

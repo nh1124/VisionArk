@@ -7,107 +7,21 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent))
 
 from datetime import date, timedelta
-from models.database import init_database, get_engine, get_session, Task, SystemConfig
-from services.lbs_engine import LBSEngine
+from models.database import init_database, get_engine, get_session
 from agents.hub_agent import HubAgent
 from agents.spoke_agent import SpokeAgent
 import uuid
 
 
 def setup_demo_data(session):
-    """Create sample tasks for testing"""
-    print("📝 Creating demo tasks...")
-    
-    # Weekly research seminar
-    seminar = Task(
-        task_id=f"T-{uuid.uuid4().hex[:8]}",
-        task_name="Research Seminar",
-        context="research_photonics",
-        base_load_score=2.5,
-        rule_type="WEEKLY",
-        mon=True,
-        wed=True,
-        start_date=date.today() - timedelta(days=30),
-        end_date=date.today() + timedelta(days=90),
-        active=True
-    )
-    
-    # Daily literature review
-    lit_review = Task(
-        task_id=f"T-{uuid.uuid4().hex[:8]}",
-        task_name="Literature Review",
-        context="research_photonics",
-        base_load_score=1.5,
-        rule_type="WEEKLY",
-        mon=True,
-        tue=True,
-        wed=True,
-        thu=True,
-        fri=True,
-        start_date=date.today(),
-        end_date=date.today() + timedelta(days=60),
-        active=True
-    )
-    
-    # Monthly budget review
-    budget = Task(
-        task_id=f"T-{uuid.uuid4().hex[:8]}",
-        task_name="Budget Review",
-        context="finance",
-        base_load_score=3.0,
-        rule_type="MONTHLY_DAY",
-        month_day=25,
-        start_date=date.today() - timedelta(days=30),
-        active=True
-    )
-    
-    # One-time thesis deadline
-    thesis = Task(
-        task_id=f"T-{uuid.uuid4().hex[:8]}",
-        task_name="Thesis Submission",
-        context="research_photonics",
-        base_load_score=8.0,
-        rule_type="ONCE",
-        due_date=date.today() + timedelta(days=30),
-        active=True
-    )
-    
-    session.add_all([seminar, lit_review, budget, thesis])
-    session.commit()
-    
-    print(f"✅ Created {len([seminar, lit_review, budget, thesis])} demo tasks")
-    return [seminar, lit_review, budget, thesis]
+    """LBS data migration demo"""
+    print("ℹ️ LBS tasks should be created via the new /tasks API or UI.")
+    return []
 
 
-def test_lbs_engine(session):
-    """Test LBS calculations"""
-    print("\n🧮 Testing LBS Engine...")
-    
-    engine = LBSEngine(session)
-    
-    # Expand tasks for next 14 days
-    start = date.today()
-    end = start + timedelta(days=14)
-    
-    print(f"   Expanding tasks from {start} to {end}...")
-    engine.expand_tasks(start, end)
-    
-    # Calculate today's load
-    today_load = engine.calculate_daily_load(date.today())
-    print(f"\n📊 Today's Load ({date.today()}):")
-    print(f"   Base Load: {today_load['base_load']}")
-    print(f"   Task Count: {today_load['task_count']}")
-    print(f"   Unique Contexts: {today_load['unique_contexts']}")
-    print(f"   Adjusted Load: {today_load['adjusted_load']:.2f} / {today_load['cap']}")
-    print(f"   Level: {today_load['level']}")
-    
-    # Weekly stats
-    weekly = engine.get_weekly_stats(start)
-    print(f"\n📈 Weekly Stats:")
-    print(f"   Average Load: {weekly['average_load']}")
-    print(f"   Over-capacity Days: {weekly['over_days']}")
-    print(f"   Recovery Rate: {weekly['recovery_rate']}%")
-    
+def test_lbs_overview():
+    """LBS testing moved to microservice repo"""
+    print("\nℹ️ LBS data is now managed by the standalone microservice.")
     return True
 
 
@@ -175,8 +89,8 @@ def main():
     tasks = setup_demo_data(session)
     
     # Test LBS engine
-    print("\n3️⃣ Testing LBS calculations...")
-    test_lbs_engine(session)
+    print("\n3️⃣ Skipping local LBS calculations (remote microservice)...")
+    test_lbs_overview()
     
     # Test Hub agent
     print("\n4️⃣ Testing Hub AI agent...")

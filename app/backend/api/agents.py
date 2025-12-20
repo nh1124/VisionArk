@@ -5,26 +5,15 @@ Chat with Hub and Spoke agents, create new Spokes
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from pathlib import Path
 from typing import Optional, List
 
-from models.database import get_session, get_engine
 from agents.hub_agent import HubAgent
 from agents.spoke_agent import SpokeAgent
 from services.inbox_handler import InboxHandler, extract_meta_actions_from_chat
+from services.auth import resolve_identity, Identity, get_db
 from utils.paths import get_spoke_dir, SPOKES_DIR
 
 router = APIRouter(prefix="/api/agents", tags=["Agents"])
-
-
-# Dependency
-def get_db():
-    engine = get_engine()
-    session = get_session(engine)
-    try:
-        yield session
-    finally:
-        session.close()
 
 
 # Pydantic models
@@ -74,6 +63,7 @@ def get_spoke_agent(spoke_name: str) -> SpokeAgent:
 async def chat_with_hub(
     message: str = Form(...),
     files: List[UploadFile] = File(default=[]),
+    identity: Identity = Depends(resolve_identity),
     db: Session = Depends(get_db)
 ):
     """Chat with the Hub agent (supports file attachments)"""
@@ -184,7 +174,10 @@ async def chat_with_hub(
 
 
 @router.get("/hub/history")
-def get_hub_history(db: Session = Depends(get_db)):
+def get_hub_history(
+    identity: Identity = Depends(resolve_identity),
+    db: Session = Depends(get_db)
+):
     """Get Hub conversation history"""
     try:
         hub = get_hub_agent(db)
@@ -201,6 +194,7 @@ async def chat_with_spoke(
     spoke_name: str,
     message: str = Form(...),
     files: List[UploadFile] = File(default=[]),
+    identity: Identity = Depends(resolve_identity),
     db: Session = Depends(get_db)
 ):
     """Chat with a specific Spoke agent (supports file attachments)"""
@@ -358,7 +352,10 @@ async def chat_with_spoke(
 
 
 @router.get("/spoke/{spoke_name}/history")
-def get_spoke_history(spoke_name: str):
+def get_spoke_history(
+    spoke_name: str,
+    identity: Identity = Depends(resolve_identity)
+):
     """Get Spoke conversation history"""
     try:
         spoke = get_spoke_agent(spoke_name)
@@ -371,7 +368,11 @@ def get_spoke_history(spoke_name: str):
 
 
 @router.post("/spoke/create")
-def create_spoke(spoke: CreateSpoke, db: Session = Depends(get_db)):
+def create_spoke(
+    spoke: CreateSpoke,
+    identity: Identity = Depends(resolve_identity),
+    db: Session = Depends(get_db)
+):
     """Create a new Spoke (project workspace)"""
     spoke_dir = get_spoke_dir(spoke.spoke_name)
     
@@ -433,7 +434,9 @@ Work efficiently and communicate proactively with the Hub.
 
 
 @router.get("/spoke/list")
-def list_spokes():
+def list_spokes(
+    identity: Identity = Depends(resolve_identity)
+):
     """List all existing Spokes with counts"""
     if not SPOKES_DIR.exists():
         return {"spokes": []}
@@ -465,7 +468,10 @@ def list_spokes():
 
 
 @router.get("/spoke/{spoke_name}/prompt")
-def get_system_prompt(spoke_name: str):
+def get_system_prompt(
+    spoke_name: str,
+    identity: Identity = Depends(resolve_identity)
+):
     """Get system prompt for a spoke"""
     spoke_dir = get_spoke_dir(spoke_name)
     if not spoke_dir.exists():
@@ -479,7 +485,11 @@ def get_system_prompt(spoke_name: str):
 
 
 @router.put("/spoke/{spoke_name}/prompt")
-def update_system_prompt(spoke_name: str, update: UpdatePrompt):
+def update_system_prompt(
+    spoke_name: str,
+    update: UpdatePrompt,
+    identity: Identity = Depends(resolve_identity)
+):
     """Update system prompt for a spoke"""
     spoke_dir = get_spoke_dir(spoke_name)
     if not spoke_dir.exists():

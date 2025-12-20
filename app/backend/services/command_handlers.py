@@ -10,8 +10,7 @@ import uuid
 
 from services.command_parser import register_command, CommandResult
 from services.inbox_handler import InboxHandler
-from services.lbs_engine import LBSEngine
-from models.database import Task
+from services.lbs_client import LBSClient
 from utils.paths import get_spoke_dir
 
 
@@ -234,10 +233,14 @@ def handle_kill(args: List[str], context_type: str = "hub", context_name: str = 
             return CommandResult(success=False, message=f"Spoke '{spoke_name}' does not exist")
         
         # Delete all tasks belonging to this spoke (for consistency)
-        if session:
-            deleted_tasks = session.query(Task).filter(Task.context == spoke_name).delete()
-            session.commit()
-            print(f"[KILL] Deleted {deleted_tasks} tasks for spoke '{spoke_name}'")
+        try:
+            client = LBSClient(user_id="dev_user")
+            tasks = client.get_tasks(context=spoke_name)
+            for t in tasks:
+                client.delete_task(t["task_id"])
+            print(f"[KILL] Deleted tasks for spoke '{spoke_name}' via LBS microservice")
+        except Exception as lbs_err:
+            print(f"[KILL] Warning: Failed to cleanup LBS tasks: {lbs_err}")
         
         # If killed from Spoke itself, send notification to Hub inbox
         if context_type == "spoke" and session:
@@ -391,82 +394,57 @@ def handle_create_task(args: List[str], session: Session = None, context_name: s
     try:
         # Parse workload
         workload = float(parsed["workload"])
-        if workload < 0 or workload > 10:
-            raise ValueError("Workload must be between 0 and 10")
         
-        # Get rule type (default to ONCE)
-        rule_type = parsed.get("rule", "ONCE").upper()
+        # Build task data for client
+        task_data = {
+            "task_name": parsed["name"],
+            "context": spoke,
+            "base_load_score": workload,
+            "rule_type": parsed.get("rule", "WEEKLY").upper(),
+            "active": True,
+            "notes": parsed.get("notes")
+        }
         
-        # Create task
-        new_task = Task(
-            task_id=f"T-{uuid.uuid4().hex[:8]}",
-            task_name=parsed["name"],
-            context=spoke,
-            base_load_score=workload,
-            rule_type=rule_type,
-            active=True,
-            notes=parsed.get("notes")
-        )
+        rule_type = task_data["rule_type"]
         
         # Handle rule-specific fields
         if rule_type == "ONCE":
             if "due" in parsed:
-                new_task.due_date = date.fromisoformat(parsed["due"])
+                task_data["due_date"] = parsed["due"]
         
         elif rule_type == "WEEKLY":
             if "days" in parsed:
                 days = parsed["days"].lower().split(",")
-                new_task.mon = "mon" in days
-                new_task.tue = "tue" in days
-                new_task.wed = "wed" in days
-                new_task.thu = "thu" in days
-                new_task.fri = "fri" in days
-                new_task.sat = "sat" in days
-                new_task.sun = "sun" in days
+                task_data.update({
+                    "mon": "mon" in days,
+                    "tue": "tue" in days,
+                    "wed": "wed" in days,
+                    "thu": "thu" in days,
+                    "fri": "fri" in days,
+                    "sat": "sat" in days,
+                    "sun": "sun" in days
+                })
         
         elif rule_type == "EVERY_N_DAYS":
             if "interval" in parsed:
-                new_task.interval_days = int(parsed["interval"])
+                task_data["interval_days"] = int(parsed["interval"])
             if "anchor" in parsed:
-                new_task.anchor_date = date.fromisoformat(parsed["anchor"])
+                task_data["anchor_date"] = parsed["anchor"]
         
         elif rule_type == "MONTHLY_DAY":
             if "day" in parsed:
-                new_task.month_day = int(parsed["day"])
+                task_data["month_day"] = int(parsed["day"])
         
-        # Add to database
-        session.add(new_task)
-        session.commit()
-        session.refresh(new_task)
-        
-        print(f"✅ [CREATE_TASK] Created task_id={new_task.task_id}, rule={rule_type}, due_date={getattr(new_task, 'due_date', None)}", flush=True)
-        import sys
-        sys.stdout.flush()
-        
-        #Expand LBS cache
-        from datetime import timedelta
-        # Start from task's due date if it exists and is in the past, otherwise today
-        start_expand = date.today()
-        if rule_type == "ONCE" and new_task.due_date and new_task.due_date < date.today():
-            start_expand = new_task.due_date
-        elif rule_type == "ONCE" and new_task.due_date:
-            start_expand = min(date.today(), new_task.due_date)
-        
-        end_expand = max(date.today() + timedelta(days=90), new_task.due_date if (rule_type == "ONCE" and new_task.due_date) else date.today())
-        
-        print(f"📊 [LBS] Expanding cache from {start_expand} to {end_expand}", flush=True)
-        sys.stdout.flush()
-        engine = LBSEngine(session)
-        engine.expand_tasks(start_expand, end_expand)
-        print(f"✅ [LBS] Cache expansion complete", flush=True)
-        sys.stdout.flush()
+        # Create task via microservice client
+        client = LBSClient(user_id="dev_user")
+        result = client.create_task(task_data)
         
         return CommandResult(
             success=True,
-            message=f"Created task: {parsed['name']} (ID: {new_task.task_id}, Spoke: {spoke}, Workload: {workload})",
+            message=f"Created task: {parsed['name']} (ID: {result.get('task_id')}, Spoke: {spoke}, Workload: {workload})",
             data={
-                "task_id": new_task.task_id,
-                "task_name": new_task.task_name,
+                "task_id": result.get("task_id"),
+                "task_name": parsed["name"],
                 "spoke": spoke,
                 "workload": workload
             }

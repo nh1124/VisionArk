@@ -9,21 +9,11 @@ from typing import List, Optional
 from pathlib import Path
 import shutil
 
-from models.database import get_session, get_engine
 from services.rag_service import RAGService
+from services.auth import resolve_identity, Identity, get_db
 from utils.paths import get_spoke_dir
 
 router = APIRouter(prefix="/api/rag", tags=["RAG"])
-
-
-# Dependency
-def get_db():
-    engine = get_engine()
-    session = get_session(engine)
-    try:
-        yield session
-    finally:
-        session.close()
 
 
 # Pydantic models
@@ -57,6 +47,7 @@ class IndexResponse(BaseModel):
 async def search_knowledge_base(
     spoke_name: str,
     req: SearchRequest,
+    identity: Identity = Depends(resolve_identity),
     db: Session = Depends(get_db)
 ):
     """
@@ -81,6 +72,7 @@ async def search_knowledge_base(
 async def index_refs_directory(
     spoke_name: str,
     req: IndexRequest,
+    identity: Identity = Depends(resolve_identity),
     db: Session = Depends(get_db)
 ):
     """
@@ -105,6 +97,7 @@ async def upload_reference_file(
     spoke_name: str,
     file: UploadFile = File(...),
     auto_index: bool = True,
+    identity: Identity = Depends(resolve_identity),
     db: Session = Depends(get_db)
 ):
     """
@@ -147,6 +140,7 @@ async def upload_reference_file(
 @router.get("/{spoke_name}/files")
 async def list_indexed_files(
     spoke_name: str,
+    identity: Identity = Depends(resolve_identity),
     db: Session = Depends(get_db)
 ):
     """
@@ -163,6 +157,7 @@ async def list_indexed_files(
 @router.get("/{spoke_name}/stats")
 async def get_rag_stats(
     spoke_name: str,
+    identity: Identity = Depends(resolve_identity),
     db: Session = Depends(get_db)
 ):
     """
@@ -182,6 +177,7 @@ async def get_rag_stats(
 @router.post("/{spoke_name}/rebuild")
 async def rebuild_index(
     spoke_name: str,
+    identity: Identity = Depends(resolve_identity),
     db: Session = Depends(get_db)
 ):
     """
@@ -204,6 +200,7 @@ async def rebuild_index(
 async def delete_reference_file(
     spoke_name: str,
     filename: str,
+    identity: Identity = Depends(resolve_identity),
     db: Session = Depends(get_db)
 ):
     """

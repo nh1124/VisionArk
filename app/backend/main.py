@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from models.database import init_database
-from api import lbs, inbox, agents, commands, rag, context, files
+from api import lbs, inbox, agents, commands, rag, context, files, auth
 
 from config import settings
 
@@ -16,6 +16,14 @@ from config import settings
 async def lifespan(app: FastAPI):
     """Initialize database on startup"""
     print("🚀 Initializing AI TaskManagement OS...")
+    print(f"   Environment: {settings.atmos_env}")
+    print(f"   API Key Required: {settings.atmos_require_api_key}")
+    print(f"   Legacy Key Enabled: {settings.atmos_enable_legacy_env_key}")
+    print(f"   Bind: {settings.host}:{settings.backend_port}")
+    
+    if settings.atmos_env == "prod" and settings.atmos_api_key_pepper == "dev_pepper_change_in_prod":
+        print("⚠️  WARNING: ATMOS_API_KEY_PEPPER not changed from default in production!")
+    
     init_database()  # Use automatic path detection
     print("✅ Database initialized")
     yield
@@ -36,7 +44,8 @@ app.add_middleware(
     allow_origins=[
         f"http://localhost:{settings.frontend_port}",
         "http://localhost:3000",
-        "http://localhost:3001"
+        "http://localhost:3001",
+        "http://localhost:8001"
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -44,6 +53,7 @@ app.add_middleware(
 )
 
 # Include routers
+app.include_router(auth.router)  # Auth first (no auth required for register)
 app.include_router(lbs.router)
 app.include_router(inbox.router)
 app.include_router(agents.router)

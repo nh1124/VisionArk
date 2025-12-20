@@ -8,7 +8,8 @@ import xml.etree.ElementTree as ET
 import json
 from sqlalchemy.orm import Session
 
-from models.database import InboxQueue, Task, LBSDailyCache
+from models.database import InboxQueue
+from services.lbs_client import LBSClient
 
 
 class InboxHandler:
@@ -135,8 +136,12 @@ class InboxHandler:
             return False
     
     def _apply_lbs_updates(self, payload: Dict, user_edits: Optional[Dict] = None) -> None:
-        """Apply LBS database updates from payload"""
+        """Apply LBS updates via microservice proxy"""
         lbs_updates = payload.get("lbs_updates", [])
+        if not lbs_updates:
+            return
+
+        client = LBSClient(user_id="dev_user")
         
         for update in lbs_updates:
             # Apply user edits if provided
@@ -145,33 +150,27 @@ class InboxHandler:
             
             action = update.get("action", "update")
             
-            if action == "create":
-                # Create new task (simplified for MVP)
-                from datetime import datetime, date
-                import uuid
+            try:
+                if action == "create":
+                    # Delegate creation to microservice
+                    task_data = {
+                        "task_name": update.get("name", "Unnamed Task"),
+                        "context": payload.get("source_spoke", "unknown"),
+                        "base_load_score": float(update.get("load_score", 3.0)),
+                        "rule_type": "ONCE",
+                        "due_date": update.get("due_date"),
+                        "active": True
+                    }
+                    client.create_task(task_data)
                 
-                new_task = Task(
-                    task_id=f"T-{uuid.uuid4().hex[:8]}",
-                    task_name=update.get("name", "Unnamed Task"),
-                    context=payload.get("source_spoke", "unknown"),
-                    base_load_score=float(update.get("load_score", 3.0)),
-                    rule_type="ONCE",
-                    due_date=date.fromisoformat(update.get("due_date")) if update.get("due_date") else None,
-                    active=True
-                )
-                self.session.add(new_task)
-            
-            elif action == "update":
-                task_id = update.get("id")
-                task = self.session.query(Task).filter(Task.task_id == task_id).first()
-                if task and update.get("status"):
-                    # Update cache entries
-                    self.session.query(LBSDailyCache).filter(
-                        LBSDailyCache.task_id == task_id,
-                        LBSDailyCache.status == "planned"
-                    ).update({"status": update["status"]})
-        
-        self.session.commit()
+                elif action == "update":
+                    # Simplified status update via microservice proxy
+                    # The microservice doesn't have a direct 'update status in cache' endpoint exposed here yet,
+                    # but we can update the task active status or similar if needed.
+                    # For now, we'll just log we received it since the microservice handles the engine logic.
+                    print(f"[Inbox] LBS update for {update.get('id')} received but status sync not implemented in proxy yet")
+            except Exception as e:
+                print(f"[Inbox] Failed to apply LBS update via microservice: {e}")
 
 
 def extract_meta_actions_from_chat(chat_response: str) -> List[str]:

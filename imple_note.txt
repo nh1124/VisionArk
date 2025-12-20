@@ -1,2 +1,0 @@
-1. read references in spokes. Currently, spokes cannot read references.
-2. remove meta info from chat. Sending message doesn't show meta info initially. But after reloading the chat, all meta info is shown.

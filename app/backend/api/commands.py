@@ -7,21 +7,11 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import Optional
 
-from models.database import get_session, get_engine
 from services.command_parser import parse_command, execute_command
 from services import command_handlers  # Import to register commands
+from services.auth import resolve_identity, Identity, get_db
 
 router = APIRouter(prefix="/api/commands", tags=["Commands"])
-
-
-# Dependency
-def get_db():
-    engine = get_engine()
-    session = get_session(engine)
-    try:
-        yield session
-    finally:
-        session.close()
 
 
 # Pydantic models
@@ -41,6 +31,7 @@ class CommandResponse(BaseModel):
 @router.post("/execute", response_model=CommandResponse)
 async def execute_command_endpoint(
     req: CommandRequest,
+    identity: Identity = Depends(resolve_identity),
     db: Session = Depends(get_db)
 ):
     """

@@ -5,22 +5,13 @@ Message fetching, processing, and triage
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from typing import List, Optional, Dict
+from typing import Optional, Dict
 
-from models.database import get_session, get_engine, InboxQueue
+from models.database import InboxQueue
 from services.inbox_handler import InboxHandler
+from services.auth import resolve_identity, Identity, get_db
 
 router = APIRouter(prefix="/api/inbox", tags=["Inbox"])
-
-
-# Dependency
-def get_db():
-    engine = get_engine()  # Use automatic path detection
-    session = get_session(engine)
-    try:
-        yield session
-    finally:
-        session.close()
 
 
 # Pydantic models
@@ -37,7 +28,10 @@ class ProcessMessage(BaseModel):
 
 # Endpoints
 @router.get("/pending")
-def get_pending_messages(db: Session = Depends(get_db)):
+def get_pending_messages(
+    identity: Identity = Depends(resolve_identity),
+    db: Session = Depends(get_db)
+):
     """Fetch all unprocessed inbox messages"""
     handler = InboxHandler(db)
     messages = handler.get_pending_messages()
@@ -56,7 +50,11 @@ def get_pending_messages(db: Session = Depends(get_db)):
 
 
 @router.post("/push")
-def push_message(msg: PushMessage, db: Session = Depends(get_db)):
+def push_message(
+    msg: PushMessage,
+    identity: Identity = Depends(resolve_identity),
+    db: Session = Depends(get_db)
+):
     """
     Push a <meta-action> message from Spoke to Hub inbox
     Internal endpoint used by Spoke agents
@@ -71,7 +69,11 @@ def push_message(msg: PushMessage, db: Session = Depends(get_db)):
 
 
 @router.post("/process")
-def process_message(msg: ProcessMessage, db: Session = Depends(get_db)):
+def process_message(
+    msg: ProcessMessage,
+    identity: Identity = Depends(resolve_identity),
+    db: Session = Depends(get_db)
+):
     """Process an inbox message (accept/reject/edit)"""
     handler = InboxHandler(db)
     
@@ -118,7 +120,10 @@ def process_message(msg: ProcessMessage, db: Session = Depends(get_db)):
 
 
 @router.post("/accept-all")
-def accept_all_messages(db: Session = Depends(get_db)):
+def accept_all_messages(
+    identity: Identity = Depends(resolve_identity),
+    db: Session = Depends(get_db)
+):
     """Accept all pending inbox messages at once"""
     handler = InboxHandler(db)
     pending = handler.get_pending_messages()
@@ -173,7 +178,10 @@ def accept_all_messages(db: Session = Depends(get_db)):
 
 
 @router.get("/count")
-def get_unread_count(db: Session = Depends(get_db)):
+def get_unread_count(
+    identity: Identity = Depends(resolve_identity),
+    db: Session = Depends(get_db)
+):
     """Get count of unread inbox messages"""
     count = db.query(InboxQueue).filter(InboxQueue.is_processed == False).count()
     return {"unread_count": count}

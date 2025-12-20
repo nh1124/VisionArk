@@ -9,6 +9,7 @@ from typing import List
 import shutil
 
 from utils.paths import get_spoke_dir
+from services.auth import resolve_identity, Identity
 
 router = APIRouter(prefix="/api/spokes", tags=["Spokes"])
 
@@ -17,7 +18,11 @@ MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB in bytes
 
 
 @router.post("/{spoke_name}/upload")
-async def upload_file(spoke_name: str, file: UploadFile = File(...)):
+async def upload_file(
+    spoke_name: str,
+    file: UploadFile = File(...),
+    identity: Identity = Depends(resolve_identity)
+):
     """Upload a file to a spoke's refs directory (max 100MB)"""
     spoke_dir = get_spoke_dir(spoke_name)
     
@@ -65,7 +70,10 @@ async def upload_file(spoke_name: str, file: UploadFile = File(...)):
 
 
 @router.get("/{spoke_name}/files")
-def list_files(spoke_name: str):
+def list_files(
+    spoke_name: str,
+    identity: Identity = Depends(resolve_identity)
+):
     """List all files in a spoke's refs and artifacts directories"""
     spoke_dir = get_spoke_dir(spoke_name)
     
@@ -104,7 +112,12 @@ def list_files(spoke_name: str):
 
 
 @router.get("/{spoke_name}/files/{directory}/{filename}")
-def download_file(spoke_name: str, directory: str, filename: str):
+def download_file(
+    spoke_name: str,
+    directory: str,
+    filename: str,
+    identity: Identity = Depends(resolve_identity)
+):
     """Download a file from spoke's refs or artifacts directory"""
     spoke_dir = get_spoke_dir(spoke_name)
     
@@ -123,7 +136,12 @@ def download_file(spoke_name: str, directory: str, filename: str):
 
 
 @router.delete("/{spoke_name}/files/{directory}/{filename}")
-def delete_file(spoke_name: str, directory: str, filename: str):
+def delete_file(
+    spoke_name: str,
+    directory: str,
+    filename: str,
+    identity: Identity = Depends(resolve_identity)
+):
     """Delete a file from spoke's refs or artifacts directory"""
     spoke_dir = get_spoke_dir(spoke_name)
     

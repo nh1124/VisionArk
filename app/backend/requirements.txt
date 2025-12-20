@@ -8,6 +8,7 @@ google-generativeai>=0.3.0
 numpy>=1.24.0,<2.0  # Pin to <2.0 for ChromaDB compatibility
 pandas>=2.0.0
 python-multipart>=0.0.6
+httpx>=0.25.0
 
 # Optional: Multi-LLM support
 openai>=1.0.0  # For OpenAI provider (optional)

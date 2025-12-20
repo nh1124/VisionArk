@@ -1,5 +1,5 @@
 # Database models module
-from .database import Task, InboxQueue
+from .database import InboxQueue
 from .message import Message, AttachedFile, MessageRole
 
-__all__ = ['Task', 'InboxQueue', 'Message', 'AttachedFile', 'MessageRole']
+__all__ = ['InboxQueue', 'Message', 'AttachedFile', 'MessageRole']

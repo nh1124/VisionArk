@@ -10,8 +10,7 @@ Path("../../hub_data").mkdir(parents=True, exist_ok=True)
 # Basic imports test
 print("Testing imports...")
 try:
-    from models.database import init_database, get_engine, get_session, Task
-    from services.lbs_engine import LBSEngine
+    from models.database import init_database, get_engine, get_session
     print("✅ Imports successful")
 except Exception as e:
     print(f"❌ Import error: {e}")
@@ -27,15 +26,8 @@ except Exception as e:
     print(f"❌ Database error: {e}")
     sys.exit(1)
 
-# LBS Engine test
-print("\nTesting LBS engine...")
-try:
-    lbs = LBSEngine(session)
-    config = lbs.config
-    print(f"✅ LBS Engine loaded. CAP = {config.get('CAP')}")
-except Exception as e:
-    print(f"❌ LBS Engine error: {e}")
-    sys.exit(1)
+# LBS test removed (delegated to microservice)
+print("\nℹ️ LBS Engine test skipped (remote microservice)")
 
 print("\n✅ All basic tests passed!")
 print("Backend is ready. To start the API server:")

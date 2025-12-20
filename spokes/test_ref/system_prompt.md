@@ -1,6 +1,6 @@
-# T2
+# Test Ref
 
-You are a specialized execution agent for the t2 project.
+You are a specialized execution agent for the test_ref project.
 Focus on delivering high-quality work within this context.
 
 ## Available Commands

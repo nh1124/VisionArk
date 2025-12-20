@@ -8,12 +8,15 @@ echo.
 
 echo Starting Next.js development server...
 set FRONTEND_PORT=3000
+set BACKEND_PORT=8000
 if exist .env (
-    for /f "tokens=1,2 delims==" %%a in (.env) do (
+    for /f "usebackq tokens=1,2 delims==" %%a in (".env") do (
         if "%%a"=="FRONTEND_PORT" set FRONTEND_PORT=%%b
+        if "%%a"=="BACKEND_PORT" set BACKEND_PORT=%%b
     )
 )
 echo Frontend will be available at http://localhost:%FRONTEND_PORT%
+echo Using backend at http://localhost:%BACKEND_PORT%
 echo.
 echo Make sure backend is running...
 echo.

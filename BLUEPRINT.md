@@ -45,54 +45,54 @@ AIは黒魔術的な自動判断を行わない。情報の共有、タスクの
 2.1 全体構成図 (Hub-Spoke Model)
 本システムは、ユーザーの認知負荷を最小化するため、情報の「参照（Reference）」「統括（Orchestration）」「実行（Execution）」を明確に分離した3層構造を採用する。トポロジーとしては、中央のHubが全ての状態管理を担い、Spokeが放射状に展開する「スター型ネットワーク」を形成する。これにより、各プロジェクト間の依存関係をHubで一元管理し、Spoke間の複雑な通信（メッシュ型通信）によるコンテキスト汚染を回避する。
 graph TD
-    %% レイヤー定義: 静的な参照情報
-    subgraph Layer_Global [Layer 1: Global Reference (Read-only)]
-        direction TB
-        Vision[LifeVision / NTTvision]
-        Rules[Global Rules / Prompts]
-        Assets[Shared Assets]
-    end
+	%% レイヤー定義: 静的な参照情報
+	subgraph Layer_Global [Layer 1: Global Reference (Read-only)]
+		direction TB
+		Vision[LifeVision / NTTvision]
+		Rules[Global Rules / Prompts]
+		Assets[Shared Assets]
+	end
 %% レイヤー定義: 動的な状態管理と判断
-    subgraph Layer_Hub [Layer 2: The HUB (Orchestration)]
-        direction TB
-        HubAgent[🤖 HUB Agent (PM Role)]
-        HubDB[(LBS Master DB)]
-        Inbox[📥 Inbox Buffer (Async Queue)]
-        Log_Hub[Hub Interaction Logs]
-    end
+	subgraph Layer_Hub [Layer 2: The HUB (Orchestration)]
+		direction TB
+		HubAgent[🤖 HUB Agent (PM Role)]
+		HubDB[(LBS Master DB)]
+		Inbox[📥 Inbox Buffer (Async Queue)]
+		Log_Hub[Hub Interaction Logs]
+	end
 %% レイヤー定義: 個別の実行環境
-    subgraph Layer_Spoke [Layer 3: The SPOKE (Execution)]
-        direction TB
-        SpokeA[💎 Spoke: Research (R&D)]
-        SpokeB[💎 Spoke: ProjectManagement]
-        SpokeC[💎 Spoke: Finance / Life]
-        LocalRefs[Local References (PDFs/Code)]
-    end
+	subgraph Layer_Spoke [Layer 3: The SPOKE (Execution)]
+		direction TB
+		SpokeA[💎 Spoke: Research (R&D)]
+		SpokeB[💎 Spoke: ProjectManagement]
+		SpokeC[💎 Spoke: Finance / Life]
+		LocalRefs[Local References (PDFs/Code)]
+	end
 %% 外部サービス連携
-    subgraph External [External Services]
-        MSToDo[Microsoft ToDo (Task Sync)]
-        Calendar[Outlook / Google Calendar]
-    end
+	subgraph External [External Services]
+		MSToDo[Microsoft ToDo (Task Sync)]
+		Calendar[Outlook / Google Calendar]
+	end
 %% データフローの定義
-    %% 1. 参照フロー (Read-only)
-    Vision -.->|Reference| HubAgent
-    Vision -.->|Reference| SpokeA
-    Vision -.->|Reference| SpokeB
-    Vision -.->|Reference| SpokeC
-    Rules -.->|System Prompt| HubAgent
-    Rules -.->|System Prompt| SpokeA
+	%% 1. 参照フロー (Read-only)
+	Vision -.->|Reference| HubAgent
+	Vision -.->|Reference| SpokeA
+	Vision -.->|Reference| SpokeB
+	Vision -.->|Reference| SpokeC
+	Rules -.->|System Prompt| HubAgent
+	Rules -.->|System Prompt| SpokeA
 %% 2. 状態管理フロー (State Management)
-    HubAgent <-->|CRUD Operations| HubDB
-    HubDB <-->|Bi-directional Sync| MSToDo
-    HubDB <-->|Schedule Blocking| Calendar
+	HubAgent <-->|CRUD Operations| HubDB
+	HubDB <-->|Bi-directional Sync| MSToDo
+	HubDB <-->|Schedule Blocking| Calendar
 %% 3. Pushプロトコル (Information Flow)
-    SpokeA -- Push (Meta Info) --> Inbox
-    SpokeB -- Push (Meta Info) --> Inbox
-    SpokeC -- Push (Meta Info) --> Inbox
+	SpokeA -- Push (Meta Info) --> Inbox
+	SpokeB -- Push (Meta Info) --> Inbox
+	SpokeC -- Push (Meta Info) --> Inbox
 %% 4. 指示とローカル参照
-    Inbox -- Fetch (/check_inbox) --> HubAgent
-    HubAgent -- Instruction / Resource Allocation --> SpokeA
-    LocalRefs -.-> SpokeA
+	Inbox -- Fetch (/check_inbox) --> HubAgent
+	HubAgent -- Instruction / Resource Allocation --> SpokeA
+	LocalRefs -.-> SpokeA
 2.2 レイヤー定義 (Layer Definitions)
 各レイヤーは「責任の単一性（Single Responsibility Principle）」に基づき設計されており、上位レイヤーは下位レイヤーの詳細に関知せず、下位レイヤーは上位レイヤーの決定に従う。
 Layer 1: Global Reference (Global Assets)
@@ -140,8 +140,8 @@ AIによるブラックボックス的な自動共有や、全ログの無差別
   <summary>論文Xの査読完了。追加実験（実験ID: Exp-04）が必要と判明。</summary>
   <!-- LBSデータベースへの直接的な更新指示 -->
   <lbs_update>
-    <task id="T-101" status="review_needed" load_score="4.5" />
-    <task id="T-new" action="create" name="追加実験 Exp-04" due_date="2025-12-05" load_score="3.0" />
+	<task id="T-101" status="review_needed" load_score="4.5" />
+	<task id="T-new" action="create" name="追加実験 Exp-04" due_date="2025-12-05" load_score="3.0" />
   </lbs_update>
   <!-- Hubへの相談事項 -->
   <request>追加実験のため、来週の修論執筆タスクのリソース調整を希望。</request>
@@ -218,82 +218,82 @@ AI TaskManagement OS/
 │   # UIコンポーネント、DBマイグレーションスクリプト、APIハンドラを含む。
 │   # Python (FastAPI/Streamlit) または TypeScript (Next.js) コードが配置される。
 └── .env                    # 環境変数
-    # API Keys (OpenAI/Gemini), DB Connection Strings, Secret Keys等を管理。
-    # セキュリティリスクを避けるため、Git管理対象外とする。
+	# API Keys (OpenAI/Gemini), DB Connection Strings, Secret Keys等を管理。
+	# セキュリティリスクを避けるため、Git管理対象外とする。
 3.2 データベース設計 (Database Design)
 LBS (Load Balancing System) の状態を永続化し、複雑なスケジュールルールを高速に検索・表示するためのリレーショナルデータベース設計。 書き込み（Command）と読み取り（Query）の責任を分離する設計思想（CQRSに近いアプローチ）を取り入れ、複雑な繰り返し計算を事前に行う構造とする。これにより、ダッシュボード表示時のレイテンシを最小化し、ストレスのない操作性を実現する。
 Entity Relationship Diagram (ERD)
 erDiagram
-    SYSTEM_CONFIG {
-        string key PK "ALPHA, BETA, CAP, SWITCH_COST"
-        string value "数値またはJSON設定値"
-        string description "設定の意味と影響範囲"
-        datetime updated_at
-    }
+	SYSTEM_CONFIG {
+		string key PK "ALPHA, BETA, CAP, SWITCH_COST"
+		string value "数値またはJSON設定値"
+		string description "設定の意味と影響範囲"
+		datetime updated_at
+	}
 TASKS ||--o{ TASK_EXCEPTIONS : has
-    TASKS ||--o{ LBS_DAILY_CACHE : expands_to
+	TASKS ||--o{ LBS_DAILY_CACHE : expands_to
 TASKS {
-        string task_id PK "T-UUID (システムの主キー)"
-        string task_name "タスク名称"
-        string context "Spoke Name (プロジェクトタグ)"
-        float base_load_score "0.0 - 10.0 (基本負荷)"
-        boolean active "有効/無効フラグ"
-        
-        %% ルール定義
-        string rule_type "ONCE / WEEKLY / EVERY_N / MONTHLY..."
-        date due_date "単発タスクの締切日"
-        
-        %% 繰り返し設定詳細
-        boolean mon "月曜実施フラグ"
-        boolean tue "火曜実施フラグ"
-        boolean wed "..."
-        boolean thu "..."
-        boolean fri "..."
-        boolean sat "..."
-        boolean sun "..."
-        
-        int interval_days "N日おきのN"
-        date anchor_date "繰り返しの起点日"
-        int month_day "毎月d日"
-        int nth_in_month "第n週 (1-5, -1=最終)"
-        int weekday_mon1 "曜日指定 (1=Mon...7=Sun)"
-        
-        date start_date "適用開始日"
-        date end_date "適用終了日"
-        string notes "備考・依存関係"
-        string external_sync_id "Microsoft ToDo ID"
-        datetime created_at
-        datetime updated_at
-    }
+		string task_id PK "T-UUID (システムの主キー)"
+		string task_name "タスク名称"
+		string context "Spoke Name (プロジェクトタグ)"
+		float base_load_score "0.0 - 10.0 (基本負荷)"
+		boolean active "有効/無効フラグ"
+		
+		%% ルール定義
+		string rule_type "ONCE / WEEKLY / EVERY_N / MONTHLY..."
+		date due_date "単発タスクの締切日"
+		
+		%% 繰り返し設定詳細
+		boolean mon "月曜実施フラグ"
+		boolean tue "火曜実施フラグ"
+		boolean wed "..."
+		boolean thu "..."
+		boolean fri "..."
+		boolean sat "..."
+		boolean sun "..."
+		
+		int interval_days "N日おきのN"
+		date anchor_date "繰り返しの起点日"
+		int month_day "毎月d日"
+		int nth_in_month "第n週 (1-5, -1=最終)"
+		int weekday_mon1 "曜日指定 (1=Mon...7=Sun)"
+		
+		date start_date "適用開始日"
+		date end_date "適用終了日"
+		string notes "備考・依存関係"
+		string external_sync_id "Microsoft ToDo ID"
+		datetime created_at
+		datetime updated_at
+	}
 TASK_EXCEPTIONS {
-        int id PK
-        string task_id FK "対象タスク"
-        date target_date "例外適用日"
-        string exception_type "SKIP / OVERRIDE_LOAD / FORCE_DO"
-        float override_load_value "変更後の負荷値"
-        string notes "例外理由（祝日、体調不良など）"
-        datetime created_at
-    }
+		int id PK
+		string task_id FK "対象タスク"
+		date target_date "例外適用日"
+		string exception_type "SKIP / OVERRIDE_LOAD / FORCE_DO"
+		float override_load_value "変更後の負荷値"
+		string notes "例外理由（祝日、体調不良など）"
+		datetime created_at
+	}
 LBS_DAILY_CACHE {
-        int id PK
-        date target_date "カレンダーの日付"
-        string task_id FK
-        float calculated_load "例外・係数反映後の最終負荷スコア"
-        string rule_type_snapshot "展開時点での適用ルール"
-        string status "planned / completed / skipped"
-        boolean is_overflow "CAP超過フラグ"
-        datetime generated_at
-    }
+		int id PK
+		date target_date "カレンダーの日付"
+		string task_id FK
+		float calculated_load "例外・係数反映後の最終負荷スコア"
+		string rule_type_snapshot "展開時点での適用ルール"
+		string status "planned / completed / skipped"
+		boolean is_overflow "CAP超過フラグ"
+		datetime generated_at
+	}
 INBOX_QUEUE {
-        int id PK
-        string source_spoke "送信元Spoke"
-        string message_type "share / complete / alert"
-        json payload "構造化されたメタ情報 (<meta-action>)"
-        boolean is_processed "処理済みフラグ"
-        datetime received_at
-        datetime processed_at
-        string error_log "処理失敗時のエラーメッセージ"
-    }
+		int id PK
+		string source_spoke "送信元Spoke"
+		string message_type "share / complete / alert"
+		json payload "構造化されたメタ情報 (<meta-action>)"
+		boolean is_processed "処理済みフラグ"
+		datetime received_at
+		datetime processed_at
+		string error_log "処理失敗時のエラーメッセージ"
+	}
 Table Definitions & Logic Details
 1. tasks (Master Rules Table)
 タスクおよび複雑な繰り返しルールの「定義（Definition）」を管理するマスタテーブル。 LBSエンジンの入力ソースとなる。タスクの削除は論理削除（active=FALSE）を推奨し、過去のログとの整合性を保つ。
@@ -424,32 +424,32 @@ SpokeエージェントからHubへの通信は、自然言語の会話に埋め
 	• Hidden Metadata: このXMLブロックは、チャットUI上では「共有カード」としてレンダリングされるか、または非表示となり、人間の可読性を妨げない。
 4.1.2 XMLスキーマ定義
 <meta-action type="ACTION_TYPE">
-    <!-- 必須: 送信先 -->
-    <target>Hub</target>
-    
-    <!-- 必須: 発生日時 (ISO 8601) -->
-    <timestamp>2025-11-27T14:30:00Z</timestamp>
-    
-    <!-- 必須: 人間用の要約 (Hubでの表示用) -->
-    <summary>短潔な要約テキスト</summary>
-    
-    <!-- 任意: LBSデータベースへのCRUD指示 -->
-    <lbs_update>
-        <!-- タスクステータスの更新 -->
-        <task id="T-UUID" status="done" />
-        <!-- 新規タスクの発生 -->
-        <task action="create" name="Task Name" due_date="YYYY-MM-DD" load_score="3.0" />
-    </lbs_update>
-    
-    <!-- 任意: Hubへの定性的な相談・リクエスト -->
-    <request>
-        来週のリソース配分についての相談内容...
-    </request>
-    
-    <!-- 任意: 生成物へのリンク -->
-    <artifacts>
-        <file path="spokes/research/artifacts/draft_v1.md" />
-    </artifacts>
+	<!-- 必須: 送信先 -->
+	<target>Hub</target>
+	
+	<!-- 必須: 発生日時 (ISO 8601) -->
+	<timestamp>2025-11-27T14:30:00Z</timestamp>
+	
+	<!-- 必須: 人間用の要約 (Hubでの表示用) -->
+	<summary>短潔な要約テキスト</summary>
+	
+	<!-- 任意: LBSデータベースへのCRUD指示 -->
+	<lbs_update>
+		<!-- タスクステータスの更新 -->
+		<task id="T-UUID" status="done" />
+		<!-- 新規タスクの発生 -->
+		<task action="create" name="Task Name" due_date="YYYY-MM-DD" load_score="3.0" />
+	</lbs_update>
+	
+	<!-- 任意: Hubへの定性的な相談・リクエスト -->
+	<request>
+		来週のリソース配分についての相談内容...
+	</request>
+	
+	<!-- 任意: 生成物へのリンク -->
+	<artifacts>
+		<file path="spokes/research/artifacts/draft_v1.md" />
+	</artifacts>
 </meta-action>
 4.1.3 Action Types
 	• share_update: 定期的な進捗報告。
@@ -460,18 +460,18 @@ SpokeエージェントからHubへの通信は、自然言語の会話に埋め
 Hubのコンテキスト（Attention）を守るため、Pushされた情報は即座にHubに注入されず、「Inbox」というバッファ領域を経由する。
 4.2.1 処理フロー (State Transition)
 stateDiagram-v2
-    [*] --> Generated: Spokeが<meta-action>生成
-    Generated --> Queued: Appが検知しJSONLに保存
-    
-    state "Inbox Buffer" as Buffer {
-        Queued --> Pending: 未処理リストに表示
-    }
-    
-    Pending --> Fetched: Userが/check_inbox実行
-    Fetched --> Processed: Hubエージェントが内容を解釈
-    Processed --> Archived: ログ保存・Queueから削除
-    
-    Processed --> LBS_Updated: DB更新
+	[*] --> Generated: Spokeが<meta-action>生成
+	Generated --> Queued: Appが検知しJSONLに保存
+	
+	state "Inbox Buffer" as Buffer {
+		Queued --> Pending: 未処理リストに表示
+	}
+	
+	Pending --> Fetched: Userが/check_inbox実行
+	Fetched --> Processed: Hubエージェントが内容を解釈
+	Processed --> Archived: ログ保存・Queueから削除
+	
+	Processed --> LBS_Updated: DB更新
 	1. Queueing (蓄積):
 		○ 検知された <meta-action> はパースされ、hub_data/inbox/pending.jsonl に追記される。
 		○ Hubチャット画面のサイドバー等に「未読件数: 3」のようなインジケータが表示される。
@@ -518,7 +518,7 @@ LLMのコンテキストウィンドウは有限であり、長期プロジェ�
 		○ 新たなチャットセッションの冒頭に、生成した archived_summary.md をシステムプロンプトの一部として注入する。
 		○ これにより、AIは詳細な会話履歴は忘れても、「これまでの経緯と現在の状態」を保持したまま再スタートできる。
 5.2 参照情報のRAG化 (Refsフォルダの扱い)
-spokes/{context}/refs/ ディレクトリに配置された資料（論文PDF、仕様書、議事録）を、AIが能動的に参照できる知識ベースとして構築する。
+spokes/{context}/refs/ ディレクトリに配置された資料（論文PDF、仕様書、議事録）を、AIが能動的に参照できる知識ベースとして構築する。Spokeエージェントがファイル操作、外部連携、知識検索を行う際は、テキストコマンドではなくNative Function Callingを使用する。
 5.2.1 ベクトル化プロセス
 	• Watcher: アプリケーションは refs/ フォルダを監視する。
 	• Embedding: 新規ファイル追加や更新を検知すると、テキストをチャンク分割し、OpenAI/GeminiのEmbedding APIを用いてベクトル化する。
@@ -526,22 +526,55 @@ spokes/{context}/refs/ ディレクトリに配置された資料（論文PDF、
 5.2.2 検索・参照ロジック
 	• On-Demand Retrieval: ユーザーが「昨日の論文の実験条件について教えて」と問うた際、AIはそのクエリに関連するチャンクをVector Storeから検索し、回答生成に利用する。
 	• Citation: 回答には必ず引用元ファイル名とページ数を明記させる（「Source: paper_A.pdf, p.12」）。これにより、ハルシネーションを確認可能にする。
+	• search_references function
+		○ Purpose: refs 内の資料（PDF/論文/議事録）に対して意味検索を行う。
+		○ Arguments:
+			○ spoke_name (str): 検索対象のSpoke。
+			○ query (str): 検索クエリ（例: "論文Xの実験条件パラメータ"）。
+			○ limit (int): 取得件数 (Default: 3)。
+		○ Returns: 関連するテキストチャンクと引用元（Source）のリスト。
+		○ Backend Logic: バックグラウンドのWatcherが refs/ へのファイル追加を検知し、Embedding APIを用いて pgvector に自動インデックスする仕組みを前提とする。
+	
 5.3 生成物の管理 (Artifactsフォルダ)
 チャット内での「使い捨ての回答」と、成果物としての「永続ファイル」を明確に区別する。
 5.3.1 Artifactsの定義
 	• spokes/{context}/artifacts/ に保存されるファイル群。
 	• 例: 論文ドラフト (draft.md)、Pythonスクリプト (analysis.py)、要件定義書 (requirements.md)。
 5.3.2 操作インターフェース
-	• Create/Update: AIは <meta-action> タグを用いて、特定のファイル名と内容を指定し、Artifactsフォルダへの書き込みを行う。
-<meta-action type="update_artifact">
-    <path>artifacts/experiment_log.md</path>
-    <content>...</content>
-</meta-action>
-	• User Access: ユーザーはこのフォルダをVS CodeやExplorerで直接開き、編集・閲覧できる。
-	• Read-back: AIはArtifactsフォルダ内のファイルを常に最新の状態として認識・参照できる（RAGとは異なり、生テキストとして読み込む場合もある）。
+	1. save_artifact function
+	• Purpose: 生成されたコード、ドキュメント、データを artifacts ディレクトリに保存する。
+	• Arguments:
+		○ spoke_name (str): 対象のSpoke名。
+		○ file_path (str): 保存先の相対パス。必ず artifacts/ で始まること。
+		○ content (str): ファイルの完全な中身（テキスト）。
+		○ overwrite (bool): 既存ファイルを上書きする場合は True。
+	• Returns: 成功時は保存された絶対パス、失敗時はエラーメッセージ。
+	• Versioning: artifacts/ フォルダはGit管理下にあるため、破壊的な変更があっても復元可能であることを前提とする。
+	2. read_reference function
+	• Purpose: refs ディレクトリ内のテキスト資料（コード、設定ファイル）を直接読み込む。
+	• Arguments:
+		○ spoke_name (str): 対象のSpoke名。
+		○ file_path (str): 読み込むファイルの相対パス。refs/ 配下限定。
+	3. list_directory function
+	• Purpose: 現在のSpoke内のファイル構造を確認する。
+	• Arguments: spoke_name (str), sub_dir (str: "refs" or "artifacts")
+	4. Implementation Example (Python/Pydantic)
+	from langchain_core.tools import tool
+from pydantic import BaseModel, Field
+	class SaveArtifactInput(BaseModel):
+	file_path: str = Field(..., description="Relative path starting with spokes/{context}/artifacts/")
+	content: str = Field(..., description="Full content of the file")
+	overwrite: bool = Field(False, description="Set True to overwrite existing file")
+	@tool("save_artifact", args_schema=SaveArtifactInput)
+def save_artifact(file_path: str, content: str, overwrite: bool = False):
+	"""Save code or document to the artifacts directory."""
+	# Implementation:
+	# 1. Validate path (prevent path traversal)
+	# 2. Check existence if overwrite is False
+	# 3. Write content to file
+	return f"Successfully saved to {file_path}"
 5.3.3 バージョン管理推奨
 	• artifacts/ フォルダはGit管理下置くことを強く推奨する。AIによる破壊的な変更があった場合でも、Gitの履歴から復元可能にするためである。システム側で自動コミットを行うオプションも検討する。
-
 
 6. 機能要件：外部連携 (External Integration)
 本システムは、独自のLBSデータベース（Master）を持ちつつ、ユーザーが日常的に使用するMicrosoft ToDoやOutlook Calendarを「表示・操作端末（Client）」として利用する。データの整合性を保つため、厳格な同期ロジックと方向性を定義する。 両サービスとも Microsoft Graph API を介して制御するため、認証基盤を統一できる利点がある。
@@ -553,24 +586,24 @@ spokes/{context}/refs/ ディレクトリに配置された資料（論文PDF、
 6.1.2 同期フロー (Sync Cycle)
 同期エージェント（Sync Agent）は、以下のサイクルで動作する。
 sequenceDiagram
-    participant Spoke as Spoke/User
-    participant DB as LBS Master DB
-    participant Agent as Sync Agent
-    participant Ext as MS ToDo / Outlook
+	participant Spoke as Spoke/User
+	participant DB as LBS Master DB
+	participant Agent as Sync Agent
+	participant Ext as MS ToDo / Outlook
 %% Push Flow
-    Note over Spoke, Ext: 1. Outbound Sync (LBS -> External)
-    Spoke->>DB: タスク作成 / 更新
-    Agent->>DB: 変更検知 (Polling/Trigger)
-    Agent->>Ext: Create / Update Task/Event (Graph API)
-    Ext-->>Agent: Return External ID
-    Agent->>DB: Save External ID
+	Note over Spoke, Ext: 1. Outbound Sync (LBS -> External)
+	Spoke->>DB: タスク作成 / 更新
+	Agent->>DB: 変更検知 (Polling/Trigger)
+	Agent->>Ext: Create / Update Task/Event (Graph API)
+	Ext-->>Agent: Return External ID
+	Agent->>DB: Save External ID
 %% Pull Flow
-    Note over Spoke, Ext: 2. Inbound Sync (External -> LBS)
-    Ext->>Ext: スマホでタスク完了
-    Agent->>Ext: Delta Query (差分取得)
-    Ext-->>Agent: Completed Task List
-    Agent->>DB: Update Status = DONE
-    DB->>Spoke: (Optional) Notify Hub
+	Note over Spoke, Ext: 2. Inbound Sync (External -> LBS)
+	Ext->>Ext: スマホでタスク完了
+	Agent->>Ext: Delta Query (差分取得)
+	Ext-->>Agent: Completed Task List
+	Agent->>DB: Update Status = DONE
+	DB->>Spoke: (Optional) Notify Hub
 6.2 Microsoft ToDo (Graph API) 双方向同期
 Microsoft Graph APIを使用し、生活事務や雑務（Life Admin）のシームレスな管理を実現する。
 6.2.1 データマッピング
@@ -755,4 +788,43 @@ C. Database & Infrastructure
 	• Vector Store: Supabase (pgvector)
 		○ 選定理由:
 			§ Hybrid Search: キーワード検索（SQL）と意味検索（Vector）を組み合わせたハイブリッド検索が容易であり、タスク名による検索と、文脈による資料検索を同じDBで行える運用メリットが大きい。
+8.2 実装ロードマップ (Implementation Roadmap)
+「まず骨格（LBS）を作り、次に脳（AI）を入れ、最後に手足（Sync）を繋ぐ」という段階的アプローチを採用する。 各フェーズの終わりには「MVP（Minimum Viable Product）」としての動作確認を行い、手戻りを防ぐ。
+Phase 1: The Foundation (LBS & Dashboard)
+目標: AI機能がなくても、単体で「高機能なタスク管理・負荷可視化ツール」として日常利用できる状態にする。
+	• Week 1: DB設計とAPI実装 (Backend Focus)
+		○ Day 1-2: Supabaseプロジェクトのセットアップと、SQLスキーマ定義（tasks, task_exceptions, system_config）。マイグレーションスクリプトの作成。
+		○ Day 3-4: FastAPIプロジェクトの構築。Pydanticモデルの定義。基本的なCRUDエンドポイント（GET /tasks, POST /tasks）の実装。
+		○ Day 5-7: LBS展開エンジンの実装。rule_type に基づくカレンダー展開ロジックと、負荷計算アルゴリズム（NumPy）の実装。ユニットテストによるロジック検証。
+	• Week 2: フロントエンド構築 (Frontend Focus)
+		○ Day 8-9: Next.js + shadcn/ui の環境構築。App Routerのレイアウト設計（SideBar, MainArea）。
+		○ Day 10-12: LBSダッシュボードの実装。Recharts等を用いたヒートマップ、グラフ描画。SWRまたはReact Queryを用いたデータフェッチの実装。
+		○ Day 13-14: タスク操作UIの実装。ドラッグ＆ドロップによる日付変更、ダブルクリックでのインライン編集機能。
+		○ Checkpoint: 自分の実際のタスクを登録し、翌週の計画を立てられるか検証する。
+Phase 2: The Brain (Hub-Spoke AI)
+目標: チャットUIを統合し、AIとの対話を通じてデータを操作可能にする（No-UI Interactionの実現）。
+	• Week 3: チャット基盤とプロンプト管理
+		○ Day 15-16: チャットUIコンポーネントの実装。ユーザーメッセージとAIレスポンスのストリーム表示。
+		○ Day 17-18: System Prompt管理機能。各Spoke（Project）ごとの人格設定画面と、DBへの保存処理。
+		○ Day 19-21: LangGraphの基本セットアップ。ユーザーの意図（Intent）を分類し、適切なツール（検索、DB操作）を呼び出すルーターの実装。
+	• Week 4: オーケストレーションとInbox
+		○ Day 22-24: Pushプロトコル (<meta-action>) パーサーの実装。LLMの出力からXML/JSONブロックを抽出し、Frontendでカード表示するロジック。
+		○ Day 25-26: Inbox UIの実装。SpokeからPushされたデータを一時保存するテーブルと、それをリスト表示・承認する画面の作成。
+		○ Day 27-28: Hubエージェントの実装。Inboxの内容を読み込み、LBSの変更を提案する推論ロジックの構築。
+		○ Checkpoint: 「論文読み終わった」とチャットで報告し、Inbox経由でタスク完了と次タスク追加が承認できるか確認する。
+Phase 3: The Ecosystem (External Sync & RAG)
+目標: 外部ツールと連携し、実運用における入力コストを極限まで下げる「完全体」にする。
+	• Week 5: 外部連携 (Integration)
+		○ Day 29-30: Microsoft Entra ID (Azure AD) へのアプリ登録と、OAuth2.0認証フローの実装。
+		○ Day 31-33: Sync Agentの実装。Microsoft ToDo / Outlook Calendar APIに対するポーリング処理と、差分検知ロジック（Delta Query）の実装。
+		○ Day 34-35: エラーハンドリングとリトライ処理の強化。APIレート制限対策。
+	• Week 6: RAG & Optimization (Refinement)
+		○ Day 36-38: PDFアップロード機能。Unstructured や LlamaParse を用いたPDF解析パイプラインと、pgvectorへの埋め込み処理。
+		○ Day 39-40: コンテキスト圧縮機能。/archive コマンドの実装。古いログを要約してシステムプロンプトに再注入するロジック。
+		○ Day 41-42: UIの磨き込み。キーボードショートカット（Cmd+K）の実装、ローディングステートの改善、ダークモードの微調整。
+		○ Final Checkpoint: 全システムを通した運用テスト（Antigravity Trial）。
+Future Work (Beyond MVP)
+	• Mobile App (PWA/Native): Capacitor等を用いてNext.jsアプリをラップし、iOS/Androidアプリとして通知を受け取れるようにする。
+	• Voice Interface: Whisper APIを統合し、散歩中や実験中に「音声でタスク登録」や「アイデアの壁打ち」ができるようにする。
+	• Multi-User Support: 研究室のメンバーやパートナーと特定のSpokeだけを共有できる機能を実装する（SupabaseのRLSを活用）。
 
