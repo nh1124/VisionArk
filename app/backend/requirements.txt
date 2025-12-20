@@ -15,6 +15,10 @@ psycopg2-binary>=2.9.9  # PostgreSQL driver
 openai>=1.0.0  # For OpenAI provider (optional)
 # anthropic>=0.7.0  # For Claude (future)
 
+# Authentication
+bcrypt>=4.0.0  # Password hashing
+python-jose[cryptography]>=3.3.0  # JWT tokens
+
 # Phase 2.2: RAG System
 chromadb>=0.4.22  # Vector database
 pypdf>=3.17.0  # PDF text extraction

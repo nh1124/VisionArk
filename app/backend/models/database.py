@@ -49,8 +49,21 @@ class InboxQueue(Base):
     error_log = Column(Text, nullable=True)
 
 
+class User(Base):
+    """User account for authentication"""
+    __tablename__ = "users"
+    
+    id = Column(String(36), primary_key=True)                # UUID
+    username = Column(String(50), unique=True, nullable=False, index=True)
+    email = Column(String(100), unique=True, nullable=True, index=True)  # Optional but unique
+    password_hash = Column(Text, nullable=False)             # bcrypt hash
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, onupdate=datetime.utcnow)
+
+
 class APIKey(Base):
-    """API Key for authentication - stores hashed keys only"""
+    """API Key for authentication (Phase 2) - stores hashed keys only"""
     __tablename__ = "api_keys"
     
     id = Column(String(36), primary_key=True)               # UUID
@@ -59,7 +72,7 @@ class APIKey(Base):
     client_id = Column(String(100), nullable=False)         # e.g., "hub-agent", "spoke-research"
     name = Column(String(100), nullable=True)               # Human-readable label
     scopes = Column(JSON, default=list)                     # ["tasks:read", "tasks:write", "*"]
-    is_active = Column(Boolean, default=True)               # False = revoked
+    is_active = Column(Boolean, default=False)              # Phase 2: set to True when issued
     created_at = Column(DateTime, default=datetime.utcnow)
     revoked_at = Column(DateTime, nullable=True)            # When key was revoked
     last_used_at = Column(DateTime, nullable=True)          # Last successful auth

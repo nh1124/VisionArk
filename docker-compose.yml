@@ -26,8 +26,9 @@ services:
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-atmos}:${POSTGRES_PASSWORD:-atmos_secret}@db:5432/${POSTGRES_DB:-atmos}
       - ATMOS_ENV=${ATMOS_ENV:-dev}
-      - ATMOS_REQUIRE_API_KEY=${ATMOS_REQUIRE_API_KEY:-false}
-      - ATMOS_API_KEY_PEPPER=${ATMOS_API_KEY_PEPPER:-dev_pepper_change_in_prod}
+      - HOST=0.0.0.0
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev_jwt_secret_change_in_production_must_be_32_chars}
+      - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES:-1440}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
     ports:
       - "8000:8000"

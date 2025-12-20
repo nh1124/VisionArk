@@ -1,6 +1,6 @@
 """
-Authentication service for API key-based auth
-Central dependency for all protected endpoints
+Authentication service for session-based auth (Phase 1)
+Supports JWT tokens for UI users, with API key fallback for Phase 2
 """
 import logging
 from dataclasses import dataclass, field
@@ -8,22 +8,27 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import Header, HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
-from models.database import get_engine, get_session, APIKey
+from models.database import get_engine, get_session, User, APIKey
+from utils.jwt import decode_access_token
 from utils.security import hash_api_key
 from config import settings
 
 logger = logging.getLogger(__name__)
+
+# HTTP Bearer token scheme for JWT
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
 @dataclass
 class Identity:
     """Resolved identity from authentication"""
     user_id: str
-    client_id: str
+    username: str
     scopes: List[str]
-    auth_method: str  # "api_key" | "dev_fallback" | "legacy_env_key"
+    auth_method: str  # "jwt" | "api_key" | "dev_fallback"
     warnings: List[str] = field(default_factory=list)
     
     def has_scope(self, required_scope: str) -> bool:
@@ -50,27 +55,59 @@ def get_db():
 
 
 def resolve_identity(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
     x_api_key: Optional[str] = Header(None, alias="X-API-KEY"),
     db: Session = Depends(get_db)
 ) -> Identity:
     """
-    Resolve identity from API key or dev fallback.
-    
-    This is the central authentication dependency for all protected endpoints.
+    Resolve identity from JWT token, API key, or dev fallback.
     
     Authentication order:
-    1. X-API-KEY header (primary, DB lookup)
-    2. Dev fallback (if ATMOS_REQUIRE_API_KEY=false)
+    1. Authorization: Bearer <JWT> (primary, Phase 1)
+    2. X-API-KEY header (Phase 2, for external clients)
+    3. Dev fallback (if ATMOS_ENV=dev)
     
     Returns:
-        Identity object with user_id, client_id, scopes, auth_method
+        Identity object with user_id, username, scopes, auth_method
         
     Raises:
-        HTTPException 401: If API key is required but not provided/invalid
+        HTTPException 401: If authentication is required but not provided/invalid
     """
     warnings = []
     
-    # Try API key authentication
+    # 1. Try JWT token authentication (Phase 1 primary)
+    if credentials and credentials.credentials:
+        token = credentials.credentials
+        payload = decode_access_token(token)
+        
+        if payload:
+            user_id = payload.get("sub")
+            username = payload.get("username")
+            
+            # Verify user still exists and is active
+            user = db.query(User).filter(
+                User.id == user_id,
+                User.is_active == True
+            ).first()
+            
+            if user:
+                logger.debug(f"JWT auth successful: user={username}")
+                return Identity(
+                    user_id=user_id,
+                    username=username,
+                    scopes=["*"],  # Full access for authenticated users in Phase 1
+                    auth_method="jwt"
+                )
+            else:
+                logger.warning(f"JWT token for inactive/deleted user: {user_id}")
+        
+        # Invalid token
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired token"
+        )
+    
+    # 2. Try API key authentication (Phase 2 - for external clients)
     if x_api_key:
         key_hash = hash_api_key(x_api_key)
         api_key = db.query(APIKey).filter(
@@ -86,35 +123,34 @@ def resolve_identity(
             logger.debug(f"API key auth successful: client={api_key.client_id}")
             return Identity(
                 user_id=api_key.user_id,
-                client_id=api_key.client_id,
+                username=api_key.client_id,
                 scopes=api_key.scopes or [],
                 auth_method="api_key"
             )
         else:
-            # Invalid or revoked key
-            logger.warning(f"Invalid API key attempted")
+            logger.warning("Invalid API key attempted")
             raise HTTPException(
                 status_code=401,
                 detail="Invalid or revoked API key"
             )
     
-    # No API key provided - check if required
-    if settings.atmos_require_api_key:
-        raise HTTPException(
-            status_code=401,
-            detail="API key required. Provide X-API-KEY header."
+    # 3. Dev fallback mode (only in dev environment)
+    if settings.atmos_env == "dev":
+        logger.warning("DEV_FALLBACK: No auth provided, using default user")
+        warnings.append("dev_fallback_used")
+        
+        return Identity(
+            user_id=settings.atmos_default_user_id,
+            username="dev_user",
+            scopes=["*"],  # Full access in dev mode
+            auth_method="dev_fallback",
+            warnings=warnings
         )
     
-    # Dev fallback mode
-    logger.warning("DEV_FALLBACK: No API key provided, using default user")
-    warnings.append("dev_fallback_used")
-    
-    return Identity(
-        user_id=settings.atmos_default_user_id,
-        client_id="dev_fallback",
-        scopes=["*"],  # Full access in dev mode
-        auth_method="dev_fallback",
-        warnings=warnings
+    # No authentication provided and not in dev mode
+    raise HTTPException(
+        status_code=401,
+        detail="Authentication required. Provide Authorization: Bearer <token>"
     )
 
 
@@ -129,7 +165,7 @@ def require_scope(required_scope: str):
     """
     def scope_checker(identity: Identity = Depends(resolve_identity)) -> Identity:
         if not identity.has_scope(required_scope):
-            logger.warning(f"Scope denied: {identity.client_id} missing {required_scope}")
+            logger.warning(f"Scope denied: {identity.username} missing {required_scope}")
             raise HTTPException(
                 status_code=403,
                 detail=f"Insufficient permissions. Required scope: {required_scope}"
