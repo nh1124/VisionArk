@@ -9,8 +9,8 @@ from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
-from models.database import get_db, User
-from services.auth import resolve_identity, Identity
+from models.database import User
+from services.auth import get_db, resolve_identity, Identity
 from utils.password import hash_password, verify_password, MIN_PASSWORD_LENGTH
 from utils.jwt import create_access_token, decode_access_token
 from utils.paths import get_user_hub_dir, get_user_spokes_dir, get_user_global_assets_dir
