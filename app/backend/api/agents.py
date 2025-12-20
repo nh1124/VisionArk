@@ -77,6 +77,7 @@ async def chat_with_hub(
     db: Session = Depends(get_db)
 ):
     """Chat with the Hub agent (supports file attachments)"""
+    print(f"[DEBUG] chat_with_hub called for user_id={identity.user_id}, auth_method={identity.auth_method}")
     from services.command_parser import parse_command, execute_command
     from utils.file_helper import process_file_content
     from models.message import AttachedFile
@@ -394,6 +395,7 @@ def create_spoke(
     db: Session = Depends(get_db)
 ):
     """Create a new Spoke (project workspace for this user)"""
+    print(f"[DEBUG] create_spoke called for user_id={identity.user_id}, spoke_name={spoke.spoke_name}")
     # Validate spoke name
     valid, error = validate_name(spoke.spoke_name, "spoke_name")
     if not valid:
