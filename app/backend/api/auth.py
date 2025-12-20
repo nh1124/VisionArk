@@ -1,20 +1,21 @@
 """
-Authentication API endpoints (Phase 1)
-- POST /auth/register - Create new user
-- POST /auth/login - Authenticate and get JWT token
-- POST /auth/logout - (placeholder for token invalidation)
-- GET /auth/me - Get current user profile
+Authentication API endpoints for Phase 1 (Session-based auth)
+Supports username/password registration and login with JWT tokens
 """
-from fastapi import APIRouter, Depends, HTTPException
+import uuid
+import logging
+from fastapi import APIRouter, Depends, HTTPException, Response, Request
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
-import uuid
 
-from models.database import User
-from services.auth import get_db, resolve_identity, Identity
+from models.database import get_db, User
+from services.auth import resolve_identity, Identity
 from utils.password import hash_password, verify_password, MIN_PASSWORD_LENGTH
-from utils.jwt import create_access_token
+from utils.jwt import create_access_token, decode_access_token
+from utils.paths import get_user_hub_dir, get_user_spokes_dir, get_user_global_assets_dir
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
@@ -109,6 +110,15 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
     
     # Generate access token
     access_token = create_access_token(user_id=user_id, username=req.username)
+    
+    # Create user directories for spokes, hub_data, and global_assets
+    try:
+        get_user_hub_dir(user_id)  # Creates /hub_data/{user_id}/
+        get_user_spokes_dir(user_id)  # Creates /spokes/{user_id}/
+        get_user_global_assets_dir(user_id)  # Creates /global_assets/{user_id}/
+        logger.info(f"Created user directories for {user_id}")
+    except Exception as e:
+        logger.warning(f"Failed to create user directories: {e}")
     
     return AuthResponse(
         access_token=access_token,
