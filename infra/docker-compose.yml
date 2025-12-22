@@ -1,0 +1,67 @@
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    container_name: atmos-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-atmos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-atmos_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-atmos}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-atmos}" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Backend API
+  backend:
+    build:
+      context: ../core/backend
+      dockerfile: Dockerfile
+    container_name: atmos-backend
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-atmos}:${POSTGRES_PASSWORD:-atmos_secret}@db:5432/${POSTGRES_DB:-atmos}
+      - ATMOS_ENV=${ATMOS_ENV:-dev}
+      - HOST=0.0.0.0
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
+      - ATMOS_SERVICE_KEY=${ATMOS_SERVICE_KEY}
+      - LBS_API_KEY=${LBS_API_KEY}
+      - LBS_SERVICE_URL=${LBS_SERVICE_URL}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ../core/backend:/app
+      - ../spokes:/app/spokes
+      - ../global_assets:/app/global_assets
+      - ../hub_data:/app/hub_data
+
+  # Frontend UI
+  frontend:
+    build:
+      context: ../core/frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=http://backend:8000
+    container_name: atmos-frontend
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    volumes:
+      - ../core/frontend:/app
+      - /app/node_modules
+    command: npm run dev
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:

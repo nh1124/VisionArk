@@ -15,7 +15,7 @@ if errorlevel 1 (
 )
 
 echo [2/3] Building containers (this may take a while on first run)...
-docker-compose build --no-cache
+docker-compose -f infra/docker-compose.yml build --no-cache
 if errorlevel 1 (
     echo ERROR: Failed to build containers
     pause
@@ -32,4 +32,4 @@ echo.
 echo Press Ctrl+C to stop all services
 echo.
 
-docker-compose up
+docker-compose -f infra/docker-compose.yml up
