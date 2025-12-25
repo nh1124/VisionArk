@@ -576,23 +576,6 @@ Vision Ark/
 
 ### **Entity Relationship Diagram (ERD)**
 
-erDiagram  
-    %% \==========================================  
-    %% 1\. Identity & Config  
-    %% \==========================================  
-    USERS ||--o{ SERVICE\_CONNECTIONS : "configures"  
-    USERS ||--o{ NODES : "owns"
-
-    USERS {  
-        uuid id PK  
-        string email UK  
-        boolean is\_active  
-        datetime created\_at  
-    }
-
-    SERVICE\_CONNECTIONS {  
-        uuid id PK  
-        uuid user\_id FK  
 ```mermaid
 erDiagram
     USERS ||--o{ NODES : owns
@@ -680,63 +663,7 @@ erDiagram
   * `source_spoke`: 送信元ノード名
   * `message_type`: 通知の種類 (share, complete, alert)
   * `payload`: 通知内容 (JSON)
-        uuid parent\_session\_id FK "Previous session (Linked List)"  
-        string title  
-        text summary "Summary of THIS session (to be carried over)"  
-        boolean is\_archived "True \= Rotated/Closed"  
-        datetime created\_at  
-        datetime updated\_at  
-    }
 
-    CHAT\_MESSAGES {  
-        uuid id PK  
-        uuid session\_id FK  
-        string role  
-        text content  
-        jsonb meta\_payload "Action data"  
-        boolean is\_excluded "True \= Hide from Context (Soft delete/Filter)"  
-        int token\_count  
-        datetime created\_at  
-    }
-
-    %% \==========================================  
-    %% 4\. Orchestration (Inbox)  
-    %% \==========================================  
-    INBOX\_ITEMS {  
-        uuid id PK  
-        uuid source\_node\_id FK  
-        string action\_type "TASK\_CREATE, etc."  
-        jsonb payload  
-        string status "PENDING, APPROVED, REJECTED"  
-        text resolution\_note  
-        datetime created\_at  
-    }
-
-    %% \==========================================  
-    %% 5\. File System & Internal RAG (OS Sovereignty)  
-    %% \==========================================  
-    UPLOADED\_FILES ||--o{ FILE\_CHUNKS : "vectorized\_into"
-
-    UPLOADED\_FILES {  
-        uuid id PK  
-        uuid node\_id FK "Context Scope"  
-        string filename  
-        string storage\_path "OS-managed Path (S3/Local)"  
-        string mime\_type  
-        int size\_bytes  
-        string vector\_status "PENDING, COMPLETED"  
-        string kc\_sync\_status "PENDING, SYNCED (Sent to Personalization Engine)"  
-        datetime uploaded\_at  
-    }
-
-    FILE\_CHUNKS {  
-        uuid id PK  
-        uuid file\_id FK  
-        int chunk\_index  
-        text content "Actual text segment"  
-        vector embedding "pgvector(1536) for Internal RAG"  
-        jsonb metadata "Page number, etc."  
-    }
 
  
 
