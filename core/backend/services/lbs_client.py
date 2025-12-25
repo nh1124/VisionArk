@@ -119,3 +119,23 @@ class LBSClient:
             resp = client.get("context-distribution", params=params, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
+
+    def bulk_delete_tasks(self, task_ids: List[str]) -> Dict:
+        with httpx.Client(base_url=self.base_url) as client:
+            resp = client.post("tasks/bulk-delete", json={"task_ids": task_ids}, headers=self._get_headers())
+            resp.raise_for_status()
+            return resp.json()
+
+    def bulk_update_status(self, task_ids: List[str], active: bool) -> Dict:
+        with httpx.Client(base_url=self.base_url) as client:
+            resp = client.post("tasks/bulk-update-status", json={"task_ids": task_ids, "active": active}, headers=self._get_headers())
+            resp.raise_for_status()
+            return resp.json()
+
+    def upload_tasks_csv(self, file_content: bytes, filename: str) -> Dict:
+        """Upload CSV file for server-side task creation"""
+        with httpx.Client(base_url=self.base_url) as client:
+            files = {"file": (filename, file_content, "text/csv")}
+            resp = client.post("tasks/upload-csv", files=files, headers=self._get_headers())
+            resp.raise_for_status()
+            return resp.json()

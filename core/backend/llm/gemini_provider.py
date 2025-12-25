@@ -102,6 +102,8 @@ class GeminiProvider(BaseLLMProvider):
         max_tokens: Optional[int] = None,
         preferred_model: Optional[str] = None,
         attached_files: List = None,  # List of AttachedFile objects
+        tool_definitions: List = None,  # Agent-level tool definitions (passed directly)
+        tool_functions: dict = None,    # Agent-level tool functions (passed directly)
         **kwargs
     ) -> CompletionResponse:
         """Generate completion using Gemini with optional function calling and file attachments"""
@@ -137,27 +139,37 @@ class GeminiProvider(BaseLLMProvider):
             generation_config["max_output_tokens"] = max_tokens
         
         # Create model with tools if available
+        # Priority: passed tools > stored tools
         tools_for_model = None
+        active_tool_functions = tool_functions or getattr(self, '_tool_functions', {})
         
-        # Check for dict-based definitions first
-        if hasattr(self, '_tool_definitions') and self._tool_definitions:
+        # Use passed tools first (from agent level), fallback to stored tools
+        if tool_definitions:
+            tools_for_model = self._convert_dict_tools_to_gemini(tool_definitions)
+        elif hasattr(self, '_tool_definitions') and self._tool_definitions:
             tools_for_model = self._convert_dict_tools_to_gemini(self._tool_definitions)
         elif self.tools:
             gemini_tool_declarations = self._convert_langchain_tools_to_gemini(self.tools)
             tools_for_model = gemini_tool_declarations
         
         if tools_for_model:
+            print(f"[Gemini DEBUG] Creating model with {len(tools_for_model)} tool(s)")
             model = genai.GenerativeModel(
                 model_name,
                 tools=tools_for_model
             )
+            # Use AUTO mode to let model decide when to call functions
+            tool_config = {"function_calling_config": {"mode": "AUTO"}}
         else:
+            print(f"[Gemini DEBUG] Creating model WITHOUT tools")
             model = genai.GenerativeModel(model_name)
+            tool_config = None
         
         # Generate response with multimodal content
         response = model.generate_content(
             content_parts if len(content_parts) > 1 else full_prompt,
-            generation_config=generation_config
+            generation_config=generation_config,
+            tool_config=tool_config
         )
         
         # Check if response contains function calls
@@ -174,14 +186,14 @@ class GeminiProvider(BaseLLMProvider):
                     # Find and execute the matching tool function
                     tool_result = None
                     
-                    # Check dict-based tool functions first
-                    if hasattr(self, '_tool_functions') and function_name in self._tool_functions:
+                    # Use passed tool functions (from agent), fallback to stored ones
+                    if function_name in active_tool_functions:
                         try:
                             import inspect
                             
                             # Get execution context from kwargs
                             tool_context = kwargs.get('tool_context', {})
-                            func = self._tool_functions[function_name]
+                            func = active_tool_functions[function_name]
                             
                             # Get the function's signature to know what parameters it accepts
                             sig = inspect.signature(func)

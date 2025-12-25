@@ -99,12 +99,11 @@ class HubAgent(BaseAgent):
         self._setup_tools()
     
     def _setup_tools(self):
-        """Configure native function calling tools for Hub agent"""
+        """Configure native function calling tools for Hub agent (stored at agent level)"""
         from tools import HUB_TOOL_DEFINITIONS, TOOL_FUNCTIONS
         
-        # Set tool definitions on the LLM provider
-        if hasattr(self.llm, 'set_tool_definitions'):
-            self.llm.set_tool_definitions(HUB_TOOL_DEFINITIONS, TOOL_FUNCTIONS)
+        # Store tools at agent level (persists across LLM refreshes)
+        self.set_agent_tools(HUB_TOOL_DEFINITIONS, TOOL_FUNCTIONS)
 
     def _get_default_hub_prompt(self) -> str:
         # Default Hub prompt with tools and LBS info
@@ -240,7 +239,9 @@ You have access to the following tools that you can call directly. Use them when
             formatted_messages, 
             preferred_model=preferred_model,
             tool_context=tool_context,
-            attached_files=attached_files  # Pass file references for multimodal
+            attached_files=attached_files,  # Pass file references for multimodal
+            tool_definitions=self._agent_tool_definitions,  # Pass tools directly
+            tool_functions=self._agent_tool_functions       # Pass functions directly
         )
         
         # 6. Create ASSISTANT message

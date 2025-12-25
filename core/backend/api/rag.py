@@ -52,16 +52,9 @@ async def search_knowledge_base(
 ):
     """
     Semantic search in a Spoke's knowledge base
-    
-    Example:
-        POST /api/rag/research_photonics/search
-        {
-            "query": "What is the index of refraction for silicon?",
-            "n_results": 3
-        }
     """
     try:
-        rag = RAGService(spoke_name, db)
+        rag = RAGService(identity.user_id, spoke_name, db)
         results = rag.search(req.query, req.n_results, req.filter_file)
         return results
     except Exception as e:
@@ -77,15 +70,9 @@ async def index_refs_directory(
 ):
     """
     Index all PDFs in the Spoke's refs/ directory
-    
-    Example:
-        POST /api/rag/research_photonics/index
-        {
-            "reindex": false
-        }
     """
     try:
-        rag = RAGService(spoke_name, db)
+        rag = RAGService(identity.user_id, spoke_name, db)
         results = rag.index_directory()
         return results
     except Exception as e:
@@ -102,9 +89,6 @@ async def upload_reference_file(
 ):
     """
     Upload a PDF file to the Spoke's refs/ directory
-    
-    Query params:
-        auto_index: Automatically index after upload (default: true)
     """
     # Validate file type
     if not file.filename.endswith('.pdf'):
@@ -112,7 +96,7 @@ async def upload_reference_file(
     
     try:
         # Save file
-        refs_dir = get_spoke_dir(spoke_name) / "refs"
+        refs_dir = get_spoke_dir(identity.user_id, spoke_name) / "refs"
         refs_dir.mkdir(parents=True, exist_ok=True)
         
         file_path = refs_dir / file.filename
@@ -128,7 +112,7 @@ async def upload_reference_file(
         
         # Auto-index if requested
         if auto_index:
-            rag = RAGService(spoke_name, db)
+            rag = RAGService(identity.user_id, spoke_name, db)
             index_result = rag.index_pdf(file_path)
             response["index_result"] = index_result
         
@@ -147,7 +131,7 @@ async def list_indexed_files(
     List all indexed files in a Spoke's knowledge base
     """
     try:
-        rag = RAGService(spoke_name, db)
+        rag = RAGService(identity.user_id, spoke_name, db)
         files = rag.get_indexed_files()
         return {"files": files}
     except Exception as e:
@@ -162,12 +146,9 @@ async def get_rag_stats(
 ):
     """
     Get RAG statistics for a Spoke
-    
-    Returns:
-        Document count, chunk count, storage info
     """
     try:
-        rag = RAGService(spoke_name, db)
+        rag = RAGService(identity.user_id, spoke_name, db)
         stats = rag.get_stats()
         return stats
     except Exception as e:
@@ -182,11 +163,9 @@ async def rebuild_index(
 ):
     """
     Rebuild the entire RAG index from scratch
-    
-    Warning: This will clear the existing index and re-process all PDFs
     """
     try:
-        rag = RAGService(spoke_name, db)
+        rag = RAGService(identity.user_id, spoke_name, db)
         results = rag.rebuild_index()
         return {
             "rebuilt": True,
@@ -205,20 +184,14 @@ async def delete_reference_file(
 ):
     """
     Delete a reference file and remove from index
-    
-    Note: Currently only deletes the file, not from vector store
     """
-    file_path = get_spoke_dir(spoke_name) / "refs" / filename
+    file_path = get_spoke_dir(identity.user_id, spoke_name) / "refs" / filename
     
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
     
     try:
         file_path.unlink()
-        
-        # TODO: Remove from vector store
-        # Currently would require rebuilding index
-        
         return {
             "deleted": True,
             "filename": filename,

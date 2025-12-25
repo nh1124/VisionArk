@@ -12,29 +12,31 @@ from sqlalchemy import text
 
 from llm import get_provider
 from llm.base_provider import Message
-from utils.paths import get_spoke_dir, get_hub_dir
+from utils.paths import get_spoke_dir, get_user_hub_dir
 
 
 class ContextManager:
-    """Manages conversation context rotation and archiving"""
+    """Manages conversation context rotation and archiving (per-user)"""
     
-    def __init__(self, context_type: str, context_name: str, session: Optional[Session] = None):
+    def __init__(self, user_id: str, context_type: str, context_name: str, session: Optional[Session] = None):
         """
         Initialize context manager
         
         Args:
+            user_id: User ID for scoped paths
             context_type: "hub" or "spoke"
             context_name: Hub or spoke name
             session: Database session for tracking
         """
+        self.user_id = user_id
         self.context_type = context_type
         self.context_name = context_name
         self.session = session
         
         if context_type == "hub":
-            self.base_dir = get_hub_dir()
+            self.base_dir = get_user_hub_dir(user_id)
         else:
-            self.base_dir = get_spoke_dir(context_name)
+            self.base_dir = get_spoke_dir(user_id, context_name)
         
         self.chat_log_path = self.base_dir / "chat.log"
         self.logs_archive_dir = self.base_dir / "logs"
@@ -45,14 +47,10 @@ class ContextManager:
     def get_conversation_history(self) -> List[Dict[str, str]]:
         """
         Load conversation history from chat log
-        
-        Returns:
-            List of {"role": str, "content": str} messages
         """
         if not self.chat_log_path.exists():
             return []
         
-        # Simple format: alternating user/assistant messages
         messages = []
         current_role = None
         current_content = []
@@ -79,7 +77,6 @@ class ContextManager:
                 elif line and current_role:
                     current_content.append(line)
         
-        # Add last message
         if current_role and current_content:
             messages.append({
                 "role": current_role,
@@ -91,17 +88,10 @@ class ContextManager:
     def generate_summary(self, conversation: List[Dict[str, str]]) -> str:
         """
         Generate AI summary of conversation
-        
-        Args:
-            conversation: List of messages
-        
-        Returns:
-            Markdown-formatted summary
         """
         if not conversation:
             return "No conversation to summarize."
         
-        # Build summarization prompt
         summary_prompt = """You are summarizing a conversation for context preservation. Extract:
 
 1. **Decisions Made**: Key choices and conclusions
@@ -113,14 +103,11 @@ Format as markdown with these sections. Be concise but comprehensive.
 Conversation to summarize:
 ---
 """
-        
-        # Add conversation (limit to avoid token overflow)
-        for msg in conversation[-50:]:  # Last 50 messages
+        for msg in conversation[-50:]:
             summary_prompt += f"\n{msg['role'].capitalize()}: {msg['content']}\n"
         
         summary_prompt += "\n---\nGenerate the summary now:"
         
-        # Generate summary
         try:
             messages = [Message(role="user", content=summary_prompt)]
             response = self.llm.complete(messages, temperature=0.3)
@@ -131,14 +118,7 @@ Conversation to summarize:
     def archive_context(self, force: bool = False) -> Dict:
         """
         Archive current context and rotate logs
-        
-        Args:
-            force: Force archiving even if not needed
-        
-        Returns:
-            Archive result with paths and stats
         """
-        # Check if chat log exists
         if not self.chat_log_path.exists():
             return {
                 "archived": False,
@@ -146,7 +126,6 @@ Conversation to summarize:
                 "message": "No chat history to archive"
             }
         
-        # Get conversation history
         conversation = self.get_conversation_history()
         
         if not conversation and not force:
@@ -156,22 +135,16 @@ Conversation to summarize:
                 "message": "Chat log is empty"
             }
         
-        # Generate timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        # Generate summary
         summary = self.generate_summary(conversation)
         summary_path = self.base_dir / f"archived_summary_{timestamp}.md"
         summary_path.write_text(summary, encoding='utf-8')
         
-        # Move chat log to archive
         archived_log_path = self.logs_archive_dir / f"chat_{timestamp}.log"
         shutil.move(str(self.chat_log_path), str(archived_log_path))
         
-        # Create new empty chat log
         self.chat_log_path.touch()
         
-        # Track in database
         if self.session and self.context_type == "spoke":
             self._save_archive_record(summary_path, archived_log_path, len(conversation))
         
@@ -200,11 +173,14 @@ Conversation to summarize:
             query = text("""
                 SELECT id, archived_at, summary_path, log_path, token_count
                 FROM archived_contexts
-                WHERE spoke_name = :spoke_name
+                WHERE spoke_name = :spoke_name AND user_id = :user_id
                 ORDER BY archived_at DESC
             """)
             
-            result = self.session.execute(query, {"spoke_name": self.context_name})
+            result = self.session.execute(query, {
+                "spoke_name": self.context_name,
+                "user_id": self.user_id
+            })
             
             return [
                 {
@@ -234,12 +210,13 @@ Conversation to summarize:
         
         try:
             query = text("""
-                INSERT INTO archived_contexts (spoke_name, archived_at, summary_path, log_path, token_count)
-                VALUES (:spoke_name, :archived_at, :summary_path, :log_path, :token_count)
+                INSERT INTO archived_contexts (spoke_name, user_id, archived_at, summary_path, log_path, token_count)
+                VALUES (:spoke_name, :user_id, :archived_at, :summary_path, :log_path, :token_count)
             """)
             
             self.session.execute(query, {
                 "spoke_name": self.context_name,
+                "user_id": self.user_id,
                 "archived_at": datetime.now(),
                 "summary_path": str(summary_path),
                 "log_path": str(log_path),

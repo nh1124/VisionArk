@@ -11,6 +11,9 @@ from .agent_tools import (
     process_inbox_message,
     report_to_hub,
     archive_session,
+    save_artifact,
+    read_reference,
+    list_directory,
 )
 
 __all__ = [
@@ -25,4 +28,8 @@ __all__ = [
     "process_inbox_message",
     "report_to_hub",
     "archive_session",
+    "save_artifact",
+    "read_reference",
+    "list_directory",
 ]
+

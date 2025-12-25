@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from datetime import date
@@ -137,6 +137,47 @@ def update_task(task_id: str, task: TaskUpdate, client: LBSClient = Depends(get_
 def delete_task(task_id: str, client: LBSClient = Depends(get_lbs_client)):
     try:
         return client.delete_task(task_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/tasks/upload-csv")
+async def upload_tasks_csv(
+    file: UploadFile = File(...),
+    client: LBSClient = Depends(get_lbs_client)
+):
+    """Proxy CSV upload to LBS microservice for server-side task creation"""
+    if not file.filename.endswith('.csv'):
+        raise HTTPException(status_code=400, detail="Only CSV files are allowed")
+    
+    try:
+        content = await file.read()
+        return client.upload_tasks_csv(content, file.filename)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class TaskBulkDelete(BaseModel):
+    task_ids: List[str]
+
+
+class TaskBulkStatusUpdate(BaseModel):
+    task_ids: List[str]
+    active: bool
+
+
+@router.post("/tasks/bulk-delete")
+def bulk_delete_tasks(bulk_in: TaskBulkDelete, client: LBSClient = Depends(get_lbs_client)):
+    try:
+        return client.bulk_delete_tasks(bulk_in.task_ids)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/tasks/bulk-update-status")
+def bulk_update_status(bulk_in: TaskBulkStatusUpdate, client: LBSClient = Depends(get_lbs_client)):
+    try:
+        return client.bulk_update_status(bulk_in.task_ids, bulk_in.active)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

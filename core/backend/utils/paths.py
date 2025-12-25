@@ -9,33 +9,35 @@ from typing import Tuple
 
 
 def get_project_root() -> Path:
-    """Get the project root directory (where spokes, hub_data, etc. are located)"""
+    """
+    Get the project root directory.
+    
+    In Docker: /app (backend code mounted here, data/ is a separate volume)
+    Local dev: VisionArk/ (paths.py -> utils -> backend -> core -> VisionArk)
+    
+    The data/ subdirectory contains: spokes/, hub_data/, users/, global_assets/
+    """
     current_file = Path(__file__).resolve()
     
-    # In Docker, the codebase from app/backend/ is copied to /app/
+    # In Docker, the codebase from core/backend/ is copied/mounted to /app/
     # paths.py is at /app/utils/paths.py
-    # Project root (where volumes are mounted) is /app/
+    # Project root is /app/, and data/ is mounted at /app/data/
     if current_file.parts and 'app' in current_file.parts:
-        # Find the index of 'app' and use it as root if it's followed by things we expect
         try:
             app_idx = current_file.parts.index('app')
-            # If we are in /app/utils/paths.py or /app/backend/utils/paths.py
             potential_root = Path(*current_file.parts[:app_idx+1])
-            # If we are in the backend-only container, /app is the root
             return potential_root
         except (ValueError, IndexError):
             pass
 
-    # Fallback to going up levels (local development)
-    # paths.py -> utils/ -> backend/ -> app/ -> AI_TaskManagement_OS/
+    # Local development: paths.py -> utils/ -> backend/ -> core/ -> VisionArk/
     return current_file.parent.parent.parent.parent
 
 
-# Project paths
+# Project paths - data directories are under data/ folder (mounted volume in Docker)
 PROJECT_ROOT = get_project_root()
-SPOKES_DIR = PROJECT_ROOT / "spokes"
-HUB_DATA_DIR = PROJECT_ROOT / "hub_data"
-GLOBAL_ASSETS_DIR = PROJECT_ROOT / "global_assets"
+DATA_DIR = PROJECT_ROOT / "data"
+USERS_DIR = DATA_DIR / "users"
 
 
 # ============================================================
@@ -118,18 +120,28 @@ def secure_path_join(base_dir: Path, *parts: str) -> Path:
 # User-Scoped Directory Functions
 # ============================================================
 
-def get_user_spokes_dir(user_id: str) -> Path:
+def get_user_root_dir(user_id: str) -> Path:
     """
-    Get user's spokes directory: /spokes/{user_id}/
-    Creates directory if it doesn't exist.
+    Get user's root data directory: /data/users/{user_id}/
     """
     valid, error = validate_user_id(user_id)
     if not valid:
         raise ValueError(error)
     
-    user_dir = secure_path_join(SPOKES_DIR, user_id)
+    user_dir = secure_path_join(USERS_DIR, user_id)
     user_dir.mkdir(parents=True, exist_ok=True)
     return user_dir
+
+
+def get_user_spokes_dir(user_id: str) -> Path:
+    """
+    Get user's spokes directory: /data/users/{user_id}/spokes/
+    Creates directory if it doesn't exist.
+    """
+    user_root = get_user_root_dir(user_id)
+    user_spokes = user_root / "spokes"
+    user_spokes.mkdir(parents=True, exist_ok=True)
+    return user_spokes
 
 
 def get_spoke_dir(user_id: str, spoke_name: str) -> Path:
@@ -150,30 +162,24 @@ def get_spoke_dir(user_id: str, spoke_name: str) -> Path:
 
 def get_user_hub_dir(user_id: str) -> Path:
     """
-    Get user's hub data directory: /hub_data/{user_id}/
+    Get user's hub data directory: /data/users/{user_id}/hub_data/
     Creates directory if it doesn't exist.
     """
-    valid, error = validate_user_id(user_id)
-    if not valid:
-        raise ValueError(error)
-    
-    user_dir = secure_path_join(HUB_DATA_DIR, user_id)
-    user_dir.mkdir(parents=True, exist_ok=True)
-    return user_dir
+    user_root = get_user_root_dir(user_id)
+    user_hub = user_root / "hub_data"
+    user_hub.mkdir(parents=True, exist_ok=True)
+    return user_hub
 
 
 def get_user_global_assets_dir(user_id: str) -> Path:
     """
-    Get user's global assets directory: /global_assets/{user_id}/
+    Get user's global assets directory: /data/users/{user_id}/global_assets/
     Creates directory if it doesn't exist.
     """
-    valid, error = validate_user_id(user_id)
-    if not valid:
-        raise ValueError(error)
-    
-    user_dir = secure_path_join(GLOBAL_ASSETS_DIR, user_id)
-    user_dir.mkdir(parents=True, exist_ok=True)
-    return user_dir
+    user_root = get_user_root_dir(user_id)
+    user_assets = user_root / "global_assets"
+    user_assets.mkdir(parents=True, exist_ok=True)
+    return user_assets
 
 
 def get_default_assets_dir() -> Path:
@@ -196,6 +202,7 @@ def get_hub_dir() -> Path:
     Get shared hub data directory (legacy, no user scoping).
     DEPRECATED: Use get_user_hub_dir(user_id) instead.
     """
+    HUB_DATA_DIR = DATA_DIR / "hub_data"
     HUB_DATA_DIR.mkdir(parents=True, exist_ok=True)
     return HUB_DATA_DIR
 

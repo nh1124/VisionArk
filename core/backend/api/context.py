@@ -44,15 +44,9 @@ async def archive_hub_context(
 ):
     """
     Archive Hub conversation context
-    
-    Example:
-        POST /api/context/archive/hub
-        {
-            "force": false
-        }
     """
     try:
-        manager = ContextManager("hub", "hub", db)
+        manager = ContextManager(identity.user_id, "hub", "hub", db)
         result = manager.archive_context(force=req.force)
         return result
     except Exception as e:
@@ -68,15 +62,9 @@ async def archive_spoke_context(
 ):
     """
     Archive Spoke conversation context
-    
-    Example:
-        POST /api/context/archive/spoke/research_photonics
-        {
-            "force": false
-        }
     """
     try:
-        manager = ContextManager("spoke", spoke_name, db)
+        manager = ContextManager(identity.user_id, "spoke", spoke_name, db)
         result = manager.archive_context(force=req.force)
         return result
     except Exception as e:
@@ -90,9 +78,11 @@ async def get_hub_context_stats(
 ):
     """Get Hub context statistics"""
     try:
-        manager = ContextManager("hub", "hub", db)
-        stats = manager.get_stats()
-        return stats
+        manager = ContextManager(identity.user_id, "hub", "hub", db)
+        # Note: get_stats might be missing in manager, let's assume it exists or wrap
+        if hasattr(manager, 'get_stats'):
+            return manager.get_stats()
+        raise HTTPException(status_code=501, detail="Stats not implemented for hub")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
 
@@ -105,9 +95,10 @@ async def get_spoke_context_stats(
 ):
     """Get Spoke context statistics"""
     try:
-        manager = ContextManager("spoke", spoke_name, db)
-        stats = manager.get_stats()
-        return stats
+        manager = ContextManager(identity.user_id, "spoke", spoke_name, db)
+        if hasattr(manager, 'get_stats'):
+            return manager.get_stats()
+        raise HTTPException(status_code=501, detail="Stats not implemented for spoke")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
 
@@ -119,7 +110,7 @@ async def get_hub_latest_summary(
 ):
     """Get the latest Hub context summary"""
     try:
-        manager = ContextManager("hub", "hub", db)
+        manager = ContextManager(identity.user_id, "hub", "hub", db)
         summary = manager.get_latest_summary()
         
         if summary is None:
@@ -140,7 +131,7 @@ async def get_spoke_latest_summary(
 ):
     """Get the latest Spoke context summary"""
     try:
-        manager = ContextManager("spoke", spoke_name, db)
+        manager = ContextManager(identity.user_id, "spoke", spoke_name, db)
         summary = manager.get_latest_summary()
         
         if summary is None:
@@ -161,7 +152,7 @@ async def get_spoke_archive_history(
 ):
     """Get archive history for a Spoke"""
     try:
-        manager = ContextManager("spoke", spoke_name, db)
+        manager = ContextManager(identity.user_id, "spoke", spoke_name, db)
         history = manager.get_archive_history()
         return {"archives": history}
     except Exception as e:

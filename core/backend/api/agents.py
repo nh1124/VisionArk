@@ -609,6 +609,127 @@ def list_spokes(
     return {"spokes": spokes}
 
 
+@router.delete("/spoke/{spoke_name}")
+def delete_spoke(
+    spoke_name: str,
+    identity: Identity = Depends(resolve_identity),
+    db: Session = Depends(get_db)
+):
+    """Delete a Spoke by marking it as archived in DB (soft delete)"""
+    from models.database import ChatSession, ChatMessage, AgentProfile
+    import shutil
+    
+    # Validate spoke name
+    valid, error = validate_name(spoke_name, "spoke_name")
+    if not valid:
+        raise HTTPException(status_code=400, detail=error)
+    
+    # Find the spoke node
+    node = db.query(Node).filter(
+        Node.user_id == identity.user_id,
+        Node.name == spoke_name,
+        Node.node_type == "SPOKE"
+    ).first()
+    
+    if not node:
+        raise HTTPException(status_code=404, detail=f"Spoke '{spoke_name}' not found")
+    
+    try:
+        # Soft delete: mark as archived
+        node.is_archived = True
+        db.commit()
+        
+        # Clear from cache
+        cache_key = f"{identity.user_id}:{spoke_name}"
+        _spoke_cache.remove(cache_key)
+        
+        # Optionally delete files on disk
+        try:
+            spoke_dir = get_spoke_dir(identity.user_id, spoke_name)
+            if spoke_dir.exists():
+                shutil.rmtree(spoke_dir)
+        except Exception as e:
+            print(f"[Delete Spoke] Failed to delete files: {e}")
+        
+        return {"success": True, "message": f"Spoke '{spoke_name}' deleted"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete spoke: {str(e)}")
+
+
+@router.get("/spoke/{spoke_name}/artifacts")
+def list_spoke_artifacts(
+    spoke_name: str,
+    identity: Identity = Depends(resolve_identity),
+    db: Session = Depends(get_db)
+):
+    """List all artifacts created by the AI for a spoke"""
+    # Validate spoke name
+    valid, error = validate_name(spoke_name, "spoke_name")
+    if not valid:
+        raise HTTPException(status_code=400, detail=error)
+    
+    try:
+        spoke_dir = get_spoke_dir(identity.user_id, spoke_name)
+        artifacts_dir = spoke_dir / "artifacts"
+        
+        if not artifacts_dir.exists():
+            return {"artifacts": [], "message": "No artifacts yet"}
+        
+        artifacts = []
+        for item in artifacts_dir.rglob('*'):
+            if item.is_file():
+                relative_path = str(item.relative_to(artifacts_dir))
+                artifacts.append({
+                    "name": item.name,
+                    "path": relative_path,
+                    "size": item.stat().st_size,
+                    "modified": item.stat().st_mtime
+                })
+        
+        return {"artifacts": artifacts}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list artifacts: {str(e)}")
+
+
+@router.get("/spoke/{spoke_name}/artifacts/{file_path:path}")
+def get_spoke_artifact(
+    spoke_name: str,
+    file_path: str,
+    identity: Identity = Depends(resolve_identity),
+    db: Session = Depends(get_db)
+):
+    """Get the content of an artifact file"""
+    from fastapi.responses import FileResponse
+    
+    # Validate spoke name
+    valid, error = validate_name(spoke_name, "spoke_name")
+    if not valid:
+        raise HTTPException(status_code=400, detail=error)
+    
+    # Prevent path traversal
+    if '..' in file_path:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    
+    try:
+        spoke_dir = get_spoke_dir(identity.user_id, spoke_name)
+        full_path = spoke_dir / "artifacts" / file_path
+        
+        if not full_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        # Read text content for display
+        try:
+            content = full_path.read_text(encoding='utf-8')
+            return {"content": content, "path": file_path, "name": full_path.name}
+        except UnicodeDecodeError:
+            return FileResponse(full_path)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read artifact: {str(e)}")
+
+
 @router.get("/spoke/{spoke_name}/prompt")
 def get_system_prompt(
     spoke_name: str,

@@ -25,16 +25,26 @@ class BaseAgent(ABC):
         self.llm = get_provider(api_key=api_key)
         self.system_prompt = None
         
+        # Agent-level tool storage (persists across LLM refreshes)
+        self._agent_tool_definitions: List = []
+        self._agent_tool_functions: dict = {}
+        
         # Initialize active chat session
         self.current_session_id = self._get_or_create_active_session()
         
         # Load conversation history from DB
         self._load_history_from_db()
     
+    def set_agent_tools(self, definitions: List, functions: dict):
+        """Store tools at agent level (persists across LLM refreshes)"""
+        self._agent_tool_definitions = definitions
+        self._agent_tool_functions = functions
+    
     def refresh_llm(self, api_key: str):
-        """Refresh the LLM provider with a new API key"""
+        """Refresh the LLM provider with a new API key (tools persist at agent level)"""
         if api_key:
             self.llm = get_provider(api_key=api_key)
+            # No need to re-setup tools - they're stored at agent level now
     
     @abstractmethod
     def load_system_prompt(self) -> str:
@@ -78,20 +88,15 @@ class BaseAgent(ABC):
             llm_messages  # ✅ ALL messages, not just last 10!
         )
         
-        # Get response from LLM (with optional tool context and file attachments)
-        if tool_context:
-            response = self.llm.complete(
-                messages, 
-                preferred_model=preferred_model, 
-                tool_context=tool_context,
-                attached_files=attached_files  # Pass file references for multimodal
-            )
-        else:
-            response = self.llm.complete(
-                messages, 
-                preferred_model=preferred_model,
-                attached_files=attached_files  # Pass file references for multimodal
-            )
+        # Get response from LLM - pass agent-level tools directly
+        response = self.llm.complete(
+            messages, 
+            preferred_model=preferred_model,
+            tool_context=tool_context,
+            attached_files=attached_files,
+            tool_definitions=self._agent_tool_definitions,  # Pass tools directly
+            tool_functions=self._agent_tool_functions       # Pass functions directly
+        )
         
         # Create assistant message
         assistant_msg = Message(

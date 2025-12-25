@@ -43,7 +43,7 @@ services:
         condition: service_healthy
     volumes:
       - ../core/backend:/app
-      - ../data/users:/app/data/users # User file storage (persisted)
+      - ../data:/app/data # Full data directory (spokes, hub_data, users, etc.)
     networks:
       - atmos-network
     restart: unless-stopped

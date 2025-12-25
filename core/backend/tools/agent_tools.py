@@ -402,6 +402,217 @@ def archive_session(
         session.rollback()
         return ToolResult(success=False, message=f"Failed to archive session: {str(e)}")
 
+# ==============================================================================
+# File Operation Tools (for Spoke agents) - User-Scoped Paths
+# ==============================================================================
+
+def save_artifact(
+    file_path: str,
+    content: str,
+    overwrite: bool = False,
+    *,
+    spoke_name: str,
+    user_id: str = None,  # Injected from tool_context
+    **kwargs
+) -> ToolResult:
+    """
+    Save content to the spoke's artifacts directory (user-scoped).
+    
+    Args:
+        file_path: Relative path within artifacts/ (e.g., 'draft.md')
+        content: Full content of the file
+        overwrite: Set True to overwrite existing file
+        spoke_name: Current spoke name (injected from tool_context)
+        user_id: User ID for scoped path (injected from tool_context)
+    """
+    from utils.paths import get_spoke_dir
+    
+    if not user_id:
+        return ToolResult(success=False, message="User context not available")
+    
+    try:
+        if '..' in file_path or file_path.startswith('/') or file_path.startswith('\\'):
+            return ToolResult(success=False, message="Path traversal not allowed")
+        
+        # Use user-scoped path
+        spoke_dir = get_spoke_dir(user_id, spoke_name)
+        artifacts_dir = spoke_dir / "artifacts"
+        full_path = artifacts_dir / file_path
+        
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        if full_path.exists() and not overwrite:
+            return ToolResult(success=False, message=f"File exists: {file_path}. Set overwrite=True to replace.")
+        
+        full_path.write_text(content, encoding='utf-8')
+        
+        return ToolResult(
+            success=True,
+            message=f"✅ Saved file: artifacts/{file_path}",
+            data={"file_path": file_path, "spoke": spoke_name, "full_path": str(full_path)}
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to save file: {str(e)}")
+
+
+    file_path: str,
+    *,
+    spoke_name: str,
+    user_id: str = None,
+    session: Session = None,  # Injected from tool_context
+    **kwargs
+) -> ToolResult:
+    """
+    Read a file from the spoke's refs or files directory (user-scoped).
+    Resolves original filenames to storage UUIDs via database.
+    
+    Args:
+        file_path: Original filename or relative path
+        spoke_name: Current spoke name
+        user_id: User ID
+        session: Database session
+    """
+    from utils.paths import get_spoke_dir
+    from models.database import UploadedFile, Node
+    
+    if not user_id:
+        return ToolResult(success=False, message="User context not available")
+    
+    try:
+        if '..' in file_path or file_path.startswith('/') or file_path.startswith('\\'):
+            return ToolResult(success=False, message="Path traversal not allowed")
+        
+        spoke_dir = get_spoke_dir(user_id, spoke_name)
+        
+        # 1. Search for file in database to resolve UUID naming
+        storage_path = None
+        if session:
+            # Find the spoke node first
+            node = session.query(Node).filter(
+                Node.user_id == user_id,
+                Node.name == spoke_name,
+                Node.node_type == "SPOKE"
+            ).first()
+            
+            if node:
+                # Find the file by original filename
+                db_file = session.query(UploadedFile).filter(
+                    UploadedFile.node_id == node.id,
+                    UploadedFile.filename == file_path
+                ).first()
+                
+                if db_file:
+                    storage_path = Path(db_file.storage_path)
+
+        # 2. Try various path combinations if not found in DB
+        potential_paths = []
+        if storage_path:
+            potential_paths.append(storage_path)
+            
+        # Legacy/direct paths
+        potential_paths.extend([
+            spoke_dir / "refs" / file_path,
+            spoke_dir / "files" / file_path,
+            spoke_dir / "artifacts" / file_path
+        ])
+        
+        full_path = None
+        for p in potential_paths:
+            if p.exists() and p.is_file():
+                full_path = p
+                break
+        
+        if not full_path:
+            return ToolResult(success=False, message=f"File not found: {file_path}")
+        
+        try:
+            content = full_path.read_text(encoding='utf-8')
+        except UnicodeDecodeError:
+            content = f"[Binary file: {file_path} - Use a code interpreter or specialized tool to process this file type]"
+        
+        return ToolResult(
+            success=True,
+            message=f"📄 Content of {file_path}:\n\n{content}",
+            data={"file_path": file_path, "content": content, "storage_path": str(full_path)}
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to read file: {str(e)}")
+
+
+def list_directory(
+    sub_dir: str = "refs",
+    *,
+    spoke_name: str,
+    user_id: str = None,
+    session: Session = None,
+    **kwargs
+) -> ToolResult:
+    """
+    List files in the spoke's refs, files, or artifacts directory (user-scoped).
+    
+    Args:
+        sub_dir: Either 'refs', 'files', or 'artifacts'
+        spoke_name: Current spoke name
+        user_id: User ID
+        session: Database session
+    """
+    from utils.paths import get_spoke_dir
+    from models.database import UploadedFile, Node
+    
+    if not user_id:
+        return ToolResult(success=False, message="User context not available")
+    
+    try:
+        if sub_dir not in ['refs', 'artifacts', 'files']:
+            return ToolResult(success=False, message="sub_dir must be 'refs', 'files', or 'artifacts'")
+        
+        spoke_dir = get_spoke_dir(user_id, spoke_name)
+        
+        # We'll collect files from both disk and DB to ensure original names are shown
+        found_files = set()
+        
+        # 1. Check database for files in this node
+        if session:
+            node = session.query(Node).filter(
+                Node.user_id == user_id,
+                Node.name == spoke_name,
+                Node.node_type == "SPOKE"
+            ).first()
+            if node:
+                db_files = session.query(UploadedFile).filter(UploadedFile.node_id == node.id).all()
+                for f in db_files:
+                    found_files.add(f.filename)
+        
+        # 2. Check disk (refs and artifacts might have direct files)
+        target_dir = spoke_dir / sub_dir
+        if target_dir.exists():
+            for item in target_dir.rglob('*'):
+                if item.is_file():
+                    found_files.add(str(item.relative_to(target_dir)))
+        
+        # 3. Special case: if sub_dir is 'refs', also check 'files' (unified view)
+        if sub_dir == 'refs':
+            files_dir = spoke_dir / "files"
+            if files_dir.exists():
+                for item in files_dir.rglob('*'):
+                    if item.is_file():
+                        # If it's a UUID name, we hopefully already got it from DB
+                        # If not, add the filename
+                        found_files.add(item.name)
+
+        files_list = sorted(list(found_files))
+        
+        if not files_list:
+            return ToolResult(success=True, message=f"📁 {sub_dir}/ is empty", data={"sub_dir": sub_dir, "files": []})
+        
+        return ToolResult(
+            success=True,
+            message=f"📁 Files available in {spoke_name} ({sub_dir}):\n" + "\n".join(f"  • {f}" for f in files_list),
+            data={"sub_dir": sub_dir, "files": files_list}
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to list directory: {str(e)}")
+
 
 # ==============================================================================
 # Tool Definitions for Gemini Function Calling
@@ -521,6 +732,58 @@ HUB_TOOL_DEFINITIONS = [
 
 
 SPOKE_TOOL_DEFINITIONS = [
+    # File operation tools
+    {
+        "name": "save_artifact",
+        "description": "Save code, documentation, or any content to the artifacts directory. Use this to CREATE FILES instead of just showing code. Always use this when the user asks you to create, write, or save a file.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Relative path within artifacts/ directory (e.g., 'draft.md', 'code/main.py')"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Full content of the file to save"
+                },
+                "overwrite": {
+                    "type": "boolean",
+                    "description": "Set True to overwrite existing file. Default is False."
+                }
+            },
+            "required": ["file_path", "content"]
+        }
+    },
+    {
+        "name": "read_reference",
+        "description": "Read a file from the refs/ (references) directory. Use this to access reference materials and documentation.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Relative path within refs/ directory (e.g., 'notes.md')"
+                }
+            },
+            "required": ["file_path"]
+        }
+    },
+    {
+        "name": "list_directory",
+        "description": "List files in either the refs/ or artifacts/ directory. Use to see what files are available.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sub_dir": {
+                    "type": "string",
+                    "description": "Either 'refs' or 'artifacts'"
+                }
+            },
+            "required": ["sub_dir"]
+        }
+    },
+    # Hub communication tools
     {
         "name": "report_to_hub",
         "description": "Send a progress report or request to the Hub agent. Use this to communicate with Hub.",
@@ -557,14 +820,19 @@ SPOKE_TOOL_DEFINITIONS = [
     }
 ]
 
-
 # Map tool names to functions
 TOOL_FUNCTIONS = {
+    # Hub tools
     "create_spoke": create_spoke,
     "delete_spoke": delete_spoke,
     "create_task": create_task,
     "check_inbox": check_inbox,
     "process_inbox_message": process_inbox_message,
+    # Spoke tools
     "report_to_hub": report_to_hub,
     "archive_session": archive_session,
+    # File operation tools
+    "save_artifact": save_artifact,
+    "read_reference": read_reference,
+    "list_directory": list_directory,
 }
