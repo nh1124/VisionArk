@@ -248,39 +248,25 @@ API-First Contract (APIファースト契約) 各マイクロサービス（Core
   * すべての設定値は`.env,config.yaml`  に集約  
   * 設定変更は再デプロイなしで反映可能（ホットリロード）
 
-### **セキュリティ (Security)**
-
-* #### **認証**
-
-  * 認証は、Microsoft Graph API連携のためのOAuth 2.0フローを基本とし、他の機密情報へのアクセスにも適切な認可メカニズムを使用すること。
-
-* #### **データ保護**
-
-  * ユーザーの機密データ（特にKnowledge CoreのFacts/States）は、保存時および転送時に業界標準の暗号化プロトコル（例：AES-256、TLS 1.3）を使用して保護すること。
-
-* #### **アクセス制御**
-
-  * 各Spoke（プロジェクト）のデータへのアクセスは、ユーザー本人およびエージェントの処理コンテキストに厳格に限定されること。
-
 ### **Authentication & Authorization (認証と認可)**
 
  本システムはマルチユーザー・マルチテナント環境で動作するため、ゼロトラストを前提とした厳格なアクセス制御を実装する。
 
-* #### **End-User Authentication (OAuth 2.0)**
+* #### **Authentication (JWT & Local Auth)**
 
-  * ユーザー認証には独自のID/Pass管理を行わず、標準的な **OAuth 2.0 Authorization Code Flow** (Google Account または Microsoft Entra ID) を採用する。  
-  * これにより、MFA（多要素認証）の実装コストを外部委譲し、セキュリティリスクを最小化する。
+  * ユーザー認証には独自のJWTベースの認証を採用する。ログイン後、`atmos_access_token` が発行され、以降のAPIリクエストの `Authorization: Bearer <Token>` ヘッダーで使用される。
+  * システム外部のエージェントやスクリプト向けには、個別の **API Key** 発行機能を備え、ヘッダーまたはトークンによる認証をサポートする。
 
 * #### **Service-to-Service Authentication**
 
   * マイクロサービス間（Core ⇔ LBS ⇔ Knowledge Core）の通信は、プライベートネットワーク内であっても暗黙的に信頼しない。  
-  * 全てのリクエストヘッダーに **`X-Service-Key`** (または署名付きJWT) の付与を必須とし、各サービス側で呼び出し元の正当性を検証する。
+  * 全てのリクエストヘッダーに **`X-API-KEY`** または署名付きJWTの付与を必須とし、各サービス側で呼び出し元の正当性を検証する。
 
-* #### **Role-Based Access Control (RBAC)**
+* #### **Access Control**
 
-  * Hubエージェント（Write権限）とSpokeエージェント（Read-Only権限）の権限分離は、アプリケーションロジックだけでなく、APIレベルまたはDB接続ユーザーレベルでも強制されるべきである。  
-  * ユーザーインターフェース上の「Home (参照用)」と「Hub (対話用)」の分離に伴い、権限も明確に分離する。  
-  * Hubエージェントからのリクエストのみが `WRITE` 権限を持ち、Dashboard表示などの参照系リクエストは `READ-ONLY` トークンで実行されること。  
+  * 各ユーザーのデータ（Node, Chat, File）は、データベースレベルで `user_id` により論理隔離されており、認証されたユーザー自身のデータのみが操作可能である。
+  * HubエージェントとSpokeエージェントの権限分離は、アプリケーションロジックによって制御される。
+
   
 
 
@@ -364,10 +350,12 @@ graph TD
 | 項目 | 旧管理方法（Old） | 新管理方法（New: v2.2） |
 | ----- | ----- | ----- |
 | **データ基盤** | **JSON/Markdownファイル（ファイルシステム）** | **PostgreSQL による DB中心設計** |
-| **プロジェクト管理 (Spoke)** | **spokes/ ディレクトリ** | **\`\`\` NODES \`\`\` テーブルのレコードとして管理** |
-| **チャットログ** | **chat.log (テキストファイル)** | **\`\`\` CHAT\_SESSIONS \`\`\` テーブルで構造化管理（JSONBなど）** |
-| **ユーザー管理** | **シングルユーザー** | **マルチユーザー・マルチテナント対応。全ての主要テーブルに \*\*user\_id\*\* を付与し、論理的なデータ隔離を担保。** |
-| **サービス間認証** | **なし** | **署名付き認証 (\`\`\` X-Service-Key \`\`\`) を導入し、サービス間のセキュアな連携を実現。** |
+| **プロジェクト管理 (Spoke)** | **spokes/ ディレクトリ** | **` NODES ` テーブルのレコードとして管理** |
+| **チャットログ** | **chat.log (テキストファイル)** | **` CHAT_SESSIONS ` テーブルで構造化管理 (SQL)** |
+| **ユーザー管理** | **シングルユーザー** | **マルチユーザー・マルチテナント対応。全ての主要テーブルに **user_id** を付与し、論理的なデータ隔離を担保。** |
+| **ファイル管理** | **spokes/ ディレクトリ直下** | **` UPLOADED_FILES ` テーブル + `data/users/` 物理ストレージ。Gemini File APIとの同期機能付き。** |
+| **サービス間認証** | **なし** | **API Key / JWT を導入し、サービス間のセキュアな連携を実現。** |
+
 
  
 
@@ -379,9 +367,8 @@ graph TD
 
 * **役割:** システム全体の「憲法」および「羅針盤」。AIが判断に迷った際の最終的な拠り所となる「静的な真実（Ground Truth）」を提供する。  
 * **構成要素:**  
-  * LifeVision.pdf, NTTvision.pdf: ユーザーの長期的目標や価値観を定義したドキュメント。  
-  * Global\_System\_Prompt.md: 全エージェントに共通する振る舞い（トーン＆マナー、禁止事項、出力形式）の定義ファイル。  
-  * Shared\_Glossary.json: プロジェクト横断で使用される専門用語や略語の定義集。  
+  * system_prompt_global.md: 全エージェントに共通する振る舞い（トーン＆マナー、禁止事項、出力形式）の定義ファイル。  
+  * glossary.json: プロジェクト横断で使用される専門用語や略語の定義集。  
 * **特性: 完全な読み取り専用 (Read-only)**。  
   * HubおよびすべてのSpokeは、起動時（コンテキスト生成時）にこのレイヤーをシステムプロンプトの一部として読み込む。  
   * AI自身がこのレイヤーを変更することは許可されない。変更にはユーザーによる明示的なファイル更新（Gitコミットやファイル上書き）が必要であり、これによりAIによる「目標の勝手な書き換え」や「ルールの自己都合解釈」を防ぐ。
@@ -393,6 +380,23 @@ graph TD
   * **LBS (Load Balancing System) 管理:** 全タスクの負荷スコア（Load Score）を監視・集計する。特定の日に負荷が集中した場合、優先順位の低いタスクを別日へ移動させるなどの調整案を提示し、システム全体のオーバーフローを防ぐ。  
   * **Inbox処理 (Information Traffic Control):** Spokeから非同期に送信されてくる報告（Inbox Buffer）を処理する。ノイズを除去し、重要な更新のみをコンテキストに取り込み、LBSデータベースへ反映させる。  
   * **Spoke管理 (Lifecycle Management):** 新規プロジェクト発生時のSpoke生成（ディレクトリ作成、初期設定）や、プロジェクト完了時のSpokeアーカイブ（ログ保存、コンテキスト破棄）を行う。  
+### **ファイルシステムとストレージ (File System & Storage)**
+
+本システムは、膨大な非構造化データ（PDF, CSV, 画像など）を扱うが、これらを論理的な「ノード（Spoke/Hub）」に紐付けて管理する。物理的なファイル配置は、マルチユーザー環境を考慮した隔離構造をとる。
+
+#### **1. File Metadata (Database)**
+- すべてのアップロードファイルは `UPLOADED_FILES` テーブルにメタデータ（ファイル名、サイズ、MIMEタイプ、ハッシュ値）が記録される。
+- これにより、物理ファイルの所在を意識せずに「ノード ID + ファイル名」による高速な検索と一貫性の担保が可能になる。
+
+#### **2. Physical Storage (data/users/)**
+- 物理ファイルは以下の階層構造で保存される。
+  - `data/users/{user_id}/{node_name}/`
+- `user_id` によるディレクトリ隔離により、他ユーザーによる不正アクセスをファイルアクセスレベルで防ぐ。
+- ホスト側のボリュームマウント設定により、コンテナ再起動後もデータは永続化される。
+
+#### **3. Gemini File API Synchronization**
+- AIによる高度な解析（マルチモーダル処理や長文読解）が必要な場合、ファイルは Gemini File API へ一時的に同期される。
+- `kc_sync_status` により同期状態が管理され、セッション終了時やユーザーの明示的な操作により、Gemini側からの自動クリーンアップが行われる。
 * **非干渉の原則 (Non-Interference):**  
   * Hubは、Spoke内部で行われている「具体的な作業内容」（例：Pythonコードのデバッグ、論文のパラグラフ推敲、個別のメール文面作成）には一切干渉しない。  
   * Hubが扱うのは「メタ情報」（進捗率、障害の有無、完了予定日、次のマイルストーン）のみであり、これによりHubのコンテキスト消費を最小限に抑え、長期記憶の維持を可能にする。
@@ -411,10 +415,10 @@ graph TD
 
 ### **制御フロー（最小要件）**
 
-1. **Spoke → Inbox**：各判断（タスク案、優先度案、期日案）を投入  
-2. **Inbox → Hub**：集計単位でまとめて送信（例：手動トリガ、一定件数到達、一定時間経過）  
-3. **Hub（全体最適）**：全体負荷・優先度・競合を評価し「調整案」を生成  
-4. **Hub → Spoke**：調整結果を通知し、Spoke側が必要に応じて再分解・再調整
+1.  **Spoke → Inbox**：各判断（タスク案、優先度案、期日案）を投入  
+2.  **Inbox → Hub**：集計単位でまとめて送信（例：手動トリガ、一定件数到達、一定時間経過）  
+3.  **Hub（全体最適）**：全体負荷・優先度・競合を評価し「調整案」を生成  
+4.  **Hub → Spoke**：調整結果を通知し、Spoke側が必要に応じて再分解・再調整
 
 ## **外部連携アーキテクチャ (External Integration Architecture)**
 
@@ -540,35 +544,33 @@ graph TD
 本システムは、機能（Service）と責任（Responsibility）に基づき、マイクロサービス構成としてディレクトリを分割する。各サービスは独立したDockerコンテナとして動作し、データはファイルシステムではなくデータベース（PostgreSQL）に永続化される。
 
 Vision Ark/  
- ├── global\_assets/          \# \[Shared Config\] 全サービス共通の定義ファイル  
- │   │   \# システム全体の振る舞いを規定する静的な設定。  
- │   │   \# DB管理するまでもない定数や、初期セットアップ用のシードデータを含む。  
- │   ├── system\_prompt\_global.md \# 全エージェント共通のベースプロンプト  
- │   └── glossary.json       \# ドメイン用語定義  
+ ├── data/                   # [Persistent Storage] ユーザーデータ永続化
+ │   └── users/              # 各ユーザーごとのファイル保管領域
+ │       └── {user_id}/      # ユーザーID別の隔離ディレクトリ
+ │           └── {node_name}/ # ノード（Spoke/Hub）別の実ファイル保管
  │  
- ├── core/                   \# \[Core System\] Hub & Agent Orchestrator  
- │   │   \# ユーザー対話、エージェント実行、全体統括を行うメインシステム。  
- │   ├── backend/            \# Python (FastAPI \+ LangGraph)  
- │   │   ├── app/  
- │   │   │   ├── agents/     \# HubおよびSpokeエージェントの思考ロジック  
- │   │   │   ├── api/        \# Frontend向けREST APIエンドポイント  
- │   │   │   ├── core/       \# 設定、認証、共通ユーティリティ  
- │   │   │   ├── models/     \# Core DBスキーマ (Nodes, ChatSession, Inbox)  
- │   │   │   └── services/   \# 外部サービス連携 (LBS Client) やRAGロジック  
- │   │   └── migrations/     \# AlembicによるDBマイグレーションスクリプト  
+ ├── core/                   # [Core System] Hub & Agent Orchestrator  
+ │   │   # ユーザー対話、エージェント実行、全体統括を行うメインシステム。  
+ │   ├── backend/            # Python (FastAPI + LangGraph)  
+ │   │   ├── agents/         # HubおよびSpokeエージェントの思考ロジック  
+ │   │   ├── api/            # Frontend向けREST APIエンドポイント  
+ │   │   ├── core/           # 設定、認証、共通ユーティリティ  
+ │   │   ├── global_assets/  # 全サービス共通の定義ファイル (System Prompt等)
+ │   │   ├── models/         # Core DBスキーマ (Nodes, ChatSession, Inbox)  
+ │   │   ├── services/       # 外部サービス連携 (LBS Client) やRAGロジック  
+ │   │   └── utils/          # 暗号化などの便利ツール
  │   │  
- │   └── frontend/           \# TypeScript (Next.js App Router)  
- │       ├── components/     \# UI部品 (Chat, Inbox, Dashboard)  
- │       └── app/            \# ページルーティング  
+ │   └── frontend/           # TypeScript (Next.js App Router)  
+ │       ├── components/     # UI部品 (Chat, Inbox, Dashboard)  
+ │       └── app/            # ページルーティング (API Proxy含む)
  │  
- ├── infra/                  \# \[Infrastructure\] 構成管理  
- │   ├── docker-compose.yml  \# ローカル開発用の一括起動定義  
- │   ├── postgres/           \# DB初期化スクリプト (init.sql)  
- │   └── env\_samples/        \# 環境変数テンプレート (.env.example)  
+ ├── infra/                  # [Infrastructure] 構成管理  
+ │   ├── docker-compose.yml  # ローカル開発用の一括起動定義  
+ │   └── postgres/           # DB初期化スクリプト (init.sql)  
  │  
- └── docs/                   \# ドキュメント  
-     ├── requirements/       \# 要件定義書  
-     └── architecture/       \# 設計図、シーケンス図
+ └── docs/                   # ドキュメント  
+     ├── requirements/       # 要件定義書  
+     └── architecture/       # 設計図、シーケンス図
 
 ## **データベース設計 (Database Design)**
 
@@ -591,47 +593,93 @@ erDiagram
     SERVICE\_CONNECTIONS {  
         uuid id PK  
         uuid user\_id FK  
-        string service\_type "LBS, KNOWLEDGE\_CORE"  
-        string endpoint\_url  
-        string api\_key\_encrypted  
-    }
+```mermaid
+erDiagram
+    USERS ||--o{ NODES : owns
+    USERS ||--o{ API_KEYS : has
+    USERS ||--o| USER_SETTINGS : configures
+    USERS ||--o{ SERVICE_REGISTRY : connects
+    USERS ||--o{ EXTERNAL_IDENTITIES : links
+    
+    NODES ||--o{ AGENT_PROFILES : defines
+    NODES ||--o{ CHAT_SESSIONS : has
+    NODES ||--o{ UPLOADED_FILES : contains
+    
+    CHAT_SESSIONS ||--o{ CHAT_MESSAGES : logs
+    UPLOADED_FILES ||--o{ FILE_CHUNKS : split_into
+    
+    USERS ||--o{ INBOX_QUEUE : receives
+```
 
-    %% \==========================================  
-    %% 2\. Agent Nodes (Contexts)  
-    %% \==========================================  
-    NODES ||--o{ AGENT\_PROFILES : "defined\_by"  
-    NODES ||--o{ CHAT\_SESSIONS : "has\_history"  
-    NODES ||--o{ INBOX\_ITEMS : "generates\_request"  
-    NODES ||--o{ UPLOADED\_FILES : "owns\_ref\_data"
+#### **1. USERS (ユーザー管理)**
+* **役割:** 本システムを利用する人間のアカウント。
+* **主要カラム:**
+  * `id`: UUID (Primary Key)
+  * `username`: ユニークなログインID
+  * `password_hash`: bcryptなどでハッシュ化されたパスワード
+  * `is_active`: 有効/無効フラグ
 
-    NODES {  
-        uuid id PK "Context ID"  
-        uuid user\_id FK  
-        string name "Slug"  
-        string display\_name  
-        string node\_type "HUB, SPOKE"  
-        string lbs\_access\_level "READ\_ONLY, WRITE"  
-        boolean is\_archived  
-    }
+#### **2. API_KEYS (API認証キー)**
+* **役割:** システム外部からのアクセスを認可するためのキー。
+* **主要カラム:**
+  * `id`: UUID
+  * `key_hash`: キーのハッシュ値 (平文は保存しない)
+  * `user_id`: 所有ユーザーID (FK)
+  * `scopes`: JSON形式の権限セット
 
-    AGENT\_PROFILES {  
-        uuid id PK  
-        uuid node\_id FK  
-        int version  
-        text system\_prompt  
-        boolean is\_active  
-        datetime created\_at  
-    }
+#### **3. USER_SETTINGS (ユーザー個別設定)**
+* **役割:** AIプロバイダーのAPIキーやテーマ設定などの個人設定。
+* **主要カラム:**
+  * `user_id`: ユーザーID (FK, PK)
+  * `ai_config`: JSON (Gemini API Key, Model名など)
+  * `general_settings`: JSON (UIテーマ等)
 
-    %% \==========================================  
-    %% 3\. Communication  
-    %% \==========================================  
-    CHAT\_SESSIONS ||--o{ CHAT\_MESSAGES : "contains"  
-    CHAT\_SESSIONS ||--o{ CHAT\_SESSIONS : "continues\_from"  
-      
-    CHAT\_SESSIONS {  
-        uuid id PK  
-        uuid node\_id FK  
+#### **4. SERVICE_REGISTRY (外部サービス連携)**
+* **役割:** LBSやKnowledge Coreなど、連携先サービスのURLと認証情報。
+* **主要カラム:**
+  * `service_name`: "lbs", "knowledge_core" 等
+  * `base_url`: 接続先URL
+  * `api_key_encrypted`: 暗号化されたAPIキー
+  * `remote_user_id`: 連携先でのユーザー識別子
+
+#### **5. NODES (エージェントノード)**
+* **役割:** Hubや各Spokeの実体。
+* **主要カラム:**
+  * `id`: UUID
+  * `user_id`: 所有ユーザー (FK)
+  * `name`: 名前 (slug)
+  * `node_type`: "HUB" か "SPOKE"
+  * `lbs_access_level`: LBSへのアクセス権限
+
+#### **6. AGENT_PROFILES (エージェント設定)**
+* **役割:** 各ノードのAIの性格、プロンプトの定義。
+* **主要カラム:**
+  * `node_id`: 所属ノード (FK)
+  * `system_prompt`: 命令文
+  * `is_active`: 有効フラグ
+
+#### **7. CHAT_SESSIONS / CHAT_MESSAGES (対話履歴)**
+* **役割:** ユーザーとAI、またはAI同士の会話ログ。
+* **主要カラム:**
+  * `session_id`: 会話のグループID
+  * `role`: "user", "assistant", "system"
+  * `content`: メッセージ本文
+  * `meta_payload`: JSON (ツール実行結果など)
+
+#### **8. UPLOADED_FILES (ファイル管理)**
+* **役割:** RAGやGemini解析に使用するファイルのメタデータ。
+* **主要カラム:**
+  * `node_id`: 所属ノード (FK)
+  * `filename`: 元のファイル名
+  * `storage_path`: 物理ストレージ上のパス
+  * `gemini_file_uri`: Gemini File APIの参照URL
+
+#### **9. INBOX_QUEUE (非同期インボックス)**
+* **役割:** SpokeからHubへ通知されるメッセージのバッファ。
+* **主要カラム:**
+  * `source_spoke`: 送信元ノード名
+  * `message_type`: 通知の種類 (share, complete, alert)
+  * `payload`: 通知内容 (JSON)
         uuid parent\_session\_id FK "Previous session (Linked List)"  
         string title  
         text summary "Summary of THIS session (to be carried over)"  
@@ -869,20 +917,24 @@ Inbox UIでの表示と、ユーザーによる承認・却下操作を受け付
 | `POST` | `/inbox/{id}/approve` | 指定されたアイテムを承認し、LBS/KCへの書き込みを実行いたします。修正承認の場合、payloadに上書き内容を含めます。 | `{ "override_payload": {...} }` |
 | `POST` | `/inbox/{id}/reject` | 指定されたアイテムを却下し、アーカイブまたは削除いたします。Spokeへのフィードバックコメントを付与することが可能です。 | `{ "reason": "予算不足のため" }` |
 
-#### **C. Command Execution (CLI)**
+#### **1. Files & Storage (ファイル管理)**
 
-チャット欄から入力されたスラッシュコマンドを処理する。
+| Method | Endpoint | Description | Auth |
+| :--- | :--- | :--- | :--- |
+| **GET** | `/api/files/{node_type}/{node_name}` | ノード内のファイル一覧を取得 | JWT |
+| **POST** | `/api/files/{node_type}/{node_name}/upload` | ファイルをアップロード | JWT |
+| **DELETE** | `/api/files/{file_id}` | ファイルを削除 | JWT |
+| **POST** | `/api/files/{node_type}/{node_name}/sync-gemini` | 全ファイルをGeminiへ同期 | JWT |
+| **POST** | `/api/files/{node_type}/{node_name}/cleanup-gemini` | Gemini側のファイルを削除 | JWT |
 
-| Method | Path | Description | Payload / Params |
-| ----- | ----- | ----- | ----- |
-| `POST` | `/commands/execute` | サーバーサイドコマンド（`/archive`、`/task` など）を解析し、実行します。 | `{ "command": "task", "args": ["..."], "context": {...} }` |
+#### **2. Agent & Chat (エージェント対話)**
 
-#### **D. Master Data & System Status**
-
-初期ロード時のデータ取得やヘルスチェック用。
-
-| メソッド | パス | 説明 | ペイロード / パラメータ |
-| ----- | ----- | ----- | ----- |
+| Method | Endpoint | Description | Auth |
+| :--- | :--- | :--- | :--- |
+| **GET** | `/api/agents/spoke/list` | Spokeノードの一覧表示 | JWT |
+| **POST** | `/api/agents/hub/chat` | Hubとの対話・指示実行 | JWT |
+| **POST** | `/api/agents/spoke/chat` | 特定Spokeとの専門対話 | JWT |
+| **POST** | `/api/agents/create-spoke` | 新規Spoke（Node）の作成 | JWT |
 | `GET` | `/nodes` | ユーザーがアクセス可能な全てのプロジェクト（Hub/Spoke）の定義リストを取得します。サイドバー描画に利用します。 | \- |
 | `GET` | `/system/status` | **\[FR-ARCH1-3\]** 各マイクロサービス（LBS, KC）の接続状況および同期ラグ情報を取得します。ステータスバー表示に利用します。 | \- |
 
