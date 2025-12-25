@@ -18,6 +18,10 @@ class LBSClient:
         self.base_url = base_url or default_url
         if self.base_url and not self.base_url.startswith("http"):
             self.base_url = f"http://{self.base_url}"
+        
+        # Ensure base_url ends with a slash for proper relative path joining
+        if self.base_url and not self.base_url.endswith("/"):
+            self.base_url += "/"
             
         self.api_key = api_key
         self.token = token
