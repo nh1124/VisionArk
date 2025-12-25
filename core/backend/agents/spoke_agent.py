@@ -5,7 +5,7 @@ Implements spoke-specific prompt loading and log paths
 from pathlib import Path
 from typing import List, Optional
 from agents.base_agent import BaseAgent
-from utils.paths import get_spoke_dir, get_user_global_prompt, get_global_prompt, SPOKES_DIR, get_user_spokes_dir
+from utils.paths import get_spoke_dir, get_user_global_prompt, get_global_prompt
 from models.message import AttachedFile, Message, MessageRole
 from models.database import UserSettings, Node, AgentProfile, get_engine, get_session
 from uuid import uuid4

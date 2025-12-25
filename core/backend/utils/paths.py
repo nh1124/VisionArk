@@ -146,11 +146,11 @@ def get_user_spokes_dir(user_id: str) -> Path:
 
 def get_spoke_dir(user_id: str, spoke_name: str) -> Path:
     """
-    Get user's spoke directory: /spokes/{user_id}/{spoke_name}/
+    Get user's spoke directory: /data/users/{user_id}/spokes/{spoke_name}/
     Does NOT auto-create the directory.
     
     Raises:
-        ValueError: If spoke_name is invalid or path traversal detected
+        ValueError: If user_id/spoke_name is invalid or path traversal detected
     """
     valid, error = validate_name(spoke_name, "spoke_name")
     if not valid:
@@ -194,17 +194,8 @@ def get_default_assets_dir() -> Path:
 
 
 # ============================================================
-# Legacy Functions (for backwards compatibility during migration)
+# Prompt Functions
 # ============================================================
-
-def get_hub_dir() -> Path:
-    """
-    Get shared hub data directory (legacy, no user scoping).
-    DEPRECATED: Use get_user_hub_dir(user_id) instead.
-    """
-    HUB_DATA_DIR = DATA_DIR / "hub_data"
-    HUB_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    return HUB_DATA_DIR
 
 
 def get_global_prompt() -> str:

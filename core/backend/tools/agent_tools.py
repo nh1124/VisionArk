@@ -455,6 +455,7 @@ def save_artifact(
         return ToolResult(success=False, message=f"Failed to save file: {str(e)}")
 
 
+def read_reference(
     file_path: str,
     *,
     spoke_name: str,

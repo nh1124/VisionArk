@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from models.database import UploadedFile, Node
 from config import get_settings
+from utils.paths import get_user_hub_dir, get_spoke_dir
 
 
 # File size limit: 100MB (Gemini supports up to 2GB)
@@ -35,30 +36,16 @@ class FileService:
         if api_key:
             genai.configure(api_key=api_key)
     
-    def _get_user_root(self) -> Path:
-        """Get user's root data directory"""
-        settings = get_settings()
-        data_root = Path(settings.user_data_root)
-        return data_root / self.user_id
-    
-    def get_hub_files_dir(self) -> Path:
-        """Get Hub files directory for user"""
-        path = self._get_user_root() / "hub" / "files"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-    
-    def get_spoke_files_dir(self, spoke_name: str) -> Path:
-        """Get Spoke files directory for user"""
-        path = self._get_user_root() / "spokes" / spoke_name / "files"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-    
     def get_files_dir(self, node_type: str, node_name: str) -> Path:
         """Get files directory based on node type"""
         if node_type.lower() == "hub":
-            return self.get_hub_files_dir()
+            base = get_user_hub_dir(self.user_id)
         else:
-            return self.get_spoke_files_dir(node_name)
+            base = get_spoke_dir(self.user_id, node_name)
+        
+        path = base / "files"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
     
     def _compute_hash(self, content: bytes) -> str:
         """Compute SHA256 hash of file content"""

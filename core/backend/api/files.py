@@ -39,7 +39,7 @@ async def upload_file(
     user_id = identity.user_id
     
     # Get user's spoke directory
-    spoke_dir = get_user_spokes_dir(user_id) / spoke_name
+    spoke_dir = get_spoke_dir(user_id, spoke_name)
     
     if not spoke_dir.exists():
         # Create it if missing (RDB-first, but we still need local storage)
@@ -168,7 +168,7 @@ def list_files(
 ):
     """List all files in a spoke's refs and artifacts directories"""
     user_id = identity.user_id
-    spoke_dir = get_user_spokes_dir(user_id) / spoke_name
+    spoke_dir = get_spoke_dir(user_id, spoke_name)
     
     if not spoke_dir.exists():
         # Create directories if missing
@@ -216,7 +216,7 @@ def download_file(
 ):
     """Download a file from spoke's refs or artifacts directory"""
     user_id = identity.user_id
-    spoke_dir = get_user_spokes_dir(user_id) / spoke_name
+    spoke_dir = get_spoke_dir(user_id, spoke_name)
     
     if not spoke_dir.exists():
         raise HTTPException(status_code=404, detail=f"Spoke '{spoke_name}' not found")
@@ -241,7 +241,7 @@ def delete_file(
 ):
     """Delete a file from spoke's refs or artifacts directory"""
     user_id = identity.user_id
-    spoke_dir = get_user_spokes_dir(user_id) / spoke_name
+    spoke_dir = get_spoke_dir(user_id, spoke_name)
     
     if not spoke_dir.exists():
         raise HTTPException(status_code=404, detail=f"Spoke '{spoke_name}' not found")

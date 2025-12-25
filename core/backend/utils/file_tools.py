@@ -11,8 +11,8 @@ import mimetypes
 import google.generativeai as genai
 from datetime import datetime, timedelta
 
-# Import SPOKES_DIR from paths.py for correct absolute path
-from utils.paths import SPOKES_DIR
+# Import path utilities
+from utils.paths import get_spoke_dir
 
 # File upload cache: {file_path: (uri, upload_time, file_name)}
 _file_upload_cache: Dict[str, tuple] = {}
@@ -80,7 +80,7 @@ class ListDirectoryInput(BaseModel):
 
 
 @tool("save_artifact", args_schema=SaveArtifactInput)
-def save_artifact(spoke_name: str, file_path: str, content: str, overwrite: bool = False) -> str:
+def save_artifact(spoke_name: str, file_path: str, content: str, overwrite: bool = False, user_id: str = None) -> str:
     """
     Save code or document to the spoke's artifacts directory.
     
@@ -89,18 +89,19 @@ def save_artifact(spoke_name: str, file_path: str, content: str, overwrite: bool
         file_path: Relative path within artifacts/ (e.g., 'draft.md')
         content: Full text content to save
         overwrite: Whether to overwrite if file exists
+        user_id: [Injected] User ID for scoping
         
     Returns:
         Success message with absolute path or error message
     """
+    if not user_id:
+        return "❌ Error: user_id context missing for save_artifact"
+        
     try:
         # Construct full path
-        spoke_dir = SPOKES_DIR / spoke_name
+        spoke_dir = get_spoke_dir(user_id, spoke_name)
         artifacts_dir = spoke_dir / "artifacts"
         full_path = artifacts_dir / file_path
-        
-        # Create spoke directory if it doesn't exist
-        spoke_dir.mkdir(parents=True, exist_ok=True)
         
         # Create artifacts directory if needed
         artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -122,7 +123,7 @@ def save_artifact(spoke_name: str, file_path: str, content: str, overwrite: bool
 
 
 @tool("read_reference", args_schema=ReadReferenceInput)
-def read_reference(spoke_name: str, file_path: str) -> str:
+def read_reference(spoke_name: str, file_path: str, user_id: str = None) -> str:
     """
     Read a file from the spoke's refs directory.
     Supports text files, PDFs, and images via Gemini File API.
@@ -130,19 +131,23 @@ def read_reference(spoke_name: str, file_path: str) -> str:
     Args:
         spoke_name: Name of the spoke (project)
         file_path: Relative path within refs/ directory
+        user_id: [Injected] User ID for scoping
         
     Returns:
         File content (text) or multimodal reference object (PDF/images)
     """
+    if not user_id:
+        return "❌ Error: user_id context missing for read_reference"
+        
     try:
         # Construct full path
-        spoke_dir = SPOKES_DIR / spoke_name
+        spoke_dir = get_spoke_dir(user_id, spoke_name)
         refs_dir = spoke_dir / "refs"
         full_path = refs_dir / file_path
         
         # Validate spoke exists
         if not spoke_dir.exists():
-            return f"Error: Spoke '{spoke_name}' does not exist."
+            return f"Error: Spoke '{spoke_name}' does not exist for this user."
         
         # Validate file exists
         if not full_path.exists():
@@ -209,29 +214,29 @@ def read_reference(spoke_name: str, file_path: str) -> str:
 
 
 @tool("list_directory", args_schema=ListDirectoryInput)
-def list_directory(spoke_name: str, sub_dir: str) -> str:
+def list_directory(spoke_name: str, sub_dir: str, user_id: str = None) -> str:
     """
     List files in the spoke's refs or artifacts directory.
     
     Args:
         spoke_name: Name of the spoke (project)
         sub_dir: Either 'refs' or 'artifacts'
+        user_id: [Injected] User ID for scoping
         
     Returns:
         Formatted list of files and directories
     """
+    if not user_id:
+        return "❌ Error: user_id context missing for list_directory"
+        
     try:
         # Construct full path
-        spoke_dir = SPOKES_DIR / spoke_name
+        spoke_dir = get_spoke_dir(user_id, spoke_name)
         target_dir = spoke_dir / sub_dir
-        
-        # Create spoke directory if it doesn't exist
-        if not spoke_dir.exists():
-            return f"Error: Spoke '{spoke_name}' does not exist."
         
         # Create target directory if it doesn't exist
         if not target_dir.exists():
-            return f"Error: Directory '{sub_dir}' does not exist."
+            return f"Error: Directory '{sub_dir}' does not exist in spoke '{spoke_name}'."
         
         # List files
         files = []

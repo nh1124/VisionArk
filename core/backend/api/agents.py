@@ -12,7 +12,7 @@ from agents.spoke_agent import SpokeAgent
 from services.inbox_handler import InboxHandler, extract_meta_actions_from_chat
 from services.auth import resolve_identity, Identity, get_db
 from models.database import Node, AgentProfile
-from utils.paths import get_spoke_dir, get_user_spokes_dir, validate_name, SPOKES_DIR
+from utils.paths import get_spoke_dir, get_user_spokes_dir, validate_name
 from utils.agent_cache import get_hub_agent_cache, get_spoke_agent_cache
 from uuid import uuid4
 

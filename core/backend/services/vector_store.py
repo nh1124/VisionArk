@@ -16,18 +16,19 @@ except ImportError:
     CHROMADB_AVAILABLE = False
 
 from llm import get_provider
-from utils.paths import get_spoke_dir, SPOKES_DIR
+from utils.paths import get_spoke_dir, get_user_spokes_dir
 
 
 class VectorStore:
-    """Vector store for a single Spoke's knowledge base"""
+    """Vector store for a single Spoke's knowledge base (per-user)"""
     
-    def __init__(self, spoke_name: str):
+    def __init__(self, user_id: str, spoke_name: str):
         if not CHROMADB_AVAILABLE:
             raise ImportError("ChromaDB not installed. Run: pip install chromadb>=0.4.22")
         
+        self.user_id = user_id
         self.spoke_name = spoke_name
-        self.store_path = get_spoke_dir(spoke_name) / "vector_store"
+        self.store_path = get_spoke_dir(user_id, spoke_name) / "vector_store"
         self.store_path.mkdir(parents=True, exist_ok=True)
         
         # Initialize ChromaDB client
@@ -216,25 +217,26 @@ class VectorStore:
 
 
 class VectorStoreManager:
-    """Manages vector stores for all Spokes"""
+    """Manages vector stores for all Spokes across all users"""
     
     def __init__(self):
         self._stores: Dict[str, VectorStore] = {}
     
-    def get_store(self, spoke_name: str) -> VectorStore:
+    def get_store(self, user_id: str, spoke_name: str) -> VectorStore:
         """Get or create a vector store for a Spoke"""
-        if spoke_name not in self._stores:
-            self._stores[spoke_name] = VectorStore(spoke_name)
-        return self._stores[spoke_name]
+        cache_key = f"{user_id}:{spoke_name}"
+        if cache_key not in self._stores:
+            self._stores[cache_key] = VectorStore(user_id, spoke_name)
+        return self._stores[cache_key]
     
-    def list_stores(self) -> List[str]:
-        """List all existing Spoke vector stores"""
-        spokes_dir = SPOKES_DIR
-        if not spokes_dir.exists():
+    def list_stores(self, user_id: str) -> List[str]:
+        """List all existing Spoke vector stores for a user"""
+        user_spokes_dir = get_user_spokes_dir(user_id)
+        if not user_spokes_dir.exists():
             return []
         
         stores = []
-        for spoke_dir in spokes_dir.iterdir():
+        for spoke_dir in user_spokes_dir.iterdir():
             if spoke_dir.is_dir() and (spoke_dir / "vector_store").exists():
                 stores.append(spoke_dir.name)
         
@@ -245,6 +247,6 @@ class VectorStoreManager:
 _manager = VectorStoreManager()
 
 
-def get_vector_store(spoke_name: str) -> VectorStore:
-    """Get vector store for a Spoke (singleton pattern)"""
-    return _manager.get_store(spoke_name)
+def get_vector_store(user_id: str, spoke_name: str) -> VectorStore:
+    """Get vector store for a Spoke (singleton pattern, per-user)"""
+    return _manager.get_store(user_id, spoke_name)
