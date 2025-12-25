@@ -147,7 +147,8 @@ You have access to these tools via Function Calling:
 **Hub Communication:**
 - `report_to_hub(summary, request)` - Send progress updates or requests to Hub
 - `archive_session()` - Archive conversation and start fresh
-- `delete_spoke()` - Delete this spoke (use with caution)
+**LBS Tasks:**
+- `list_tasks()` - List tasks for this spoke
 
 **Use these tools to CREATE FILES instead of just showing code!**
 

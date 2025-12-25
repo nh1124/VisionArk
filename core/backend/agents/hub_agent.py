@@ -129,6 +129,9 @@ You have access to the following tools that you can call directly. Use them when
 - `create_spoke(spoke_name, custom_prompt)` - Create a new project workspace
 - `delete_spoke(spoke_name)` - Delete a spoke permanently
 - `create_task(task_name, workload, spoke, rule_type, due_date, days)` - Create an LBS task
+- `list_tasks(context)` - List existing tasks (optionally filtered by context)
+- `update_task_details(task_id, task_name, workload, active, notes)` - Update task properties
+- `delete_task_by_id(task_id)` - Delete a task permanently
 - `check_inbox()` - Check for messages from Spokes
 - `process_inbox_message(message_id, action)` - Accept or reject an inbox message
 - `archive_session()` - Archive current conversation and start fresh

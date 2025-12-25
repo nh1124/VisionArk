@@ -203,6 +203,117 @@ def create_task(
         return ToolResult(success=False, message=f"Failed to create task: {str(e)}")
 
 
+def list_tasks(
+    context: Optional[str] = None,
+    *,
+    session: Session,
+    user_id: str,
+    context_name: str = "general"
+) -> ToolResult:
+    """
+    List tasks from the LBS system.
+    
+    Args:
+        context: Specific context/spoke to filter by. Defaults to current context.
+        session: Database session (injected)
+        user_id: User ID (injected)
+        context_name: Current context name (injected)
+    """
+    try:
+        client = LBSClient()
+        target_context = context or context_name
+        tasks = client.get_tasks(context=target_context)
+        
+        if not tasks:
+            return ToolResult(
+                success=True,
+                message=f"No tasks found for context: {target_context}",
+                data={"tasks": [], "context": target_context}
+            )
+        
+        # Format tasks for display
+        task_info = []
+        for t in tasks:
+            due = f" due {t.get('due_date')}" if t.get('due_date') else ""
+            rule = f" ({t.get('rule_type')})"
+            task_info.append(f"  • [{t.get('task_id')}] {t.get('task_name')} - Load: {t.get('base_load_score')}{due}{rule}")
+            
+        return ToolResult(
+            success=True,
+            message=f"📋 Tasks for {target_context}:\n" + "\n".join(task_info),
+            data={"tasks": tasks, "context": target_context}
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to list tasks: {str(e)}")
+
+
+def update_task_details(
+    task_id: str,
+    task_name: Optional[str] = None,
+    workload: Optional[float] = None,
+    active: Optional[bool] = None,
+    notes: Optional[str] = None,
+    *,
+    session: Session,
+    user_id: str
+) -> ToolResult:
+    """
+    Update an existing task in the LBS system.
+    
+    Args:
+        task_id: ID of the task to update
+        task_name: New name for the task
+        workload: New load score (0-10)
+        active: New active status
+        notes: New notes
+    """
+    try:
+        updates = {}
+        if task_name is not None: updates["task_name"] = task_name
+        if workload is not None: updates["base_load_score"] = float(workload)
+        if active is not None: updates["active"] = active
+        if notes is not None: updates["notes"] = notes
+        
+        if not updates:
+            return ToolResult(success=False, message="No updates provided")
+            
+        client = LBSClient()
+        result = client.update_task(task_id, updates)
+        
+        return ToolResult(
+            success=True,
+            message=f"✅ Updated task {task_id}",
+            data={"task_id": task_id, "result": result}
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to update task: {str(e)}")
+
+
+def delete_task_by_id(
+    task_id: str,
+    *,
+    session: Session,
+    user_id: str
+) -> ToolResult:
+    """
+    Delete a task from the LBS system.
+    
+    Args:
+        task_id: ID of the task to delete
+    """
+    try:
+        client = LBSClient()
+        client.delete_task(task_id)
+        
+        return ToolResult(
+            success=True,
+            message=f"🗑️ Deleted task {task_id}",
+            data={"task_id": task_id}
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to delete task: {str(e)}")
+
+
 def check_inbox(
     *,
     session: Session,
@@ -695,6 +806,63 @@ HUB_TOOL_DEFINITIONS = [
         }
     },
     {
+        "name": "list_tasks",
+        "description": "List existing tasks from the LBS. Use this to see what tasks are currently scheduled.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "context": {
+                    "type": "string",
+                    "description": "Optional context/spoke to filter tasks by. Defaults to current context."
+                }
+            }
+        }
+    },
+    {
+        "name": "update_task_details",
+        "description": "Update properties of an existing task in LBS.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "The ID of the task to update (get this from list_tasks)"
+                },
+                "task_name": {
+                    "type": "string",
+                    "description": "New name for the task"
+                },
+                "workload": {
+                    "type": "number",
+                    "description": "New load score (0-10)"
+                },
+                "active": {
+                    "type": "boolean",
+                    "description": "Whether the task is active"
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "New notes for the task"
+                }
+            },
+            "required": ["task_id"]
+        }
+    },
+    {
+        "name": "delete_task_by_id",
+        "description": "Delete a task from LBS permanently.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "The ID of the task to delete"
+                }
+            },
+            "required": ["task_id"]
+        }
+    },
+    {
         "name": "check_inbox",
         "description": "Check the Hub's inbox for pending messages and reports from Spokes.",
         "parameters": {
@@ -804,6 +972,14 @@ SPOKE_TOOL_DEFINITIONS = [
         }
     },
     {
+        "name": "list_tasks",
+        "description": "List existing tasks from the LBS for this spoke.",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
         "name": "delete_spoke",
         "description": "Delete this spoke (current project) permanently. Use with caution.",
         "parameters": {
@@ -827,6 +1003,9 @@ TOOL_FUNCTIONS = {
     "create_spoke": create_spoke,
     "delete_spoke": delete_spoke,
     "create_task": create_task,
+    "list_tasks": list_tasks,
+    "update_task_details": update_task_details,
+    "delete_task_by_id": delete_task_by_id,
     "check_inbox": check_inbox,
     "process_inbox_message": process_inbox_message,
     # Spoke tools

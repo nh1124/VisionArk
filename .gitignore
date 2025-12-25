@@ -50,6 +50,7 @@ tmp/
 temp/
 
 # AI TaskManagement OS specific
+data
 spokes/*/chat.log
 spokes/*/artifacts/
 .gemini/

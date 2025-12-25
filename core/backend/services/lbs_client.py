@@ -10,12 +10,19 @@ class LBSClient:
     Delegates all load balancing logic to the standalone service.
     """
     def __init__(self, base_url: str = None, api_key: str = None, token: str = None):
-        default_url = os.getenv("LBS_SERVICE_URL", "http://localhost:8100/api/lbs")
+        from config import settings
+        
+        # 1. Determine default URL from settings or env
+        env_url = os.getenv("LBS_SERVICE_URL")
+        # Use provided base_url, then env_url (if not empty), then settings default, then fallback
+        hardcoded_fallback = "http://localhost:8100/api/lbs"
+        final_url = base_url or env_url or settings.lbs_service_url or hardcoded_fallback
+        
         # In Docker, localhost refers to the container. Use host.docker.internal for the host LBS.
-        if "localhost" in default_url and os.path.exists("/.dockerenv"):
-            default_url = default_url.replace("localhost", "host.docker.internal")
+        if "localhost" in final_url and os.path.exists("/.dockerenv"):
+            final_url = final_url.replace("localhost", "host.docker.internal")
             
-        self.base_url = base_url or default_url
+        self.base_url = final_url
         if self.base_url and not self.base_url.startswith("http"):
             self.base_url = f"http://{self.base_url}"
         
