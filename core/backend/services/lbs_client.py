@@ -9,15 +9,17 @@ class LBSClient:
     Client for interacting with the LBS Microservice.
     Delegates all load balancing logic to the standalone service.
     """
-    def __init__(self, base_url: str = None, api_key: str = None, user_id: str = "dev_user", token: str = None):
+    def __init__(self, base_url: str = None, api_key: str = None, token: str = None):
         default_url = os.getenv("LBS_SERVICE_URL", "http://localhost:8100/api/lbs")
         # In Docker, localhost refers to the container. Use host.docker.internal for the host LBS.
         if "localhost" in default_url and os.path.exists("/.dockerenv"):
             default_url = default_url.replace("localhost", "host.docker.internal")
             
         self.base_url = base_url or default_url
-        self.api_key = api_key or os.getenv("LBS_API_KEY")
-        self.user_id = user_id
+        if self.base_url and not self.base_url.startswith("http"):
+            self.base_url = f"http://{self.base_url}"
+            
+        self.api_key = api_key
         self.token = token
         
     def _get_headers(self):
@@ -27,14 +29,12 @@ class LBSClient:
         }
         
         if self.api_key:
-            headers["X-API-Key"] = self.api_key
+            headers["x-api-key"] = self.api_key
         
         # Prefer JWT token propagation
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
         
-        # Fallback to X-User-ID for dev/legacy if no token
-        headers["X-User-ID"] = self.user_id
         return headers
 
     def get_dashboard(self, start_date: Optional[date] = None) -> Dict:

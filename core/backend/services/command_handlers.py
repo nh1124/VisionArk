@@ -31,8 +31,10 @@ def handle_check_inbox(args: List[str], session: Session = None, **kwargs) -> Co
     if session is None:
         return CommandResult(success=False, message="No database session available")
     
+    user_id = kwargs.get("user_id")
+    
     try:
-        inbox = InboxHandler(session)
+        inbox = InboxHandler(session, user_id=user_id)
         messages = inbox.get_pending_messages()
         
         if not messages:
@@ -214,23 +216,29 @@ def handle_kill(args: List[str], context_type: str = "hub", context_name: str = 
     else:
         return CommandResult(success=False, message="Usage: /kill <spoke_name>")
     
+    # Get user_id early - it's required
+    user_id = kwargs.get("user_id")
+    if not user_id:
+        return CommandResult(success=False, message="Missing user context")
+    
     try:
         # 1. Find and archive DB Node
-        user_id = kwargs.get("user_id")
         node = session.query(Node).filter(
             Node.user_id == user_id,
             Node.name == spoke_name,
             Node.node_type == "SPOKE"
-        ).first() if session and user_id else None
+        ).first() if session else None
         
         if node:
             node.is_archived = True
             session.commit()
             print(f"[KILL] Archived DB Node for spoke '{spoke_name}'")
+        else:
+            return CommandResult(success=False, message=f"Spoke '{spoke_name}' not found")
 
         # 2. Delete LBS tasks
         try:
-            client = LBSClient(user_id=user_id or "dev_user")
+            client = LBSClient(user_id=user_id)
             tasks = client.get_tasks(context=spoke_name)
             for t in tasks:
                 client.delete_task(t["task_id"])
@@ -238,7 +246,7 @@ def handle_kill(args: List[str], context_type: str = "hub", context_name: str = 
         except Exception as lbs_err:
             print(f"[KILL] Warning: Failed to cleanup LBS tasks: {lbs_err}")
         
-        # 3. Handle inbox notification
+        # 3. Handle inbox notification (pass user_id to InboxHandler)
         if context_type == "spoke" and session:
             meta_xml = f"""<meta-action type="share_update">
 <target>Hub</target>
@@ -246,7 +254,7 @@ def handle_kill(args: List[str], context_type: str = "hub", context_name: str = 
 <summary>Spoke '{spoke_name}' has been terminated</summary>
 <request></request>
 </meta-action>"""
-            inbox = InboxHandler(session)
+            inbox = InboxHandler(session, user_id=user_id)
             inbox.push_to_inbox(
                 source_spoke=spoke_name,
                 meta_action_xml=meta_xml
@@ -337,10 +345,14 @@ def handle_report(args: List[str], spoke_name: str = None, session: Session = No
     if session is None or spoke_name is None:
         return CommandResult(success=False, message="Missing context")
     
+    user_id = kwargs.get("user_id")
+    if not user_id:
+        return CommandResult(success=False, message="Missing user context")
+    
     summary = " ".join(args) if args else "Progress update from spoke"
     
     try:
-        inbox = InboxHandler(session)
+        inbox = InboxHandler(session, user_id=user_id)
         
         # Create XML meta-action for inbox
         meta_xml = f"""<meta-action type="share_update">

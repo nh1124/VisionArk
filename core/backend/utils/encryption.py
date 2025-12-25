@@ -31,4 +31,4 @@ def decrypt_string(encrypted_text: str) -> str:
         f = Fernet(get_encryption_key())
         return f.decrypt(encrypted_text.encode()).decode()
     except Exception:
-        return "[Decryption Error]"
+        return ""

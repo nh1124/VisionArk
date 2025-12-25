@@ -15,9 +15,12 @@ from uuid import uuid4
 class HubAgent(BaseAgent):
     """Hub agent with Hub-specific logic and LBS integration (per-user)"""
     
-    def _get_api_key(self, user_id: str, db_session=None) -> Optional[str]:
+    @staticmethod
+    def _get_api_key(user_id: str, db_session=None) -> Optional[str]:
         """Retrieve and decrypt Gemini API key for the user"""
+        print(f"[HubAgent._get_api_key] Called with user_id={user_id}")
         if not user_id:
+            print("[HubAgent._get_api_key] No user_id provided, returning None")
             return None
             
         from models.database import UserSettings, get_engine, get_session
@@ -27,16 +30,24 @@ class HubAgent(BaseAgent):
         session = db_session or get_session(get_engine())
         try:
             settings = session.query(UserSettings).filter(UserSettings.user_id == user_id).first()
+            print(f"[HubAgent._get_api_key] Found settings: {settings is not None}")
+            if settings and settings.ai_config:
+                print(f"[HubAgent._get_api_key] ai_config keys: {list(settings.ai_config.keys())}")
             if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
                 encrypted_key = settings.ai_config["gemini_api_key"]
-                if encrypted_key == "********": # Should not happen with new logic but safe to check
+                print(f"[HubAgent._get_api_key] Encrypted key length: {len(encrypted_key)}")
+                if encrypted_key == "********":
+                    print("[HubAgent._get_api_key] Key is masked, returning None")
                     return None
-                return decrypt_string(encrypted_key)
+                decrypted = decrypt_string(encrypted_key)
+                print(f"[HubAgent._get_api_key] Decryption returned key of length: {len(decrypted) if decrypted else 0}")
+                return decrypted if decrypted else None
         except Exception as e:
             print(f"[HubAgent] Failed to retrieve/decrypt API key: {e}")
         finally:
             if not db_session:
                 session.close()
+        print("[HubAgent._get_api_key] No key found, returning None")
         return None
 
     @classmethod
@@ -82,10 +93,21 @@ class HubAgent(BaseAgent):
             node_id = node.id
             
         api_key = self._get_api_key(user_id, db_session)
-        super().__init__(node_id=node_id, db_session=db_session, api_key=api_key)
+        super().__init__(node_id=node_id, db_session=db_session, api_key=api_key, user_id=user_id)
+        
+        # Set up native function calling tools
+        self._setup_tools()
+    
+    def _setup_tools(self):
+        """Configure native function calling tools for Hub agent"""
+        from tools import HUB_TOOL_DEFINITIONS, TOOL_FUNCTIONS
+        
+        # Set tool definitions on the LLM provider
+        if hasattr(self.llm, 'set_tool_definitions'):
+            self.llm.set_tool_definitions(HUB_TOOL_DEFINITIONS, TOOL_FUNCTIONS)
 
     def _get_default_hub_prompt(self) -> str:
-        # Default Hub prompt with commands and LBS info
+        # Default Hub prompt with tools and LBS info
         hub_default = """# Hub Agent (Project Manager Role)
 
 You are the central orchestration agent (Hub) responsible for:
@@ -101,21 +123,16 @@ You are the central orchestration agent (Hub) responsible for:
 4. Process Inbox messages from Spokes
 5. Provide high-level strategic guidance
 
-## Available Commands
+## Available Tools
 
-You can execute commands directly:
+You have access to the following tools that you can call directly. Use them when needed:
 
-- `/check_inbox` - Check for messages from Spokes
-- `/create_spoke \"name\" [\"prompt\"]` - Create new project workspace
-- `/archive` - Archive current conversation and start fresh
-- `/kill spoke_name` - Delete a spoke
-- `/create_task name=\"X\" spoke=\"Y\" workload=N rule=ONCE|WEEKLY due=DATE` - Create LBS task
-
-Example:
-- /create_task name=\"Task 1\" spoke=\"Spoke 1\" workload=5 rule=ONCE due=2025-12-05
-
-Attention: 
-- Don't use quotes before backslash
+- `create_spoke(spoke_name, custom_prompt)` - Create a new project workspace
+- `delete_spoke(spoke_name)` - Delete a spoke permanently
+- `create_task(task_name, workload, spoke, rule_type, due_date, days)` - Create an LBS task
+- `check_inbox()` - Check for messages from Spokes
+- `process_inbox_message(message_id, action)` - Accept or reject an inbox message
+- `archive_session()` - Archive current conversation and start fresh
 
 ## LBS (Load Balancing System) Parameters
 
@@ -131,15 +148,15 @@ Attention:
 
 **Task Rules:**
 1. `ONCE` - Single deadline (use `due_date`)
-2. `WEEKLY` - Recurring on specific days (mon, tue, wed, thu, fri, sat, sun)
-3. `EVERY_N_DAYS` - Recurring every N days (use `interval_days`, `anchor_date`)
+2. `WEEKLY` - Recurring on specific days (use `days` array: ["mon", "tue", etc.])
+3. `EVERY_N_DAYS` - Recurring every N days (use `interval_days`)
 4. `MONTHLY_DAY` - Specific day each month (use `month_day`)
 
 ## Communication Style
 - Strategic and meta-level (don't get into project details)
 - Data-driven (cite load scores, capacities)
 - Proactive (warn about bottlenecks before they occur)
-- Use commands when appropriate
+- Use tools when appropriate to take action
 """
         return hub_default
     
@@ -190,7 +207,8 @@ Attention:
         # 2. Build LBS context
         meta_info_str = None
         try:
-            client = LBSClient(user_id=self.user_id)
+            # LBSClient uses base_url, api_key, or token - not user_id directly
+            client = LBSClient()
             daily_data = client.calculate_load(date.today())
             load = daily_data.get("adjusted_load", 0.0)
             meta_info_str = f"Load: {load:.1f}/10.0 | Capacity: 10.0"
@@ -211,8 +229,19 @@ Attention:
         llm_messages = [m.to_llm_message() for m in self.conversation_history]
         formatted_messages = self.llm.format_messages(self.system_prompt, llm_messages)
         
-        # 5. Get LLM response
-        response = self.llm.complete(formatted_messages, preferred_model=preferred_model)
+        # 5. Get LLM response with tool context for function calling
+        tool_context = {
+            'session': self.db_session,
+            'user_id': self.user_id,
+            'node_id': self.node_id,
+            'context_name': 'hub'
+        }
+        response = self.llm.complete(
+            formatted_messages, 
+            preferred_model=preferred_model,
+            tool_context=tool_context,
+            attached_files=attached_files  # Pass file references for multimodal
+        )
         
         # 6. Create ASSISTANT message
         assistant_msg = Message(

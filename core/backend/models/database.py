@@ -209,6 +209,8 @@ class UploadedFile(Base):
     size_bytes = Column(Integer, nullable=False)
     vector_status = Column(String(50), default="PENDING")  # PENDING, COMPLETED
     kc_sync_status = Column(String(50), default="PENDING")  # PENDING, SYNCED
+    gemini_file_uri = Column(String(512), nullable=True)   # Gemini File API URI
+    gemini_file_name = Column(String(255), nullable=True)  # Gemini file name reference
     uploaded_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships
@@ -276,6 +278,20 @@ def _run_migrations(engine):
                 ))
                 conn.commit()
                 print("✅ Migration: Added remote_user_id column to service_registry")
+    
+    # Migration: Add Gemini File API columns to uploaded_files if missing
+    if 'uploaded_files' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('uploaded_files')]
+        if 'gemini_file_uri' not in columns:
+            with engine.connect() as conn:
+                conn.execute(text(
+                    "ALTER TABLE uploaded_files ADD COLUMN gemini_file_uri VARCHAR(512)"
+                ))
+                conn.execute(text(
+                    "ALTER TABLE uploaded_files ADD COLUMN gemini_file_name VARCHAR(255)"
+                ))
+                conn.commit()
+                print("✅ Migration: Added Gemini File API columns to uploaded_files")
 
 
 def get_session(engine):

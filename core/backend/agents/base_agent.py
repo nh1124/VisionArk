@@ -17,9 +17,10 @@ import json
 class BaseAgent(ABC):
     """Abstract base class for all AI agents"""
     
-    def __init__(self, node_id: str, db_session, api_key: Optional[str] = None):
+    def __init__(self, node_id: str, db_session, api_key: Optional[str] = None, user_id: Optional[str] = None):
         self.node_id = node_id
         self.db_session = db_session
+        self.user_id = user_id  # Store for API key refresh
         self.conversation_history: List[Message] = []
         self.llm = get_provider(api_key=api_key)
         self.system_prompt = None
@@ -29,6 +30,11 @@ class BaseAgent(ABC):
         
         # Load conversation history from DB
         self._load_history_from_db()
+    
+    def refresh_llm(self, api_key: str):
+        """Refresh the LLM provider with a new API key"""
+        if api_key:
+            self.llm = get_provider(api_key=api_key)
     
     @abstractmethod
     def load_system_prompt(self) -> str:
@@ -44,7 +50,7 @@ class BaseAgent(ABC):
         """Return the name (slug) of the node"""
         pass
     
-    def chat(self, user_message: str, attached_files: List[AttachedFile] = None, preferred_model: Optional[str] = None) -> str:
+    def chat(self, user_message: str, attached_files: List[AttachedFile] = None, preferred_model: Optional[str] = None, tool_context: dict = None) -> str:
         """
         Generic chat logic - same for all agents
         NOW SENDS ALL MESSAGES
@@ -72,8 +78,20 @@ class BaseAgent(ABC):
             llm_messages  # ✅ ALL messages, not just last 10!
         )
         
-        # Get response from LLM
-        response = self.llm.complete(messages, preferred_model=preferred_model)
+        # Get response from LLM (with optional tool context and file attachments)
+        if tool_context:
+            response = self.llm.complete(
+                messages, 
+                preferred_model=preferred_model, 
+                tool_context=tool_context,
+                attached_files=attached_files  # Pass file references for multimodal
+            )
+        else:
+            response = self.llm.complete(
+                messages, 
+                preferred_model=preferred_model,
+                attached_files=attached_files  # Pass file references for multimodal
+            )
         
         # Create assistant message
         assistant_msg = Message(

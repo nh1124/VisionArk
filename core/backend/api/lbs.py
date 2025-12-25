@@ -23,7 +23,7 @@ def get_lbs_client(
     
     # Try to get user's registered LBS service config
     lbs_api_key = None
-    lbs_user_id = identity.user_id  # Default to OS user ID
+    lbs_url = None
     
     service = db.query(ServiceRegistry).filter(
         ServiceRegistry.user_id == identity.user_id,
@@ -31,19 +31,16 @@ def get_lbs_client(
     ).first()
     
     if service:
-        # Use remote_user_id if configured (for cross-service user mapping)
-        if service.remote_user_id:
-            lbs_user_id = service.remote_user_id
-        
+        lbs_url = service.base_url
         # Decrypt API key
         if service.api_key_encrypted:
             try:
                 lbs_api_key = decrypt_string(service.api_key_encrypted)
             except Exception:
-                pass  # Fall back to env var if decryption fails
+                pass  # Fall back to env var logic in LBSClient if decryption fails
     
-    # Use API key auth and mapped user ID for LBS communication
-    return LBSClient(user_id=lbs_user_id, api_key=lbs_api_key)
+    # Use API key auth only
+    return LBSClient(base_url=lbs_url, api_key=lbs_api_key)
 
 
 # Pydantic models (kept for compatibility with frontend and Hub logic)

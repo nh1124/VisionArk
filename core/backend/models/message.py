@@ -18,20 +18,33 @@ class MessageRole(Enum):
 @dataclass
 class AttachedFile:
     """
-    File attachment with metadata and content
-    Separates full content (for LLM) from metadata (for logs)
+    File attachment with metadata and Gemini File API reference
+    Stores file reference for multimodal LLM calls, not raw content
     """
     filename: str
     file_type: str
     size_bytes: int
-    content: Optional[str] = None  # Extracted text content
+    content: Optional[str] = None  # Legacy: extracted text (for fallback only)
+    gemini_file_uri: Optional[str] = None  # Gemini File API URI
+    gemini_file_name: Optional[str] = None  # Gemini file reference name
+    storage_path: Optional[str] = None  # Local storage path
+    
+    def has_gemini_reference(self) -> bool:
+        """Check if file was uploaded to Gemini"""
+        return self.gemini_file_uri is not None
     
     def format_for_chat(self) -> str:
         """
-        Format for LLM - include full content
+        Format for LLM - show file reference, NOT content
+        Use Gemini File API for actual content when available
         """
-        if self.content:
-            return f"\n\n**Attached File: {self.filename}**\n```\n{self.content}\n```"
+        if self.gemini_file_uri:
+            return f"\n\n**Attached File: {self.filename}** (Gemini File: available for analysis)"
+        elif self.content:
+            # Fallback for text files only (small files < 10KB)
+            if self.size_bytes < 10000 and self.file_type.startswith("text/"):
+                return f"\n\n**Attached File: {self.filename}**\n```\n{self.content}\n```"
+            return f"\n\n**Attached File: {self.filename}** (content available)"
         return f"\n\n**File attached: {self.filename}** (type: {self.file_type})"
     
     def format_for_log(self) -> str:
@@ -46,13 +59,29 @@ class AttachedFile:
     
     def format_for_display(self) -> dict:
         """
-        Format for frontend display
+        Format for frontend display - metadata only, no content
         """
         return {
             "name": self.filename,
             "type": self.file_type,
-            "size": self.size_bytes
+            "size": self.size_bytes,
+            "has_gemini_ref": self.has_gemini_reference()
         }
+    
+    def to_gemini_part(self):
+        """
+        Convert to Gemini content part for multimodal API calls.
+        Creates a file_data part using the stored URI - does not re-fetch.
+        """
+        if self.gemini_file_uri and self.gemini_file_name:
+            from google.generativeai import protos
+            return protos.Part(
+                file_data=protos.FileData(
+                    file_uri=self.gemini_file_uri,
+                    mime_type=self.file_type
+                )
+            )
+        return None
 
 
 @dataclass

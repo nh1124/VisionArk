@@ -49,10 +49,12 @@ def get_hub_agent(user_id: str, db: Session) -> HubAgent:
     """Get or create per-user Hub agent with TTL/LRU caching"""
     cached = _hub_cache.get(user_id)
     if cached:
-        # Cache holds the instance, but we need to ensure it has the current session?
-        # Better: agents should perhaps not be long-lived in cache if they hold session
-        # Or they should update their session
+        # Update session and refresh API key in case it changed
         cached.db_session = db
+        # Refresh API key to ensure it's current
+        api_key = HubAgent._get_api_key(user_id, db)
+        if api_key:
+            cached.refresh_llm(api_key)
         return cached
     
     # Create new hub agent for this user
@@ -67,6 +69,10 @@ def get_spoke_agent(user_id: str, spoke_name: str, db: Session) -> SpokeAgent:
     cached = _spoke_cache.get(cache_key)
     if cached:
         cached.db_session = db
+        # Refresh API key to ensure it's current
+        api_key = SpokeAgent._get_api_key(user_id, db)
+        if api_key:
+            cached.refresh_llm(api_key)
         return cached
     
     # Create new spoke agent for this user
@@ -84,36 +90,140 @@ async def chat_with_hub(
     db: Session = Depends(get_db),
     x_preferred_model: Optional[str] = Header(None, alias="X-Preferred-Model")
 ):
-    """Chat with the Hub agent (supports file attachments)"""
-    print(f"[DEBUG] chat_with_hub called for user_id={identity.user_id}, auth_method={identity.auth_method}")
+    """Chat with the Hub agent (supports file attachments via Gemini File API)"""
     from services.command_parser import parse_command, execute_command
-    from utils.file_helper import process_file_content
     from models.message import AttachedFile
+    from llm import get_provider
+    from utils.encryption import decrypt_string
+    from models.database import UserSettings
+    import tempfile
+    import os
     
     executed_commands = []
     attached_files = []
     file_metadata = []
     
-    # Process uploaded files - create AttachedFile objects
+    # Process uploaded files - upload to Gemini File API
     if files:
+        # Get user's Gemini API key for file upload
+        settings = db.query(UserSettings).filter(UserSettings.user_id == identity.user_id).first()
+        api_key = None
+        if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
+            api_key = decrypt_string(settings.ai_config["gemini_api_key"])
+        
+        if api_key:
+            try:
+                provider = get_provider(api_key=api_key)
+            except Exception as e:
+                print(f"[Hub] Failed to get provider for file upload: {e}")
+                provider = None
+                api_key = None
+        else:
+            provider = None
+            api_key = None
+        
+        # Initialize FileService for persistent storage
+        file_service = None
+        if api_key:
+            try:
+                from services.file_service import FileService
+                file_service = FileService(db, identity.user_id, api_key)
+            except Exception as e:
+                print(f"[Hub] Failed to init FileService: {e}")
+        
         for file in files:
             content = await file.read()
+            file_size = len(content)
+            mime_type = file.content_type or "application/octet-stream"
             
-            # Extract file content
-            file_text = await process_file_content(content, file.filename, file.content_type)
+            gemini_file_uri = None
+            gemini_file_name = None
+            file_text = None
+            storage_path = None
             
-            # Create AttachedFile object
+            # Save to local storage and database via FileService
+            if file_service:
+                try:
+                    db_file = file_service.save_file(
+                        content=content,
+                        filename=file.filename,
+                        mime_type=mime_type,
+                        node_type="hub",
+                        node_name="hub"
+                    )
+                    storage_path = db_file.storage_path
+                    
+                    # Upload to Gemini
+                    if storage_path:
+                        gemini_file = file_service.upload_to_gemini(db_file.id)
+                        if gemini_file:
+                            gemini_file_uri = gemini_file.uri
+                            gemini_file_name = gemini_file.name
+                            print(f"[Hub] Saved & uploaded file: {file.filename} -> {gemini_file_name}")
+                except Exception as e:
+                    print(f"[Hub] FileService error: {e}")
+            
+            # Fallback to direct Gemini upload if FileService failed
+            if not gemini_file_uri and provider and hasattr(provider, 'upload_file'):
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp:
+                        tmp.write(content)
+                        tmp_path = tmp.name
+                    
+                    result = provider.upload_file(tmp_path, mime_type=mime_type, display_name=file.filename)
+                    gemini_file_uri = result["file_uri"]
+                    gemini_file_name = result["file_name"]
+                    print(f"[Hub] Uploaded file to Gemini (fallback): {file.filename} -> {gemini_file_name}")
+                    
+                    os.unlink(tmp_path)
+                except Exception as e:
+                    print(f"[Hub] Failed to upload file to Gemini: {e}")
+                    if file_size < 100000 and mime_type.startswith("text/"):
+                        from utils.file_helper import process_file_content
+                        file_text = await process_file_content(content, file.filename, mime_type)
+            
+            # Create AttachedFile object with Gemini reference
             attached_file = AttachedFile(
                 filename=file.filename,
-                file_type=file.content_type or "application/octet-stream",
-                size_bytes=len(content),
-                content=file_text
+                file_type=mime_type,
+                size_bytes=file_size,
+                content=file_text,
+                gemini_file_uri=gemini_file_uri,
+                gemini_file_name=gemini_file_name,
+                storage_path=storage_path
             )
             attached_files.append(attached_file)
             file_metadata.append(attached_file.format_for_display())
     
-    # Check if user directly sent a command
-    command_context = None
+    # Also load synced reference files from FileService
+    try:
+        from services.file_service import FileService
+        
+        # Get user's Gemini API key
+        settings = db.query(UserSettings).filter(UserSettings.user_id == identity.user_id).first()
+        api_key = None
+        if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
+            api_key = decrypt_string(settings.ai_config["gemini_api_key"])
+        
+        if api_key:
+            file_service = FileService(db, identity.user_id, api_key)
+            synced_parts = file_service.get_gemini_file_parts("hub", "hub")
+            
+            # Add synced files to attached_files
+            for gemini_file in synced_parts:
+                synced_attached = AttachedFile(
+                    filename=gemini_file.display_name or "reference_file",
+                    file_type=gemini_file.mime_type or "application/octet-stream",
+                    size_bytes=0,  # Not tracked for synced files
+                    gemini_file_uri=gemini_file.uri,
+                    gemini_file_name=gemini_file.name
+                )
+                attached_files.append(synced_attached)
+                print(f"[Hub] Added synced file: {gemini_file.display_name}")
+    except Exception as e:
+        print(f"[Hub] Failed to load synced files: {e}")
+    
+    # Check if user directly sent a command - process and return WITHOUT AI response
     if message.strip().startswith('/'):
         cmd = parse_command(message.strip())
         if cmd:
@@ -132,9 +242,13 @@ async def chat_with_hub(
                     "message": cmd_result.message
                 })
                 
-                # ✅ Pass command result to AI as context
-                if cmd_result.success:
-                    command_context = f"[Command Result: {cmd_result.message}]"
+                # ✅ Return immediately - don't send to AI
+                return ChatResponse(
+                    response=cmd_result.message,
+                    meta_actions=[],
+                    executed_commands=executed_commands,
+                    attached_files=file_metadata
+                )
                 
             except Exception as e:
                 executed_commands.append({
@@ -142,50 +256,19 @@ async def chat_with_hub(
                     "success": False,
                     "message": f"Command failed: {str(e)}"
                 })
+                return ChatResponse(
+                    response=f"❌ Command failed: {str(e)}",
+                    meta_actions=[],
+                    executed_commands=executed_commands,
+                    attached_files=file_metadata
+                )
     
-    # Get Hub's response
+    # Get Hub's response (only reached if no direct command was executed)
     hub = get_hub_agent(identity.user_id, db)
+    response = hub.chat(message, attached_files, preferred_model=x_preferred_model)
     
-    # ✅ Include command result in context if command was executed
-    if command_context:
-        user_message_with_context = f"{message}\n\n{command_context}"
-    else:
-        user_message_with_context = message
-        
-    response = hub.chat(user_message_with_context, attached_files, preferred_model=x_preferred_model)
-    
-    # Check if Hub's response contains commands
-    lines = response.split('\n')
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith('/'):
-            cmd = parse_command(stripped)
-            if cmd:
-                try:
-                    cmd_result = await execute_command(
-                        cmd,
-                        context="hub",
-                        context_type="hub",
-                        context_name="hub",
-                        session=db,
-                        user_id=identity.user_id
-                    )
-                    executed_commands.append({
-                        "command": stripped,
-                        "success": cmd_result.success,
-                        "message": cmd_result.message
-                    })
-                    
-                    if cmd.name == "check_inbox" and cmd_result.success and cmd_result.data and cmd_result.data.get("has_messages"):
-                        followup_response = hub.chat(cmd_result.message)
-                        response += f"\n\n{followup_response}"
-                        
-                except Exception as e:
-                    executed_commands.append({
-                        "command": stripped,
-                        "success": False,
-                        "message": f"Command failed: {str(e)}"
-                    })
+    # Note: AI tool calls are now handled via native function calling in GeminiProvider
+    # No need to parse slash commands from AI response text
     
     return ChatResponse(
         response=response,
@@ -226,45 +309,147 @@ async def chat_with_spoke(
     if not valid:
         raise HTTPException(status_code=400, detail=error)
     
-    spoke_dir = get_spoke_dir(identity.user_id, spoke_name)
-    if not spoke_dir.exists():
+    # Check if spoke exists in database (RDB is source of truth)
+    node = db.query(Node).filter(
+        Node.user_id == identity.user_id,
+        Node.name == spoke_name,
+        Node.node_type == "SPOKE"
+    ).first()
+    
+    if not node:
         raise HTTPException(status_code=404, detail=f"Spoke '{spoke_name}' not found")
     
     from services.command_parser import parse_command, execute_command
-    from utils.file_helper import process_file_content
     from utils.ref_loader import load_reference_files
+    from models.message import AttachedFile
+    from llm import get_provider
+    from utils.encryption import decrypt_string
+    from models.database import UserSettings
+    import tempfile
+    import os as os_module
     
     executed_commands = []
     user_message = message
     file_metadata = []
+    attached_file_objects = []
     
-    # Process uploaded files and extract content
+    # Process uploaded files - upload to Gemini File API
     if files:
-        processed_contents = []
+        # Get user's Gemini API key for file upload
+        settings = db.query(UserSettings).filter(UserSettings.user_id == identity.user_id).first()
+        api_key = None
+        if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
+            api_key = decrypt_string(settings.ai_config["gemini_api_key"])
+        
+        if api_key:
+            try:
+                provider = get_provider(api_key=api_key)
+            except Exception as e:
+                print(f"[Spoke] Failed to get provider for file upload: {e}")
+                provider = None
+        else:
+            provider = None
+        
+        # Initialize FileService for persistent storage
+        file_service = None
+        if api_key:
+            try:
+                from services.file_service import FileService
+                file_service = FileService(db, identity.user_id, api_key)
+            except Exception as e:
+                print(f"[Spoke] Failed to init FileService: {e}")
+        
         for file in files:
             content = await file.read()
+            file_size = len(content)
+            mime_type = file.content_type or "application/octet-stream"
             
-            # Store metadata
-            file_info = {
-                "name": file.filename,
-                "size": len(content),
-                "type": file.content_type or "application/octet-stream"
-            }
-            file_metadata.append(file_info)
+            gemini_file_uri = None
+            gemini_file_name = None
+            file_text = None
+            storage_path = None
             
-            # Extract file content
-            file_text = await process_file_content(content, file.filename, file.content_type)
-            processed_contents.append(file_text)
-        
-        # Add file content to message
-        if processed_contents:
-            files_section = "\n\n".join(processed_contents)
-            user_message = f"{message}\n\n**Attached Files Content:**\n{files_section}"
+            # Save to local storage and database via FileService
+            if file_service:
+                try:
+                    db_file = file_service.save_file(
+                        content=content,
+                        filename=file.filename,
+                        mime_type=mime_type,
+                        node_type="spoke",
+                        node_name=spoke_name
+                    )
+                    storage_path = db_file.storage_path
+                    
+                    # Upload to Gemini
+                    if storage_path:
+                        gemini_file = file_service.upload_to_gemini(db_file.id)
+                        if gemini_file:
+                            gemini_file_uri = gemini_file.uri
+                            gemini_file_name = gemini_file.name
+                            print(f"[Spoke] Saved & uploaded file: {file.filename} -> {gemini_file_name}")
+                except Exception as e:
+                    print(f"[Spoke] FileService error: {e}")
+            
+            # Fallback to direct Gemini upload if FileService failed
+            if not gemini_file_uri and provider and hasattr(provider, 'upload_file'):
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=os_module.path.splitext(file.filename)[1]) as tmp:
+                        tmp.write(content)
+                        tmp_path = tmp.name
+                    
+                    result = provider.upload_file(tmp_path, mime_type=mime_type, display_name=file.filename)
+                    gemini_file_uri = result["file_uri"]
+                    gemini_file_name = result["file_name"]
+                    print(f"[Spoke] Uploaded file to Gemini (fallback): {file.filename} -> {gemini_file_name}")
+                    
+                    os_module.unlink(tmp_path)
+                except Exception as e:
+                    print(f"[Spoke] Failed to upload file to Gemini: {e}")
+                    if file_size < 100000 and mime_type.startswith("text/"):
+                        from utils.file_helper import process_file_content
+                        file_text = await process_file_content(content, file.filename, mime_type)
+            
+            # Create AttachedFile object with Gemini reference
+            attached_file = AttachedFile(
+                filename=file.filename,
+                file_type=mime_type,
+                size_bytes=file_size,
+                content=file_text,
+                gemini_file_uri=gemini_file_uri,
+                gemini_file_name=gemini_file_name,
+                storage_path=storage_path
+            )
+            attached_file_objects.append(attached_file)
+            file_metadata.append(attached_file.format_for_display())
     
-    # Load reference files from spoke's refs/ directory
-    ref_content = load_reference_files(identity.user_id, spoke_name, max_files=3)
-    if ref_content:
-        user_message = f"{user_message}\n\n{ref_content}"
+    # Load synced reference files from FileService
+    try:
+        from services.file_service import FileService
+        
+        # Get user's Gemini API key
+        settings = db.query(UserSettings).filter(UserSettings.user_id == identity.user_id).first()
+        api_key = None
+        if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
+            api_key = decrypt_string(settings.ai_config["gemini_api_key"])
+        
+        if api_key:
+            file_service = FileService(db, identity.user_id, api_key)
+            synced_parts = file_service.get_gemini_file_parts("spoke", spoke_name)
+            
+            # Add synced files to attached_files
+            for gemini_file in synced_parts:
+                synced_attached = AttachedFile(
+                    filename=gemini_file.display_name or "reference_file",
+                    file_type=gemini_file.mime_type or "application/octet-stream",
+                    size_bytes=0,  # Not tracked for synced files
+                    gemini_file_uri=gemini_file.uri,
+                    gemini_file_name=gemini_file.name
+                )
+                attached_file_objects.append(synced_attached)
+                print(f"[Spoke {spoke_name}] Added synced file: {gemini_file.display_name}")
+    except Exception as e:
+        print(f"[Spoke {spoke_name}] Failed to load synced files: {e}")
     
     # Check if user directly sent a command
     if message.strip().startswith('/'):
@@ -316,54 +501,13 @@ async def chat_with_spoke(
                     attached_files=file_metadata
                 )
     
-    # Get Spoke's response using new chat method with AttachedFile objects
+    # Get Spoke's response with AttachedFile objects (already created with Gemini references)
     spoke = get_spoke_agent(identity.user_id, spoke_name, db)
-    
-    # Create AttachedFile objects if files were uploaded
-    attached_file_objects = []
-    if files:
-        from models.message import AttachedFile
-        for file_info in file_metadata:
-            # Note: We already extracted content earlier
-            # For now, pass empty content since it's in user_message
-            attached_file_objects.append(AttachedFile(
-                filename=file_info["name"],
-                file_type=file_info["type"],
-                size_bytes=file_info["size"],
-                content=""  # Content already in user_message
-            ))
     
     response = spoke.chat(user_message, attached_file_objects, preferred_model=x_preferred_model)
     
-    # Check if Spoke's response contains commands
-    lines = response.split('\n')
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith('/'):
-            cmd = parse_command(stripped)
-            if cmd:
-                try:
-                    cmd_result = await execute_command(
-                        cmd,
-                        context="spoke",
-                        context_type="spoke",
-                        context_name=spoke_name,
-                        spoke_name=spoke_name,  # Add this parameter!
-                        session=db,
-                        user_id=identity.user_id
-                    )
-                    executed_commands.append({
-                        "command": stripped,
-                        "success": cmd_result.success,
-                        "message": cmd_result.message
-                    })
-                except Exception as e:
-                    executed_commands.append({
-                        "command": stripped,
-                        "success": False,
-                        "message": f"Command failed: {str(e)}"
-                    })
-
+    # Note: AI tool calls are now handled via native function calling in GeminiProvider
+    # No need to parse slash commands from AI response text
     
     # Extract meta-actions
     meta_actions = extract_meta_actions_from_chat(response)
@@ -410,7 +554,6 @@ def create_spoke(
     db: Session = Depends(get_db)
 ):
     """Create a new Spoke (project workspace for this user) using DB and disk"""
-    print(f"[DEBUG] create_spoke called for user_id={identity.user_id}, spoke_name={spoke.spoke_name}")
     
     # 1. Validate
     valid, error = validate_name(spoke.spoke_name, "spoke_name")
@@ -427,7 +570,7 @@ def create_spoke(
                 AgentProfile.is_active == True
             ).first()
             if profile:
-                profile.system_prompt = spoke.custom_prompt
+                profile.system_prompt = spoke.custom_prompt or "You are a specialized AI assistant for this project. Help the user manage tasks, analyze data, and generate insights."
                 db.commit()
         
         return {
@@ -446,7 +589,6 @@ def list_spokes(
     db: Session = Depends(get_db)
 ):
     """List all existing Spokes for this user from DB"""
-    print(f"[DEBUG] list_spokes called for user_id={identity.user_id}")
     
     # Query Nodes table for SPOKES belonging to this user
     spoke_nodes = db.query(Node).filter(

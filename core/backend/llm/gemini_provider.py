@@ -17,8 +17,15 @@ class GeminiProvider(BaseLLMProvider):
         self.tools = []  # Store tools for function calling
     
     def set_tools(self, tools: List[Any]):
-        """Set LangChain tools for function calling"""
+        """Set tools for function calling (supports LangChain tools or dict definitions)"""
         self.tools = tools
+        self._tool_definitions = None  # Will be converted lazily
+    
+    def set_tool_definitions(self, definitions: List[Dict], tool_functions: Dict = None):
+        """Set tool definitions directly (dict format) with optional function map"""
+        self._tool_definitions = definitions
+        self._tool_functions = tool_functions or {}
+        self.tools = []  # Clear LangChain tools
     
     def _convert_langchain_tools_to_gemini(self, tools: List[Any]) -> List[Dict]:
         """Convert LangChain tools to Gemini function declarations"""
@@ -55,20 +62,72 @@ class GeminiProvider(BaseLLMProvider):
         
         return gemini_tools
     
+    def _convert_dict_tools_to_gemini(self, definitions: List[Dict]) -> List[genai.protos.Tool]:
+        """Convert dict-based tool definitions to Gemini Tool format"""
+        function_declarations = []
+        
+        for defn in definitions:
+            # Build parameters schema
+            params = defn.get("parameters", {})
+            properties = {}
+            
+            for prop_name, prop_schema in params.get("properties", {}).items():
+                prop_type = prop_schema.get("type", "string").upper()
+                if prop_type == "INTEGER":
+                    prop_type = "NUMBER"
+                
+                prop_def = genai.protos.Schema(
+                    type=getattr(genai.protos.Type, prop_type, genai.protos.Type.STRING),
+                    description=prop_schema.get("description", "")
+                )
+                properties[prop_name] = prop_def
+            
+            func_decl = genai.protos.FunctionDeclaration(
+                name=defn["name"],
+                description=defn.get("description", ""),
+                parameters=genai.protos.Schema(
+                    type=genai.protos.Type.OBJECT,
+                    properties=properties,
+                    required=params.get("required", [])
+                )
+            )
+            function_declarations.append(func_decl)
+        
+        return [genai.protos.Tool(function_declarations=function_declarations)]
+    
     def complete(
         self,
         messages: List[Message],
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         preferred_model: Optional[str] = None,
+        attached_files: List = None,  # List of AttachedFile objects
         **kwargs
     ) -> CompletionResponse:
-        """Generate completion using Gemini with optional function calling"""
+        """Generate completion using Gemini with optional function calling and file attachments"""
         # Determine model to use (per-request override or default)
         model_name = preferred_model or self.model_name
         
         # Build prompt from messages
         full_prompt = self._build_prompt(messages)
+        
+        # Build content parts for multimodal request
+        content_parts = []
+        
+        # Add file parts first (Gemini recommends files before text)
+        if attached_files:
+            for attached_file in attached_files:
+                if hasattr(attached_file, 'to_gemini_part') and attached_file.has_gemini_reference():
+                    try:
+                        file_part = attached_file.to_gemini_part()
+                        if file_part:
+                            content_parts.append(file_part)
+                            print(f"[Gemini] Added file part: {attached_file.filename}")
+                    except Exception as e:
+                        print(f"[Gemini] Failed to add file part for {attached_file.filename}: {e}")
+        
+        # Add text prompt
+        content_parts.append(full_prompt)
         
         # Generate config
         generation_config = {
@@ -78,18 +137,26 @@ class GeminiProvider(BaseLLMProvider):
             generation_config["max_output_tokens"] = max_tokens
         
         # Create model with tools if available
-        if self.tools:
+        tools_for_model = None
+        
+        # Check for dict-based definitions first
+        if hasattr(self, '_tool_definitions') and self._tool_definitions:
+            tools_for_model = self._convert_dict_tools_to_gemini(self._tool_definitions)
+        elif self.tools:
             gemini_tool_declarations = self._convert_langchain_tools_to_gemini(self.tools)
+            tools_for_model = gemini_tool_declarations
+        
+        if tools_for_model:
             model = genai.GenerativeModel(
                 model_name,
-                tools=gemini_tool_declarations
+                tools=tools_for_model
             )
         else:
             model = genai.GenerativeModel(model_name)
         
-        # Generate response
+        # Generate response with multimodal content
         response = model.generate_content(
-            full_prompt,
+            content_parts if len(content_parts) > 1 else full_prompt,
             generation_config=generation_config
         )
         
@@ -104,23 +171,54 @@ class GeminiProvider(BaseLLMProvider):
                     function_name = part.function_call.name
                     function_args = dict(part.function_call.args)
                     
-                    # Find the matching tool
+                    # Find and execute the matching tool function
                     tool_result = None
-                    for tool in self.tools:
-                        if tool.name == function_name:
-                            try:
-                                # Call the underlying function directly
-                                # The tool's func attribute is the bound function with spoke_name pre-filled
-                                if hasattr(tool, 'func') and callable(tool.func):
-                                    tool_result = tool.func(**function_args)
-                                else:
-                                    # Fallback to run method
-                                    tool_result = tool.run(function_args)
-                                break
-                            except Exception as e:
-                                import traceback
-                                traceback.print_exc()
-                                tool_result = f"Error executing {function_name}: {str(e)}"
+                    
+                    # Check dict-based tool functions first
+                    if hasattr(self, '_tool_functions') and function_name in self._tool_functions:
+                        try:
+                            import inspect
+                            
+                            # Get execution context from kwargs
+                            tool_context = kwargs.get('tool_context', {})
+                            func = self._tool_functions[function_name]
+                            
+                            # Get the function's signature to know what parameters it accepts
+                            sig = inspect.signature(func)
+                            accepted_params = set(sig.parameters.keys())
+                            
+                            # Merge function args with only the injected context that the function accepts
+                            full_args = {**function_args}
+                            for key in ['session', 'user_id', 'node_id', 'spoke_name', 'context_name']:
+                                if key in tool_context and key in accepted_params:
+                                    full_args[key] = tool_context[key]
+                            
+                            result = func(**full_args)
+                            
+                            # Handle ToolResult objects
+                            if hasattr(result, 'to_dict'):
+                                tool_result = result.message
+                            else:
+                                tool_result = str(result)
+                        except Exception as e:
+                            import traceback
+                            traceback.print_exc()
+                            tool_result = f"Error executing {function_name}: {str(e)}"
+                    
+                    # Fallback to LangChain tools
+                    elif self.tools:
+                        for tool in self.tools:
+                            if tool.name == function_name:
+                                try:
+                                    if hasattr(tool, 'func') and callable(tool.func):
+                                        tool_result = tool.func(**function_args)
+                                    else:
+                                        tool_result = tool.run(function_args)
+                                    break
+                                except Exception as e:
+                                    import traceback
+                                    traceback.print_exc()
+                                    tool_result = f"Error executing {function_name}: {str(e)}"
                     
                     if tool_result is None:
                         tool_result = f"Function {function_name} not found"
@@ -187,6 +285,121 @@ class GeminiProvider(BaseLLMProvider):
             task_type="retrieval_document"
         )
         return result["embedding"]
+    
+    def upload_file(self, file_path: str, mime_type: str = None, display_name: str = None) -> Dict:
+        """
+        Upload a file to Gemini File API for multimodal processing.
+        
+        Args:
+            file_path: Absolute path to the file
+            mime_type: Optional MIME type (auto-detected if not provided)
+            display_name: Optional display name for the file
+            
+        Returns:
+            Dict with file_uri and file_name for later reference
+        """
+        import mimetypes
+        from pathlib import Path
+        
+        path = Path(file_path)
+        
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+        
+        # Auto-detect MIME type if not provided
+        if not mime_type:
+            mime_type, _ = mimetypes.guess_type(str(path))
+            mime_type = mime_type or "application/octet-stream"
+        
+        # Display name defaults to filename
+        if not display_name:
+            display_name = path.name
+        
+        try:
+            uploaded_file = genai.upload_file(
+                path=str(path),
+                mime_type=mime_type,
+                display_name=display_name
+            )
+            
+            return {
+                "file_uri": uploaded_file.uri,
+                "file_name": uploaded_file.name,
+                "display_name": display_name,
+                "mime_type": mime_type,
+                "size_bytes": path.stat().st_size
+            }
+        except Exception as e:
+            raise RuntimeError(f"Failed to upload file to Gemini: {str(e)}")
+    
+    def get_uploaded_file(self, file_name: str):
+        """
+        Retrieve a previously uploaded file by its Gemini file name.
+        
+        Args:
+            file_name: The Gemini file name (not display name)
+            
+        Returns:
+            Gemini file object
+        """
+        return genai.get_file(name=file_name)
+    
+    def complete_with_files(
+        self,
+        messages: List[Message],
+        file_references: List[str],  # Gemini file URIs or names
+        temperature: float = 0.7,
+        preferred_model: str = None,
+        **kwargs
+    ) -> CompletionResponse:
+        """
+        Generate completion with uploaded files included in context.
+        
+        Args:
+            messages: Conversation messages
+            file_references: List of Gemini file URIs or names
+            temperature: Temperature for generation
+            preferred_model: Optional model override
+            
+        Returns:
+            CompletionResponse with generated content
+        """
+        model_name = preferred_model or self.model_name
+        
+        # Build content parts with files
+        content_parts = []
+        
+        # Add files first
+        for file_ref in file_references:
+            try:
+                if file_ref.startswith("files/"):
+                    # It's a file name
+                    file_obj = self.get_uploaded_file(file_ref)
+                else:
+                    # Try to parse as URI to get name
+                    file_name = file_ref.split("/")[-1]
+                    file_obj = self.get_uploaded_file(f"files/{file_name}")
+                content_parts.append(file_obj)
+            except Exception as e:
+                print(f"[Gemini] Warning: Could not retrieve file {file_ref}: {e}")
+        
+        # Add text prompt  
+        full_prompt = self._build_prompt(messages)
+        content_parts.append(full_prompt)
+        
+        generation_config = {"temperature": temperature}
+        
+        model = genai.GenerativeModel(model_name)
+        response = model.generate_content(
+            content_parts,
+            generation_config=generation_config
+        )
+        
+        return CompletionResponse(
+            content=response.text,
+            model=model_name,
+            usage=None
+        )
     
     def stream_complete(
         self,

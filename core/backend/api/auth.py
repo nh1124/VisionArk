@@ -10,11 +10,15 @@ from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
-from models.database import User
+from models.database import User, ServiceRegistry, UserSettings
+from config import settings
 from services.auth import get_db, resolve_identity, Identity
 from utils.password import hash_password, verify_password, MIN_PASSWORD_LENGTH
 from utils.jwt import create_access_token, decode_access_token
 from utils.paths import get_user_hub_dir, get_user_spokes_dir, get_user_global_assets_dir, get_default_assets_dir
+from utils.encryption import encrypt_string
+import os
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +30,8 @@ class RegisterRequest(BaseModel):
     username: str
     password: str
     email: str | None = None
+    lbs_api_key: str
+    gemini_api_key: str
     
     @field_validator('username')
     @classmethod
@@ -68,6 +74,10 @@ class UserProfile(BaseModel):
 class MessageResponse(BaseModel):
     message: str
 
+class ConnectionTest(BaseModel):
+    api_key: str
+    base_url: str | None = None
+
 
 @router.post("/register", response_model=AuthResponse)
 async def register(req: RegisterRequest, db: Session = Depends(get_db)):
@@ -87,6 +97,24 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
         if existing_email:
             raise HTTPException(status_code=400, detail="Email already registered")
     
+    # Validate LBS key before creating account
+    lbs_url = (settings.lbs_service_url or "http://localhost:8100/api/lbs")
+    if "localhost" in lbs_url and os.path.exists("/.dockerenv"):
+        lbs_url = lbs_url.replace("localhost", "host.docker.internal")
+    
+    if not lbs_url.startswith("http"):
+        lbs_url = f"http://{lbs_url}"
+
+    health_url = f"{lbs_url.rstrip('/')}/health"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(health_url, headers={"x-api-key": req.lbs_api_key})
+            if resp.status_code != 200:
+                raise HTTPException(status_code=400, detail=f"Invalid LBS API Key (LBS returned {resp.status_code})")
+    except Exception as e:
+        logger.error(f"LBS validation failed during registration: {str(e)}")
+        raise HTTPException(status_code=400, detail="LBS service unreachable. Please ensure LBS is running.")
+
     # Create user
     user_id = str(uuid.uuid4())
     try:
@@ -102,8 +130,27 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
         is_active=True
     )
     
+    # Create LBS service registry entry
+    lbs_service = ServiceRegistry(
+        user_id=user_id,
+        service_name="lbs",
+        base_url=lbs_url,
+        api_key_encrypted=encrypt_string(req.lbs_api_key),
+        is_active=True
+    )
+    
+    # Create UserSettings with Gemini API Key
+    user_settings = UserSettings(
+        user_id=user_id,
+        ai_config={
+            "gemini_api_key": encrypt_string(req.gemini_api_key)
+        }
+    )
+    
     try:
         db.add(user)
+        db.add(lbs_service)
+        db.add(user_settings)
         db.commit()
     except Exception as e:
         db.rollback()
@@ -135,6 +182,29 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
         user_id=user_id,
         username=req.username
     )
+
+@router.post("/test-lbs-connection")
+async def test_lbs_connection(test: ConnectionTest):
+    """
+    Public endpoint to test LBS connection before/during registration.
+    """
+    lbs_url = test.base_url or settings.lbs_service_url or "http://localhost:8100/api/lbs"
+    if "localhost" in lbs_url and os.path.exists("/.dockerenv"):
+        lbs_url = lbs_url.replace("localhost", "host.docker.internal")
+    
+    if not lbs_url.startswith("http"):
+        lbs_url = f"http://{lbs_url}"
+
+    health_url = f"{lbs_url.rstrip('/')}/health"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(health_url, headers={"x-api-key": test.api_key})
+            if resp.status_code == 200:
+                return {"status": "success", "message": "Valid LBS API Key!"}
+            else:
+                return {"status": "error", "message": f"Invalid Key (LBS status {resp.status_code})"}
+    except Exception as e:
+        return {"status": "error", "message": f"LBS Unreachable: {str(e)}"}
 
 
 @router.post("/login", response_model=AuthResponse)

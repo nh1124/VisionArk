@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     frontend_port: int = 3000
     host: str = "127.0.0.1"  # Default to localhost for security; set to 0.0.0.0 for Docker
     debug: bool = True
+    lbs_service_url: str = "http://localhost:8100/api/lbs"
     
     # Auth Settings (Legacy API Key - Phase 2)
     atmos_env: str = "dev"                    # dev | prod
@@ -23,6 +24,10 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "dev_jwt_secret_change_in_production_must_be_32_chars"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24  # 24 hours
+    
+    # File Storage Settings
+    user_data_root: str = "data/users"  # Root directory for user files
+    max_file_size_mb: int = 100  # Maximum file upload size in MB
     
     # Database Settings (PostgreSQL required)
     database_url: str = ""  # postgresql://user:pass@host:5432/dbname

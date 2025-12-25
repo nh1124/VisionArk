@@ -16,6 +16,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - atmos-network
+    restart: unless-stopped
 
   # Backend API
   backend:
@@ -43,6 +46,10 @@ services:
       - ../spokes:/app/spokes
       - ../global_assets:/app/global_assets
       - ../hub_data:/app/hub_data
+      - ../data/users:/app/data/users # User file storage (persisted)
+    networks:
+      - atmos-network
+    restart: unless-stopped
 
   # Frontend UI
   frontend:
@@ -62,6 +69,13 @@ services:
     command: npm run dev
     depends_on:
       - backend
+    networks:
+      - atmos-network
+    restart: unless-stopped
+
+networks:
+  atmos-network:
+    driver: bridge
 
 volumes:
   postgres_data:

@@ -9,6 +9,7 @@ from models.database import User, UserSettings, ServiceRegistry, ExternalIdentit
 from services.auth import get_db, resolve_identity, Identity
 from utils.password import hash_password, verify_password
 from utils.encryption import encrypt_string, decrypt_string
+from config import settings
 
 router = APIRouter(prefix="/api/settings", tags=["Settings"])
 
@@ -23,7 +24,10 @@ class ServiceRegister(BaseModel):
     service_name: str
     base_url: str
     api_key: Optional[str] = None
-    remote_user_id: Optional[str] = None  # User ID in the remote service (e.g., LBS user ID)
+
+class ConnectionTest(BaseModel):
+    base_url: str
+    api_key: str
 
 class ServiceResponse(BaseModel):
     id: int
@@ -83,19 +87,24 @@ def update_ai_settings(
     db: Session = Depends(get_db)
 ):
     """Update AI provider settings with encryption"""
+    from sqlalchemy.orm.attributes import flag_modified
+    
     settings = db.query(UserSettings).filter(UserSettings.user_id == identity.user_id).first()
     if not settings:
         settings = UserSettings(user_id=identity.user_id, ai_config={})
         db.add(settings)
     
-    current_config = settings.ai_config or {}
+    current_config = dict(settings.ai_config) if settings.ai_config else {}
     
     if update.gemini_api_key:
         # Only update if it's not the masked value
         if update.gemini_api_key != "********":
-            current_config["gemini_api_key"] = encrypt_string(update.gemini_api_key)
+            encrypted = encrypt_string(update.gemini_api_key)
+            current_config["gemini_api_key"] = encrypted
         
     settings.ai_config = current_config
+    # Force SQLAlchemy to detect the JSON change
+    flag_modified(settings, "ai_config")
     db.commit()
     return {"message": "AI settings updated"}
 
@@ -118,21 +127,41 @@ def register_service(
         service.base_url = reg.base_url
         if encrypted_key:
             service.api_key_encrypted = encrypted_key
-        if reg.remote_user_id:
-            service.remote_user_id = reg.remote_user_id
     else:
         service = ServiceRegistry(
             user_id=identity.user_id,
             service_name=reg.service_name,
             base_url=reg.base_url,
-            api_key_encrypted=encrypted_key,
-            remote_user_id=reg.remote_user_id
+            api_key_encrypted=encrypted_key
         )
         db.add(service)
     
     db.commit()
     db.refresh(service)
     return service
+
+@router.post("/test-connection")
+async def test_connection(
+    test: ConnectionTest,
+    identity: Identity = Depends(resolve_identity)
+):
+    """Test a connection to an external service (like LBS) using Base URL and API Key"""
+    base_url = test.base_url
+    if not base_url.startswith("http"):
+        base_url = f"http://{base_url}"
+    
+    health_url = f"{base_url.rstrip('/')}/health"
+    headers = {"x-api-key": test.api_key}
+    
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(health_url, headers=headers)
+            if resp.status_code == 200:
+                return {"status": "success", "message": "Connection successful"}
+            else:
+                return {"status": "error", "message": f"Service returned status {resp.status_code}"}
+    except Exception as e:
+        return {"status": "error", "message": f"Could not reach service: {str(e)}"}
 
 @router.get("/services/{service_id}/health")
 async def check_service_health(
@@ -149,7 +178,11 @@ async def check_service_health(
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
     
-    health_url = f"{service.base_url.rstrip('/')}/health"
+    base_url = service.base_url
+    if not base_url.startswith("http"):
+        base_url = f"http://{base_url}"
+        
+    health_url = f"{base_url.rstrip('/')}/health"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(health_url)

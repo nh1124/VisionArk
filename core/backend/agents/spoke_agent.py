@@ -49,7 +49,8 @@ class SpokeAgent(BaseAgent):
             
         return node
 
-    def _get_api_key(self, user_id: str, db_session=None) -> Optional[str]:
+    @staticmethod
+    def _get_api_key(user_id: str, db_session=None) -> Optional[str]:
         """Retrieve and decrypt Gemini API key for the user"""
         if not user_id:
             return None
@@ -82,7 +83,7 @@ class SpokeAgent(BaseAgent):
             node_id = node.id
             
         api_key = self._get_api_key(user_id, db_session)
-        super().__init__(node_id=node_id, db_session=db_session, api_key=api_key)
+        super().__init__(node_id=node_id, db_session=db_session, api_key=api_key, user_id=user_id)
         
         # Backward compatibility for file tools (can be refactored later to use DB files)
         self.spoke_dir = get_spoke_dir(user_id, spoke_name)
@@ -91,10 +92,11 @@ class SpokeAgent(BaseAgent):
         self._setup_tools()
     
     def _setup_tools(self):
-        """Setup and bind file operation tools to LLM"""
+        """Setup and bind file operation tools plus native tools to LLM"""
         from functools import partial
+        from tools import SPOKE_TOOL_DEFINITIONS, TOOL_FUNCTIONS
         
-        # Create spoke-specific versions of tools
+        # Create spoke-specific versions of file tools
         spoke_tools = []
         for tool in ARTIFACT_TOOLS:
             # Create a partial function with spoke_name pre-filled
@@ -170,9 +172,13 @@ class SpokeAgent(BaseAgent):
                 
                 spoke_tools.append(list_directory_bound)
         
-        # Set tools on the LLM provider
-        if hasattr(self.llm, 'set_tools'):
+        # Set LangChain tools for file operations
+        if hasattr(self.llm, 'set_tools') and spoke_tools:
             self.llm.set_tools(spoke_tools)
+        
+        # Also set native tool definitions for Hub communication
+        if hasattr(self.llm, 'set_tool_definitions'):
+            self.llm.set_tool_definitions(SPOKE_TOOL_DEFINITIONS, TOOL_FUNCTIONS)
     
     def load_system_prompt(self) -> str:
         """
@@ -211,29 +217,26 @@ Focus on delivering high-quality work within this context.
 ## Available Tools
 
 You have access to these tools via Function Calling:
+
+**File Operations:**
 - `save_artifact(file_path, content, overwrite=False)` - Save code/docs to artifacts/ 
 - `read_reference(file_path)` - Read files from refs/
 - `list_directory(sub_dir)` - List files in 'refs' or 'artifacts'
 
+**Hub Communication:**
+- `report_to_hub(summary, request)` - Send progress updates or requests to Hub
+- `archive_session()` - Archive conversation and start fresh
+- `delete_spoke()` - Delete this spoke (use with caution)
+
 **Use these tools to CREATE FILES instead of just showing code!**
 
-## Available Commands
+## How to Communicate with Hub
 
-**IMPORTANT: You can use these commands DIRECTLY in your responses.**
+When you complete a milestone or need Hub's input, use the `report_to_hub` tool:
 
-- `/report "message"` - Send progress updates to Hub
-- `/archive` - Archive conversation and start fresh  
-- `/kill` - Delete this spoke (use with caution)
-
-## How to Send Messages to Hub
-
-When you complete a milestone, **use /report directly**:
-
-```
-I've completed the analysis. Here are the findings...
-
-/report "Analysis phase completed. Key findings: X, Y, Z."
-```
+Example: 
+- `report_to_hub(summary="Analysis phase completed. Key findings: X, Y, Z.")`
+- `report_to_hub(summary="Draft complete", request="Please review and approve")`
 
 ## Reference Files
 
@@ -246,3 +249,24 @@ Work efficiently and communicate proactively with the Hub.
     
     def get_node_name(self) -> str:
         return self.spoke_name
+    
+    def chat(self, user_message: str, attached_files=None, preferred_model=None) -> str:
+        """
+        Spoke-specific chat - passes tool context with spoke information
+        """
+        from models.message import AttachedFile
+        
+        tool_context = {
+            'session': self.db_session,
+            'user_id': self.user_id,
+            'node_id': self.node_id,
+            'spoke_name': self.spoke_name,
+            'context_name': self.spoke_name
+        }
+        
+        return super().chat(
+            user_message, 
+            attached_files=attached_files, 
+            preferred_model=preferred_model,
+            tool_context=tool_context
+        )
