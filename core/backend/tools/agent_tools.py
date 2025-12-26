@@ -31,6 +31,36 @@ class ToolResult:
 
 
 # ==============================================================================
+# LBS Client Helper
+# ==============================================================================
+
+def _get_lbs_client(user_id: str, session: Session) -> LBSClient:
+    """Get LBS client with user's registered LBS API key and remote user ID from ServiceRegistry"""
+    from models.database import ServiceRegistry
+    from utils.encryption import decrypt_string
+    
+    # Try to get user's registered LBS service config
+    lbs_api_key = None
+    lbs_url = None
+    
+    service = session.query(ServiceRegistry).filter(
+        ServiceRegistry.user_id == user_id,
+        ServiceRegistry.service_name == "lbs"
+    ).first()
+    
+    if service:
+        lbs_url = service.base_url
+        # Decrypt API key
+        if service.api_key_encrypted:
+            try:
+                lbs_api_key = decrypt_string(service.api_key_encrypted)
+            except Exception:
+                pass  # Fall back to env var logic in LBSClient if decryption fails
+    
+    return LBSClient(base_url=lbs_url, api_key=lbs_api_key)
+
+
+# ==============================================================================
 # Hub Tools - Available to Hub Agent
 # ==============================================================================
 
@@ -111,7 +141,7 @@ def delete_spoke(
         
         # Clean up LBS tasks
         try:
-            client = LBSClient()
+            client = _get_lbs_client(user_id, session)
             tasks = client.get_tasks(context=spoke_name)
             for t in tasks:
                 client.delete_task(t["task_id"])
@@ -191,7 +221,7 @@ def create_task(
         elif rule_type.upper() == "EVERY_N_DAYS" and interval_days:
             task_data["interval_days"] = interval_days
         
-        client = LBSClient()
+        client = _get_lbs_client(user_id, session)
         result = client.create_task(task_data)
         
         return ToolResult(
@@ -220,7 +250,7 @@ def list_tasks(
         context_name: Current context name (injected)
     """
     try:
-        client = LBSClient()
+        client = _get_lbs_client(user_id, session)
         target_context = context or context_name
         tasks = client.get_tasks(context=target_context)
         
@@ -277,7 +307,7 @@ def update_task_details(
         if not updates:
             return ToolResult(success=False, message="No updates provided")
             
-        client = LBSClient()
+        client = _get_lbs_client(user_id, session)
         result = client.update_task(task_id, updates)
         
         return ToolResult(
@@ -302,7 +332,7 @@ def delete_task_by_id(
         task_id: ID of the task to delete
     """
     try:
-        client = LBSClient()
+        client = _get_lbs_client(user_id, session)
         client.delete_task(task_id)
         
         return ToolResult(

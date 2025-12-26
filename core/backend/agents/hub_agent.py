@@ -209,8 +209,27 @@ You have access to the following tools that you can call directly. Use them when
         # 2. Build LBS context
         meta_info_str = None
         try:
-            # LBSClient uses base_url, api_key, or token - not user_id directly
-            client = LBSClient()
+            from models.database import ServiceRegistry
+            from utils.encryption import decrypt_string
+            
+            # Get user's LBS config
+            lbs_api_key = None
+            lbs_url = None
+            
+            service = self.db_session.query(ServiceRegistry).filter(
+                ServiceRegistry.user_id == self.user_id,
+                ServiceRegistry.service_name == "lbs"
+            ).first()
+            
+            if service:
+                lbs_url = service.base_url
+                if service.api_key_encrypted:
+                    try:
+                        lbs_api_key = decrypt_string(service.api_key_encrypted)
+                    except Exception:
+                        pass
+            
+            client = LBSClient(base_url=lbs_url, api_key=lbs_api_key)
             daily_data = client.calculate_load(date.today())
             load = daily_data.get("adjusted_load", 0.0)
             meta_info_str = f"Load: {load:.1f}/10.0 | Capacity: 10.0"
