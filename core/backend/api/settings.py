@@ -150,7 +150,14 @@ async def test_connection(
     if not base_url.startswith("http"):
         base_url = f"http://{base_url}"
     
-    health_url = f"{base_url.rstrip('/')}/health"
+    # Smart health check pathing: strip common API path suffixes for the health check
+    health_base = base_url
+    for suffix in ["/api/lbs", "/api/v1", "/v1"]:
+        if health_base.endswith(suffix):
+            health_base = health_base[:-len(suffix)]
+            break
+            
+    health_url = f"{health_base.rstrip('/')}/health"
     headers = {"x-api-key": test.api_key}
     
     try:
@@ -182,7 +189,14 @@ async def check_service_health(
     if not base_url.startswith("http"):
         base_url = f"http://{base_url}"
         
-    health_url = f"{base_url.rstrip('/')}/health"
+    # Smart health check pathing: strip common API path suffixes for the health check
+    health_base = base_url
+    for suffix in ["/api/lbs", "/api/v1", "/v1"]:
+        if health_base.endswith(suffix):
+            health_base = health_base[:-len(suffix)]
+            break
+            
+    health_url = f"{health_base.rstrip('/')}/health"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(health_url)
@@ -215,3 +229,38 @@ def change_password(
     user.password_hash = hash_password(pc.new_password)
     db.commit()
     return {"message": "Password changed successfully"}
+
+@router.get("/status")
+async def get_system_status(
+    identity: Identity = Depends(resolve_identity),
+    db: Session = Depends(get_db)
+):
+    """Check if all mandatory services (Gemini, LBS, KnowledgeCore) are configured and healthy"""
+    # 1. Check Gemini
+    settings_obj = db.query(UserSettings).filter(UserSettings.user_id == identity.user_id).first()
+    gemini_configured = False
+    if settings_obj and settings_obj.ai_config:
+        if settings_obj.ai_config.get("gemini_api_key"):
+            gemini_configured = True
+            
+    # 2. Check Services
+    services = db.query(ServiceRegistry).filter(ServiceRegistry.user_id == identity.user_id).all()
+    
+    status_map = {
+        "gemini": {"configured": gemini_configured},
+        "lbs": {"configured": False, "url": None},
+        "knowledge_core": {"configured": False, "url": None}
+    }
+    
+    for s in services:
+        if s.service_name in status_map:
+            status_map[s.service_name]["configured"] = True
+            status_map[s.service_name]["url"] = s.base_url
+    
+    # Overall summary
+    all_mandatory_met = gemini_configured and status_map["lbs"]["configured"] and status_map["knowledge_core"]["configured"]
+    
+    return {
+        "all_mandatory_met": all_mandatory_met,
+        "details": status_map
+    }

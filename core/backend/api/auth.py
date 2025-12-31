@@ -31,6 +31,7 @@ class RegisterRequest(BaseModel):
     password: str
     email: str | None = None
     lbs_api_key: str
+    kc_api_key: str
     gemini_api_key: str
     
     @field_validator('username')
@@ -115,6 +116,26 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
         logger.error(f"LBS validation failed during registration: {str(e)}")
         raise HTTPException(status_code=400, detail="LBS service unreachable. Please ensure LBS is running.")
 
+    # Validate KnowledgeCore key before creating account
+    kc_url = (settings.knowledge_core_url or "http://localhost:8200/api/v1")
+    if "localhost" in kc_url and os.path.exists("/.dockerenv"):
+        kc_url = kc_url.replace("localhost", "host.docker.internal")
+    
+    if not kc_url.startswith("http"):
+        kc_url = f"http://{kc_url}"
+
+    # Health is at root, but kc_url might end in /v1. Strip /v1 if present for health check.
+    kc_root = kc_url.split("/v1")[0].rstrip("/")
+    kc_health_url = f"{kc_root}/health"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(kc_health_url, headers={"x-api-key": req.kc_api_key})
+            if resp.status_code != 200:
+                raise HTTPException(status_code=400, detail=f"Invalid KnowledgeCore API Key (KC returned {resp.status_code})")
+    except Exception as e:
+        logger.error(f"KnowledgeCore validation failed during registration: {str(e)}")
+        raise HTTPException(status_code=400, detail="KnowledgeCore service unreachable. Please ensure KnowledgeCore is running.")
+
     # Create user
     user_id = str(uuid.uuid4())
     try:
@@ -139,6 +160,15 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
         is_active=True
     )
     
+    # Create KnowledgeCore service registry entry
+    kc_service = ServiceRegistry(
+        user_id=user_id,
+        service_name="knowledge_core",
+        base_url=kc_url,
+        api_key_encrypted=encrypt_string(req.kc_api_key),
+        is_active=True
+    )
+    
     # Create UserSettings with Gemini API Key
     user_settings = UserSettings(
         user_id=user_id,
@@ -150,6 +180,7 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
     try:
         db.add(user)
         db.add(lbs_service)
+        db.add(kc_service)
         db.add(user_settings)
         db.commit()
     except Exception as e:
@@ -205,6 +236,32 @@ async def test_lbs_connection(test: ConnectionTest):
                 return {"status": "error", "message": f"Invalid Key (LBS status {resp.status_code})"}
     except Exception as e:
         return {"status": "error", "message": f"LBS Unreachable: {str(e)}"}
+
+
+@router.post("/test-kc-connection")
+async def test_kc_connection(test: ConnectionTest):
+    """
+    Public endpoint to test KnowledgeCore connection before/during registration.
+    """
+    kc_url = test.base_url or settings.knowledge_core_url or "http://localhost:8200/api/v1"
+    if "localhost" in kc_url and os.path.exists("/.dockerenv"):
+        kc_url = kc_url.replace("localhost", "host.docker.internal")
+    
+    if not kc_url.startswith("http"):
+        kc_url = f"http://{kc_url}"
+
+    # Health is at root, but kc_url might end in /v1. Strip /v1 if present for health check.
+    kc_root = kc_url.split("/v1")[0].rstrip("/")
+    health_url = f"{kc_root}/health"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(health_url, headers={"x-api-key": test.api_key})
+            if resp.status_code == 200:
+                return {"status": "success", "message": "Valid KnowledgeCore API Key!"}
+            else:
+                return {"status": "error", "message": f"Invalid Key (KC status {resp.status_code})"}
+    except Exception as e:
+        return {"status": "error", "message": f"KnowledgeCore Unreachable: {str(e)}"}
 
 
 @router.post("/login", response_model=AuthResponse)

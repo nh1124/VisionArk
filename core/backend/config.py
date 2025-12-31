@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"  # Default to localhost for security; set to 0.0.0.0 for Docker
     debug: bool = True
     lbs_service_url: str = "http://localhost:8100/api/lbs"
+    knowledge_core_url: str = "http://localhost:8200/v1"
     
     # Auth Settings (Legacy API Key - Phase 2)
     atmos_env: str = "dev"                    # dev | prod
