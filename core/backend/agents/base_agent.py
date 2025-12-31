@@ -12,6 +12,8 @@ from models.database import Node, ChatSession, ChatMessage, AgentProfile
 from datetime import datetime
 from uuid import uuid4
 import json
+from services.knowledge_core_service import KnowledgeCoreService
+
 
 
 class BaseAgent(ABC):
@@ -60,7 +62,7 @@ class BaseAgent(ABC):
         """Return the name (slug) of the node"""
         pass
     
-    def chat(self, user_message: str, attached_files: List[AttachedFile] = None, preferred_model: Optional[str] = None, tool_context: dict = None) -> str:
+    def chat(self, user_message: str, attached_files: List[AttachedFile] = None, preferred_model: Optional[str] = None, tool_context: dict = None, meta_info: Optional[str] = None) -> str:
         """
         Generic chat logic - same for all agents
         NOW SENDS ALL MESSAGES
@@ -73,18 +75,29 @@ class BaseAgent(ABC):
         msg = Message(
             role=MessageRole.USER,
             content=user_message,
-            attached_files=attached_files or []
+            attached_files=attached_files or [],
+            meta_info=meta_info
         )
         
         # Add to history
         self.conversation_history.append(msg)
         
+        # --- KnowledgeCore Integration (Context) ---
+        kc_prompt_augmentation = ""
+        if self.user_id:
+            kc_service = KnowledgeCoreService(self.db_session, self.user_id)
+            context = kc_service.get_context(query=user_message, agent_id=self.get_node_name())
+            if context and context.get("synthesis"):
+                kc_prompt_augmentation = f"\n\n# Context from KnowledgeCore\n{context['synthesis']}"
+                print(f"[{self.get_node_name()}] Augmented prompt with KnowledgeCore context")
+        
         # Convert ALL messages to LLM format (NO LIMIT!)
         llm_messages = [m.to_llm_message() for m in self.conversation_history]
         
         # Format for LLM provider
+        effective_system_prompt = self.system_prompt + kc_prompt_augmentation
         messages = self.llm.format_messages(
-            self.system_prompt,
+            effective_system_prompt,
             llm_messages  # ✅ ALL messages, not just last 10!
         )
         
@@ -110,6 +123,14 @@ class BaseAgent(ABC):
         # Save both messages to DB
         self._save_to_db(msg)
         self._save_to_db(assistant_msg)
+        
+        # --- KnowledgeCore Integration (Ingestion) ---
+        if self.user_id:
+            # Re-init or reuse kc_service
+            kc_service = KnowledgeCoreService(self.db_session, self.user_id)
+            kc_service.ingest_message(text=user_message, role="user", agent_id=self.get_node_name())
+            kc_service.ingest_message(text=response.content, role="assistant", agent_id=self.get_node_name())
+            print(f"[{self.get_node_name()}] Ingested messages to KnowledgeCore")
         
         return response.content
     

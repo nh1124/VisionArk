@@ -19,6 +19,8 @@ services:
     networks:
       - atmos-network
     restart: unless-stopped
+    env_file:
+      - ../.env
 
   # Backend API
   backend:
@@ -47,6 +49,8 @@ services:
     networks:
       - atmos-network
     restart: unless-stopped
+    env_file:
+      - ../.env
 
   # Frontend UI
   frontend:
@@ -69,6 +73,8 @@ services:
     networks:
       - atmos-network
     restart: unless-stopped
+    env_file:
+      - ../.env
 
 networks:
   atmos-network:

@@ -119,7 +119,7 @@ You are the central orchestration agent (Hub) responsible for:
 1. Monitor daily and weekly load scores
 2. Warn when capacity (CAP) is approaching or exceeded
 3. Suggest task rescheduling when necessary
-4. Process Inbox messages from Spokes
+4. Process Inbox messages from Spokes and provide a brief strategic analysis of the update
 5. Provide high-level strategic guidance
 
 ## Available Tools
@@ -236,42 +236,18 @@ You have access to the following tools that you can call directly. Use them when
         except Exception as e:
             print(f"[Hub] Failed to load LBS context: {e}")
         
-        # 3. Create USER message
-        msg = Message(
-            role=MessageRole.USER,
-            content=user_message,
-            attached_files=attached_files or [],
-            meta_info=meta_info_str
-        )
-        self.conversation_history.append(msg)
-        self._save_to_db(msg)
-        
-        # 4. Prepare messages for LLM
-        llm_messages = [m.to_llm_message() for m in self.conversation_history]
-        formatted_messages = self.llm.format_messages(self.system_prompt, llm_messages)
-        
-        # 5. Get LLM response with tool context for function calling
+        # 3. Use BaseAgent.chat which handles KnowledgeCore integration and LLM calls
         tool_context = {
             'session': self.db_session,
             'user_id': self.user_id,
             'node_id': self.node_id,
             'context_name': 'hub'
         }
-        response = self.llm.complete(
-            formatted_messages, 
+        
+        return super().chat(
+            user_message,
+            attached_files=attached_files,
             preferred_model=preferred_model,
             tool_context=tool_context,
-            attached_files=attached_files,  # Pass file references for multimodal
-            tool_definitions=self._agent_tool_definitions,  # Pass tools directly
-            tool_functions=self._agent_tool_functions       # Pass functions directly
+            meta_info=meta_info_str
         )
-        
-        # 6. Create ASSISTANT message
-        assistant_msg = Message(
-            role=MessageRole.ASSISTANT,
-            content=response.content
-        )
-        self.conversation_history.append(assistant_msg)
-        self._save_to_db(assistant_msg)
-        
-        return response.content

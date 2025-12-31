@@ -295,6 +295,12 @@ class FileService:
             # Upload if not available
             if not status["gemini_available"]:
                 try:
+                    # Check if local file actually exists before trying to upload
+                    if not os.path.exists(file_record.storage_path):
+                        print(f"[FileService] Warning: Local file missing, skipping sync: {file_record.filename}")
+                        status["error"] = "Local file missing"
+                        continue
+                        
                     result = self.upload_to_gemini(file_record)
                     status["gemini_available"] = True
                     status["gemini_file_uri"] = result["gemini_file_uri"]

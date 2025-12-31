@@ -99,9 +99,19 @@ def process_message(
             summary = inbox_msg.payload.get('summary', 'No summary')
             request = inbox_msg.payload.get('request', '')
             
-            notification = f"📬 New message from {spoke}:\n{summary}"
+            notification = (
+                f"📢 **Inbox Update Received**\n"
+                f"I have accepted an update from the Spoke: **{spoke}**.\n\n"
+                f"**Summary of Change:**\n{summary}\n"
+            )
             if request:
-                notification += f"\n*Request:* {request}"
+                notification += f"\n**Spoke's Request:**\n{request}\n"
+            
+            notification += (
+                "\n---\n"
+                "Please analyze this update in the context of our current LBS load and overall strategy. "
+                "Provide a brief strategic assessment of how this affects our project planning."
+            )
             
             # Send to Hub and get response
             hub = get_hub_agent(identity.user_id, db)
@@ -154,12 +164,21 @@ def accept_all_messages(
             from api.agents import get_hub_agent
             
             # Format notification for Hub
-            notification = f"📬 Accepted {accepted_count} messages from Spokes:\n\n"
-            for msg_data in accepted_messages:
-                notification += f"**From {msg_data['spoke']}:**\n{msg_data['summary']}\n"
+            notification = (
+                f"📢 **Batch Inbox Processing Complete**\n"
+                f"I have just accepted **{accepted_count}** pending updates from multiple Spokes.\n\n"
+                f"**Consolidated Summary of Updates:**\n"
+            )
+            for i, msg_data in enumerate(accepted_messages, 1):
+                notification += f"\n{i}. **[{msg_data['spoke']}]** {msg_data['summary']}"
                 if msg_data['request']:
-                    notification += f"*Request:* {msg_data['request']}\n"
-                notification += "\n"
+                    notification += f" (Request: {msg_data['request']})"
+            
+            notification += (
+                "\n\n---\n"
+                "Please perform a global re-evaluation of our status based on these combined updates. "
+                "Does our current strategy remain optimal, or do we need to reschedule any tasks in the LBS?"
+            )
             
             # Send to Hub and get response
             hub = get_hub_agent(identity.user_id, db)

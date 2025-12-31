@@ -195,10 +195,9 @@ async def chat_with_hub(
             attached_files.append(attached_file)
             file_metadata.append(attached_file.format_for_display())
     
-    # Also load synced reference files from FileService
+    # --- Sync-Chat-Cleanup Lifecycle ---
+    file_service = None
     try:
-        from services.file_service import FileService
-        
         # Get user's Gemini API key
         settings = db.query(UserSettings).filter(UserSettings.user_id == identity.user_id).first()
         api_key = None
@@ -206,76 +205,79 @@ async def chat_with_hub(
             api_key = decrypt_string(settings.ai_config["gemini_api_key"])
         
         if api_key:
+            from services.file_service import FileService
             file_service = FileService(db, identity.user_id, api_key)
-            synced_parts = file_service.get_gemini_file_parts("hub", "hub")
             
-            # Add synced files to attached_files
+        # 1. Check if user directly sent a command - process and return BEFORE syncing/chatting
+        if message.strip().startswith('/'):
+            from services.command_parser import parse_command, execute_command
+            cmd = parse_command(message.strip())
+            if cmd:
+                try:
+                    cmd_result = await execute_command(
+                        cmd,
+                        context="hub",
+                        context_type="hub",
+                        context_name="hub",
+                        session=db,
+                        user_id=identity.user_id
+                    )
+                    executed_commands.append({
+                        "command": message.strip(),
+                        "success": cmd_result.success,
+                        "message": cmd_result.message
+                    })
+                    
+                    return ChatResponse(
+                        response=cmd_result.message,
+                        meta_actions=[],
+                        executed_commands=executed_commands,
+                        attached_files=file_metadata
+                    )
+                except Exception as e:
+                    return ChatResponse(
+                        response=f"❌ Command failed: {str(e)}",
+                        meta_actions=[],
+                        executed_commands=executed_commands,
+                        attached_files=file_metadata
+                    )
+
+        if file_service:
+            # 2. Proactively sync all local files for this node to Gemini
+            print(f"[Hub] Proactively syncing all local files to Gemini...")
+            file_service.sync_files_for_session("hub", "hub")
+            
+            # 3. Get the actual Gemini file objects (parts) for the LLM
+            synced_parts = file_service.get_gemini_file_parts("hub", "hub")
             for gemini_file in synced_parts:
                 synced_attached = AttachedFile(
                     filename=gemini_file.display_name or "reference_file",
                     file_type=gemini_file.mime_type or "application/octet-stream",
-                    size_bytes=0,  # Not tracked for synced files
+                    size_bytes=0,
                     gemini_file_uri=gemini_file.uri,
                     gemini_file_name=gemini_file.name
                 )
-                attached_files.append(synced_attached)
-                print(f"[Hub] Added synced file: {gemini_file.display_name}")
-    except Exception as e:
-        print(f"[Hub] Failed to load synced files: {e}")
-    
-    # Check if user directly sent a command - process and return WITHOUT AI response
-    if message.strip().startswith('/'):
-        cmd = parse_command(message.strip())
-        if cmd:
-            try:
-                cmd_result = await execute_command(
-                    cmd,
-                    context="hub",
-                    context_type="hub",
-                    context_name="hub",
-                    session=db,
-                    user_id=identity.user_id
-                )
-                executed_commands.append({
-                    "command": message.strip(),
-                    "success": cmd_result.success,
-                    "message": cmd_result.message
-                })
-                
-                # ✅ Return immediately - don't send to AI
-                return ChatResponse(
-                    response=cmd_result.message,
-                    meta_actions=[],
-                    executed_commands=executed_commands,
-                    attached_files=file_metadata
-                )
-                
-            except Exception as e:
-                executed_commands.append({
-                    "command": message.strip(),
-                    "success": False,
-                    "message": f"Command failed: {str(e)}"
-                })
-                return ChatResponse(
-                    response=f"❌ Command failed: {str(e)}",
-                    meta_actions=[],
-                    executed_commands=executed_commands,
-                    attached_files=file_metadata
-                )
-    
-    # Get Hub's response (only reached if no direct command was executed)
-    hub = get_hub_agent(identity.user_id, db)
-    response = hub.chat(message, attached_files, preferred_model=x_preferred_model)
-    
-    # Note: AI tool calls are now handled via native function calling in GeminiProvider
-    # No need to parse slash commands from AI response text
-    
-    return ChatResponse(
-        response=response,
-        meta_actions=[],
-        executed_commands=executed_commands,
-        attached_files=file_metadata
-    )
+                # Check if already added (from the upload step above)
+                if not any(f.gemini_file_name == synced_attached.gemini_file_name for f in attached_files):
+                    attached_files.append(synced_attached)
+                    print(f"[Hub] Added synced reference: {gemini_file.display_name}")
+
+        # 4. Get Hub's response
+        hub = get_hub_agent(identity.user_id, db)
+        response_text = hub.chat(message, attached_files, preferred_model=x_preferred_model)
+        
+        return ChatResponse(
+            response=response_text,
+            meta_actions=[],
+            executed_commands=executed_commands,
+            attached_files=file_metadata
+        )
+        
+    finally:
+        # 4. Cleanup Gemini files after response is sent
+        if file_service:
+            print(f"[Hub] Auto-cleaning Gemini files...")
+            file_service.cleanup_gemini_files("hub", "hub")
 
 
 @router.get("/hub/history")
@@ -423,10 +425,9 @@ async def chat_with_spoke(
             attached_file_objects.append(attached_file)
             file_metadata.append(attached_file.format_for_display())
     
-    # Load synced reference files from FileService
+    # --- Sync-Chat-Cleanup Lifecycle ---
+    file_service = None
     try:
-        from services.file_service import FileService
-        
         # Get user's Gemini API key
         settings = db.query(UserSettings).filter(UserSettings.user_id == identity.user_id).first()
         api_key = None
@@ -434,95 +435,87 @@ async def chat_with_spoke(
             api_key = decrypt_string(settings.ai_config["gemini_api_key"])
         
         if api_key:
+            from services.file_service import FileService
             file_service = FileService(db, identity.user_id, api_key)
-            synced_parts = file_service.get_gemini_file_parts("spoke", spoke_name)
             
-            # Add synced files to attached_files
+        # 1. Check if user directly sent a command - return BEFORE syncing/chatting
+        if message.strip().startswith('/'):
+            from services.command_parser import parse_command, execute_command
+            cmd = parse_command(message.strip())
+            if cmd:
+                try:
+                    cmd_result = await execute_command(
+                        cmd,
+                        context="spoke",
+                        context_type="spoke",
+                        context_name=spoke_name,
+                        spoke_name=spoke_name,
+                        session=db,
+                        user_id=identity.user_id
+                    )
+                    executed_commands.append({
+                        "command": message.strip(),
+                        "success": cmd_result.success,
+                        "message": cmd_result.message
+                    })
+                    
+                    return ChatResponse(
+                        response=cmd_result.message,
+                        meta_actions=[],
+                        executed_commands=executed_commands,
+                        attached_files=file_metadata
+                    )
+                except Exception as e:
+                    return ChatResponse(
+                        response=f"❌ Command failed: {str(e)}",
+                        meta_actions=[],
+                        executed_commands=executed_commands,
+                        attached_files=file_metadata
+                    )
+
+        if file_service:
+            # 2. Proactively sync all local files for this spoke to Gemini
+            print(f"[Spoke {spoke_name}] Proactively syncing all local files to Gemini...")
+            file_service.sync_files_for_session("spoke", spoke_name)
+            
+            # 3. Get the actual Gemini file objects (parts) for the LLM
+            synced_parts = file_service.get_gemini_file_parts("spoke", spoke_name)
             for gemini_file in synced_parts:
                 synced_attached = AttachedFile(
                     filename=gemini_file.display_name or "reference_file",
                     file_type=gemini_file.mime_type or "application/octet-stream",
-                    size_bytes=0,  # Not tracked for synced files
+                    size_bytes=0,
                     gemini_file_uri=gemini_file.uri,
                     gemini_file_name=gemini_file.name
                 )
-                attached_file_objects.append(synced_attached)
-                print(f"[Spoke {spoke_name}] Added synced file: {gemini_file.display_name}")
-    except Exception as e:
-        print(f"[Spoke {spoke_name}] Failed to load synced files: {e}")
-    
-    # Check if user directly sent a command
-    if message.strip().startswith('/'):
-        cmd = parse_command(message.strip())
-        if cmd:
-            try:
-                print(f"[SPOKE {spoke_name}] Executing command: {cmd.name} with args: {cmd.args}")
-                
-                cmd_result = await execute_command(
-                    cmd,
-                    context="spoke",
-                    context_type="spoke",
-                    context_name=spoke_name,
-                    spoke_name=spoke_name,
-                    session=db,
-                    user_id=identity.user_id
-                )
-                
-                print(f"[SPOKE {spoke_name}] Command result: success={cmd_result.success}, message={cmd_result.message}")
-                
-                executed_commands.append({
-                    "command": message.strip(),
-                    "success": cmd_result.success,
-                    "message": cmd_result.message
-                })
-                
-                # Return immediately for ALL commands - don't send to LLM
-                return ChatResponse(
-                    response=cmd_result.message,
-                    meta_actions=[],
-                    executed_commands=executed_commands,
-                    attached_files=file_metadata
-                )
-                
-            except Exception as e:
-                print(f"[SPOKE {spoke_name}] Command execution failed: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                
-                executed_commands.append({
-                    "command": message.strip(),
-                    "success": False,
-                    "message": f"Command failed: {str(e)}"
-                })
-                return ChatResponse(
-                    response=f"❌ {str(e)}",
-                    meta_actions=[],
-                    executed_commands=executed_commands,
-                    attached_files=file_metadata
-                )
-    
-    # Get Spoke's response with AttachedFile objects (already created with Gemini references)
-    spoke = get_spoke_agent(identity.user_id, spoke_name, db)
-    
-    response = spoke.chat(user_message, attached_file_objects, preferred_model=x_preferred_model)
-    
-    # Note: AI tool calls are now handled via native function calling in GeminiProvider
-    # No need to parse slash commands from AI response text
-    
-    # Extract meta-actions
-    meta_actions = extract_meta_actions_from_chat(response)
-    
-    if meta_actions:
-        inbox = InboxHandler(db, user_id=identity.user_id)
-        for meta_xml in meta_actions:
-            inbox.push_to_inbox("hub", meta_xml)
-    
-    return ChatResponse(
-        response=response,
-        meta_actions=[meta.replace("<", "&lt;").replace(">", "&gt;") for meta in meta_actions],
-        executed_commands=executed_commands,
-        attached_files=file_metadata
-    )
+                # Check if already added (from the upload step above)
+                if not any(f.gemini_file_name == synced_attached.gemini_file_name for f in attached_file_objects):
+                    attached_file_objects.append(synced_attached)
+                    print(f"[Spoke {spoke_name}] Added synced reference: {gemini_file.display_name}")
+
+        # 4. Get Spoke's response
+        spoke = get_spoke_agent(identity.user_id, spoke_name, db)
+        response_text = spoke.chat(user_message, attached_file_objects, preferred_model=x_preferred_model)
+        
+        # Extract meta-actions
+        meta_actions = extract_meta_actions_from_chat(response_text)
+        if meta_actions:
+            inbox = InboxHandler(db, user_id=identity.user_id)
+            for meta_xml in meta_actions:
+                inbox.push_to_inbox("hub", meta_xml)
+        
+        return ChatResponse(
+            response=response_text,
+            meta_actions=[meta.replace("<", "&lt;").replace(">", "&gt;") for meta in meta_actions],
+            executed_commands=executed_commands,
+            attached_files=file_metadata
+        )
+        
+    finally:
+        # 4. Cleanup Gemini files after response is sent
+        if file_service:
+            print(f"[Spoke {spoke_name}] Auto-cleaning Gemini files...")
+            file_service.cleanup_gemini_files("spoke", spoke_name)
 
 
 @router.get("/spoke/{spoke_name}/history")
