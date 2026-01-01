@@ -126,10 +126,7 @@ class SpokeAgent(BaseAgent):
         global_prompt = get_user_global_prompt(self.user_id)
         separator = f"\n\n---\n\n# {self.spoke_name.replace('_', ' ').title()} (Role-Specific Instructions)\n\n" if global_prompt else ""
         
-        if spoke_specific:
-            return global_prompt + separator + spoke_specific
-        
-        # Default Spoke prompt
+        # Default Spoke prompt (defined here so it's always available)
         spoke_default = f"""# {self.spoke_name.replace('_', ' ').title()}
 
 You are a specialized execution agent for the {self.spoke_name} project.

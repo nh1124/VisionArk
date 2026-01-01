@@ -13,6 +13,7 @@ from datetime import datetime
 from uuid import uuid4
 import json
 from services.knowledge_core_service import KnowledgeCoreService
+from services.context_manager import ContextManager
 
 
 
@@ -206,6 +207,26 @@ class BaseAgent(ABC):
             
         # Optional: Load summary from parent sessions if context rotation is needed
         # (Phase 3 logic can be expanded here)
+    
+    def _load_latest_summary(self, context_type: str, context_name: str) -> str:
+        """Load the latest archived summary for this context"""
+        if not self.user_id:
+            return ""
+            
+        try:
+            manager = ContextManager(
+                user_id=self.user_id,
+                context_type=context_type,
+                context_name=context_name,
+                session=self.db_session
+            )
+            summary = manager.get_latest_summary()
+            if summary:
+                return f"\n\n# Summary from Previous Session\n\n{summary}\n"
+        except Exception as e:
+            print(f"[{self.get_node_name()}] Failed to load latest summary: {e}")
+            
+        return ""
     
     def chat_with_context(self, context_message: str, preferred_model: Optional[str] = None) -> str:
         """

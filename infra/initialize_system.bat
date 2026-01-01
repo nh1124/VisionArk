@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 echo ========================================
-echo AI TaskManagement OS - System Initialization
+echo VISION ARK - System Initialization
 echo [WARNING] This will wipe ALL user data and registrations!
 echo ========================================
 echo.
@@ -24,17 +24,9 @@ if errorlevel 1 (
 
 echo.
 echo [2/4] Wiping host data directories...
-echo Cleaning spokes/...
-if exist spokes (
-    powershell -Command "Remove-Item -Path 'spokes\*' -Recurse -Force -ErrorAction SilentlyContinue"
-)
-echo Cleaning hub_data/...
-if exist hub_data (
-    powershell -Command "Remove-Item -Path 'hub_data\*' -Recurse -Force -ErrorAction SilentlyContinue"
-)
-echo Cleaning global_assets/...
-if exist global_assets (
-    powershell -Command "Remove-Item -Path 'global_assets\*' -Recurse -Force -ErrorAction SilentlyContinue"
+echo Cleaning data/...
+if exist data (
+    powershell -Command "Remove-Item -Path 'data\*' -Recurse -Force -ErrorAction SilentlyContinue"
 )
 
 echo.

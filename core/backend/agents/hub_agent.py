@@ -191,7 +191,10 @@ You have access to the following tools that you can call directly. Use them when
         global_prompt = get_user_global_prompt(self.user_id)
         separator = "\n\n---\n\n# Hub Agent (Role-Specific Instructions)\n\n" if global_prompt else ""
         
-        return global_prompt + separator + hub_prompt
+        # 4. Load latest archived summary for context migration
+        previous_context = self._load_latest_summary(context_type="hub", context_name="hub")
+        
+        return global_prompt + separator + hub_prompt + previous_context
     
     def get_node_name(self) -> str:
         return "hub"
