@@ -88,8 +88,8 @@ class BaseAgent(ABC):
         if self.user_id:
             kc_service = KnowledgeCoreService(self.db_session, self.user_id)
             context = kc_service.get_context(query=user_message, agent_id=self.get_node_name())
-            if context and context.get("synthesis"):
-                kc_prompt_augmentation = f"\n\n# Context from KnowledgeCore\n{context['synthesis']}"
+            if context and context.get("summary"):
+                kc_prompt_augmentation = f"\n\n# Context from KnowledgeCore\n{context['summary']}"
                 print(f"[{self.get_node_name()}] Augmented prompt with KnowledgeCore context")
         
         # Convert ALL messages to LLM format (NO LIMIT!)

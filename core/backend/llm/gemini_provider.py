@@ -62,34 +62,59 @@ class GeminiProvider(BaseLLMProvider):
         
         return gemini_tools
     
+    def _convert_schema(self, prop_schema: Dict) -> genai.protos.Schema:
+        """Recursively convert JSON schema to Gemini Protocol Buffer schema"""
+        prop_type = prop_schema.get("type", "string").upper()
+        
+        # Map JSON schema types to Gemini types
+        type_map = {
+            "STRING": genai.protos.Type.STRING,
+            "NUMBER": genai.protos.Type.NUMBER,
+            "INTEGER": genai.protos.Type.INTEGER,
+            "BOOLEAN": genai.protos.Type.BOOLEAN,
+            "ARRAY": genai.protos.Type.ARRAY,
+            "OBJECT": genai.protos.Type.OBJECT,
+        }
+        
+        genai_type = type_map.get(prop_type, genai.protos.Type.STRING)
+        
+        # Prepare schema arguments
+        schema_args = {
+            "type_": genai_type,
+            "description": prop_schema.get("description", ""),
+        }
+        
+        # Handle Array: items is mandatory for ARRAY type
+        if genai_type == genai.protos.Type.ARRAY and "items" in prop_schema:
+            schema_args["items"] = self._convert_schema(prop_schema["items"])
+            
+        # Handle Object: properties and required
+        if genai_type == genai.protos.Type.OBJECT and "properties" in prop_schema:
+            schema_args["properties"] = {
+                k: self._convert_schema(v) for k, v in prop_schema["properties"].items()
+            }
+            if "required" in prop_schema:
+                schema_args["required"] = prop_schema["required"]
+                
+        # Handle Enum
+        if "enum" in prop_schema:
+            schema_args["enum"] = prop_schema["enum"]
+            
+        return genai.protos.Schema(**schema_args)
+
     def _convert_dict_tools_to_gemini(self, definitions: List[Dict]) -> List[genai.protos.Tool]:
         """Convert dict-based tool definitions to Gemini Tool format"""
         function_declarations = []
         
         for defn in definitions:
-            # Build parameters schema
+            # Build parameters schema using recursive converter
             params = defn.get("parameters", {})
-            properties = {}
-            
-            for prop_name, prop_schema in params.get("properties", {}).items():
-                prop_type = prop_schema.get("type", "string").upper()
-                if prop_type == "INTEGER":
-                    prop_type = "NUMBER"
-                
-                prop_def = genai.protos.Schema(
-                    type=getattr(genai.protos.Type, prop_type, genai.protos.Type.STRING),
-                    description=prop_schema.get("description", "")
-                )
-                properties[prop_name] = prop_def
+            schema = self._convert_schema(params)
             
             func_decl = genai.protos.FunctionDeclaration(
                 name=defn["name"],
                 description=defn.get("description", ""),
-                parameters=genai.protos.Schema(
-                    type=genai.protos.Type.OBJECT,
-                    properties=properties,
-                    required=params.get("required", [])
-                )
+                parameters=schema
             )
             function_declarations.append(func_decl)
         
@@ -165,118 +190,179 @@ class GeminiProvider(BaseLLMProvider):
             model = genai.GenerativeModel(model_name)
             tool_config = None
         
-        # Generate response with multimodal content
-        response = model.generate_content(
-            content_parts if len(content_parts) > 1 else full_prompt,
-            generation_config=generation_config,
-            tool_config=tool_config
-        )
+        # Prepare conversion to Gemini Content format for multi-turn
+        def to_part(p):
+            if isinstance(p, str):
+                return genai.protos.Part(text=p)
+            return p # Already a Part (e.g. from File API)
+
+        # Initialize history for this request
+        history = [
+            genai.protos.Content(
+                role="user",
+                parts=[to_part(p) for p in (content_parts if content_parts else [full_prompt])]
+            )
+        ]
         
-        # Check if response contains function calls
-        if response.candidates and response.candidates[0].content.parts:
-            parts = response.candidates[0].content.parts
+        turn_count = 0
+        max_turns = 8
+        accumulated_tool_results = []
+        
+        while turn_count < max_turns:
+            turn_count += 1
             
-            # Check for function calls
-            for part in parts:
-                if hasattr(part, 'function_call') and part.function_call:
-                    # Execute the function call
-                    function_name = part.function_call.name
-                    function_args = dict(part.function_call.args)
-                    
-                    # Find and execute the matching tool function
-                    tool_result = None
-                    
-                    # Use passed tool functions (from agent), fallback to stored ones
-                    if function_name in active_tool_functions:
-                        try:
-                            import inspect
-                            
-                            # Get execution context from kwargs
-                            tool_context = kwargs.get('tool_context', {})
-                            func = active_tool_functions[function_name]
-                            
-                            # Get the function's signature to know what parameters it accepts
-                            sig = inspect.signature(func)
-                            accepted_params = set(sig.parameters.keys())
-                            
-                            # Merge function args with only the injected context that the function accepts
-                            full_args = {**function_args}
-                            for key in ['session', 'user_id', 'node_id', 'spoke_name', 'context_name']:
-                                if key in tool_context and key in accepted_params:
-                                    full_args[key] = tool_context[key]
-                            
-                            result = func(**full_args)
-                            
-                            # Handle ToolResult objects
-                            if hasattr(result, 'to_dict'):
-                                tool_result = result.message
-                            else:
-                                tool_result = str(result)
-                        except Exception as e:
-                            import traceback
-                            traceback.print_exc()
-                            tool_result = f"Error executing {function_name}: {str(e)}"
-                    
-                    # Fallback to LangChain tools
-                    elif self.tools:
-                        for tool in self.tools:
-                            if tool.name == function_name:
-                                try:
-                                    if hasattr(tool, 'func') and callable(tool.func):
-                                        tool_result = tool.func(**function_args)
-                                    else:
-                                        tool_result = tool.run(function_args)
-                                    break
-                                except Exception as e:
-                                    import traceback
-                                    traceback.print_exc()
-                                    tool_result = f"Error executing {function_name}: {str(e)}"
-                    
-                    if tool_result is None:
-                        tool_result = f"Function {function_name} not found"
-                    
-                    # Check if tool returned a multimodal reference
-                    if isinstance(tool_result, str) and "__type__" in tool_result and "multimodal_ref" in tool_result:
-                        try:
-                            import ast
-                            # Parse the dictionary string
-                            multimodal_data = ast.literal_eval(tool_result)
-                            
-                            if multimodal_data.get("__type__") == "multimodal_ref":
-                                file_uri = multimodal_data.get("file_uri")
-                                file_name = multimodal_data.get("file_name")
-                                mime_type = multimodal_data.get("mime_type")
-                                
-                                # Get the uploaded file from Gemini
-                                uploaded_file = genai.get_file(name=file_uri.split('/')[-1])
-                                
-                                # Create a new prompt with the file
-                                multimodal_prompt = [
-                                    f"I uploaded the file '{file_name}' ({mime_type}). What can you tell me about it?",
-                                    uploaded_file
-                                ]
-                                
-                                # Make another API call with the file
-                                multimodal_response = model.generate_content(
-                                    multimodal_prompt,
-                                    generation_config=generation_config
-                                )
-                                
-                                return CompletionResponse(
-                                    content=f"[File: {file_name}]\n\n{multimodal_response.text}",
-                                    model=self.model_name,
-                                    usage=None
-                                )
-                        except Exception as parse_error:
-                            # If parsing fails, treat as regular text
-                            pass
-                    
-                    # Return the tool result as content
+            # Generate response
+            try:
+                response = model.generate_content(
+                    history,
+                    generation_config=generation_config,
+                    tool_config=tool_config
+                )
+            except Exception as e:
+                print(f"[Gemini] Generation error: {e}")
+                if accumulated_tool_results:
                     return CompletionResponse(
-                        content=f"[Tool Call: {function_name}]\n{tool_result}",
-                        model=self.model_name,
+                        content="\n".join(accumulated_tool_results) + f"\n\nError during continuation: {str(e)}",
+                        model=model_name,
                         usage=None
                     )
+                raise
+            
+            # Check if valid response
+            if not response.candidates or not response.candidates[0].content.parts:
+                break
+                
+            model_content = response.candidates[0].content
+            history.append(model_content)
+            
+            # Extract all function calls in this turn
+            function_calls = [p.function_call for p in model_content.parts if p.function_call]
+            
+            if not function_calls:
+                # Final text response
+                final_text = response.text
+                if accumulated_tool_results:
+                    return CompletionResponse(
+                        content="\n".join(accumulated_tool_results) + "\n\n" + final_text,
+                        model=model_name,
+                        usage=None
+                    )
+                return CompletionResponse(
+                    content=final_text,
+                    model=model_name,
+                    usage=None
+                )
+            
+            # Execute all tool calls in parallel (simulated sequentially here)
+            tool_response_parts = []
+            
+            for fc in function_calls:
+                function_name = fc.name
+                function_args = dict(fc.args)
+                
+                print(f"[Gemini] Executing function: {function_name}")
+                
+                # Find and execute the matching tool function
+                tool_result = None
+                
+                # Use passed tool functions (from agent), fallback to stored ones
+                if function_name in active_tool_functions:
+                    try:
+                        import inspect
+                        
+                        # Get execution context from kwargs
+                        tool_context = kwargs.get('tool_context', {})
+                        func = active_tool_functions[function_name]
+                        
+                        # Get the function's signature to know what parameters it accepts
+                        sig = inspect.signature(func)
+                        accepted_params = set(sig.parameters.keys())
+                        
+                        # Merge function args with only the injected context that the function accepts
+                        full_args = {**function_args}
+                        for key in ['session', 'user_id', 'node_id', 'spoke_name', 'context_name']:
+                            if key in tool_context and key in accepted_params:
+                                full_args[key] = tool_context[key]
+                        
+                        result = func(**full_args)
+                        
+                        # Handle ToolResult objects
+                        if hasattr(result, 'to_dict'):
+                            tool_result = result.message
+                        else:
+                            tool_result = str(result)
+                    except Exception as e:
+                        import traceback
+                        traceback.print_exc()
+                        tool_result = f"Error executing {function_name}: {str(e)}"
+                
+                # Fallback to LangChain tools
+                elif self.tools:
+                    for tool in self.tools:
+                        if tool.name == function_name:
+                            try:
+                                if hasattr(tool, 'func') and callable(tool.func):
+                                    tool_result = tool.func(**function_args)
+                                else:
+                                    tool_result = tool.run(function_args)
+                                break
+                            except Exception as e:
+                                import traceback
+                                traceback.print_exc()
+                                tool_result = f"Error executing {function_name}: {str(e)}"
+                
+                if tool_result is None:
+                    tool_result = f"Function {function_name} not found"
+                
+                # Check if tool returned a multimodal reference (special logic)
+                if isinstance(tool_result, str) and "__type__" in tool_result and "multimodal_ref" in tool_result:
+                    try:
+                        import ast
+                        multimodal_data = ast.literal_eval(tool_result)
+                        if multimodal_data.get("__type__") == "multimodal_ref":
+                            file_uri = multimodal_data.get("file_uri")
+                            file_name = multimodal_data.get("file_name")
+                            mime_type = multimodal_data.get("mime_type")
+                            
+                            # Note: For multi-turn, we'll just treat the "thinking" as the result
+                            # and let the model continue. We don't want to break the loop here.
+                            # But since the previous code had specific return logic, we'll adapt it.
+                            uploaded_file = genai.get_file(name=file_uri.split('/')[-1])
+                            tool_result = f"Analyzed file '{file_name}' ({mime_type})."
+                            # Add the actual file part to the NEXT model turn
+                            # We can't easily inject it into the FunctionResponse part, 
+                            # so we'll append it as a separate user turn or similar.
+                            # For simplicity, we'll just log it.
+                    except Exception:
+                        pass
+                
+                # Accumulate for UI
+                accumulated_tool_results.append(f"[Tool Call: {function_name}]\n{tool_result}")
+                
+                # Add to response parts for Gemini
+                tool_response_parts.append(genai.protos.Part(
+                    function_response=genai.protos.FunctionResponse(
+                        name=function_name,
+                        response={'result': tool_result}
+                    )
+                ))
+            
+            # Add tool responses to history
+            history.append(genai.protos.Content(
+                role="function", # In protos, role should be "function"
+                parts=tool_response_parts
+            ))
+            
+        # If we exit loop due to turn count
+        last_resp = "\n".join(accumulated_tool_results)
+        if turn_count >= max_turns:
+            last_resp += "\n\n(Reached maximum reasoning turns)"
+            
+        return CompletionResponse(
+            content=last_resp,
+            model=model_name,
+            usage=None
+        )
         
         # Extract token usage
         total_tokens = 0

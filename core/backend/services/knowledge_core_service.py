@@ -38,11 +38,13 @@ class KnowledgeCoreService:
                 self.client = KnowledgeCoreClient(base_url=service.base_url)
                 if api_key:
                     self.client.set_api_key(api_key)
-                print(f"[KnowledgeCoreService] Initialized for user {self.user_id} at {service.base_url}")
+                print(f"[KnowledgeCoreService] Initialized for user {self.user_id} at {service.base_url} (Key provided: {api_key is not None})")
             else:
                 print(f"[KnowledgeCoreService] No active 'knowledge_core' service found for user {self.user_id}")
         except Exception as e:
             print(f"[KnowledgeCoreService] Initialization error: {e}")
+            import traceback
+            traceback.print_exc()
 
     def ingest_message(self, text: str, role: str, scope: str = "global", agent_id: Optional[str] = None) -> Optional[str]:
         """Ingest a chat message into KnowledgeCore"""
@@ -52,7 +54,7 @@ class KnowledgeCoreService:
         try:
             # Add role metadata to text for better analysis if needed, 
             # or use 'source' to distinguish. Here we use source='visionark-{role}'
-            source = f"visionark-{role}"
+            source = f"visionark_{role}"
             response = self.client.ingest_text(
                 text=text,
                 source=source,
@@ -64,17 +66,12 @@ class KnowledgeCoreService:
             print(f"[KnowledgeCoreService] Ingestion error: {e}")
             return None
 
-    def get_context(self, query: str, scope: str = "global", agent_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def get_context(self, query: str, app_context: Optional[dict] = None, agent_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Retrieve context from KnowledgeCore for a given query"""
         if not self.client:
             return None
 
         try:
-            # We can pass scope/agent_id as app_context for better filtering in KnowledgeCore
-            app_context = f"scope:{scope}"
-            if agent_id:
-                app_context += f",agent:{agent_id}"
-
             response = self.client.get_context(
                 query=query,
                 include_global=True,
