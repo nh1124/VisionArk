@@ -213,7 +213,7 @@ class GeminiProvider(BaseLLMProvider):
         ]
         
         turn_count = 0
-        max_turns = 8
+        max_turns = 30
         accumulated_tool_results = []  # List of {name, result, success} dicts
         
         while turn_count < max_turns:

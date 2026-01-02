@@ -1340,24 +1340,6 @@ HUB_TOOL_DEFINITIONS = [
             "properties": {}
         }
     },
-    {
-        "name": "list_local_files",
-        "description": "List files stored locally for a node (hub or spoke). Shows which files are uploaded to Gemini and which need uploading. Use this to check what reference materials are available.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "node_type": {
-                    "type": "string",
-                    "enum": ["hub", "spoke"],
-                    "description": "Type of node (hub or spoke). Defaults to 'hub'."
-                },
-                "node_name": {
-                    "type": "string",
-                    "description": "Name of the node (e.g., 'hub' or spoke name like 'certification'). Defaults to 'hub'."
-                }
-            }
-        }
-    },
     # File operation tools
     {
         "name": "save_artifact",

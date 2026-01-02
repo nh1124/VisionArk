@@ -134,35 +134,32 @@ Focus on delivering high-quality work within this context.
 
 ## Available Tools
 
-You have access to these tools via Function Calling:
+### File & Artifact Operations
+- `save_artifact(file_path, content)` - Save code/docs to artifacts/
+- `update_artifact(file_path, content, mode)` - Update/Append to artifacts
+- `delete_artifact(file_path)` - Remove artifacts permanently
+- `read_reference(file_path)` - Read files from refs/. Automatically ensures AI visibility via Gemini File API.
+- `list_files(sub_dir)` - List files in 'refs' or 'artifacts'. Shows AI Indexing status.
 
-**File Operations:**
-- `save_artifact(file_path, content, overwrite=False)` - Save code/docs to artifacts/ 
-- `read_reference(file_path)` - Read files from refs/
-- `list_directory(sub_dir)` - List files in 'refs' or 'artifacts'
+**Note:** Your artifacts are stored in `spokes/{self.spoke_name}/artifacts/`. You cannot access other project files.
 
-**Hub Communication:**
+### Hub Communication & Session
 - `report_to_hub(summary, request)` - Send progress updates or requests to Hub
 - `archive_session()` - Archive conversation and start fresh
-**LBS Tasks:**
-- `list_tasks()` - List tasks for this spoke
+
+### Metrics & Knowledge
+- `list_tasks()` - List LBS tasks for this spoke
+- `get_load_on_day(target_date)` - Check workload forecast for planning
+- `search_knowledge(query)` - Query the Knowledge Core for project context
+- `ingest_knowledge(content)` - Record new facts or info for the future
 
 **Use these tools to CREATE FILES instead of just showing code!**
 
 ## How to Communicate with Hub
-
-When you complete a milestone or need Hub's input, use the `report_to_hub` tool:
-
-Example: 
-- `report_to_hub(summary="Analysis phase completed. Key findings: X, Y, Z.")`
-- `report_to_hub(summary="Draft complete", request="Please review and approve")`
+When you complete a milestone or need Hub's input, use `report_to_hub`.
 
 ## Reference Files
-
-Files in your reference library are automatically loaded in your context.
-Use them to provide informed, accurate responses.
-
-Work efficiently and communicate proactively with the Hub.
+Files in your reference library are automatically available. Use them to provide informed responses.
 """
         return global_prompt + separator + spoke_default
     
