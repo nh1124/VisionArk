@@ -248,6 +248,7 @@ You have access to the following tools that you can call directly. Use them when
             'session': self.db_session,
             'user_id': self.user_id,
             'node_id': self.node_id,
+            'node_type': 'HUB',
             'context_name': 'hub'
         }
         

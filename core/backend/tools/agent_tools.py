@@ -4,11 +4,12 @@ Replaces slash command system with Gemini native function calling
 """
 from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, date
 import uuid
 
-from models.database import Node, AgentProfile, ChatSession, InboxQueue
+from models.database import Node, AgentProfile, ChatSession, InboxQueue, ServiceRegistry
 from services.lbs_client import LBSClient
+from services.knowledge_core_service import KnowledgeCoreService
 
 
 # ==============================================================================
@@ -58,6 +59,49 @@ def _get_lbs_client(user_id: str, session: Session) -> LBSClient:
                 pass  # Fall back to env var logic in LBSClient if decryption fails
     
     return LBSClient(base_url=lbs_url, api_key=lbs_api_key)
+
+
+def _get_kc_service(user_id: str, session: Session) -> KnowledgeCoreService:
+    """Get KnowledgeCore service for the user"""
+    return KnowledgeCoreService(session, user_id)
+
+
+def _get_file_service(user_id: str, session: Session) -> FileService:
+    """Get FileService for the user with API key configuration"""
+    from models.database import UserSettings
+    from utils.encryption import decrypt_string
+    
+    api_key = None
+    settings = session.query(UserSettings).filter(UserSettings.user_id == user_id).first()
+    if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
+        try:
+            api_key = decrypt_string(settings.ai_config["gemini_api_key"])
+        except Exception:
+            pass
+            
+    return FileService(session, user_id, api_key=api_key)
+
+
+def _resolve_agent_artifacts_dir(user_id: str, node_type: str, spoke_name: Optional[str] = None) -> Path:
+    """
+    Resolve the artifacts directory based on node type.
+    Hub -> {user_dir}/hub_data/artifacts
+    Spoke -> {user_dir}/spokes/{spoke_name}/artifacts
+    """
+    from utils.paths import get_user_hub_dir, get_spoke_dir
+    
+    if node_type == 'HUB':
+        base_dir = get_user_hub_dir(user_id)
+    elif node_type == 'SPOKE':
+        if not spoke_name:
+            raise ValueError("spoke_name is required for Spoke agents")
+        base_dir = get_spoke_dir(user_id, spoke_name)
+    else:
+        raise ValueError(f"Unknown node_type: {node_type}")
+        
+    artifacts_dir = base_dir / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    return artifacts_dir
 
 
 # ==============================================================================
@@ -644,32 +688,19 @@ def save_artifact(
     content: str,
     overwrite: bool = False,
     *,
-    spoke_name: str,
-    user_id: str = None,  # Injected from tool_context
+    user_id: str,
+    node_type: str,
+    spoke_name: Optional[str] = None,
     **kwargs
 ) -> ToolResult:
     """
-    Save content to the spoke's artifacts directory (user-scoped).
-    
-    Args:
-        file_path: Relative path within artifacts/ (e.g., 'draft.md')
-        content: Full content of the file
-        overwrite: Set True to overwrite existing file
-        spoke_name: Current spoke name (injected from tool_context)
-        user_id: User ID for scoped path (injected from tool_context)
+    Save content to the agent's artifacts directory (user-scoped and isolated).
     """
-    from utils.paths import get_spoke_dir
-    
-    if not user_id:
-        return ToolResult(success=False, message="User context not available")
-    
     try:
         if '..' in file_path or file_path.startswith('/') or file_path.startswith('\\'):
             return ToolResult(success=False, message="Path traversal not allowed")
         
-        # Use user-scoped path
-        spoke_dir = get_spoke_dir(user_id, spoke_name)
-        artifacts_dir = spoke_dir / "artifacts"
+        artifacts_dir = _resolve_agent_artifacts_dir(user_id, node_type, spoke_name)
         full_path = artifacts_dir / file_path
         
         full_path.parent.mkdir(parents=True, exist_ok=True)
@@ -679,75 +710,148 @@ def save_artifact(
         
         full_path.write_text(content, encoding='utf-8')
         
+        # Display name for user
+        context_label = f"spokes/{spoke_name}" if node_type == 'SPOKE' else "hub_data"
+        
         return ToolResult(
             success=True,
-            message=f"✅ Saved file: artifacts/{file_path}",
-            data={"file_path": file_path, "spoke": spoke_name, "full_path": str(full_path)}
+            message=f"✅ Saved file: {context_label}/artifacts/{file_path}",
+            data={"file_path": file_path, "node_type": node_type, "full_path": str(full_path)}
         )
     except Exception as e:
         return ToolResult(success=False, message=f"Failed to save file: {str(e)}")
 
 
-def read_reference(
+def update_artifact(
     file_path: str,
+    content: str,
+    mode: str = 'w',
     *,
-    spoke_name: str,
-    user_id: str = None,
-    session: Session = None,  # Injected from tool_context
+    user_id: str,
+    node_type: str,
+    spoke_name: Optional[str] = None,
     **kwargs
 ) -> ToolResult:
     """
-    Read a file from the spoke's refs or files directory (user-scoped).
-    Resolves original filenames to storage UUIDs via database.
-    
-    Args:
-        file_path: Original filename or relative path
-        spoke_name: Current spoke name
-        user_id: User ID
-        session: Database session
+    Update or append to an artifact in the agent's isolated artifacts directory.
     """
-    from utils.paths import get_spoke_dir
-    from models.database import UploadedFile, Node
-    
-    if not user_id:
-        return ToolResult(success=False, message="User context not available")
+    if mode not in ['w', 'a', 'w+', 'a+']:
+        return ToolResult(success=False, message="Mode must be 'w' (overwrite) or 'a' (append)")
     
     try:
         if '..' in file_path or file_path.startswith('/') or file_path.startswith('\\'):
             return ToolResult(success=False, message="Path traversal not allowed")
         
-        spoke_dir = get_spoke_dir(user_id, spoke_name)
+        artifacts_dir = _resolve_agent_artifacts_dir(user_id, node_type, spoke_name)
+        full_path = artifacts_dir / file_path
         
-        # 1. Search for file in database to resolve UUID naming
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Determine Python file mode
+        py_mode = 'a' if 'a' in mode else 'w'
+        
+        with open(full_path, py_mode, encoding='utf-8') as f:
+            f.write(content)
+        
+        action = "Appended to" if py_mode == 'a' else "Updated"
+        context_label = f"spokes/{spoke_name}" if node_type == 'SPOKE' else "hub_data"
+        
+        return ToolResult(
+            success=True,
+            message=f"✅ {action} file: {context_label}/artifacts/{file_path}",
+            data={"file_path": file_path, "mode": mode, "full_path": str(full_path)}
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to update file: {str(e)}")
+
+
+def delete_artifact(
+    file_path: str,
+    *,
+    user_id: str,
+    node_type: str,
+    spoke_name: Optional[str] = None,
+    **kwargs
+) -> ToolResult:
+    """
+    Delete an artifact from the agent's isolated artifacts directory.
+    """
+    try:
+        if '..' in file_path or file_path.startswith('/') or file_path.startswith('\\'):
+            return ToolResult(success=False, message="Path traversal not allowed")
+        
+        artifacts_dir = _resolve_agent_artifacts_dir(user_id, node_type, spoke_name)
+        full_path = artifacts_dir / file_path
+        
+        if not full_path.exists():
+            return ToolResult(success=False, message=f"File not found: {file_path}")
+            
+        full_path.unlink()
+        
+        context_label = f"spokes/{spoke_name}" if node_type == 'SPOKE' else "hub_data"
+        
+        return ToolResult(
+            success=True,
+            message=f"🗑️ Deleted file: {context_label}/artifacts/{file_path}",
+            data={"file_path": file_path, "deleted": True}
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to delete file: {str(e)}")
+
+
+def read_reference(
+    file_path: str,
+    *,
+    user_id: str,
+    node_type: str,
+    spoke_name: Optional[str] = None,
+    session: Session = None,
+    **kwargs
+) -> ToolResult:
+    """
+    Read a file from refs/ or artifacts/. 
+    Synchronizes with Gemini File API for AI visibility.
+    """
+    from utils.paths import get_spoke_dir, get_user_hub_dir
+    from models.database import UploadedFile, Node
+    import asyncio
+    
+    try:
+        if '..' in file_path or file_path.startswith('/') or file_path.startswith('\\'):
+            return ToolResult(success=False, message="Path traversal not allowed")
+        
+        if node_type == 'HUB':
+            agent_base_dir = get_user_hub_dir(user_id)
+        else:
+            agent_base_dir = get_spoke_dir(user_id, spoke_name)
+        
+        # 1. Resolve storage path
         storage_path = None
+        db_file = None
         if session:
-            # Find the spoke node first
+            node_name = spoke_name if node_type == 'SPOKE' else 'hub'
             node = session.query(Node).filter(
                 Node.user_id == user_id,
-                Node.name == spoke_name,
-                Node.node_type == "SPOKE"
+                Node.name == node_name,
+                Node.node_type == node_type
             ).first()
             
             if node:
-                # Find the file by original filename
                 db_file = session.query(UploadedFile).filter(
                     UploadedFile.node_id == node.id,
                     UploadedFile.filename == file_path
                 ).first()
-                
                 if db_file:
                     storage_path = Path(db_file.storage_path)
 
-        # 2. Try various path combinations if not found in DB
         potential_paths = []
         if storage_path:
             potential_paths.append(storage_path)
             
-        # Legacy/direct paths
         potential_paths.extend([
-            spoke_dir / "refs" / file_path,
-            spoke_dir / "files" / file_path,
-            spoke_dir / "artifacts" / file_path
+            agent_base_dir / "refs" / file_path,
+            agent_base_dir / "files" / file_path,
+            agent_base_dir / "artifacts" / file_path
         ])
         
         full_path = None
@@ -759,183 +863,274 @@ def read_reference(
         if not full_path:
             return ToolResult(success=False, message=f"File not found: {file_path}")
         
+        # 2. Sync with Gemini if it's a known DB file and not yet uploaded
+        gemini_info = ""
+        if db_file and not db_file.gemini_file_name:
+            try:
+                file_service = _get_file_service(user_id, session)
+                # Run async upload in sync context
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(file_service.upload_to_gemini(db_file))
+                loop.close()
+                gemini_info = "\n\n(AI System: This file has been uploaded to Gemini File API for full-text visibility in upcoming turns.)"
+            except Exception as e:
+                print(f"[read_reference] Gemini sync failed: {e}")
+
+        # 3. Read content
         try:
             content = full_path.read_text(encoding='utf-8')
         except UnicodeDecodeError:
-            content = f"[Binary file: {file_path} - Use a code interpreter or specialized tool to process this file type]"
+            content = f"[Binary file: {file_path}]"
         
         return ToolResult(
             success=True,
-            message=f"📄 Content of {file_path}:\n\n{content}",
-            data={"file_path": file_path, "content": content, "storage_path": str(full_path)}
+            message=f"📄 Content of {file_path}:\n\n{content}{gemini_info}",
+            data={"file_path": file_path, "content": content}
         )
     except Exception as e:
         return ToolResult(success=False, message=f"Failed to read file: {str(e)}")
 
 
-def list_directory(
+def list_files(
     sub_dir: str = "refs",
     *,
-    spoke_name: str,
-    user_id: str = None,
+    user_id: str,
+    node_type: str,
+    spoke_name: Optional[str] = None,
     session: Session = None,
     **kwargs
 ) -> ToolResult:
     """
-    List files in the spoke's refs, files, or artifacts directory (user-scoped).
-    
-    Args:
-        sub_dir: Either 'refs', 'files', or 'artifacts'
-        spoke_name: Current spoke name
-        user_id: User ID
-        session: Database session
+    Unified tool to list files and their AI (Gemini) synchronization status.
     """
-    from utils.paths import get_spoke_dir
+    from utils.paths import get_spoke_dir, get_user_hub_dir
     from models.database import UploadedFile, Node
-    
-    if not user_id:
-        return ToolResult(success=False, message="User context not available")
     
     try:
         if sub_dir not in ['refs', 'artifacts', 'files']:
             return ToolResult(success=False, message="sub_dir must be 'refs', 'files', or 'artifacts'")
         
-        spoke_dir = get_spoke_dir(user_id, spoke_name)
+        node_name = spoke_name if node_type == 'SPOKE' else 'hub'
+        if node_type == 'HUB':
+            agent_base_dir = get_user_hub_dir(user_id)
+        else:
+            agent_base_dir = get_spoke_dir(user_id, spoke_name)
         
-        # We'll collect files from both disk and DB to ensure original names are shown
-        found_files = set()
+        found_files = {} # filename -> {size, uploaded}
         
-        # 1. Check database for files in this node
+        # 1. Get file metadata from Database
         if session:
             node = session.query(Node).filter(
                 Node.user_id == user_id,
-                Node.name == spoke_name,
-                Node.node_type == "SPOKE"
+                Node.name == node_name,
+                Node.node_type == node_type
             ).first()
             if node:
                 db_files = session.query(UploadedFile).filter(UploadedFile.node_id == node.id).all()
                 for f in db_files:
-                    found_files.add(f.filename)
+                    found_files[f.filename] = {
+                        "size": f.size_bytes / 1024 if f.size_bytes else 0,
+                        "uploaded": bool(f.gemini_file_name)
+                    }
         
-        # 2. Check disk (refs and artifacts might have direct files)
-        target_dir = spoke_dir / sub_dir
+        # 2. Reconcile with Disk
+        target_dir = agent_base_dir / sub_dir
         if target_dir.exists():
             for item in target_dir.rglob('*'):
                 if item.is_file():
-                    found_files.add(str(item.relative_to(target_dir)))
+                    name = str(item.relative_to(target_dir))
+                    if name not in found_files:
+                        found_files[name] = {
+                            "size": item.stat().st_size / 1024,
+                            "uploaded": False
+                        }
         
-        # 3. Special case: if sub_dir is 'refs', also check 'files' (unified view)
-        if sub_dir == 'refs':
-            files_dir = spoke_dir / "files"
-            if files_dir.exists():
-                for item in files_dir.rglob('*'):
-                    if item.is_file():
-                        # If it's a UUID name, we hopefully already got it from DB
-                        # If not, add the filename
-                        found_files.add(item.name)
+        # 3. Handle 'refs'/'files' unified view
+        if sub_dir == 'refs' and (agent_base_dir / "files").exists():
+            for item in (agent_base_dir / "files").rglob('*'):
+                if item.is_file():
+                    if item.name not in found_files:
+                        found_files[item.name] = {
+                            "size": item.stat().st_size / 1024,
+                            "uploaded": False
+                        }
 
-        files_list = sorted(list(found_files))
+        # 4. Format Output
+        files_list = sorted(found_files.keys())
+        context_label = f"spokes/{spoke_name}" if node_type == 'SPOKE' else "hub_data"
         
         if not files_list:
-            return ToolResult(success=True, message=f"📁 {sub_dir}/ is empty", data={"sub_dir": sub_dir, "files": []})
+            return ToolResult(success=True, message=f"📁 {sub_dir}/ is empty", data={"files": []})
         
+        lines = [f"📁 Files available in {context_label} ({sub_dir}):"]
+        for name in files_list:
+            meta = found_files[name]
+            status = "✅ AI Indexed" if meta['uploaded'] else "⚠️ Local only"
+            lines.append(f"  • {name} ({meta['size']:.1f} KB) - {status}")
+            
         return ToolResult(
             success=True,
-            message=f"📁 Files available in {spoke_name} ({sub_dir}):\n" + "\n".join(f"  • {f}" for f in files_list),
-            data={"sub_dir": sub_dir, "files": files_list}
+            message="\n".join(lines),
+            data={"files": found_files}
         )
     except Exception as e:
-        return ToolResult(success=False, message=f"Failed to list directory: {str(e)}")
+        return ToolResult(success=False, message=f"Failed to list files: {str(e)}")
 
 
-def list_local_files(
-    node_type: str = "hub",
-    node_name: str = "hub",
+
+
+# ==============================================================================
+# LBS & KC Extended Tools
+# ==============================================================================
+
+def get_load_on_day(
+    target_date: str,
     *,
     session: Session,
     user_id: str
 ) -> ToolResult:
     """
-    List files stored locally for a node, showing which are uploaded to Gemini.
+    Get the total estimated workload for a specific future day.
     
     Args:
-        node_type: Either 'hub' or 'spoke'
-        node_name: Name of the node (e.g., 'hub' or spoke name like 'certification')
-        session: Database session (injected)
-        user_id: User ID (injected)
-    
-    Returns:
-        ToolResult with list of local files and their Gemini upload status
+        target_date: Date to check (YYYY-MM-DD)
     """
-    from models.database import UploadedFile, Node
-    
     try:
-        # Find the node
-        node = session.query(Node).filter(
-            Node.user_id == user_id,
-            Node.name == node_name,
-            Node.node_type == node_type.upper()
-        ).first()
+        dt = date.fromisoformat(target_date)
+        client = _get_lbs_client(user_id, session)
+        result = client.calculate_load(dt)
         
-        if not node:
-            return ToolResult(
-                success=True,
-                message=f"📁 No files found for {node_type}/{node_name}",
-                data={"files": [], "node_type": node_type, "node_name": node_name}
-            )
-        
-        # Get all files for this node
-        files = session.query(UploadedFile).filter(
-            UploadedFile.node_id == node.id
-        ).order_by(UploadedFile.uploaded_at.desc()).all()
-        
-        if not files:
-            return ToolResult(
-                success=True,
-                message=f"📁 No files stored for {node_type}/{node_name}",
-                data={"files": [], "node_type": node_type, "node_name": node_name}
-            )
-        
-        # Format file list with Gemini status
-        file_list = []
-        uploaded_count = 0
-        not_uploaded_count = 0
-        
-        for f in files:
-            has_gemini = bool(f.gemini_file_name)
-            status = "✅ Uploaded" if has_gemini else "⚠️ Not uploaded"
-            size_kb = f.size_bytes / 1024 if f.size_bytes else 0
-            
-            if has_gemini:
-                uploaded_count += 1
-            else:
-                not_uploaded_count += 1
-            
-            file_list.append({
-                "filename": f.filename,
-                "size_kb": round(size_kb, 1),
-                "gemini_status": status,
-                "has_gemini": has_gemini
-            })
-        
-        # Build message
-        lines = [f"📁 Local files for {node_type}/{node_name} ({len(files)} total):"]
-        lines.append(f"   ✅ {uploaded_count} uploaded to Gemini, ⚠️ {not_uploaded_count} not uploaded")
-        lines.append("")
-        for f in file_list:
-            lines.append(f"  • {f['filename']} ({f['size_kb']} KB) - {f['gemini_status']}")
-        
-        if not_uploaded_count > 0:
-            lines.append("")
-            lines.append("💡 To access un-uploaded files, the user can attach them in the chat or use the file manager.")
+        load = result.get("total_load", 0.0)
+        task_count = result.get("task_count", 0)
         
         return ToolResult(
             success=True,
-            message="\n".join(lines),
-            data={"files": file_list, "node_type": node_type, "node_name": node_name}
+            message=f"📊 Load Forecast for {target_date}: {load:.1f} (Based on {task_count} tasks)",
+            data=result
         )
     except Exception as e:
-        return ToolResult(success=False, message=f"Failed to list local files: {str(e)}")
+        return ToolResult(success=False, message=f"Failed to get load: {str(e)}")
+
+
+def get_load_in_period(
+    start_date: str,
+    end_date: str,
+    *,
+    session: Session,
+    user_id: str
+) -> ToolResult:
+    """
+    Get a breakdown of daily workload for a specific period.
+    
+    Args:
+        start_date: Start of the period (YYYY-MM-DD)
+        end_date: End of the period (YYYY-MM-DD)
+    """
+    try:
+        start = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
+        
+        client = _get_lbs_client(user_id, session)
+        heatmap = client.get_heatmap(start, end)
+        
+        if not heatmap:
+            return ToolResult(success=True, message=f"No load data for period {start_date} to {end_date}")
+        
+        lines = [f"📅 Load Heatmap ({start_date} to {end_date}):"]
+        for day in heatmap:
+            day_str = day.get("date")
+            load = day.get("total_load", 0.0)
+            status = day.get("status", "unknown")
+            bar = "█" * int(min(load, 10)) + "░" * (10 - int(min(load, 10)))
+            lines.append(f"  • {day_str}: [{bar}] {load:.1f} ({status})")
+            
+        return ToolResult(
+            success=True,
+            message="\n".join(lines),
+            data={"heatmap": heatmap}
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to get load period: {str(e)}")
+
+
+def search_knowledge(
+    query: str,
+    limit: int = 5,
+    *,
+    session: Session,
+    user_id: str,
+    context_name: str = "general"
+) -> ToolResult:
+    """
+    Search the Knowledge Core for relevant information, facts, and context.
+    
+    Args:
+        query: Search query or question
+        limit: Number of results to consider
+    """
+    try:
+        service = _get_kc_service(user_id, session)
+        # Using get_context for a synthesized answer/context
+        context = service.get_context(query=query, agent_id=context_name)
+        
+        if not context or not context.get("summary"):
+            return ToolResult(
+                success=True, 
+                message=f"🔍 No specific knowledge found for: '{query}'",
+                data={"context": None}
+            )
+        
+        summary = context.get("summary")
+        return ToolResult(
+            success=True,
+            message=f"🧠 Knowledge Repository Result:\n\n{summary}",
+            data=context
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Knowledge search failed: {str(e)}")
+
+
+def ingest_knowledge(
+    content: str,
+    label: Optional[str] = None,
+    *,
+    session: Session,
+    user_id: str,
+    context_name: str = "general"
+) -> ToolResult:
+    """
+    Ingest new information, notes, or data into the Knowledge Core.
+    
+    Args:
+        content: The information to remember
+        label: Optional category or label (e.g. 'research', 'meeting_notes')
+    """
+    try:
+        service = _get_kc_service(user_id, session)
+        
+        # We can prepend the label to the content for better indexing if provided
+        ingest_text = content
+        if label:
+            ingest_text = f"[{label}] {content}"
+            
+        ingest_id = service.ingest_message(
+            text=ingest_text,
+            role="assistant",  # Act as agent recording knowledge
+            scope="global",
+            agent_id=context_name
+        )
+        
+        if not ingest_id:
+            return ToolResult(success=False, message="Knowledge ingestion failed (service unavailable).")
+            
+        return ToolResult(
+            success=True,
+            message=f"📥 Successfully ingested knowledge into core (ID: {ingest_id})",
+            data={"ingest_id": ingest_id}
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to ingest knowledge: {str(e)}")
 
 
 # ==============================================================================
@@ -1185,6 +1380,140 @@ HUB_TOOL_DEFINITIONS = [
             },
             "required": ["file_path", "content"]
         }
+    },
+    {
+        "name": "update_artifact",
+        "description": "Update or append to an existing artifact. Use this for logging or iterative task updates.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Relative path within artifacts/ directory"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "New content to write or append"
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["w", "a"],
+                    "description": "Write mode: 'w' for overwrite, 'a' for append. Default is 'w'."
+                }
+            },
+            "required": ["file_path", "content"]
+        }
+    },
+    {
+        "name": "delete_artifact",
+        "description": "Permanently delete an artifact from the system.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Relative path within artifacts/ directory to delete"
+                }
+            },
+            "required": ["file_path"]
+        }
+    },
+    {
+        "name": "read_reference",
+        "description": "Read a file from the refs/ or artifacts/ directory. Automatically synchronizes with AI memory for better understanding.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Relative path within refs/ or artifacts/ directory (e.g., 'notes.md')"
+                }
+            },
+            "required": ["file_path"]
+        }
+    },
+    {
+        "name": "list_files",
+        "description": "List files and their AI indexing status in either refs/ or artifacts/ directory.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sub_dir": {
+                    "type": "string",
+                    "enum": ["refs", "artifacts", "files"],
+                    "description": "Either 'refs', 'artifacts', or 'files'"
+                }
+            },
+            "required": ["sub_dir"]
+        }
+    },
+    {
+        "name": "get_load_on_day",
+        "description": "Get the total workload forecast for a specific future day. Use this to check availability or planning.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "target_date": {
+                    "type": "string",
+                    "description": "Date to check in YYYY-MM-DD format"
+                }
+            },
+            "required": ["target_date"]
+        }
+    },
+    {
+        "name": "get_load_in_period",
+        "description": "Get a breakdown of daily workload for a specific period. Use this to find the best time for new tasks.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "start_date": {
+                    "type": "string",
+                    "description": "Start date in YYYY-MM-DD format"
+                },
+                "end_date": {
+                    "type": "string",
+                    "description": "End date in YYYY-MM-DD format"
+                }
+            },
+            "required": ["start_date", "end_date"]
+        }
+    },
+    {
+        "name": "search_knowledge",
+        "description": "Search the Knowledge Core for relevant information, facts, and context across all projects.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query or question"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Optional limit of results"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "ingest_knowledge",
+        "description": "Record new information, facts, or data into the long-term Knowledge Core.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "The information to remember"
+                },
+                "label": {
+                    "type": "string",
+                    "description": "Optional category label (e.g. 'research', 'personal_pref')"
+                }
+            },
+            "required": ["content"]
+        }
     }
 ]
 
@@ -1214,8 +1543,45 @@ SPOKE_TOOL_DEFINITIONS = [
         }
     },
     {
+        "name": "update_artifact",
+        "description": "Update or append to an existing artifact. Use this for logging or iterative task updates.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Relative path within artifacts/ directory"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "New content to write or append"
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["w", "a"],
+                    "description": "Write mode: 'w' for overwrite, 'a' for append. Default is 'w'."
+                }
+            },
+            "required": ["file_path", "content"]
+        }
+    },
+    {
+        "name": "delete_artifact",
+        "description": "Permanently delete an artifact from the system.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Relative path within artifacts/ directory to delete"
+                }
+            },
+            "required": ["file_path"]
+        }
+    },
+    {
         "name": "read_reference",
-        "description": "Read a file from the refs/ (references) directory. Use this to access reference materials and documentation.",
+        "description": "Read a file from the refs/ or artifacts/ directory. Automatically synchronizes with AI memory for better understanding.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -1228,8 +1594,8 @@ SPOKE_TOOL_DEFINITIONS = [
         }
     },
     {
-        "name": "list_directory",
-        "description": "List files in either the refs/ or artifacts/ directory. Use to see what files are available.",
+        "name": "list_files",
+        "description": "List files and their AI indexing status in either refs/ or artifacts/ directory.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -1283,6 +1649,74 @@ SPOKE_TOOL_DEFINITIONS = [
             "type": "object",
             "properties": {}
         }
+    },
+    {
+        "name": "get_load_on_day",
+        "description": "Get the total workload forecast for a specific future day. Use this to check availability or planning.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "target_date": {
+                    "type": "string",
+                    "description": "Date to check in YYYY-MM-DD format"
+                }
+            },
+            "required": ["target_date"]
+        }
+    },
+    {
+        "name": "get_load_in_period",
+        "description": "Get a breakdown of daily workload for a specific period. Use this to find the best time for new tasks.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "start_date": {
+                    "type": "string",
+                    "description": "Start date in YYYY-MM-DD format"
+                },
+                "end_date": {
+                    "type": "string",
+                    "description": "End date in YYYY-MM-DD format"
+                }
+            },
+            "required": ["start_date", "end_date"]
+        }
+    },
+    {
+        "name": "search_knowledge",
+        "description": "Search the Knowledge Core for relevant information, facts, and context related to this project.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query or question"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Optional limit of results"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "ingest_knowledge",
+        "description": "Record new information, facts, or data into the long-term Knowledge Core.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "The information to remember"
+                },
+                "label": {
+                    "type": "string",
+                    "description": "Optional category label"
+                }
+            },
+            "required": ["content"]
+        }
     }
 ]
 
@@ -1303,7 +1737,13 @@ TOOL_FUNCTIONS = {
     "archive_session": archive_session,
     # File operation tools
     "save_artifact": save_artifact,
+    "update_artifact": update_artifact,
+    "delete_artifact": delete_artifact,
     "read_reference": read_reference,
-    "list_directory": list_directory,
-    "list_local_files": list_local_files,
+    "list_files": list_files,
+    # LBS & KC Extended Tools
+    "get_load_on_day": get_load_on_day,
+    "get_load_in_period": get_load_in_period,
+    "search_knowledge": search_knowledge,
+    "ingest_knowledge": ingest_knowledge,
 }

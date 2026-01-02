@@ -179,6 +179,7 @@ Work efficiently and communicate proactively with the Hub.
             'session': self.db_session,
             'user_id': self.user_id,
             'node_id': self.node_id,
+            'node_type': 'SPOKE',
             'spoke_name': self.spoke_name,
             'context_name': self.spoke_name
         }
