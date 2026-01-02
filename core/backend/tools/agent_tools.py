@@ -322,8 +322,13 @@ def update_task_details(
     task_id: str,
     task_name: Optional[str] = None,
     workload: Optional[float] = None,
+    spoke: Optional[str] = None,
     active: Optional[bool] = None,
     notes: Optional[str] = None,
+    rule_type: Optional[str] = None,
+    due_date: Optional[str] = None,
+    days: Optional[str] = None,
+    interval_days: Optional[int] = None,
     *,
     session: Session,
     user_id: str
@@ -335,15 +340,61 @@ def update_task_details(
         task_id: ID of the task to update
         task_name: New name for the task
         workload: New load score (0-10)
+        spoke: New spoke/context to assign the task to
         active: New active status
         notes: New notes
+        rule_type: New recurrence rule (ONCE, WEEKLY, EVERY_N_DAYS, MONTHLY_DAY)
+        due_date: New due date for ONCE tasks (YYYY-MM-DD)
+        days: Comma-separated days for WEEKLY tasks (e.g., "mon,wed,fri")
+        interval_days: Interval for EVERY_N_DAYS tasks
     """
     try:
         updates = {}
         if task_name is not None: updates["task_name"] = task_name
         if workload is not None: updates["base_load_score"] = float(workload)
+        if spoke is not None: updates["context"] = spoke
         if active is not None: updates["active"] = active
         if notes is not None: updates["notes"] = notes
+        
+        # Handle rule_type and related fields
+        if rule_type is not None:
+            updates["rule_type"] = rule_type.upper()
+            
+            if rule_type.upper() == "ONCE" and due_date:
+                updates["due_date"] = due_date
+            
+            elif rule_type.upper() == "WEEKLY" and days:
+                # Parse comma-separated days into boolean flags
+                days_list = [d.strip().lower() for d in days.split(",")]
+                day_map = {d: True for d in days_list}
+                updates.update({
+                    "mon": day_map.get("mon", False),
+                    "tue": day_map.get("tue", False),
+                    "wed": day_map.get("wed", False),
+                    "thu": day_map.get("thu", False),
+                    "fri": day_map.get("fri", False),
+                    "sat": day_map.get("sat", False),
+                    "sun": day_map.get("sun", False)
+                })
+            
+            elif rule_type.upper() == "EVERY_N_DAYS" and interval_days:
+                updates["interval_days"] = interval_days
+        else:
+            # Allow updating these fields even without changing rule_type
+            if due_date is not None: updates["due_date"] = due_date
+            if interval_days is not None: updates["interval_days"] = interval_days
+            if days is not None:
+                days_list = [d.strip().lower() for d in days.split(",")]
+                day_map = {d: True for d in days_list}
+                updates.update({
+                    "mon": day_map.get("mon", False),
+                    "tue": day_map.get("tue", False),
+                    "wed": day_map.get("wed", False),
+                    "thu": day_map.get("thu", False),
+                    "fri": day_map.get("fri", False),
+                    "sat": day_map.get("sat", False),
+                    "sun": day_map.get("sun", False)
+                })
         
         if not updates:
             return ToolResult(success=False, message="No updates provided")
@@ -797,6 +848,96 @@ def list_directory(
         return ToolResult(success=False, message=f"Failed to list directory: {str(e)}")
 
 
+def list_local_files(
+    node_type: str = "hub",
+    node_name: str = "hub",
+    *,
+    session: Session,
+    user_id: str
+) -> ToolResult:
+    """
+    List files stored locally for a node, showing which are uploaded to Gemini.
+    
+    Args:
+        node_type: Either 'hub' or 'spoke'
+        node_name: Name of the node (e.g., 'hub' or spoke name like 'certification')
+        session: Database session (injected)
+        user_id: User ID (injected)
+    
+    Returns:
+        ToolResult with list of local files and their Gemini upload status
+    """
+    from models.database import UploadedFile, Node
+    
+    try:
+        # Find the node
+        node = session.query(Node).filter(
+            Node.user_id == user_id,
+            Node.name == node_name,
+            Node.node_type == node_type.upper()
+        ).first()
+        
+        if not node:
+            return ToolResult(
+                success=True,
+                message=f"📁 No files found for {node_type}/{node_name}",
+                data={"files": [], "node_type": node_type, "node_name": node_name}
+            )
+        
+        # Get all files for this node
+        files = session.query(UploadedFile).filter(
+            UploadedFile.node_id == node.id
+        ).order_by(UploadedFile.uploaded_at.desc()).all()
+        
+        if not files:
+            return ToolResult(
+                success=True,
+                message=f"📁 No files stored for {node_type}/{node_name}",
+                data={"files": [], "node_type": node_type, "node_name": node_name}
+            )
+        
+        # Format file list with Gemini status
+        file_list = []
+        uploaded_count = 0
+        not_uploaded_count = 0
+        
+        for f in files:
+            has_gemini = bool(f.gemini_file_name)
+            status = "✅ Uploaded" if has_gemini else "⚠️ Not uploaded"
+            size_kb = f.size_bytes / 1024 if f.size_bytes else 0
+            
+            if has_gemini:
+                uploaded_count += 1
+            else:
+                not_uploaded_count += 1
+            
+            file_list.append({
+                "filename": f.filename,
+                "size_kb": round(size_kb, 1),
+                "gemini_status": status,
+                "has_gemini": has_gemini
+            })
+        
+        # Build message
+        lines = [f"📁 Local files for {node_type}/{node_name} ({len(files)} total):"]
+        lines.append(f"   ✅ {uploaded_count} uploaded to Gemini, ⚠️ {not_uploaded_count} not uploaded")
+        lines.append("")
+        for f in file_list:
+            lines.append(f"  • {f['filename']} ({f['size_kb']} KB) - {f['gemini_status']}")
+        
+        if not_uploaded_count > 0:
+            lines.append("")
+            lines.append("💡 To access un-uploaded files, the user can attach them in the chat or use the file manager.")
+        
+        return ToolResult(
+            success=True,
+            message="\n".join(lines),
+            data={"files": file_list, "node_type": node_type, "node_name": node_name}
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to list local files: {str(e)}")
+
+
 # ==============================================================================
 # Tool Definitions for Gemini Function Calling
 # ==============================================================================
@@ -906,7 +1047,7 @@ HUB_TOOL_DEFINITIONS = [
     },
     {
         "name": "update_task_details",
-        "description": "Update properties of an existing task in LBS.",
+        "description": "Update properties of an existing task in LBS including recurrence rules.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -922,6 +1063,10 @@ HUB_TOOL_DEFINITIONS = [
                     "type": "number",
                     "description": "New load score (0-10)"
                 },
+                "spoke": {
+                    "type": "string",
+                    "description": "New spoke/context to assign the task to"
+                },
                 "active": {
                     "type": "boolean",
                     "description": "Whether the task is active"
@@ -929,6 +1074,23 @@ HUB_TOOL_DEFINITIONS = [
                 "notes": {
                     "type": "string",
                     "description": "New notes for the task"
+                },
+                "rule_type": {
+                    "type": "string",
+                    "enum": ["ONCE", "WEEKLY", "EVERY_N_DAYS", "MONTHLY_DAY"],
+                    "description": "Recurrence rule type"
+                },
+                "due_date": {
+                    "type": "string",
+                    "description": "Due date for ONCE tasks (YYYY-MM-DD format)"
+                },
+                "days": {
+                    "type": "string",
+                    "description": "Comma-separated days for WEEKLY tasks (e.g., 'mon,wed,fri')"
+                },
+                "interval_days": {
+                    "type": "integer",
+                    "description": "Interval for EVERY_N_DAYS tasks"
                 }
             },
             "required": ["task_id"]
@@ -982,6 +1144,47 @@ HUB_TOOL_DEFINITIONS = [
             "type": "object",
             "properties": {}
         }
+    },
+    {
+        "name": "list_local_files",
+        "description": "List files stored locally for a node (hub or spoke). Shows which files are uploaded to Gemini and which need uploading. Use this to check what reference materials are available.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "node_type": {
+                    "type": "string",
+                    "enum": ["hub", "spoke"],
+                    "description": "Type of node (hub or spoke). Defaults to 'hub'."
+                },
+                "node_name": {
+                    "type": "string",
+                    "description": "Name of the node (e.g., 'hub' or spoke name like 'certification'). Defaults to 'hub'."
+                }
+            }
+        }
+    },
+    # File operation tools
+    {
+        "name": "save_artifact",
+        "description": "Save content to a file in the system. MUST BE USED whenever writing code, docs, or logs. DO NOT print the content in chat without saving it first.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Relative path within artifacts/ directory (e.g., 'draft.md', 'code/main.py')"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Full content of the file to save"
+                },
+                "overwrite": {
+                    "type": "boolean",
+                    "description": "Set True to overwrite existing file. Default is False."
+                }
+            },
+            "required": ["file_path", "content"]
+        }
     }
 ]
 
@@ -990,7 +1193,7 @@ SPOKE_TOOL_DEFINITIONS = [
     # File operation tools
     {
         "name": "save_artifact",
-        "description": "Save code, documentation, or any content to the artifacts directory. Use this to CREATE FILES instead of just showing code. Always use this when the user asks you to create, write, or save a file.",
+        "description": "Save content to a file in the system. MUST BE USED whenever writing code, docs, or logs. DO NOT print the content in chat without saving it first.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -1102,4 +1305,5 @@ TOOL_FUNCTIONS = {
     "save_artifact": save_artifact,
     "read_reference": read_reference,
     "list_directory": list_directory,
+    "list_local_files": list_local_files,
 }

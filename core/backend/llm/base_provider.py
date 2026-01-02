@@ -20,6 +20,7 @@ class CompletionResponse:
     model: str
     usage: Optional[Dict] = None  # tokens used, cost, etc.
     metadata: Optional[Dict] = None
+    tool_calls: Optional[List[Dict]] = None  # List of tool call results
 
 
 class BaseLLMProvider(ABC):

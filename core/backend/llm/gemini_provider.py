@@ -182,7 +182,11 @@ class GeminiProvider(BaseLLMProvider):
             genai.configure(api_key=self.api_key)
         
         if tools_for_model:
-            print(f"[Gemini DEBUG] Creating model with {len(tools_for_model)} tool(s)")
+            # Debug: Print what tools are being registered
+            if tool_definitions:
+                tool_names = [td.get('name', 'unknown') for td in tool_definitions]
+                print(f"[Gemini DEBUG] Creating model with {len(tool_definitions)} tools: {tool_names[:5]}...")
+            print(f"[Gemini DEBUG] tools_for_model type: {type(tools_for_model)}, len: {len(tools_for_model)}")
             model = genai.GenerativeModel(
                 model_name,
                 tools=tools_for_model
@@ -210,7 +214,7 @@ class GeminiProvider(BaseLLMProvider):
         
         turn_count = 0
         max_turns = 8
-        accumulated_tool_results = []
+        accumulated_tool_results = []  # List of {name, result, success} dicts
         
         while turn_count < max_turns:
             turn_count += 1
@@ -226,9 +230,10 @@ class GeminiProvider(BaseLLMProvider):
                 print(f"[Gemini] Generation error: {e}")
                 if accumulated_tool_results:
                     return CompletionResponse(
-                        content="\n".join(accumulated_tool_results) + f"\n\nError during continuation: {str(e)}",
+                        content=f"Error during continuation: {str(e)}",
                         model=model_name,
-                        usage=None
+                        usage=None,
+                        tool_calls=accumulated_tool_results
                     )
                 raise
             
@@ -245,16 +250,11 @@ class GeminiProvider(BaseLLMProvider):
             if not function_calls:
                 # Final text response
                 final_text = response.text
-                if accumulated_tool_results:
-                    return CompletionResponse(
-                        content="\n".join(accumulated_tool_results) + "\n\n" + final_text,
-                        model=model_name,
-                        usage=None
-                    )
                 return CompletionResponse(
                     content=final_text,
                     model=model_name,
-                    usage=None
+                    usage=None,
+                    tool_calls=accumulated_tool_results if accumulated_tool_results else None
                 )
             
             # Execute all tool calls in parallel (simulated sequentially here)
@@ -340,8 +340,13 @@ class GeminiProvider(BaseLLMProvider):
                     except Exception:
                         pass
                 
-                # Accumulate for UI
-                accumulated_tool_results.append(f"[Tool Call: {function_name}]\n{tool_result}")
+                # Accumulate structured tool result
+                is_success = not (tool_result.startswith("Error") or tool_result.startswith("Failed"))
+                accumulated_tool_results.append({
+                    "name": function_name,
+                    "result": tool_result,
+                    "success": is_success
+                })
                 
                 # Add to response parts for Gemini
                 tool_response_parts.append(genai.protos.Part(
@@ -358,14 +363,15 @@ class GeminiProvider(BaseLLMProvider):
             ))
             
         # If we exit loop due to turn count
-        last_resp = "\n".join(accumulated_tool_results)
+        final_content = ""
         if turn_count >= max_turns:
-            last_resp += "\n\n(Reached maximum reasoning turns)"
+            final_content = "(Reached maximum reasoning turns)"
             
         return CompletionResponse(
-            content=last_resp,
+            content=final_content,
             model=model_name,
-            usage=None
+            usage=None,
+            tool_calls=accumulated_tool_results if accumulated_tool_results else None
         )
         
         # Extract token usage

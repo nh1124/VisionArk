@@ -4,6 +4,7 @@ Chat with Hub and Spoke agents, create new Spokes
 """
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header
 from pydantic import BaseModel
+import time
 from sqlalchemy.orm import Session
 from typing import Optional, List
 
@@ -28,7 +29,8 @@ class ChatResponse(BaseModel):
     response: str
     meta_actions: list = []
     executed_commands: list = []
-    attached_files: list = []  # NEW: file metadata
+    attached_files: list = []  # file metadata
+    tool_calls: list = []  # structured tool call results
 
 
 class CreateSpoke(BaseModel):
@@ -242,35 +244,38 @@ async def chat_with_hub(
                     attached_files=file_metadata
                 )
 
-    if file_service:
-        # 2. Proactively sync all local files for this node to Gemini
-        print(f"[Hub] Proactively syncing all local files to Gemini...")
+    # === TIMING START ===
+    _chat_start = time.time()
+    print(f"[Hub/Timing] === Chat request started ===")
+    
+    # FIX: Only sync files when user uploads NEW files (not every request)
+    if file_service and files:  # Only when there are new uploads
+        # 2. Sync newly uploaded files to Gemini
+        t0 = time.time()
+        print(f"[Hub] Syncing newly uploaded files to Gemini...")
         await file_service.sync_files_for_session("hub", "hub")
-        
-        # 3. Get the actual Gemini file objects (parts) for the LLM
-        synced_parts = await file_service.get_gemini_file_parts("hub", "hub")
-        for gemini_file in synced_parts:
-            synced_attached = AttachedFile(
-                filename=gemini_file.display_name or "reference_file",
-                file_type=gemini_file.mime_type or "application/octet-stream",
-                size_bytes=0,
-                gemini_file_uri=gemini_file.uri,
-                gemini_file_name=gemini_file.name
-            )
-            # Check if already added (from the upload step above)
-            if not any(f.gemini_file_name == synced_attached.gemini_file_name for f in attached_files):
-                attached_files.append(synced_attached)
-                print(f"[Hub] Added synced reference: {gemini_file.display_name}")
+        print(f"[Hub/Timing] sync_files_for_session: {time.time()-t0:.2f}s")
+    else:
+        print(f"[Hub/Timing] sync_files_for_session: SKIPPED (no new uploads)")
+    
+    # FIX: Don't load ALL reference files into every message
+    # Reference files should be queried via KnowledgeCore RAG
+    # Only the files user explicitly attached in THIS message are sent
+    # (attached_files already contains the newly uploaded files from above)
 
     # 4. Get Hub's response
+    t0 = time.time()
     hub = get_hub_agent(identity.user_id, db)
-    response_text = hub.chat(message, attached_files, preferred_model=x_preferred_model)
+    response_text, tool_calls = hub.chat(message, attached_files, preferred_model=x_preferred_model)
+    print(f"[Hub/Timing] hub.chat: {time.time()-t0:.2f}s")
+    print(f"[Hub/Timing] === Total: {time.time()-_chat_start:.2f}s ===")
     
     return ChatResponse(
         response=response_text,
         meta_actions=[],
         executed_commands=executed_commands,
-        attached_files=file_metadata
+        attached_files=file_metadata,
+        tool_calls=tool_calls
     )
     
 
@@ -289,6 +294,70 @@ def get_hub_history(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/hub/artifacts")
+def list_hub_artifacts(
+    identity: Identity = Depends(resolve_identity),
+    db: Session = Depends(get_db)
+):
+    """List all artifacts created by the AI for the Hub"""
+    from utils.paths import get_user_hub_dir
+    
+    try:
+        hub_dir = get_user_hub_dir(identity.user_id)
+        artifacts_dir = hub_dir / "artifacts"
+        
+        if not artifacts_dir.exists():
+            return {"artifacts": [], "message": "No artifacts yet"}
+        
+        artifacts = []
+        for item in artifacts_dir.rglob('*'):
+            if item.is_file():
+                relative_path = str(item.relative_to(artifacts_dir))
+                artifacts.append({
+                    "name": item.name,
+                    "path": relative_path,
+                    "size": item.stat().st_size,
+                    "modified": item.stat().st_mtime
+                })
+        
+        return {"artifacts": artifacts}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list artifacts: {str(e)}")
+
+
+@router.get("/hub/artifacts/{file_path:path}")
+def get_hub_artifact(
+    file_path: str,
+    identity: Identity = Depends(resolve_identity),
+    db: Session = Depends(get_db)
+):
+    """Get the content of a Hub artifact file"""
+    from fastapi.responses import FileResponse
+    from utils.paths import get_user_hub_dir
+    
+    # Prevent path traversal
+    if '..' in file_path:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    
+    try:
+        hub_dir = get_user_hub_dir(identity.user_id)
+        full_path = hub_dir / "artifacts" / file_path
+        
+        if not full_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        # Read text content for display
+        try:
+            content = full_path.read_text(encoding='utf-8')
+            return {"content": content, "path": file_path, "name": full_path.name}
+        except UnicodeDecodeError:
+            return FileResponse(full_path)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read artifact: {str(e)}")
 
 
 @router.post("/spoke/{spoke_name}/chat", response_model=ChatResponse)
@@ -468,29 +537,21 @@ async def chat_with_spoke(
                     attached_files=file_metadata
                 )
 
-    if file_service:
-        # 2. Proactively sync all local files for this spoke to Gemini
-        print(f"[Spoke {spoke_name}] Proactively syncing all local files to Gemini...")
+    # FIX: Only sync files when user uploads NEW files (not every request)
+    if file_service and files:  # Only when there are new uploads
+        # 2. Sync newly uploaded files to Gemini
+        print(f"[Spoke {spoke_name}] Syncing newly uploaded files to Gemini...")
         await file_service.sync_files_for_session("spoke", spoke_name)
-        
-        # 3. Get the actual Gemini file objects (parts) for the LLM
-        synced_parts = await file_service.get_gemini_file_parts("spoke", spoke_name)
-        for gemini_file in synced_parts:
-            synced_attached = AttachedFile(
-                filename=gemini_file.display_name or "reference_file",
-                file_type=gemini_file.mime_type or "application/octet-stream",
-                size_bytes=0,
-                gemini_file_uri=gemini_file.uri,
-                gemini_file_name=gemini_file.name
-            )
-            # Check if already added (from the upload step above)
-            if not any(f.gemini_file_name == synced_attached.gemini_file_name for f in attached_file_objects):
-                attached_file_objects.append(synced_attached)
-                print(f"[Spoke {spoke_name}] Added synced reference: {gemini_file.display_name}")
+    else:
+        print(f"[Spoke {spoke_name}] sync_files_for_session: SKIPPED (no new uploads)")
+    
+    # FIX: Don't load ALL reference files into every message
+    # Reference files should be queried via KnowledgeCore RAG
+    # Only the files user explicitly attached in THIS message are sent
 
     # 4. Get Spoke's response
     spoke = get_spoke_agent(identity.user_id, spoke_name, db)
-    response_text = spoke.chat(user_message, attached_file_objects, preferred_model=x_preferred_model)
+    response_text, tool_calls = spoke.chat(user_message, attached_file_objects, preferred_model=x_preferred_model)
     
     # Extract meta-actions
     meta_actions = extract_meta_actions_from_chat(response_text)
@@ -503,7 +564,8 @@ async def chat_with_spoke(
         response=response_text,
         meta_actions=[meta.replace("<", "&lt;").replace(">", "&gt;") for meta in meta_actions],
         executed_commands=executed_commands,
-        attached_files=file_metadata
+        attached_files=file_metadata,
+        tool_calls=tool_calls
     )
 
 

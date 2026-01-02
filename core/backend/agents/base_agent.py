@@ -12,6 +12,7 @@ from models.database import Node, ChatSession, ChatMessage, AgentProfile
 from datetime import datetime
 from uuid import uuid4
 import json
+import time
 from services.knowledge_core_service import KnowledgeCoreService
 from services.context_manager import ContextManager
 
@@ -72,6 +73,10 @@ class BaseAgent(ABC):
         if not self.system_prompt:
             self.system_prompt = self.load_system_prompt()
         
+        # --- Inject current time ---
+        current_time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S (%A)')
+        time_context = f"\n\n## Current Context\n- **Current Date & Time**: {current_time_str}\n"
+
         # Create structured message
         msg = Message(
             role=MessageRole.USER,
@@ -87,7 +92,9 @@ class BaseAgent(ABC):
         kc_prompt_augmentation = ""
         if self.user_id:
             kc_service = KnowledgeCoreService(self.db_session, self.user_id)
+            t0 = time.time()
             context = kc_service.get_context(query=user_message, agent_id=self.get_node_name())
+            print(f"[{self.get_node_name()}/Timing] KC get_context: {time.time()-t0:.2f}s")
             if context and context.get("summary"):
                 kc_prompt_augmentation = f"\n\n# Context from KnowledgeCore\n{context['summary']}"
                 print(f"[{self.get_node_name()}] Augmented prompt with KnowledgeCore context")
@@ -96,13 +103,14 @@ class BaseAgent(ABC):
         llm_messages = [m.to_llm_message() for m in self.conversation_history]
         
         # Format for LLM provider
-        effective_system_prompt = self.system_prompt + kc_prompt_augmentation
+        effective_system_prompt = self.system_prompt + time_context + kc_prompt_augmentation
         messages = self.llm.format_messages(
             effective_system_prompt,
             llm_messages  # ✅ ALL messages, not just last 10!
         )
         
         # Get response from LLM - pass agent-level tools directly
+        t0 = time.time()
         response = self.llm.complete(
             messages, 
             preferred_model=preferred_model,
@@ -111,6 +119,7 @@ class BaseAgent(ABC):
             tool_definitions=self._agent_tool_definitions,  # Pass tools directly
             tool_functions=self._agent_tool_functions       # Pass functions directly
         )
+        print(f"[{self.get_node_name()}/Timing] LLM complete: {time.time()-t0:.2f}s")
         
         # Create assistant message
         assistant_msg = Message(
@@ -129,11 +138,13 @@ class BaseAgent(ABC):
         if self.user_id:
             # Re-init or reuse kc_service
             kc_service = KnowledgeCoreService(self.db_session, self.user_id)
+            t0 = time.time()
             kc_service.ingest_message(text=user_message, role="user", agent_id=self.get_node_name())
             kc_service.ingest_message(text=response.content, role="assistant", agent_id=self.get_node_name())
-            print(f"[{self.get_node_name()}] Ingested messages to KnowledgeCore")
+            print(f"[{self.get_node_name()}/Timing] KC ingest: {time.time()-t0:.2f}s")
         
-        return response.content
+        # Return content and tool_calls separately
+        return (response.content, response.tool_calls or [])
     
     def _get_or_create_active_session(self) -> str:
         """Get the latest active session or create a new one"""

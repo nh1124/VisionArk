@@ -10,6 +10,7 @@ from models.message import Message, MessageRole, AttachedFile
 from models.database import UserSettings, Node, AgentProfile, get_engine, get_session
 from datetime import date, datetime
 from uuid import uuid4
+import time
 
 
 class HubAgent(BaseAgent):
@@ -234,7 +235,9 @@ You have access to the following tools that you can call directly. Use them when
                         pass
             
             client = LBSClient(base_url=lbs_url, api_key=lbs_api_key)
+            t0 = time.time()
             daily_data = client.calculate_load(date.today())
+            print(f"[Hub/Timing] LBS calculate_load: {time.time()-t0:.2f}s")
             load = daily_data.get("adjusted_load", 0.0)
             meta_info_str = f"Load: {load:.1f}/10.0 | Capacity: 10.0"
         except Exception as e:
