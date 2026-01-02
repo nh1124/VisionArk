@@ -117,15 +117,15 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="LBS service unreachable. Please ensure LBS is running.")
 
     # Validate KnowledgeCore key before creating account
-    kc_url = (settings.knowledge_core_url or "http://localhost:8200/api/v1")
+    kc_url = (settings.knowledge_core_url or "http://localhost:8200")
     if "localhost" in kc_url and os.path.exists("/.dockerenv"):
         kc_url = kc_url.replace("localhost", "host.docker.internal")
     
     if not kc_url.startswith("http"):
         kc_url = f"http://{kc_url}"
 
-    # Health is at root, but kc_url might end in /v1. Strip /v1 if present for health check.
-    kc_root = kc_url.split("/v1")[0].rstrip("/")
+    # Health is at root.
+    kc_root = kc_url.rstrip("/")
     kc_health_url = f"{kc_root}/health"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -243,15 +243,15 @@ async def test_kc_connection(test: ConnectionTest):
     """
     Public endpoint to test KnowledgeCore connection before/during registration.
     """
-    kc_url = test.base_url or settings.knowledge_core_url or "http://localhost:8200/api/v1"
+    kc_url = test.base_url or settings.knowledge_core_url or "http://localhost:8200"
     if "localhost" in kc_url and os.path.exists("/.dockerenv"):
         kc_url = kc_url.replace("localhost", "host.docker.internal")
     
     if not kc_url.startswith("http"):
         kc_url = f"http://{kc_url}"
 
-    # Health is at root, but kc_url might end in /v1. Strip /v1 if present for health check.
-    kc_root = kc_url.split("/v1")[0].rstrip("/")
+    # Health is at root.
+    kc_root = kc_url.rstrip("/")
     health_url = f"{kc_root}/health"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:

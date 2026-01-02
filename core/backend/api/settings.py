@@ -151,7 +151,7 @@ async def test_connection(
         base_url = f"http://{base_url}"
     
     # Smart health check pathing: strip common API path suffixes for the health check
-    health_base = base_url
+    health_base = base_url.rstrip("/")
     for suffix in ["/api/lbs", "/api/v1", "/v1"]:
         if health_base.endswith(suffix):
             health_base = health_base[:-len(suffix)]

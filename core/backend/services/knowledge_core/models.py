@@ -85,20 +85,20 @@ class MemoryUpdateRequest(BaseModel):
     confidence: Optional[float] = None
 
 class MemoryResponse(BaseModel):
-    id: uuid.UUID
-    content: str
-    memory_type: str
-    importance: int
-    confidence: float
-    tags: List[str]
-    user_id: uuid.UUID
-    scope: str
+    id: Optional[uuid.UUID] = None
+    content: Optional[str] = None
+    memory_type: Optional[str] = None
+    importance: Optional[int] = None
+    confidence: Optional[float] = None
+    tags: List[str] = []
+    user_id: Optional[uuid.UUID] = None
+    scope: Optional[str] = None
     agent_id: Optional[str] = None
-    source: str
-    input_channel: str
+    source: Optional[str] = None
+    input_channel: Optional[str] = None
     event_time: Optional[datetime] = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     warnings: Optional[List[str]] = None
 
 class MemoryListResponse(BaseModel):

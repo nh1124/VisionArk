@@ -153,12 +153,12 @@ async def chat_with_hub(
                     )
                     storage_path = db_file.storage_path
                     
-                    # Upload to Gemini
+                    # Upload to Gemini (AWAIT THIS!)
                     if storage_path:
-                        gemini_file = file_service.upload_to_gemini(db_file.id)
+                        gemini_file = await file_service.upload_to_gemini(db_file)
                         if gemini_file:
-                            gemini_file_uri = gemini_file.uri
-                            gemini_file_name = gemini_file.name
+                            gemini_file_uri = gemini_file["gemini_file_uri"]
+                            gemini_file_name = gemini_file["gemini_file_name"]
                             print(f"[Hub] Saved & uploaded file: {file.filename} -> {gemini_file_name}")
                 except Exception as e:
                     print(f"[Hub] FileService error: {e}")
@@ -197,7 +197,8 @@ async def chat_with_hub(
     
     # --- Sync-Chat-Cleanup Lifecycle ---
     file_service = None
-    try:
+    # try:
+    if True:
         # Get user's Gemini API key
         settings = db.query(UserSettings).filter(UserSettings.user_id == identity.user_id).first()
         api_key = None
@@ -245,10 +246,10 @@ async def chat_with_hub(
         if file_service:
             # 2. Proactively sync all local files for this node to Gemini
             print(f"[Hub] Proactively syncing all local files to Gemini...")
-            file_service.sync_files_for_session("hub", "hub")
+            await file_service.sync_files_for_session("hub", "hub")
             
             # 3. Get the actual Gemini file objects (parts) for the LLM
-            synced_parts = file_service.get_gemini_file_parts("hub", "hub")
+            synced_parts = await file_service.get_gemini_file_parts("hub", "hub")
             for gemini_file in synced_parts:
                 synced_attached = AttachedFile(
                     filename=gemini_file.display_name or "reference_file",
@@ -273,11 +274,12 @@ async def chat_with_hub(
             attached_files=file_metadata
         )
         
-    finally:
-        # 4. Cleanup Gemini files after response is sent
-        if file_service:
-            print(f"[Hub] Auto-cleaning Gemini files...")
-            file_service.cleanup_gemini_files("hub", "hub")
+        return ChatResponse(
+            response=response_text,
+            meta_actions=[],
+            executed_commands=executed_commands,
+            attached_files=file_metadata
+        )
 
 
 @router.get("/hub/history")
@@ -383,12 +385,12 @@ async def chat_with_spoke(
                     )
                     storage_path = db_file.storage_path
                     
-                    # Upload to Gemini
+                    # Upload to Gemini (AWAIT THIS!)
                     if storage_path:
-                        gemini_file = file_service.upload_to_gemini(db_file.id)
+                        gemini_file = await file_service.upload_to_gemini(db_file)
                         if gemini_file:
-                            gemini_file_uri = gemini_file.uri
-                            gemini_file_name = gemini_file.name
+                            gemini_file_uri = gemini_file["gemini_file_uri"]
+                            gemini_file_name = gemini_file["gemini_file_name"]
                             print(f"[Spoke] Saved & uploaded file: {file.filename} -> {gemini_file_name}")
                 except Exception as e:
                     print(f"[Spoke] FileService error: {e}")
@@ -427,7 +429,8 @@ async def chat_with_spoke(
     
     # --- Sync-Chat-Cleanup Lifecycle ---
     file_service = None
-    try:
+    # try:
+    if True:
         # Get user's Gemini API key
         settings = db.query(UserSettings).filter(UserSettings.user_id == identity.user_id).first()
         api_key = None
@@ -476,10 +479,10 @@ async def chat_with_spoke(
         if file_service:
             # 2. Proactively sync all local files for this spoke to Gemini
             print(f"[Spoke {spoke_name}] Proactively syncing all local files to Gemini...")
-            file_service.sync_files_for_session("spoke", spoke_name)
+            await file_service.sync_files_for_session("spoke", spoke_name)
             
             # 3. Get the actual Gemini file objects (parts) for the LLM
-            synced_parts = file_service.get_gemini_file_parts("spoke", spoke_name)
+            synced_parts = await file_service.get_gemini_file_parts("spoke", spoke_name)
             for gemini_file in synced_parts:
                 synced_attached = AttachedFile(
                     filename=gemini_file.display_name or "reference_file",
@@ -511,11 +514,12 @@ async def chat_with_spoke(
             attached_files=file_metadata
         )
         
-    finally:
-        # 4. Cleanup Gemini files after response is sent
-        if file_service:
-            print(f"[Spoke {spoke_name}] Auto-cleaning Gemini files...")
-            file_service.cleanup_gemini_files("spoke", spoke_name)
+        return ChatResponse(
+            response=response_text,
+            meta_actions=[meta.replace("<", "&lt;").replace(">", "&gt;") for meta in meta_actions],
+            executed_commands=executed_commands,
+            attached_files=file_metadata
+        )
 
 
 @router.get("/spoke/{spoke_name}/history")

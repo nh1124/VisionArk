@@ -1,0 +1,928 @@
+/app/llm/gemini_provider.py:5: FutureWarning: 
+
+All support for the `google.generativeai` package has ended. It will no longer be receiving 
+updates or bug fixes. Please switch to the `google.genai` package as soon as possible.
+See README for more details:
+
+https://github.com/google-gemini/deprecated-generative-ai-python/blob/main/README.md
+
+  import google.generativeai as genai
+INFO:     Started server process [1]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+🚀 Initializing AI TaskManagement OS...
+   Environment: dev
+   API Key Required: False
+   Legacy Key Enabled: True
+   Bind: 0.0.0.0:8000
+✅ Database initialized
+INFO:     172.21.0.4:51810 - "GET /api/settings/status HTTP/1.1" 200 OK
+INFO:     172.21.0.4:51788 - "GET /api/agents/spoke/list HTTP/1.1" 200 OK
+INFO:     172.21.0.4:51818 - "GET /api/settings/status HTTP/1.1" 200 OK
+INFO:     172.21.0.4:51834 - "GET /api/agents/spoke/list HTTP/1.1" 200 OK
+INFO:     172.21.0.4:51798 - "GET /api/lbs/dashboard HTTP/1.1" 200 OK
+INFO:     172.21.0.4:51836 - "GET /api/lbs/dashboard HTTP/1.1" 200 OK
+INFO:     172.21.0.4:51852 - "GET /api/lbs/trends?weeks=12 HTTP/1.1" 200 OK
+INFO:     172.21.0.4:51862 - "GET /api/lbs/trends?weeks=12 HTTP/1.1" 200 OK
+INFO:     172.21.0.4:51872 - "GET /api/lbs/heatmap?start=2026-01-01&end=2026-01-31 HTTP/1.1" 200 OK
+INFO:     172.21.0.4:51888 - "GET /api/lbs/heatmap?start=2026-01-01&end=2026-01-31 HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=9b55a4db-a6e6-464f-afa8-5bd88c30e699
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:60736 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=9b55a4db-a6e6-464f-afa8-5bd88c30e699
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:60746 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+INFO:     172.21.0.4:33520 - "GET /api/lbs/tasks?limit=200 HTTP/1.1" 200 OK
+INFO:     172.21.0.4:33524 - "GET /api/lbs/tasks?limit=200 HTTP/1.1" 200 OK
+INFO:     172.21.0.4:33536 - "POST /api/lbs/tasks/bulk-delete HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=9b55a4db-a6e6-464f-afa8-5bd88c30e699
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:51096 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=9b55a4db-a6e6-464f-afa8-5bd88c30e699
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:51104 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+INFO:     172.21.0.4:44718 - "POST /api/files/hub/hub/cleanup-gemini HTTP/1.1" 200 OK
+INFO:     172.21.0.4:44732 - "GET /api/files/hub/hub HTTP/1.1" 200 OK
+INFO:     172.21.0.4:44742 - "GET /api/files/hub/hub HTTP/1.1" 200 OK
+[FileService] Uploading to Gemini: vision1.0.pdf
+[FileService] Uploading to Gemini: vision1.0.pdf
+[FileService] Uploaded to Gemini: files/5ws7qebe8t52
+[FileService] Uploading to Gemini: NTTvision.pdf
+[FileService] Uploaded to Gemini: files/nuaoz7qx8ifk
+[FileService] Uploading to Gemini: NTTvision.pdf
+[Hub] Proactively syncing all local files to Gemini...
+[FileService] Uploading to Gemini: NTTvision.pdf
+[FileService] Uploaded to Gemini: files/slhublvslk96
+[FileService] Uploaded to Gemini: files/3dl2vhsu8ltd
+[FileService] Uploaded to Gemini: files/zpxss19zeg3w
+[Hub] Added synced reference: vision1.0.pdf
+[Hub] Added synced reference: NTTvision.pdf
+[HubAgent._get_api_key] Called with user_id=9b55a4db-a6e6-464f-afa8-5bd88c30e699
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+[KnowledgeCoreService] Initialized for user 9b55a4db-a6e6-464f-afa8-5bd88c30e699 at http://host.docker.internal:8200/v1 (Key provided: True)
+[KnowledgeCoreService] Context retrieval error: Client error '404 Not Found' for url 'http://host.docker.internal:8200/v1/v1/context'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404
+[Gemini] Added file part: vision1.0.pdf
+[Gemini] Added file part: NTTvision.pdf
+[Gemini DEBUG] Creating model with 1 tool(s)
+[KnowledgeCoreService] Initialized for user 9b55a4db-a6e6-464f-afa8-5bd88c30e699 at http://host.docker.internal:8200/v1 (Key provided: True)
+[KnowledgeCoreService] Ingestion error: Client error '404 Not Found' for url 'http://host.docker.internal:8200/v1/v1/ingest'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404
+[KnowledgeCoreService] Ingestion error: Client error '404 Not Found' for url 'http://host.docker.internal:8200/v1/v1/ingest'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404
+[hub] Ingested messages to KnowledgeCore
+[Hub] Auto-cleaning Gemini files...
+[FileService] Deleted from Gemini: files/nuaoz7qx8ifk
+[FileService] Deleted from Gemini: files/zpxss19zeg3w
+INFO:     172.21.0.4:35190 - "POST /api/agents/hub/chat HTTP/1.1" 200 OK
+INFO:     172.21.0.4:42592 - "PATCH /api/settings/ai HTTP/1.1" 200 OK
+INFO:     172.21.0.4:47698 - "POST /api/settings/services HTTP/1.1" 200 OK
+INFO:     172.21.0.4:47706 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     172.21.0.4:47716 - "POST /api/settings/services HTTP/1.1" 200 OK
+INFO:     172.21.0.4:47730 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     172.21.0.4:54896 - "GET /api/lbs/tasks?limit=200 HTTP/1.1" 200 OK
+INFO:     172.21.0.4:54906 - "GET /api/lbs/tasks?limit=200 HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=9b55a4db-a6e6-464f-afa8-5bd88c30e699
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:54916 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=9b55a4db-a6e6-464f-afa8-5bd88c30e699
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:54924 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+INFO:     172.21.0.4:42544 - "GET /api/lbs/tasks?limit=200 HTTP/1.1" 200 OK
+INFO:     172.21.0.4:42558 - "GET /api/lbs/tasks?limit=200 HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=9b55a4db-a6e6-464f-afa8-5bd88c30e699
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:42566 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=9b55a4db-a6e6-464f-afa8-5bd88c30e699
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:42582 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+INFO:     172.21.0.4:59364 - "GET /api/inbox/pending HTTP/1.1" 200 OK
+INFO:     172.21.0.4:59370 - "GET /api/inbox/pending HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=9b55a4db-a6e6-464f-afa8-5bd88c30e699
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:43908 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=9b55a4db-a6e6-464f-afa8-5bd88c30e699
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:43912 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+INFO:     172.21.0.4:43922 - "GET /api/inbox/pending HTTP/1.1" 200 OK
+INFO:     172.21.0.4:43926 - "GET /api/inbox/pending HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [1]
+👋 Shutting down...
+/app/llm/gemini_provider.py:5: FutureWarning: 
+
+All support for the `google.generativeai` package has ended. It will no longer be receiving 
+updates or bug fixes. Please switch to the `google.genai` package as soon as possible.
+See README for more details:
+
+https://github.com/google-gemini/deprecated-generative-ai-python/blob/main/README.md
+
+  import google.generativeai as genai
+INFO:     Started server process [1]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+🚀 Initializing AI TaskManagement OS...
+   Environment: dev
+   API Key Required: False
+   Legacy Key Enabled: True
+   Bind: 0.0.0.0:8000
+✅ Database initialized
+[HubAgent._get_api_key] Called with user_id=2296b703-dff4-408a-b49c-4b705d0e8d77
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:57066 - "GET /api/settings/status HTTP/1.1" 200 OK
+INFO:     172.21.0.4:57080 - "GET /api/agents/spoke/list HTTP/1.1" 200 OK
+INFO:     172.21.0.4:57086 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+INFO:     172.21.0.4:57092 - "GET /api/settings/status HTTP/1.1" 200 OK
+INFO:     172.21.0.4:57104 - "GET /api/agents/spoke/list HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=2296b703-dff4-408a-b49c-4b705d0e8d77
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:57106 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+/app/api/agents.py:248: RuntimeWarning: coroutine 'FileService.sync_files_for_session' was never awaited
+  file_service.sync_files_for_session("hub", "hub")
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+/app/api/agents.py:280: RuntimeWarning: coroutine 'FileService.cleanup_gemini_files' was never awaited
+  file_service.cleanup_gemini_files("hub", "hub")
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+[FileService] Saved file: test_upload.txt -> /app/data/users/2296b703-dff4-408a-b49c-4b705d0e8d77/hub_data/files/7179a48a-3601-43b7-b33a-f11360c36ff7.txt
+[Hub] FileService error: 'coroutine' object has no attribute 'uri'
+[Hub] Uploaded file to Gemini (fallback): test_upload.txt -> files/729fb9ltba5b
+[Hub] Proactively syncing all local files to Gemini...
+[Hub] Auto-cleaning Gemini files...
+INFO:     172.21.0.4:38842 - "POST /api/agents/hub/chat HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/uvicorn/protocols/http/httptools_impl.py", line 416, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/fastapi/applications.py", line 1135, in __call__
+    await super().__call__(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/applications.py", line 107, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/cors.py", line 85, in __call__
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/routing.py", line 716, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/routing.py", line 736, in app
+    await route.handle(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/routing.py", line 290, in handle
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 115, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 101, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 355, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 243, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/api/agents.py", line 252, in chat_with_hub
+    for gemini_file in synced_parts:
+TypeError: 'coroutine' object is not iterable
+/usr/local/lib/python3.11/site-packages/uvicorn/protocols/http/httptools_impl.py:-1: RuntimeWarning: coroutine 'FileService.upload_to_gemini' was never awaited
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+/usr/local/lib/python3.11/site-packages/uvicorn/protocols/http/httptools_impl.py:-1: RuntimeWarning: coroutine 'FileService.get_gemini_file_parts' was never awaited
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+INFO:     172.21.0.4:50070 - "GET /api/agents/spoke/list HTTP/1.1" 200 OK
+INFO:     172.21.0.4:50088 - "GET /api/settings/status HTTP/1.1" 200 OK
+INFO:     172.21.0.4:50086 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     172.21.0.4:50092 - "GET /api/agents/spoke/list HTTP/1.1" 200 OK
+INFO:     172.21.0.4:50100 - "GET /api/settings/status HTTP/1.1" 200 OK
+INFO:     172.21.0.4:50114 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     172.21.0.4:47378 - "GET /api/settings/status HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=2296b703-dff4-408a-b49c-4b705d0e8d77
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:47348 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+INFO:     172.21.0.4:47364 - "GET /api/agents/spoke/list HTTP/1.1" 200 OK
+INFO:     172.21.0.4:47382 - "GET /api/settings/status HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=2296b703-dff4-408a-b49c-4b705d0e8d77
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:47394 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+INFO:     172.21.0.4:47384 - "GET /api/agents/spoke/list HTTP/1.1" 200 OK
+INFO:     172.21.0.4:46234 - "POST /api/agents/hub/chat HTTP/1.1" 422 Unprocessable Entity
+INFO:     172.21.0.4:32772 - "GET /api/settings/status HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=2296b703-dff4-408a-b49c-4b705d0e8d77
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:32768 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+INFO:     172.21.0.4:32778 - "GET /api/agents/spoke/list HTTP/1.1" 200 OK
+INFO:     172.21.0.4:32786 - "GET /api/settings/status HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=2296b703-dff4-408a-b49c-4b705d0e8d77
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:32788 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+INFO:     172.21.0.4:32796 - "GET /api/agents/spoke/list HTTP/1.1" 200 OK
+[Hub] Proactively syncing all local files to Gemini...
+[Hub] Auto-cleaning Gemini files...
+INFO:     172.21.0.4:44626 - "POST /api/agents/hub/chat HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/uvicorn/protocols/http/httptools_impl.py", line 416, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/fastapi/applications.py", line 1135, in __call__
+    await super().__call__(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/applications.py", line 107, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/cors.py", line 85, in __call__
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/routing.py", line 716, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/routing.py", line 736, in app
+    await route.handle(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/routing.py", line 290, in handle
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 115, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 101, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 355, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 243, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/api/agents.py", line 252, in chat_with_hub
+    for gemini_file in synced_parts:
+TypeError: 'coroutine' object is not iterable
+INFO:     172.21.0.4:54020 - "GET /api/settings/status HTTP/1.1" 200 OK
+INFO:     172.21.0.4:54034 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     172.21.0.4:54010 - "GET /api/agents/spoke/list HTTP/1.1" 200 OK
+INFO:     172.21.0.4:54040 - "GET /api/settings/status HTTP/1.1" 200 OK
+INFO:     172.21.0.4:54044 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     172.21.0.4:54060 - "GET /api/agents/spoke/list HTTP/1.1" 200 OK
+INFO:     172.21.0.4:38852 - "GET /api/settings/services/7/health HTTP/1.1" 200 OK
+INFO:     172.21.0.4:38866 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     172.21.0.4:53126 - "GET /api/settings/status HTTP/1.1" 200 OK
+INFO:     172.21.0.4:53138 - "GET /api/agents/spoke/list HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=2296b703-dff4-408a-b49c-4b705d0e8d77
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:53154 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+INFO:     172.21.0.4:53156 - "GET /api/settings/status HTTP/1.1" 200 OK
+INFO:     172.21.0.4:53172 - "GET /api/agents/spoke/list HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=2296b703-dff4-408a-b49c-4b705d0e8d77
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:53178 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+INFO:     172.21.0.4:56728 - "POST /api/files/hub/hub/cleanup-gemini HTTP/1.1" 200 OK
+INFO:     172.21.0.4:56738 - "GET /api/files/hub/hub HTTP/1.1" 200 OK
+INFO:     172.21.0.4:56746 - "GET /api/files/hub/hub HTTP/1.1" 200 OK
+[FileService] Uploading to Gemini: test_upload.txt
+[FileService] Uploading to Gemini: test_upload.txt
+[FileService] Uploaded to Gemini: files/ypabsec0qddr
+INFO:     172.21.0.4:56762 - "POST /api/files/hub/hub/sync-gemini HTTP/1.1" 200 OK
+INFO:     172.21.0.4:56768 - "GET /api/files/hub/hub HTTP/1.1" 200 OK
+[FileService] Uploaded to Gemini: files/n4aio50glb47
+INFO:     172.21.0.4:56766 - "POST /api/files/hub/hub/sync-gemini HTTP/1.1" 200 OK
+INFO:     172.21.0.4:42004 - "GET /api/files/hub/hub HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [1]
+👋 Shutting down...
+/app/llm/gemini_provider.py:5: FutureWarning: 
+
+All support for the `google.generativeai` package has ended. It will no longer be receiving 
+updates or bug fixes. Please switch to the `google.genai` package as soon as possible.
+See README for more details:
+
+https://github.com/google-gemini/deprecated-generative-ai-python/blob/main/README.md
+
+  import google.generativeai as genai
+INFO:     Started server process [1]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+🚀 Initializing AI TaskManagement OS...
+   Environment: dev
+   API Key Required: False
+   Legacy Key Enabled: True
+   Bind: 0.0.0.0:8000
+✅ Database initialized
+INFO:     172.21.0.4:44390 - "GET /api/settings/status HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=2296b703-dff4-408a-b49c-4b705d0e8d77
+INFO:     172.21.0.4:44376 - "GET /api/agents/spoke/list HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:44396 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+INFO:     172.21.0.4:44404 - "GET /api/settings/status HTTP/1.1" 200 OK
+INFO:     172.21.0.4:44414 - "GET /api/agents/spoke/list HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=2296b703-dff4-408a-b49c-4b705d0e8d77
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:44424 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+INFO:     172.21.0.4:37536 - "GET /api/settings/status HTTP/1.1" 200 OK
+INFO:     172.21.0.4:37530 - "GET /api/agents/spoke/list HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=2296b703-dff4-408a-b49c-4b705d0e8d77
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:37538 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+INFO:     172.21.0.4:37548 - "GET /api/settings/status HTTP/1.1" 200 OK
+INFO:     172.21.0.4:37558 - "GET /api/agents/spoke/list HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=2296b703-dff4-408a-b49c-4b705d0e8d77
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:37562 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+INFO:     172.21.0.4:45644 - "GET /api/files/hub/hub HTTP/1.1" 200 OK
+INFO:     172.21.0.4:45658 - "GET /api/files/hub/hub HTTP/1.1" 200 OK
+INFO:     172.21.0.4:45676 - "POST /api/files/hub/hub/sync-gemini HTTP/1.1" 200 OK
+INFO:     172.21.0.4:45674 - "POST /api/files/hub/hub/sync-gemini HTTP/1.1" 200 OK
+INFO:     172.21.0.4:45686 - "GET /api/files/hub/hub HTTP/1.1" 200 OK
+INFO:     172.21.0.4:45696 - "GET /api/files/hub/hub HTTP/1.1" 200 OK
+[FileService] Deleted from Gemini: files/n4aio50glb47
+INFO:     172.21.0.4:45634 - "POST /api/files/hub/hub/cleanup-gemini HTTP/1.1" 200 OK
+[FileService] Saved file: final_fix_test.txt -> /app/data/users/2296b703-dff4-408a-b49c-4b705d0e8d77/hub_data/files/77f94459-1296-47ee-b203-fb437831849c.txt
+[FileService] Uploading to Gemini: final_fix_test.txt
+[FileService] Uploaded to Gemini: files/1vy89269afly
+[Hub] Saved & uploaded file: final_fix_test.txt -> files/1vy89269afly
+[Hub] Proactively syncing all local files to Gemini...
+[FileService] Uploading to Gemini: test_upload.txt
+[FileService] Uploaded to Gemini: files/qufo5j66z2mn
+[Hub] Added synced reference: test_upload.txt
+[HubAgent._get_api_key] Called with user_id=2296b703-dff4-408a-b49c-4b705d0e8d77
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+[KnowledgeCoreService] Initialized for user 2296b703-dff4-408a-b49c-4b705d0e8d77 at http://host.docker.internal:8200 (Key provided: True)
+[KnowledgeCoreService] Context retrieval error: Client error '401 Unauthorized' for url 'http://host.docker.internal:8200/v1/context'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401
+[Gemini] Added file part: final_fix_test.txt
+[Gemini] Added file part: test_upload.txt
+[Gemini DEBUG] Creating model with 1 tool(s)
+[Gemini] Executing function: list_tasks
+[Gemini] Executing function: list_tasks
+[KnowledgeCoreService] Initialized for user 2296b703-dff4-408a-b49c-4b705d0e8d77 at http://host.docker.internal:8200 (Key provided: True)
+[KnowledgeCoreService] Ingestion error: Client error '401 Unauthorized' for url 'http://host.docker.internal:8200/v1/ingest'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401
+[KnowledgeCoreService] Ingestion error: Client error '401 Unauthorized' for url 'http://host.docker.internal:8200/v1/ingest'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401
+[hub] Ingested messages to KnowledgeCore
+[Hub] Auto-cleaning Gemini files...
+[FileService] Deleted from Gemini: files/qufo5j66z2mn
+[FileService] Deleted from Gemini: files/1vy89269afly
+INFO:     172.21.0.4:59858 - "POST /api/agents/hub/chat HTTP/1.1" 200 OK
+[FileService] Uploading to Gemini: test_upload.txt
+[FileService] Uploaded to Gemini: files/aoxgka89owgq
+[FileService] Uploading to Gemini: final_fix_test.txt
+[FileService] Uploaded to Gemini: files/k27xk8a086c8
+INFO:     172.21.0.4:57844 - "POST /api/files/hub/hub/sync-gemini HTTP/1.1" 200 OK
+INFO:     172.21.0.4:56650 - "GET /api/files/hub/hub HTTP/1.1" 200 OK
+[Hub] Proactively syncing all local files to Gemini...
+[Hub] Added synced reference: test_upload.txt
+[Hub] Added synced reference: final_fix_test.txt
+[HubAgent._get_api_key] Called with user_id=2296b703-dff4-408a-b49c-4b705d0e8d77
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+[KnowledgeCoreService] Initialized for user 2296b703-dff4-408a-b49c-4b705d0e8d77 at http://host.docker.internal:8200 (Key provided: True)
+[KnowledgeCoreService] Context retrieval error: Client error '401 Unauthorized' for url 'http://host.docker.internal:8200/v1/context'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401
+[Gemini] Added file part: test_upload.txt
+[Gemini] Added file part: final_fix_test.txt
+[Gemini DEBUG] Creating model with 1 tool(s)
+[KnowledgeCoreService] Initialized for user 2296b703-dff4-408a-b49c-4b705d0e8d77 at http://host.docker.internal:8200 (Key provided: True)
+[KnowledgeCoreService] Ingestion error: Client error '401 Unauthorized' for url 'http://host.docker.internal:8200/v1/ingest'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401
+[KnowledgeCoreService] Ingestion error: Client error '401 Unauthorized' for url 'http://host.docker.internal:8200/v1/ingest'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401
+[hub] Ingested messages to KnowledgeCore
+[Hub] Auto-cleaning Gemini files...
+[FileService] Deleted from Gemini: files/aoxgka89owgq
+[FileService] Deleted from Gemini: files/k27xk8a086c8
+INFO:     172.21.0.4:47654 - "POST /api/agents/hub/chat HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=9b55a4db-a6e6-464f-afa8-5bd88c30e699
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+[KnowledgeCoreService] Initialized for user 9b55a4db-a6e6-464f-afa8-5bd88c30e699 at http://host.docker.internal:8200 (Key provided: True)
+[HubAgent._get_api_key] Called with user_id=9b55a4db-a6e6-464f-afa8-5bd88c30e699
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:59456 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+[HubAgent._get_api_key] Called with user_id=9b55a4db-a6e6-464f-afa8-5bd88c30e699
+[HubAgent._get_api_key] Found settings: True
+[HubAgent._get_api_key] ai_config keys: ['gemini_api_key']
+[HubAgent._get_api_key] Encrypted key length: 140
+[HubAgent._get_api_key] Decryption returned key of length: 39
+INFO:     172.21.0.4:59472 - "GET /api/agents/hub/history HTTP/1.1" 200 OK
+[hub] Augmented prompt with KnowledgeCore context
+[Gemini DEBUG] Creating model with 1 tool(s)
+[KnowledgeCoreService] Initialized for user 9b55a4db-a6e6-464f-afa8-5bd88c30e699 at http://host.docker.internal:8200 (Key provided: True)
+[hub] Ingested messages to KnowledgeCore
+INFO:     172.21.0.4:36038 - "POST /api/inbox/accept-all HTTP/1.1" 200 OK
+INFO:     172.21.0.4:59476 - "GET /api/inbox/pending HTTP/1.1" 200 OK
+INFO:     172.21.0.4:39170 - "GET /api/files/hub/hub HTTP/1.1" 200 OK
+INFO:     172.21.0.4:39180 - "POST /api/files/hub/hub/cleanup-gemini HTTP/1.1" 200 OK
+INFO:     172.21.0.4:39188 - "GET /api/files/hub/hub HTTP/1.1" 200 OK
+[FileService] Uploading to Gemini: vision1.0.pdf
+[FileService] Uploading to Gemini: vision1.0.pdf
+[FileService] Uploaded to Gemini: files/6ptv4gbec8c2
+[FileService] Uploading to Gemini: NTTvision.pdf
+[FileService] Uploaded to Gemini: files/bzohhi8f7s2c
+[FileService] Uploading to Gemini: NTTvision.pdf
+[FileService] Uploaded to Gemini: files/behwn7an8wf4
+INFO:     172.21.0.4:39196 - "POST /api/files/hub/hub/sync-gemini HTTP/1.1" 200 OK
+INFO:     172.21.0.4:41158 - "GET /api/files/hub/hub HTTP/1.1" 200 OK
+[FileService] Uploaded to Gemini: files/svj3z3kejqh9
+INFO:     172.21.0.4:39200 - "POST /api/files/hub/hub/sync-gemini HTTP/1.1" 200 OK
+INFO:     172.21.0.4:41160 - "GET /api/files/hub/hub HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [1]
+👋 Shutting down...
+/app/llm/gemini_provider.py:5: FutureWarning: 
+
+All support for the `google.generativeai` package has ended. It will no longer be receiving 
+updates or bug fixes. Please switch to the `google.genai` package as soon as possible.
+See README for more details:
+
+https://github.com/google-gemini/deprecated-generative-ai-python/blob/main/README.md
+
+  import google.generativeai as genai
+INFO:     Started server process [1]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+DEV_FALLBACK: No auth provided, using default user
+🚀 Initializing AI TaskManagement OS...
+   Environment: dev
+   API Key Required: False
+   Legacy Key Enabled: True
+   Bind: 0.0.0.0:8000
+✅ Database initialized
+INFO:     172.21.0.1:44712 - "POST /api/agents/hub/chat HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+psycopg2.errors.ForeignKeyViolation: insert or update on table "nodes" violates foreign key constraint "nodes_user_id_fkey"
+DETAIL:  Key (user_id)=(00000000-0000-0000-0000-000000000001) is not present in table "users".
+
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/uvicorn/protocols/http/httptools_impl.py", line 416, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/fastapi/applications.py", line 1135, in __call__
+    await super().__call__(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/applications.py", line 107, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/cors.py", line 85, in __call__
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/routing.py", line 716, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/routing.py", line 736, in app
+    await route.handle(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/routing.py", line 290, in handle
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 115, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 101, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 355, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 243, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/api/agents.py", line 267, in chat_with_hub
+    hub = get_hub_agent(identity.user_id, db)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/api/agents.py", line 61, in get_hub_agent
+    agent = HubAgent(user_id=user_id, db_session=db)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/agents/hub_agent.py", line 92, in __init__
+    node = self.get_or_create_hub_node(user_id, db_session)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/agents/hub_agent.py", line 72, in get_or_create_hub_node
+    db_session.commit()
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py", line 2030, in commit
+    trans.commit(_to_root=True)
+  File "<string>", line 2, in commit
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py", line 1311, in commit
+    self._prepare_impl()
+  File "<string>", line 2, in _prepare_impl
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py", line 1286, in _prepare_impl
+    self.session.flush()
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py", line 4331, in flush
+    self._flush(objects)
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py", line 4466, in _flush
+    with util.safe_reraise():
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py", line 4427, in _flush
+    flush_context.execute()
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/unitofwork.py", line 466, in execute
+    rec.execute(self)
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/persistence.py", line 93, in save_obj
+    _emit_insert_statements(
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/persistence.py", line 1048, in _emit_insert_statements
+    result = connection.execute(
+             ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 1419, in execute
+    return meth(
+           ^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/sql/elements.py", line 527, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 1641, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 1846, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 1986, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 2363, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+sqlalchemy.exc.IntegrityError: (psycopg2.errors.ForeignKeyViolation) insert or update on table "nodes" violates foreign key constraint "nodes_user_id_fkey"
+DETAIL:  Key (user_id)=(00000000-0000-0000-0000-000000000001) is not present in table "users".
+
+[SQL: INSERT INTO nodes (id, user_id, name, display_name, node_type, lbs_access_level, is_archived, created_at, updated_at) VALUES (%(id)s, %(user_id)s, %(name)s, %(display_name)s, %(node_type)s, %(lbs_access_level)s, %(is_archived)s, %(created_at)s, %(updated_at)s)]
+[parameters: {'id': '1489a141-3022-4700-bf7b-1990af81ca74', 'user_id': '00000000-0000-0000-0000-000000000001', 'name': 'hub', 'display_name': 'Central Hub', 'node_type': 'HUB', 'lbs_access_level': 'WRITE', 'is_archived': False, 'created_at': datetime.datetime(2026, 1, 2, 6, 2, 15, 183573), 'updated_at': None}]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+DEV_FALLBACK: No auth provided, using default user
+INFO:     172.21.0.1:53932 - "POST /api/agents/hub/chat HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+psycopg2.errors.ForeignKeyViolation: insert or update on table "nodes" violates foreign key constraint "nodes_user_id_fkey"
+DETAIL:  Key (user_id)=(00000000-0000-0000-0000-000000000001) is not present in table "users".
+
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/uvicorn/protocols/http/httptools_impl.py", line 416, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/fastapi/applications.py", line 1135, in __call__
+    await super().__call__(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/applications.py", line 107, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/cors.py", line 85, in __call__
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/routing.py", line 716, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/routing.py", line 736, in app
+    await route.handle(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/routing.py", line 290, in handle
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 115, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 101, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 355, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 243, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/api/agents.py", line 267, in chat_with_hub
+    hub = get_hub_agent(identity.user_id, db)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/api/agents.py", line 61, in get_hub_agent
+    agent = HubAgent(user_id=user_id, db_session=db)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/agents/hub_agent.py", line 92, in __init__
+    node = self.get_or_create_hub_node(user_id, db_session)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/agents/hub_agent.py", line 72, in get_or_create_hub_node
+    db_session.commit()
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py", line 2030, in commit
+    trans.commit(_to_root=True)
+  File "<string>", line 2, in commit
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py", line 1311, in commit
+    self._prepare_impl()
+  File "<string>", line 2, in _prepare_impl
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py", line 1286, in _prepare_impl
+    self.session.flush()
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py", line 4331, in flush
+    self._flush(objects)
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py", line 4466, in _flush
+    with util.safe_reraise():
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py", line 4427, in _flush
+    flush_context.execute()
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/unitofwork.py", line 466, in execute
+    rec.execute(self)
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/persistence.py", line 93, in save_obj
+    _emit_insert_statements(
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/persistence.py", line 1048, in _emit_insert_statements
+    result = connection.execute(
+             ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 1419, in execute
+    return meth(
+           ^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/sql/elements.py", line 527, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 1641, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 1846, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 1986, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 2363, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+sqlalchemy.exc.IntegrityError: (psycopg2.errors.ForeignKeyViolation) insert or update on table "nodes" violates foreign key constraint "nodes_user_id_fkey"
+DETAIL:  Key (user_id)=(00000000-0000-0000-0000-000000000001) is not present in table "users".
+
+[SQL: INSERT INTO nodes (id, user_id, name, display_name, node_type, lbs_access_level, is_archived, created_at, updated_at) VALUES (%(id)s, %(user_id)s, %(name)s, %(display_name)s, %(node_type)s, %(lbs_access_level)s, %(is_archived)s, %(created_at)s, %(updated_at)s)]
+[parameters: {'id': 'ce010b8b-5ce3-4639-976a-8732d0f38603', 'user_id': '00000000-0000-0000-0000-000000000001', 'name': 'hub', 'display_name': 'Central Hub', 'node_type': 'HUB', 'lbs_access_level': 'WRITE', 'is_archived': False, 'created_at': datetime.datetime(2026, 1, 2, 6, 4, 45, 513553), 'updated_at': None}]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+DEV_FALLBACK: No auth provided, using default user
+[HubAgent._get_api_key] Called with user_id=00000000-0000-0000-0000-000000000001
+[HubAgent._get_api_key] Found settings: False
+[HubAgent._get_api_key] No key found, returning None
+[KnowledgeCoreService] No active 'knowledge_core' service found for user 00000000-0000-0000-0000-000000000001
+[Gemini DEBUG] Creating model with 1 tool(s)
+[Gemini] Generation error: 400 API Key not found. Please pass a valid API key. [reason: "API_KEY_INVALID"
+domain: "googleapis.com"
+metadata {
+  key: "service"
+  value: "generativelanguage.googleapis.com"
+}
+, locale: "en-US"
+message: "API Key not found. Please pass a valid API key."
+]
+INFO:     172.21.0.1:50434 - "POST /api/agents/hub/chat HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/uvicorn/protocols/http/httptools_impl.py", line 416, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/fastapi/applications.py", line 1135, in __call__
+    await super().__call__(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/applications.py", line 107, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/cors.py", line 85, in __call__
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/routing.py", line 716, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/routing.py", line 736, in app
+    await route.handle(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/routing.py", line 290, in handle
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 115, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 101, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 355, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 243, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/api/agents.py", line 268, in chat_with_hub
+    response_text = hub.chat(message, attached_files, preferred_model=x_preferred_model)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/agents/hub_agent.py", line 251, in chat
+    return super().chat(
+           ^^^^^^^^^^^^^
+  File "/app/agents/base_agent.py", line 106, in chat
+    response = self.llm.complete(
+               ^^^^^^^^^^^^^^^^^^
+  File "/app/llm/gemini_provider.py", line 220, in complete
+    response = model.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/generativeai/generative_models.py", line 331, in generate_content
+    response = self._client.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/client.py", line 835, in generate_content
+    response = rpc(
+               ^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/gapic_v1/method.py", line 131, in __call__
+    return wrapped_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 294, in retry_wrapped_func
+    return retry_target(
+           ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 156, in retry_target
+    next_sleep = _retry_error_helper(
+                 ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_base.py", line 214, in _retry_error_helper
+    raise final_exc from source_exc
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 147, in retry_target
+    result = target()
+             ^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/timeout.py", line 130, in func_with_timeout
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/grpc_helpers.py", line 77, in error_remapped_callable
+    raise exceptions.from_grpc_error(exc) from exc
+google.api_core.exceptions.InvalidArgument: 400 API Key not found. Please pass a valid API key. [reason: "API_KEY_INVALID"
+domain: "googleapis.com"
+metadata {
+  key: "service"
+  value: "generativelanguage.googleapis.com"
+}
+, locale: "en-US"
+message: "API Key not found. Please pass a valid API key."
+]

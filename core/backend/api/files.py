@@ -308,7 +308,7 @@ files_router = APIRouter(prefix="/api/files", tags=["Files"])
 
 
 @files_router.get("/{node_type}/{node_name}")
-def list_node_files(
+async def list_node_files(
     node_type: str,
     node_name: str,
     identity: Identity = Depends(resolve_identity),
@@ -368,7 +368,7 @@ async def upload_node_file(
 
 
 @files_router.post("/{node_type}/{node_name}/sync-gemini")
-def sync_gemini_files(
+async def sync_gemini_files(
     node_type: str,
     node_name: str,
     identity: Identity = Depends(resolve_identity),
@@ -387,7 +387,7 @@ def sync_gemini_files(
     
     service = FileService(db, identity.user_id, api_key)
     
-    results = service.sync_files_for_session(node_type, node_name)
+    results = await service.sync_files_for_session(node_type, node_name)
     
     synced = sum(1 for r in results if r.get("gemini_available"))
     failed = sum(1 for r in results if r.get("error"))
@@ -400,7 +400,7 @@ def sync_gemini_files(
 
 
 @files_router.post("/{node_type}/{node_name}/cleanup-gemini")
-def cleanup_gemini_files(
+async def cleanup_gemini_files(
     node_type: str,
     node_name: str,
     identity: Identity = Depends(resolve_identity),
@@ -416,7 +416,7 @@ def cleanup_gemini_files(
     api_key = _get_user_api_key(db, identity.user_id)
     service = FileService(db, identity.user_id, api_key)
     
-    cleaned = service.cleanup_gemini_files(node_type, node_name)
+    cleaned = await service.cleanup_gemini_files(node_type, node_name)
     
     return {
         "cleaned_count": cleaned,

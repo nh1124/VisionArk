@@ -108,6 +108,47 @@ def create_spoke(
         return ToolResult(success=False, message=f"Failed to create spoke: {str(e)}")
 
 
+def create_multiple_spokes(
+    spoke_names: List[str],
+    *,
+    session: Session,
+    user_id: str
+) -> ToolResult:
+    """
+    Create multiple Spokes (project workspaces) at once.
+    
+    Args:
+        spoke_names: List of names for the new spokes
+        session: Database session (injected)
+        user_id: User ID (injected)
+    
+    Returns:
+        ToolResult with success status and list of created spokes
+    """
+    results = []
+    errors = []
+    
+    for name in spoke_names:
+        res = create_spoke(spoke_name=name, session=session, user_id=user_id)
+        if res.success:
+            results.append(name)
+        else:
+            errors.append(f"{name}: {res.message}")
+            
+    if not results:
+        return ToolResult(success=False, message=f"Failed to create any spokes: {'; '.join(errors)}")
+        
+    msg = f"✅ Created {len(results)} spokes: {', '.join(results)}"
+    if errors:
+        msg += f" (Errors: {'; '.join(errors)})"
+        
+    return ToolResult(
+        success=True,
+        message=msg,
+        data={"created": results, "errors": errors}
+    )
+
+
 def delete_spoke(
     spoke_name: str,
     *,
@@ -780,6 +821,21 @@ HUB_TOOL_DEFINITIONS = [
         }
     },
     {
+        "name": "create_multiple_spokes",
+        "description": "Create multiple new Spokes (project workspaces) at once. Use this when the user wants to start several projects simultaneously.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "spoke_names": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "List of names for the new spokes (projects). Use lowercase with underscores."
+                }
+            },
+            "required": ["spoke_names"]
+        }
+    },
+    {
         "name": "delete_spoke",
         "description": "Delete a spoke (project) permanently. Use with caution.",
         "parameters": {
@@ -1031,6 +1087,7 @@ SPOKE_TOOL_DEFINITIONS = [
 TOOL_FUNCTIONS = {
     # Hub tools
     "create_spoke": create_spoke,
+    "create_multiple_spokes": create_multiple_spokes,
     "delete_spoke": delete_spoke,
     "create_task": create_task,
     "list_tasks": list_tasks,

@@ -1,13 +1,6 @@
-"""
-File Service - Manages file lifecycle with Gemini File API integration
-
-Handles:
-- Local file storage (filesystem + database)
-- Gemini File API upload/sync/cleanup
-- File availability monitoring
-"""
 import os
 import hashlib
+import asyncio
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from pathlib import Path
@@ -35,6 +28,11 @@ class FileService:
         
         if api_key:
             genai.configure(api_key=api_key)
+            
+    def _ensure_config(self):
+        """Ensure Gemini is configured with the instance API key"""
+        if self.api_key:
+            genai.configure(api_key=self.api_key)
     
     def get_files_dir(self, node_type: str, node_name: str) -> Path:
         """Get files directory based on node type"""
@@ -154,7 +152,7 @@ class FileService:
         file_path.write_bytes(content)
         
         # Compute hash
-        content_hash = self._compute_hash(content)
+        # content_hash = self._compute_hash(content)
         
         # Create database record
         uploaded_file = UploadedFile(
@@ -176,9 +174,9 @@ class FileService:
         print(f"[FileService] Saved file: {filename} -> {file_path}")
         return uploaded_file
     
-    def upload_to_gemini(self, file_record: UploadedFile) -> Dict[str, str]:
+    async def upload_to_gemini(self, file_record: UploadedFile) -> Dict[str, str]:
         """
-        Upload a file to Gemini File API.
+        Upload a file to Gemini File API using asyncio for processing wait.
         
         Args:
             file_record: UploadedFile database record
@@ -194,20 +192,23 @@ class FileService:
         if not file_path.exists():
             raise FileNotFoundError(f"Local file not found: {file_path}")
         
-        # Upload to Gemini
+        # Upload to Gemini (synchronous call but we wrap the wait loop)
         print(f"[FileService] Uploading to Gemini: {file_record.filename}")
-        gemini_file = genai.upload_file(
+        self._ensure_config()
+        
+        # Run upload in a thread pool to avoid blocking the event loop
+        gemini_file = await asyncio.to_thread(
+            genai.upload_file,
             path=str(file_path),
             mime_type=file_record.mime_type,
             display_name=file_record.filename
         )
         
-        # Wait for processing if needed
-        import time
+        # Wait for processing asynchronously
         while gemini_file.state.name == "PROCESSING":
             print(f"[FileService] Waiting for Gemini processing: {file_record.filename}")
-            time.sleep(2)
-            gemini_file = genai.get_file(gemini_file.name)
+            await asyncio.sleep(2)
+            gemini_file = await asyncio.to_thread(genai.get_file, gemini_file.name)
         
         if gemini_file.state.name == "FAILED":
             raise RuntimeError(f"Gemini file processing failed: {file_record.filename}")
@@ -223,7 +224,7 @@ class FileService:
             "gemini_file_name": gemini_file.name
         }
     
-    def check_gemini_availability(self, file_record: UploadedFile) -> bool:
+    async def check_gemini_availability(self, file_record: UploadedFile) -> bool:
         """
         Check if a file is still available in Gemini File API.
         
@@ -240,13 +241,14 @@ class FileService:
             return False
         
         try:
-            gemini_file = genai.get_file(file_record.gemini_file_name)
+            self._ensure_config()
+            gemini_file = await asyncio.to_thread(genai.get_file, file_record.gemini_file_name)
             return gemini_file.state.name == "ACTIVE"
         except Exception as e:
             print(f"[FileService] Gemini file not available: {file_record.gemini_file_name} - {e}")
             return False
     
-    def sync_files_for_session(
+    async def sync_files_for_session(
         self,
         node_type: str,
         node_name: str
@@ -283,7 +285,7 @@ class FileService:
             
             # Check if already uploaded and available
             if file_record.gemini_file_name:
-                if self.check_gemini_availability(file_record):
+                if await self.check_gemini_availability(file_record):
                     status["gemini_available"] = True
                     status["gemini_file_uri"] = file_record.gemini_file_uri
                 else:
@@ -301,7 +303,7 @@ class FileService:
                         status["error"] = "Local file missing"
                         continue
                         
-                    result = self.upload_to_gemini(file_record)
+                    result = await self.upload_to_gemini(file_record)
                     status["gemini_available"] = True
                     status["gemini_file_uri"] = result["gemini_file_uri"]
                 except Exception as e:
@@ -312,7 +314,7 @@ class FileService:
         
         return results
     
-    def cleanup_gemini_files(self, node_type: str, node_name: str) -> int:
+    async def cleanup_gemini_files(self, node_type: str, node_name: str) -> int:
         """
         Delete all Gemini files for a node (preserves local files).
         Called when user leaves the chat page.
@@ -334,9 +336,10 @@ class FileService:
         ).all()
         
         cleaned = 0
+        self._ensure_config()
         for file_record in files:
             try:
-                genai.delete_file(file_record.gemini_file_name)
+                await asyncio.to_thread(genai.delete_file, file_record.gemini_file_name)
                 print(f"[FileService] Deleted from Gemini: {file_record.gemini_file_name}")
             except Exception as e:
                 print(f"[FileService] Failed to delete from Gemini: {e}")
@@ -369,6 +372,7 @@ class FileService:
         # Delete from Gemini if uploaded
         if file_record.gemini_file_name:
             try:
+                self._ensure_config()
                 genai.delete_file(file_record.gemini_file_name)
             except Exception as e:
                 print(f"[FileService] Failed to delete from Gemini: {e}")
@@ -416,7 +420,7 @@ class FileService:
             for f in files
         ]
     
-    def get_gemini_file_parts(self, node_type: str, node_name: str) -> List:
+    async def get_gemini_file_parts(self, node_type: str, node_name: str) -> List:
         """
         Get Gemini file parts for all synced files.
         Used when making LLM requests with file context.
@@ -438,9 +442,10 @@ class FileService:
         ).all()
         
         parts = []
+        self._ensure_config()
         for f in files:
             try:
-                gemini_file = genai.get_file(f.gemini_file_name)
+                gemini_file = await asyncio.to_thread(genai.get_file, f.gemini_file_name)
                 if gemini_file.state.name == "ACTIVE":
                     parts.append(gemini_file)
             except Exception as e:

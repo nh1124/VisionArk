@@ -177,6 +177,10 @@ class GeminiProvider(BaseLLMProvider):
             gemini_tool_declarations = self._convert_langchain_tools_to_gemini(self.tools)
             tools_for_model = gemini_tool_declarations
         
+        if self.api_key:
+            # Ensure API key is configured for this specific call
+            genai.configure(api_key=self.api_key)
+        
         if tools_for_model:
             print(f"[Gemini DEBUG] Creating model with {len(tools_for_model)} tool(s)")
             model = genai.GenerativeModel(
