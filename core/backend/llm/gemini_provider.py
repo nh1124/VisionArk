@@ -163,9 +163,7 @@ class GeminiProvider(BaseLLMProvider):
         if max_tokens:
             generation_config["max_output_tokens"] = max_tokens
         
-        # Create model with tools if available
-        # Priority: passed tools > stored tools
-        tools_for_model = None
+        # 1. Prepare Tools
         active_tool_functions = tool_functions or getattr(self, '_tool_functions', {})
         
         # Use passed tools first (from agent level), fallback to stored tools
@@ -175,28 +173,37 @@ class GeminiProvider(BaseLLMProvider):
             tools_for_model = self._convert_dict_tools_to_gemini(self._tool_definitions)
         elif self.tools:
             gemini_tool_declarations = self._convert_langchain_tools_to_gemini(self.tools)
-            tools_for_model = gemini_tool_declarations
+            tools_for_model = [genai.protos.Tool(function_declarations=gemini_tool_declarations)]
+        else:
+            tools_for_model = []
+
+        # 2. Inject Google Search Grounding Tool
+        google_search_tool = genai.protos.Tool(
+            google_search_retrieval=genai.protos.GoogleSearchRetrieval()
+        )
         
+        # Merge Search tool with existing Function Calling tools
+        if isinstance(tools_for_model, list):
+            tools_for_model.append(google_search_tool)
+        else:
+            tools_for_model = [google_search_tool]
+
         if self.api_key:
             # Ensure API key is configured for this specific call
             genai.configure(api_key=self.api_key)
         
-        if tools_for_model:
-            # Debug: Print what tools are being registered
-            if tool_definitions:
-                tool_names = [td.get('name', 'unknown') for td in tool_definitions]
-                print(f"[Gemini DEBUG] Creating model with {len(tool_definitions)} tools: {tool_names[:5]}...")
-            print(f"[Gemini DEBUG] tools_for_model type: {type(tools_for_model)}, len: {len(tools_for_model)}")
-            model = genai.GenerativeModel(
-                model_name,
-                tools=tools_for_model
-            )
-            # Use AUTO mode to let model decide when to call functions
-            tool_config = {"function_calling_config": {"mode": "AUTO"}}
-        else:
-            print(f"[Gemini DEBUG] Creating model WITHOUT tools")
-            model = genai.GenerativeModel(model_name)
-            tool_config = None
+        # Create model with tools (Search + Functions)
+        # Debug: Print tool info
+        if tool_definitions:
+            tool_names = [td.get('name', 'unknown') for td in tool_definitions]
+            print(f"[Gemini DEBUG] Model enabled with {len(tool_definitions)} functions and Google Search Grounding")
+        
+        model = genai.GenerativeModel(
+            model_name,
+            tools=tools_for_model
+        )
+        # Use AUTO mode to let model decide when to call functions or use search
+        tool_config = {"function_calling_config": {"mode": "AUTO"}}
         
         # Prepare conversion to Gemini Content format for multi-turn
         def to_part(p):
@@ -250,6 +257,25 @@ class GeminiProvider(BaseLLMProvider):
             if not function_calls:
                 # Final text response
                 final_text = response.text
+                
+                # 3. Process Grounding Metadata (Search Citations)
+                if response.candidates and response.candidates[0].grounding_metadata:
+                    metadata = response.candidates[0].grounding_metadata
+                    
+                    # Entry point (often includes rendered HTML citations)
+                    if hasattr(metadata, 'search_entry_point') and metadata.search_entry_point and metadata.search_entry_point.rendered_content:
+                        final_text += f"\n\n---\n{metadata.search_entry_point.rendered_content}"
+                    
+                    # Individual grounding chunks (links)
+                    elif hasattr(metadata, 'grounding_chunks') and metadata.grounding_chunks:
+                        sources = []
+                        for chunk in metadata.grounding_chunks:
+                            if chunk.web:
+                                sources.append(f"- [{chunk.web.title}]({chunk.web.uri})")
+                        
+                        if sources:
+                            final_text += "\n\n**🔍 Search Sources:**\n" + "\n".join(set(sources))
+
                 return CompletionResponse(
                     content=final_text,
                     model=model_name,
