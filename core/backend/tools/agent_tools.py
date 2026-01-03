@@ -1004,13 +1004,13 @@ def google_search(query: str, user_id: str, session: Session) -> ToolResult:
     if not api_key:
         return ToolResult(success=False, message="Gemini API Key not found for research")
         
-    # Initialize Client with Alpha version for 2.0 grounded search
-    client = Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
+    # Initialize Client
+    client = Client(api_key=api_key)
     
     try:
         # Use latest model for research
         response = client.models.generate_content(
-            model="gemini-3-flash",
+            model="gemini-2.5-flash-lite",
             contents=query,
             config=types.GenerateContentConfig(
                 tools=[types.Tool(google_search=types.GoogleSearch())],
