@@ -143,7 +143,11 @@ Focus on delivering high-quality work within this context.
 
 **Note:** Your artifacts are stored in `spokes/{self.spoke_name}/artifacts/`. You cannot access other project files.
 
-### Hub Communication & Session
+### Hub Communication & Research
+- `google_search(query)` - Search Google for real-time information and documentation
+- `execute_code(prompt)` - Perform complex calculations or simulations via Gemini
+- `search_places(query, lat, lng)` - Search for places and directions using Google Maps grounding
+- `research_url(urls, query)` - Extract information or summarize content from specific URLs
 - `report_to_hub(summary, request)` - Send progress updates or requests to Hub
 - `archive_session()` - Archive conversation and start fresh
 
