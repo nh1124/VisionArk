@@ -10,6 +10,8 @@ import uuid
 from models.database import Node, AgentProfile, ChatSession, InboxQueue, ServiceRegistry
 from services.lbs_client import LBSClient
 from services.knowledge_core_service import KnowledgeCoreService
+import asyncio
+from pathlib import Path
 
 
 # ==============================================================================
@@ -66,10 +68,11 @@ def _get_kc_service(user_id: str, session: Session) -> KnowledgeCoreService:
     return KnowledgeCoreService(session, user_id)
 
 
-def _get_file_service(user_id: str, session: Session) -> FileService:
+def _get_file_service(user_id: str, session: Session) -> 'FileService':
     """Get FileService for the user with API key configuration"""
     from models.database import UserSettings
     from utils.encryption import decrypt_string
+    from services.file_service import FileService
     
     api_key = None
     settings = session.query(UserSettings).filter(UserSettings.user_id == user_id).first()
@@ -981,6 +984,59 @@ def list_files(
 
 
 # ==============================================================================
+# Gemini Research Wrapper
+# ==============================================================================
+
+def google_search(query: str, user_id: str, session: Session) -> ToolResult:
+    """Wrapper function for Gemini Google Search research capability"""
+    from google.genai import Client, types
+    from models.database import UserSettings
+    from utils.encryption import decrypt_string
+    
+    api_key = None
+    settings = session.query(UserSettings).filter(UserSettings.user_id == user_id).first()
+    if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
+        try:
+            api_key = decrypt_string(settings.ai_config["gemini_api_key"])
+        except Exception:
+            pass
+            
+    if not api_key:
+        return ToolResult(success=False, message="Gemini API Key not found for research")
+        
+    # Initialize Client with Alpha version for 2.0 grounded search
+    client = Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
+    
+    try:
+        # Use latest model for research
+        response = client.models.generate_content(
+            model="gemini-3-flash",
+            contents=query,
+            config=types.GenerateContentConfig(
+                tools=[types.Tool(google_search=types.GoogleSearch())],
+            )
+        )
+        
+        final_text = response.text
+        # Process grounding metadata for citations
+        if response.candidates and response.candidates[0].grounding_metadata:
+            metadata = response.candidates[0].grounding_metadata
+            if hasattr(metadata, 'search_entry_point') and metadata.search_entry_point and metadata.search_entry_point.rendered_content:
+                final_text += f"\n\n---\n{metadata.search_entry_point.rendered_content}"
+            elif hasattr(metadata, 'grounding_chunks') and metadata.grounding_chunks:
+                sources = []
+                for chunk in metadata.grounding_chunks:
+                    if chunk.web:
+                        sources.append(f"- [{chunk.web.title}]({chunk.web.uri})")
+                if sources:
+                    final_text += "\n\n**🔍 Search Sources:**\n" + "\n".join(set(sources))
+                    
+        return ToolResult(success=True, message=final_text)
+    except Exception as e:
+        return ToolResult(success=False, message=f"Research failed: {str(e)}")
+
+
+# ==============================================================================
 # LBS & KC Extended Tools
 # ==============================================================================
 
@@ -1001,7 +1057,7 @@ def get_load_on_day(
         client = _get_lbs_client(user_id, session)
         result = client.calculate_load(dt)
         
-        load = result.get("total_load", 0.0)
+        load = result.get("adjusted_load", 0.0)
         task_count = result.get("task_count", 0)
         
         return ToolResult(
@@ -1040,8 +1096,8 @@ def get_load_in_period(
         lines = [f"📅 Load Heatmap ({start_date} to {end_date}):"]
         for day in heatmap:
             day_str = day.get("date")
-            load = day.get("total_load", 0.0)
-            status = day.get("status", "unknown")
+            load = day.get("adjusted_load", 0.0)
+            status = day.get("level", "unknown")
             bar = "█" * int(min(load, 10)) + "░" * (10 - int(min(load, 10)))
             lines.append(f"  • {day_str}: [{bar}] {load:.1f} ({status})")
             
@@ -1430,6 +1486,20 @@ HUB_TOOL_DEFINITIONS = [
         }
     },
     {
+        "name": "google_search",
+        "description": "Search Google for real-time information, research, and technical documentation when internal knowledge is insufficient.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
         "name": "get_load_on_day",
         "description": "Get the total workload forecast for a specific future day. Use this to check availability or planning.",
         "parameters": {
@@ -1633,6 +1703,20 @@ SPOKE_TOOL_DEFINITIONS = [
         }
     },
     {
+        "name": "google_search",
+        "description": "Search Google for real-time information, research, and technical documentation when internal knowledge is insufficient.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
         "name": "get_load_on_day",
         "description": "Get the total workload forecast for a specific future day. Use this to check availability or planning.",
         "parameters": {
@@ -1717,6 +1801,7 @@ TOOL_FUNCTIONS = {
     # Spoke tools
     "report_to_hub": report_to_hub,
     "archive_session": archive_session,
+    "google_search": google_search,
     # File operation tools
     "save_artifact": save_artifact,
     "update_artifact": update_artifact,

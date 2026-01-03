@@ -71,15 +71,12 @@ class AttachedFile:
     def to_gemini_part(self):
         """
         Convert to Gemini content part for multimodal API calls.
-        Creates a file_data part using the stored URI - does not re-fetch.
         """
-        if self.gemini_file_uri and self.gemini_file_name:
-            from google.generativeai import protos
-            return protos.Part(
-                file_data=protos.FileData(
-                    file_uri=self.gemini_file_uri,
-                    mime_type=self.file_type
-                )
+        if self.gemini_file_uri:
+            from google.genai import types
+            return types.Part.from_uri(
+                file_uri=self.gemini_file_uri,
+                mime_type=self.file_type
             )
         return None
 
