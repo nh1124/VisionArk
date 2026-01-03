@@ -202,9 +202,9 @@ class BaseAgent(ABC):
             if db_msg.meta_payload and "attached_files" in db_msg.meta_payload:
                 for f_data in db_msg.meta_payload["attached_files"]:
                     files.append(AttachedFile(
-                        filename=f_data["name"],
-                        file_type=f_data["type"],
-                        size_bytes=f_data["size"]
+                        filename=f_data.get("name") or f_data.get("filename"),
+                        file_type=f_data.get("type") or f_data.get("file_type"),
+                        size_bytes=f_data.get("size") or f_data.get("size_bytes", 0)
                     ))
             
             msg = Message(
