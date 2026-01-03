@@ -1036,6 +1036,114 @@ def google_search(query: str, user_id: str, session: Session) -> ToolResult:
         return ToolResult(success=False, message=f"Research failed: {str(e)}")
 
 
+def execute_code(prompt: str, user_id: str, session: Session) -> ToolResult:
+    """Perform complex calculations or simulations via Gemini Code Execution"""
+    from google.genai import Client, types
+    from models.database import UserSettings
+    from utils.encryption import decrypt_string
+    
+    api_key = None
+    settings = session.query(UserSettings).filter(UserSettings.user_id == user_id).first()
+    if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
+        try:
+            api_key = decrypt_string(settings.ai_config["gemini_api_key"])
+        except Exception:
+            pass
+            
+    if not api_key:
+        return ToolResult(success=False, message="Gemini API Key not found for code execution")
+    
+    client = Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
+    
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-exp",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                tools=[types.Tool(code_execution=types.ToolCodeExecution())],
+            )
+        )
+        return ToolResult(success=True, message=response.text)
+    except Exception as e:
+        return ToolResult(success=False, message=f"Code execution failed: {str(e)}")
+
+
+def search_places(query: str, user_id: str, session: Session, lat: float = None, lng: float = None) -> ToolResult:
+    """Search for places, businesses, and directions using Google Maps grounding"""
+    from google.genai import Client, types
+    from models.database import UserSettings
+    from utils.encryption import decrypt_string
+    
+    api_key = None
+    settings = session.query(UserSettings).filter(UserSettings.user_id == user_id).first()
+    if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
+        try:
+            api_key = decrypt_string(settings.ai_config["gemini_api_key"])
+        except Exception:
+            pass
+            
+    if not api_key:
+        return ToolResult(success=False, message="Gemini API Key not found for maps")
+    
+    client = Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
+    
+    tool_config = None
+    if lat is not None and lng is not None:
+        tool_config = types.ToolConfig(
+            retrieval_config=types.RetrievalConfig(
+                lat_lng=types.LatLng(latitude=lat, longitude=lng)
+            )
+        )
+        
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-exp",
+            contents=query,
+            config=types.GenerateContentConfig(
+                tools=[types.Tool(google_maps=types.GoogleMaps())],
+                tool_config=tool_config
+            )
+        )
+        return ToolResult(success=True, message=response.text)
+    except Exception as e:
+        return ToolResult(success=False, message=f"Maps search failed: {str(e)}")
+
+
+def research_url(urls: List[str], query: str, user_id: str, session: Session) -> ToolResult:
+    """Extract information or summarize content from specific URLs using Gemini grounding"""
+    from google.genai import Client, types
+    from models.database import UserSettings
+    from utils.encryption import decrypt_string
+    
+    api_key = None
+    settings = session.query(UserSettings).filter(UserSettings.user_id == user_id).first()
+    if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
+        try:
+            api_key = decrypt_string(settings.ai_config["gemini_api_key"])
+        except Exception:
+            pass
+            
+    if not api_key:
+        return ToolResult(success=False, message="Gemini API Key not found for URL research")
+    
+    client = Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
+    
+    # URL Context tool expects URLs in the prompt contents or potentially enabled
+    full_prompt = f"Using information from the following URLs: {', '.join(urls)}\n\nQuery: {query}"
+    
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-exp",
+            contents=full_prompt,
+            config=types.GenerateContentConfig(
+                tools=[types.Tool(url_context=types.UrlContext())],
+            )
+        )
+        return ToolResult(success=True, message=response.text)
+    except Exception as e:
+        return ToolResult(success=False, message=f"URL research failed: {str(e)}")
+
+
 # ==============================================================================
 # LBS & KC Extended Tools
 # ==============================================================================
@@ -1093,7 +1201,7 @@ def get_load_in_period(
         if not heatmap:
             return ToolResult(success=True, message=f"No load data for period {start_date} to {end_date}")
         
-        lines = [f"📅 Load Heatmap ({start_date} to {end_date}):"]
+        lines = [f"📅 Load Heatmap ({start_date} to {end_date}):\n"]
         for day in heatmap:
             day_str = day.get("date")
             load = day.get("adjusted_load", 0.0)
@@ -1566,6 +1674,75 @@ HUB_TOOL_DEFINITIONS = [
             },
             "required": ["content"]
         }
+    },
+    {
+        "name": "google_search",
+        "description": "Search Google for real-time information, research, and technical documentation.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query or question"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "execute_code",
+        "description": "Perform complex calculations, simulations, or data processing by executing Python code via Gemini.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "The task or calculation that requires code execution"
+                }
+            },
+            "required": ["prompt"]
+        }
+    },
+    {
+        "name": "search_places",
+        "description": "Search for places, businesses, restaurants, and directions using Google Maps grounding.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The place or business search query"
+                },
+                "lat": {
+                    "type": "number",
+                    "description": "Optional latitude for location context"
+                },
+                "lng": {
+                    "type": "number",
+                    "description": "Optional longitude for location context"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "research_url",
+        "description": "Extract specific information, summarize, or query content from provided URLs using Gemini grounding.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "urls": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "List of URLs to research"
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Specific question or summary request for the provided URLs"
+                }
+            },
+            "required": ["urls", "query"]
+        }
     }
 ]
 
@@ -1783,6 +1960,75 @@ SPOKE_TOOL_DEFINITIONS = [
             },
             "required": ["content"]
         }
+    },
+    {
+        "name": "google_search",
+        "description": "Search Google for real-time information, research, and technical documentation.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query or question"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "execute_code",
+        "description": "Perform complex calculations, simulations, or data processing by executing Python code via Gemini.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "The task or calculation that requires code execution"
+                }
+            },
+            "required": ["prompt"]
+        }
+    },
+    {
+        "name": "search_places",
+        "description": "Search for places, businesses, restaurants, and directions using Google Maps grounding.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The place or business search query"
+                },
+                "lat": {
+                    "type": "number",
+                    "description": "Optional latitude for location context"
+                },
+                "lng": {
+                    "type": "number",
+                    "description": "Optional longitude for location context"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "research_url",
+        "description": "Extract specific information, summarize, or query content from provided URLs using Gemini grounding.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "urls": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "List of URLs to research"
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Specific question or summary request for the provided URLs"
+                }
+            },
+            "required": ["urls", "query"]
+        }
     }
 ]
 
@@ -1802,6 +2048,9 @@ TOOL_FUNCTIONS = {
     "report_to_hub": report_to_hub,
     "archive_session": archive_session,
     "google_search": google_search,
+    "execute_code": execute_code,
+    "search_places": search_places,
+    "research_url": research_url,
     # File operation tools
     "save_artifact": save_artifact,
     "update_artifact": update_artifact,
