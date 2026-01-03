@@ -109,7 +109,7 @@ def get_dashboard_data(
 @router.post("/tasks")
 def create_task(task: TaskCreate, client: LBSClient = Depends(get_lbs_client)):
     try:
-        return client.create_task(task.model_dump())
+        return client.create_task(task.model_dump(mode='json'))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -125,10 +125,18 @@ def list_tasks(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/tasks/{task_id}")
+def get_task(task_id: str, client: LBSClient = Depends(get_lbs_client)):
+    try:
+        return client.get_task(task_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.put("/tasks/{task_id}")
 def update_task(task_id: str, task: TaskUpdate, client: LBSClient = Depends(get_lbs_client)):
     try:
-        return client.update_task(task_id, task.model_dump(exclude_unset=True))
+        return client.update_task(task_id, task.model_dump(mode='json', exclude_unset=True))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -185,7 +193,7 @@ def bulk_update_status(bulk_in: TaskBulkStatusUpdate, client: LBSClient = Depend
 @router.post("/exceptions")
 def create_exception(exc: ExceptionCreate, client: LBSClient = Depends(get_lbs_client)):
     try:
-        return client.create_exception(exc.model_dump())
+        return client.create_exception(exc.model_dump(mode='json'))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

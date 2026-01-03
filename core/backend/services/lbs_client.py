@@ -71,6 +71,12 @@ class LBSClient:
             resp.raise_for_status()
             return resp.json()
 
+    def get_task(self, task_id: str) -> Dict:
+        with httpx.Client(base_url=self.base_url) as client:
+            resp = client.get(f"tasks/{task_id}", headers=self._get_headers())
+            resp.raise_for_status()
+            return resp.json()
+
     def update_task(self, task_id: str, task_data: Dict) -> Dict:
         with httpx.Client(base_url=self.base_url) as client:
             resp = client.put(f"tasks/{task_id}", json=task_data, headers=self._get_headers())
