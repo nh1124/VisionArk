@@ -1676,20 +1676,6 @@ HUB_TOOL_DEFINITIONS = [
         }
     },
     {
-        "name": "google_search",
-        "description": "Search Google for real-time information, research, and technical documentation.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Search query or question"
-                }
-            },
-            "required": ["query"]
-        }
-    },
-    {
         "name": "execute_code",
         "description": "Perform complex calculations, simulations, or data processing by executing Python code via Gemini.",
         "parameters": {
@@ -1959,20 +1945,6 @@ SPOKE_TOOL_DEFINITIONS = [
                 }
             },
             "required": ["content"]
-        }
-    },
-    {
-        "name": "google_search",
-        "description": "Search Google for real-time information, research, and technical documentation.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Search query or question"
-                }
-            },
-            "required": ["query"]
         }
     },
     {
