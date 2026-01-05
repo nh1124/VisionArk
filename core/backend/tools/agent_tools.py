@@ -115,8 +115,8 @@ def create_spoke(
     spoke_name: str,
     custom_prompt: Optional[str] = None,
     *,
-    session: Session,
-    user_id: str
+    session: Optional[Session] = None,
+    user_id: Optional[str] = None
 ) -> ToolResult:
     """
     Create a new Spoke (project workspace) for the user.
@@ -130,6 +130,8 @@ def create_spoke(
     Returns:
         ToolResult with success status and spoke details
     """
+    if not session or not user_id:
+        return ToolResult(success=False, message="Error: Missing database session or user context for create_spoke")
     from agents.spoke_agent import SpokeAgent
     
     try:
@@ -158,8 +160,8 @@ def create_spoke(
 def create_multiple_spokes(
     spoke_names: List[str],
     *,
-    session: Session,
-    user_id: str
+    session: Optional[Session] = None,
+    user_id: Optional[str] = None
 ) -> ToolResult:
     """
     Create multiple Spokes (project workspaces) at once.
@@ -172,6 +174,8 @@ def create_multiple_spokes(
     Returns:
         ToolResult with success status and list of created spokes
     """
+    if not session or not user_id:
+        return ToolResult(success=False, message="Error: Missing database session or user context")
     results = []
     errors = []
     
@@ -199,8 +203,8 @@ def create_multiple_spokes(
 def delete_spoke(
     spoke_name: str,
     *,
-    session: Session,
-    user_id: str
+    session: Optional[Session] = None,
+    user_id: Optional[str] = None
 ) -> ToolResult:
     """
     Delete a spoke (project) permanently.
@@ -213,6 +217,8 @@ def delete_spoke(
     Returns:
         ToolResult with success status
     """
+    if not session or not user_id:
+        return ToolResult(success=False, message="Error: Missing database session or user context")
     try:
         # Find and archive the node
         node = session.query(Node).filter(
@@ -257,9 +263,10 @@ def create_task(
     month_day: Optional[int] = None,
     notes: Optional[str] = None,
     *,
-    session: Session,
-    user_id: str,
-    context_name: str = "general"
+    session: Optional[Session] = None,
+    user_id: Optional[str] = None,
+    context_name: str = "general",
+    meta_info: Optional[str] = None
 ) -> ToolResult:
     """
     Create a new task in the LBS system.
@@ -281,6 +288,8 @@ def create_task(
     Returns:
         ToolResult with task details
     """
+    if not session or not user_id:
+        return ToolResult(success=False, message="Error: Missing database session or user context")
     try:
         task_data = {
             "task_name": task_name,
@@ -329,9 +338,10 @@ def create_task(
 def list_tasks(
     context: Optional[str] = None,
     *,
-    session: Session,
-    user_id: str,
-    context_name: str = "general"
+    session: Optional[Session] = None,
+    user_id: Optional[str] = None,
+    context_name: str = "general",
+    meta_info: Optional[str] = None
 ) -> ToolResult:
     """
     List tasks from the LBS system.
@@ -342,6 +352,8 @@ def list_tasks(
         user_id: User ID (injected)
         context_name: Current context name (injected)
     """
+    if not session or not user_id:
+        return ToolResult(success=False, message="Error: Missing database session or user context")
     try:
         client = _get_lbs_client(user_id, session)
         target_context = context or context_name
@@ -383,8 +395,8 @@ def update_task_details(
     interval_days: Optional[int] = None,
     month_day: Optional[int] = None,
     *,
-    session: Session,
-    user_id: str
+    session: Optional[Session] = None,
+    user_id: Optional[str] = None
 ) -> ToolResult:
     """
     Update an existing task in the LBS system.
@@ -402,6 +414,8 @@ def update_task_details(
         interval_days: Interval for EVERY_N_DAYS tasks
         month_day: Day of the month for MONTHLY_DAY tasks
     """
+    if not session or not user_id:
+        return ToolResult(success=False, message="Error: Missing database session or user context")
     try:
         updates = {}
         if task_name is not None: updates["task_name"] = task_name
@@ -472,8 +486,8 @@ def update_task_details(
 def delete_task_by_id(
     task_id: str,
     *,
-    session: Session,
-    user_id: str
+    session: Optional[Session] = None,
+    user_id: Optional[str] = None
 ) -> ToolResult:
     """
     Delete a task from the LBS system.
@@ -481,6 +495,8 @@ def delete_task_by_id(
     Args:
         task_id: ID of the task to delete
     """
+    if not session or not user_id:
+        return ToolResult(success=False, message="Error: Missing database session or user context")
     try:
         client = _get_lbs_client(user_id, session)
         client.delete_task(task_id)
@@ -499,8 +515,9 @@ def complete_lbs_task(
     target_date: str,
     status: str = "done",
     *,
-    session: Session,
-    user_id: str
+    session: Optional[Session] = None,
+    user_id: Optional[str] = None,
+    meta_info: Optional[str] = None
 ) -> ToolResult:
     """
     Record an execution status for a specific task on a specific date.
@@ -510,6 +527,8 @@ def complete_lbs_task(
         target_date: Date of execution (YYYY-MM-DD)
         status: Status to record (done, skipped, todo, in_progress)
     """
+    if not session or not user_id:
+        return ToolResult(success=False, message="Error: Missing database session or user context")
     try:
         from services.lbs_client import TaskStatus
         client = _get_lbs_client(user_id, session)
@@ -536,8 +555,8 @@ def get_lbs_schedule(
     start_date: str,
     end_date: str,
     *,
-    session: Session,
-    user_id: str
+    session: Optional[Session] = None,
+    user_id: Optional[str] = None
 ) -> ToolResult:
     """
     Get the unified schedule including all tasks and their calculated loads.
@@ -546,6 +565,8 @@ def get_lbs_schedule(
         start_date: Start date (YYYY-MM-DD)
         end_date: End date (YYYY-MM-DD)
     """
+    if not session or not user_id:
+        return ToolResult(success=False, message="Error: Missing database session or user context")
     try:
         start = date.fromisoformat(start_date)
         end = date.fromisoformat(end_date)
@@ -646,13 +667,7 @@ def check_inbox(
 ) -> ToolResult:
     """
     Check the Hub's inbox for pending messages from Spokes.
-    
-    Args:
-        session: Database session (injected)
-        user_id: User ID (injected)
-    
-    Returns:
-        ToolResult with pending messages
+    Does NOT return payloads, only summaries. Use read_all_inbox_messages to see all data.
     """
     try:
         messages = session.query(InboxQueue).filter(
@@ -663,7 +678,7 @@ def check_inbox(
         if not messages:
             return ToolResult(
                 success=True,
-                message="📭 Inbox is empty. No pending messages from Spokes.",
+                message="📭 Inbox is empty.",
                 data={"messages": [], "count": 0}
             )
         
@@ -679,11 +694,51 @@ def check_inbox(
         
         return ToolResult(
             success=True,
-            message=f"📬 Found {len(messages)} pending message(s) in inbox.",
+            message=f"📬 Found {len(messages)} pending message(s) in inbox. Use `read_all_inbox_messages()` to read their full content.",
             data={"messages": message_list, "count": len(messages)}
         )
     except Exception as e:
         return ToolResult(success=False, message=f"Failed to check inbox: {str(e)}")
+
+
+def read_all_inbox_messages(
+    *,
+    session: Session,
+    user_id: str
+) -> ToolResult:
+    """
+    Read the full content and payload of all pending inbox messages.
+    """
+    try:
+        messages = session.query(InboxQueue).filter(
+            InboxQueue.user_id == user_id,
+            InboxQueue.is_processed == False
+        ).order_by(InboxQueue.received_at.desc()).all()
+        
+        if not messages:
+            return ToolResult(
+                success=True,
+                message="📭 Inbox is empty.",
+                data={"messages": [], "count": 0}
+            )
+        
+        detailed_list = []
+        for msg in messages:
+            detailed_list.append({
+                "id": msg.id,
+                "spoke": msg.source_spoke,
+                "type": msg.message_type,
+                "payload": msg.payload,
+                "received_at": msg.received_at.isoformat() if msg.received_at else None
+            })
+        
+        return ToolResult(
+            success=True,
+            message=f"📋 Reading {len(messages)} pending inbox messages. Please analyze and process them as needed.",
+            data={"messages": detailed_list, "count": len(messages)}
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to read all inbox messages: {str(e)}")
 
 
 def process_inbox_message(
@@ -703,12 +758,13 @@ def process_inbox_message(
         user_id: User ID (injected)
     
     Returns:
-        ToolResult with processing status
+        ToolResult with processing status and payload
     """
     if action not in ["accept", "reject"]:
         return ToolResult(success=False, message="Action must be 'accept' or 'reject'")
     
     try:
+        # Get message
         msg = session.query(InboxQueue).filter(
             InboxQueue.id == message_id,
             InboxQueue.user_id == user_id
@@ -717,18 +773,19 @@ def process_inbox_message(
         if not msg:
             return ToolResult(success=False, message=f"Message {message_id} not found")
         
+        # Update status
         msg.is_processed = True
         msg.processed_at = datetime.utcnow()
-        
         if action == "reject":
-            msg.error_log = "Rejected by user"
+            msg.error_log = "Rejected by agent"
         
         session.commit()
         
+        # Return payload so the agent can act on it using other tools
         return ToolResult(
             success=True,
-            message=f"✅ Message {message_id} {action}ed successfully.",
-            data={"message_id": message_id, "action": action}
+            message=f"✅ Message {message_id} {action}ed. You can now use the payload to take further actions if needed.",
+            data={"message_id": message_id, "action": action, "payload": msg.payload}
         )
     except Exception as e:
         session.rollback()
@@ -847,14 +904,17 @@ def save_artifact(
     content: str,
     overwrite: bool = False,
     *,
-    user_id: str,
-    node_type: str,
+    user_id: Optional[str] = None,
+    node_type: Optional[str] = None,
     spoke_name: Optional[str] = None,
+    meta_info: Optional[str] = None,
     **kwargs
 ) -> ToolResult:
     """
     Save content to the agent's artifacts directory (user-scoped and isolated).
     """
+    if not user_id or not node_type:
+        return ToolResult(success=False, message="Error: Missing user context or node type for save_artifact")
     try:
         if '..' in file_path or file_path.startswith('/') or file_path.startswith('\\'):
             return ToolResult(success=False, message="Path traversal not allowed")
@@ -886,14 +946,16 @@ def update_artifact(
     content: str,
     mode: str = 'w',
     *,
-    user_id: str,
-    node_type: str,
+    user_id: Optional[str] = None,
+    node_type: Optional[str] = None,
     spoke_name: Optional[str] = None,
     **kwargs
 ) -> ToolResult:
     """
     Update or append to an artifact in the agent's isolated artifacts directory.
     """
+    if not user_id or not node_type:
+        return ToolResult(success=False, message="Error: Missing user context or node type for update_artifact")
     if mode not in ['w', 'a', 'w+', 'a+']:
         return ToolResult(success=False, message="Mode must be 'w' (overwrite) or 'a' (append)")
     
@@ -927,14 +989,16 @@ def update_artifact(
 def delete_artifact(
     file_path: str,
     *,
-    user_id: str,
-    node_type: str,
+    user_id: Optional[str] = None,
+    node_type: Optional[str] = None,
     spoke_name: Optional[str] = None,
     **kwargs
 ) -> ToolResult:
     """
     Delete an artifact from the agent's isolated artifacts directory.
     """
+    if not user_id or not node_type:
+        return ToolResult(success=False, message="Error: Missing user context or node type for delete_artifact")
     try:
         if '..' in file_path or file_path.startswith('/') or file_path.startswith('\\'):
             return ToolResult(success=False, message="Path traversal not allowed")
@@ -961,16 +1025,18 @@ def delete_artifact(
 def read_reference(
     file_path: str,
     *,
-    user_id: str,
-    node_type: str,
+    user_id: Optional[str] = None,
+    node_type: Optional[str] = None,
     spoke_name: Optional[str] = None,
-    session: Session = None,
+    session: Optional[Session] = None,
     **kwargs
 ) -> ToolResult:
     """
     Read a file from refs/ or artifacts/. 
     Synchronizes with Gemini File API for AI visibility.
     """
+    if not user_id or not node_type:
+        return ToolResult(success=False, message="Error: Missing user context or node type for read_reference")
     from utils.paths import get_spoke_dir, get_user_hub_dir
     from models.database import UploadedFile, Node
     import asyncio
@@ -1415,8 +1481,8 @@ def ingest_knowledge(
     content: str,
     label: Optional[str] = None,
     *,
-    session: Session,
-    user_id: str,
+    session: Optional[Session] = None,
+    user_id: Optional[str] = None,
     context_name: str = "general"
 ) -> ToolResult:
     """
@@ -1426,6 +1492,8 @@ def ingest_knowledge(
         content: The information to remember
         label: Optional category or label (e.g. 'research', 'meeting_notes')
     """
+    if not session or not user_id:
+        return ToolResult(success=False, message="Error: Missing database session or user context for ingest_knowledge")
     try:
         service = _get_kc_service(user_id, session)
         
@@ -1635,7 +1703,15 @@ HUB_TOOL_DEFINITIONS = [
     },
     {
         "name": "check_inbox",
-        "description": "Check the Hub's inbox for pending messages and reports from Spokes.",
+        "description": "Check for new messages in the Hub's inbox. Returns a list of message summaries and IDs.",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "read_all_inbox_messages",
+        "description": "Read the full content and payload of all pending inbox messages in a single call. Use this for efficient processing of multiple updates.",
         "parameters": {
             "type": "object",
             "properties": {}
@@ -1643,18 +1719,18 @@ HUB_TOOL_DEFINITIONS = [
     },
     {
         "name": "process_inbox_message",
-        "description": "Process a pending inbox message by accepting or rejecting it.",
+        "description": "Accept or reject a specific inbox message. Accepting a message will return its full payload for you to handle with tools (e.g. create_task).",
         "parameters": {
             "type": "object",
             "properties": {
                 "message_id": {
                     "type": "integer",
-                    "description": "ID of the inbox message to process"
+                    "description": "The ID of the message to process"
                 },
                 "action": {
                     "type": "string",
                     "enum": ["accept", "reject"],
-                    "description": "Action to take on the message"
+                    "description": "Action to take"
                 }
             },
             "required": ["message_id", "action"]
@@ -2305,6 +2381,7 @@ TOOL_FUNCTIONS = {
     "update_task_details": update_task_details,
     "delete_task_by_id": delete_task_by_id,
     "check_inbox": check_inbox,
+    "read_all_inbox_messages": read_all_inbox_messages,
     "process_inbox_message": process_inbox_message,
     # Spoke tools
     "report_to_hub": report_to_hub,

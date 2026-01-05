@@ -75,55 +75,83 @@ def process_message(
     db: Session = Depends(get_db)
 ):
     """Process an inbox message (accept/reject/edit)"""
-    handler = InboxHandler(db, user_id=identity.user_id)
+    from datetime import datetime
     
-    # Get the message before processing to read its content
-    from models.database import InboxQueue
-    inbox_msg = db.query(InboxQueue).filter(InboxQueue.id == msg.message_id).first()
+    # Get the message
+    inbox_msg = db.query(InboxQueue).filter(
+        InboxQueue.id == msg.message_id,
+        InboxQueue.user_id == identity.user_id
+    ).first()
     
     if not inbox_msg:
         raise HTTPException(status_code=404, detail="Message not found")
     
-    success = handler.process_message(msg.message_id, msg.action, msg.user_edits)
+    # Update message status directly (handler logic is obsolete)
+    inbox_msg.is_processed = True
+    inbox_msg.processed_at = datetime.utcnow()
     
-    if not success:
-        raise HTTPException(status_code=404, detail="Processing failed")
+    if msg.action == "reject":
+        inbox_msg.error_log = "Rejected by user"
     
-    # If accepted, automatically notify Hub
+    db.commit()
+    
+    # If accepted, automatically notify Hub with full payload
     if msg.action == "accept":
         try:
             from api.agents import get_hub_agent
+            import json
             
-            # Format the message for Hub
+            # Format the message for Hub with technical details
             spoke = inbox_msg.source_spoke
-            summary = inbox_msg.payload.get('summary', 'No summary')
-            request = inbox_msg.payload.get('request', '')
+            payload = inbox_msg.payload
+            
+            summary = payload.get('summary', 'No summary')
+            request = payload.get('request', '')
+            lbs_updates = payload.get('lbs_updates', [])
             
             notification = (
-                f"📢 **Inbox Update Received**\n"
+                f"📢 **Inbox Update Received: {spoke}**\n"
                 f"I have accepted an update from the Spoke: **{spoke}**.\n\n"
-                f"**Summary of Change:**\n{summary}\n"
+                f"**Summary:** {summary}\n"
             )
+            
             if request:
-                notification += f"\n**Spoke's Request:**\n{request}\n"
+                notification += f"**Request:** {request}\n"
+            
+            if lbs_updates:
+                notification += "\n**LBS Updates Recommended by Spoke:**\n"
+                for i, update in enumerate(lbs_updates, 1):
+                    action = update.get('action', 'update')
+                    name = update.get('name', 'Unnamed Task')
+                    load = update.get('load_score', '?')
+                    due = update.get('due_date', 'N/A')
+                    notification += f"{i}. {action.upper()} Task '{name}' (Load: {load}, Due: {due})\n"
+                
+                notification += "\n**Technical Payload (for your tools):**\n"
+                notification += f"```json\n{json.dumps(payload, indent=2)}\n```\n"
             
             notification += (
                 "\n---\n"
-                "Please analyze this update in the context of our current LBS load and overall strategy. "
-                "Provide a brief strategic assessment of how this affects our project planning."
+                "Please analyze this update and use your tools (like `create_task`, `update_task_details`, or `complete_lbs_task`) to reflect these changes in our LBS system as you see fit. "
+                "Provide a brief assessment of how this affects our project priority."
             )
             
             # Send to Hub and get response
             hub = get_hub_agent(identity.user_id, db)
-            hub_response = hub.chat_with_context(notification)
+            hub_response = hub.chat(notification) # Use chat to allow tool calls
+            
+            # Hub's return from chat is (response_text, tool_calls)
+            response_text = hub_response[0] if isinstance(hub_response, tuple) else hub_response
             
             return {
                 "message": f"Message {msg.action}ed successfully",
                 "hub_notified": True,
-                "hub_response": hub_response
+                "hub_response": response_text
             }
         except Exception as e:
             print(f"Failed to notify Hub: {e}")
+            import traceback
+            traceback.print_exc()
             return {"message": f"Message {msg.action}ed successfully", "hub_notified": False}
     
     return {"message": f"Message {msg.action}ed successfully"}
@@ -135,38 +163,41 @@ def accept_all_messages(
     db: Session = Depends(get_db)
 ):
     """Accept all pending inbox messages at once"""
-    handler = InboxHandler(db, user_id=identity.user_id)
-    pending = handler.get_pending_messages()
+    from datetime import datetime
+    
+    pending = db.query(InboxQueue).filter(
+        InboxQueue.user_id == identity.user_id,
+        InboxQueue.is_processed == False
+    ).all()
     
     if not pending:
         return {"message": "No pending messages to accept", "count": 0}
     
-    accepted_count = 0
-    failed_count = 0
     accepted_messages = []
     
     for msg in pending:
-        success = handler.process_message(msg.id, "accept")
-        if success:
-            accepted_count += 1
-            accepted_messages.append({
-                "spoke": msg.source_spoke,
-                "summary": msg.payload.get('summary', 'No summary'),
-                "request": msg.payload.get('request', '')
-            })
-        else:
-            failed_count += 1
+        msg.is_processed = True
+        msg.processed_at = datetime.utcnow()
+        accepted_messages.append({
+            "spoke": msg.source_spoke,
+            "summary": msg.payload.get('summary', 'No summary'),
+            "request": msg.payload.get('request', ''),
+            "payload": msg.payload
+        })
+    
+    db.commit()
     
     # Automatically notify Hub about all accepted messages
     hub_response = None
-    if accepted_count > 0:
+    if accepted_messages:
         try:
             from api.agents import get_hub_agent
+            import json
             
             # Format notification for Hub
             notification = (
                 f"📢 **Batch Inbox Processing Complete**\n"
-                f"I have just accepted **{accepted_count}** pending updates from multiple Spokes.\n\n"
+                f"I have just accepted **{len(accepted_messages)}** pending updates from multiple Spokes.\n\n"
                 f"**Consolidated Summary of Updates:**\n"
             )
             for i, msg_data in enumerate(accepted_messages, 1):
@@ -174,23 +205,26 @@ def accept_all_messages(
                 if msg_data['request']:
                     notification += f" (Request: {msg_data['request']})"
             
+            notification += "\n\n**Technical Details (for your reference):**\n"
+            notification += "```json\n" + json.dumps([m['payload'] for m in accepted_messages], indent=2) + "\n```\n"
+
             notification += (
                 "\n\n---\n"
                 "Please perform a global re-evaluation of our status based on these combined updates. "
-                "Does our current strategy remain optimal, or do we need to reschedule any tasks in the LBS?"
+                "Use your tools to adjust the LBS schedule or create new tasks as necessary."
             )
             
             # Send to Hub and get response
             hub = get_hub_agent(identity.user_id, db)
-            hub_response = hub.chat_with_context(notification)
+            hub_chat_res = hub.chat(notification)
+            hub_response = hub_chat_res[0] if isinstance(hub_chat_res, tuple) else hub_chat_res
             
         except Exception as e:
             print(f"Failed to notify Hub: {e}")
     
     return {
-        "message": f"✅ Accepted {accepted_count} messages" + (f", {failed_count} failed" if failed_count > 0 else ""),
-        "accepted": accepted_count,
-        "failed": failed_count,
+        "message": f"✅ Accepted {len(accepted_messages)} messages",
+        "accepted": len(accepted_messages),
         "hub_notified": hub_response is not None,
         "hub_response": hub_response
     }
