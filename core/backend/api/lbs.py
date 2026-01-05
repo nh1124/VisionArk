@@ -59,9 +59,13 @@ class TaskCreate(BaseModel):
     sun: bool = False
     interval_days: Optional[int] = None
     anchor_date: Optional[date] = None
+    month_day: Optional[int] = None
+    nth_in_month: Optional[int] = None
+    weekday_mon1: Optional[int] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     notes: Optional[str] = None
+    external_sync_id: Optional[str] = None
 
 
 class TaskUpdate(BaseModel):
@@ -82,8 +86,11 @@ class TaskUpdate(BaseModel):
     interval_days: Optional[int] = None
     anchor_date: Optional[date] = None
     month_day: Optional[int] = None
+    nth_in_month: Optional[int] = None
+    weekday_mon1: Optional[int] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
+    external_sync_id: Optional[str] = None
 
 
 class ExceptionCreate(BaseModel):
@@ -115,20 +122,47 @@ def create_task(task: TaskCreate, client: LBSClient = Depends(get_lbs_client)):
 
 
 @router.get("/tasks")
-def list_tasks(
+async def list_tasks(
     context: Optional[str] = None,
-    client: LBSClient = Depends(get_lbs_client)
+    active: Optional[bool] = None,
+    target_date: Optional[date] = None,
+    lbs: LBSClient = Depends(get_lbs_client)
 ):
+    """
+    List project tasks with optional filters.
+    If target_date is provided, returns execution status for that day.
+    """
     try:
-        return client.get_tasks(context)
+        return lbs.get_tasks(context=context, active=active, target_date=target_date)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/tasks/{task_id}")
-def get_task(task_id: str, client: LBSClient = Depends(get_lbs_client)):
+async def get_task_details(
+    task_id: str,
+    target_date: Optional[date] = None,
+    lbs: LBSClient = Depends(get_lbs_client)
+):
+    """
+    Get detailed information about a specific task.
+    If target_date is provided, returns context-specific status for that date.
+    """
     try:
-        return client.get_task(task_id)
+        return lbs.get_task(task_id, target_date=target_date)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/tasks/{task_id}/history")
+async def get_task_history(
+    task_id: str,
+    start_date: date,
+    end_date: date,
+    lbs: LBSClient = Depends(get_lbs_client)
+):
+    """Fetch execution history for a specific task."""
+    try:
+        return lbs.get_task_history(task_id, start_date, end_date)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -169,7 +203,7 @@ class TaskBulkDelete(BaseModel):
     task_ids: List[str]
 
 
-class TaskBulkStatusUpdate(BaseModel):
+class TaskBulkActiveUpdate(BaseModel):
     task_ids: List[str]
     active: bool
 
@@ -182,10 +216,10 @@ def bulk_delete_tasks(bulk_in: TaskBulkDelete, client: LBSClient = Depends(get_l
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/tasks/bulk-update-status")
-def bulk_update_status(bulk_in: TaskBulkStatusUpdate, client: LBSClient = Depends(get_lbs_client)):
+@router.post("/tasks/bulk-update-active")
+def bulk_update_active(bulk_in: TaskBulkActiveUpdate, client: LBSClient = Depends(get_lbs_client)):
     try:
-        return client.bulk_update_status(bulk_in.task_ids, bulk_in.active)
+        return client.bulk_update_active(bulk_in.task_ids, bulk_in.active)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -235,5 +269,48 @@ def get_context_distribution(
 ):
     try:
         return client.get_context_distribution(start, end)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/schedule")
+def get_schedule(
+    start_date: date,
+    end_date: date,
+    client: LBSClient = Depends(get_lbs_client)
+):
+    try:
+        return client.get_schedule(start_date, end_date)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/expand")
+def expand_tasks(
+    start_date: date,
+    end_date: date,
+    client: LBSClient = Depends(get_lbs_client)
+):
+    try:
+        return client.force_expand(start_date, end_date)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class TaskCompletionRequest(BaseModel):
+    target_date: date
+    status: str = "done"
+
+
+@router.post("/tasks/{task_id}/complete")
+def complete_task(
+    task_id: str,
+    req: TaskCompletionRequest,
+    client: LBSClient = Depends(get_lbs_client)
+):
+    try:
+        from services.lbs_client import TaskStatus
+        status_val = req.status
+        return client.toggle_task_completion(task_id, req.target_date, status_val)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

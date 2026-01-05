@@ -252,8 +252,9 @@ def create_task(
     spoke: Optional[str] = None,
     rule_type: str = "ONCE",
     due_date: Optional[str] = None,
-    days: Optional[str] = None,  # Changed to string (comma-separated)
+    days: Optional[str] = None,
     interval_days: Optional[int] = None,
+    month_day: Optional[int] = None,
     notes: Optional[str] = None,
     *,
     session: Session,
@@ -271,6 +272,7 @@ def create_task(
         due_date: Due date for ONCE tasks (YYYY-MM-DD)
         days: Comma-separated days for WEEKLY tasks (e.g., "mon,wed,fri")
         interval_days: Interval for EVERY_N_DAYS tasks
+        month_day: Day of the month (1-31) for MONTHLY_DAY tasks
         notes: Additional notes
         session: Database session (injected)
         user_id: User ID (injected)
@@ -308,6 +310,9 @@ def create_task(
         
         elif rule_type.upper() == "EVERY_N_DAYS" and interval_days:
             task_data["interval_days"] = interval_days
+
+        elif rule_type.upper() == "MONTHLY_DAY" and month_day:
+            task_data["month_day"] = month_day
         
         client = _get_lbs_client(user_id, session)
         result = client.create_task(task_data)
@@ -376,6 +381,7 @@ def update_task_details(
     due_date: Optional[str] = None,
     days: Optional[str] = None,
     interval_days: Optional[int] = None,
+    month_day: Optional[int] = None,
     *,
     session: Session,
     user_id: str
@@ -394,6 +400,7 @@ def update_task_details(
         due_date: New due date for ONCE tasks (YYYY-MM-DD)
         days: Comma-separated days for WEEKLY tasks (e.g., "mon,wed,fri")
         interval_days: Interval for EVERY_N_DAYS tasks
+        month_day: Day of the month for MONTHLY_DAY tasks
     """
     try:
         updates = {}
@@ -426,10 +433,14 @@ def update_task_details(
             
             elif rule_type.upper() == "EVERY_N_DAYS" and interval_days:
                 updates["interval_days"] = interval_days
+
+            elif rule_type.upper() == "MONTHLY_DAY" and month_day:
+                updates["month_day"] = month_day
         else:
             # Allow updating these fields even without changing rule_type
             if due_date is not None: updates["due_date"] = due_date
             if interval_days is not None: updates["interval_days"] = interval_days
+            if month_day is not None: updates["month_day"] = month_day
             if days is not None:
                 days_list = [d.strip().lower() for d in days.split(",")]
                 day_map = {d: True for d in days_list}
@@ -481,6 +492,151 @@ def delete_task_by_id(
         )
     except Exception as e:
         return ToolResult(success=False, message=f"Failed to delete task: {str(e)}")
+
+
+def complete_lbs_task(
+    task_id: str,
+    target_date: str,
+    status: str = "done",
+    *,
+    session: Session,
+    user_id: str
+) -> ToolResult:
+    """
+    Record an execution status for a specific task on a specific date.
+    
+    Args:
+        task_id: ID of the task
+        target_date: Date of execution (YYYY-MM-DD)
+        status: Status to record (done, skipped, todo, in_progress)
+    """
+    try:
+        from services.lbs_client import TaskStatus
+        client = _get_lbs_client(user_id, session)
+        
+        # Validate status
+        try:
+            status_enum = TaskStatus(status.lower())
+        except ValueError:
+            return ToolResult(success=False, message=f"Invalid status: {status}. Use 'done', 'skipped', 'todo', or 'in_progress'.")
+            
+        dt = date.fromisoformat(target_date)
+        result = client.toggle_task_completion(task_id, dt, status_enum)
+        
+        return ToolResult(
+            success=True,
+            message=f"✅ Task {task_id} marked as '{status}' for {target_date}.",
+            data=result
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to complete task: {str(e)}")
+
+
+def get_lbs_schedule(
+    start_date: str,
+    end_date: str,
+    *,
+    session: Session,
+    user_id: str
+) -> ToolResult:
+    """
+    Get the unified schedule including all tasks and their calculated loads.
+    
+    Args:
+        start_date: Start date (YYYY-MM-DD)
+        end_date: End date (YYYY-MM-DD)
+    """
+    try:
+        start = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
+        
+        client = _get_lbs_client(user_id, session)
+        schedule = client.get_schedule(start, end)
+        
+        if not schedule:
+            return ToolResult(success=True, message=f"No tasks scheduled between {start_date} and {end_date}")
+            
+        lines = [f"📅 Schedule from {start_date} to {end_date}:\n"]
+        for day in schedule:
+            dt_str = day.get("date")
+            total_load = day.get("total_load", 0.0)
+            tasks = day.get("tasks", [])
+            
+            lines.append(f"● {dt_str} (Total Load: {total_load:.1f})")
+            for t in tasks:
+                status_icon = "✅" if t.get("status") == "done" else "🕒"
+                lines.append(f"  └ {status_icon} [{t.get('task_id')}] {t.get('task_name')} ({t.get('load'):.1f})")
+        
+        return ToolResult(
+            success=True,
+            message="\n".join(lines),
+            data={"schedule": schedule}
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to get schedule: {str(e)}")
+
+
+def get_task_execution_history(
+    task_id: str,
+    start_date: str,
+    end_date: str,
+    *,
+    session: Session,
+    user_id: str
+) -> ToolResult:
+    """
+    Get the execution history (status records) for a specific task over a date range.
+    
+    Args:
+        task_id: ID of the task to get history for
+        start_date: Start date (YYYY-MM-DD)
+        end_date: End date (YYYY-MM-DD)
+    """
+    try:
+        start = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
+        
+        client = _get_lbs_client(user_id, session)
+        history = client.get_task_history(task_id, start, end)
+        
+        if not history:
+            return ToolResult(
+                success=True, 
+                message=f"No execution records found for task {task_id} between {start_date} and {end_date}",
+                data={"history": [], "task_id": task_id}
+            )
+        
+        # Format history for display
+        lines = [f"📊 Execution history for task {task_id}:\n"]
+        done_count = 0
+        skipped_count = 0
+        todo_count = 0
+        
+        for record in history:
+            date_str = record.get("target_date", "N/A")
+            status = record.get("status", "todo")
+            
+            if status == "done":
+                icon = "✅"
+                done_count += 1
+            elif status == "skipped":
+                icon = "⏭️"
+                skipped_count += 1
+            else:
+                icon = "🕒"
+                todo_count += 1
+                
+            lines.append(f"  {icon} {date_str}: {status}")
+        
+        lines.append(f"\nSummary: ✅ Done: {done_count} | ⏭️ Skipped: {skipped_count} | 🕒 Todo: {todo_count}")
+        
+        return ToolResult(
+            success=True,
+            message="\n".join(lines),
+            data={"history": history, "task_id": task_id, "done": done_count, "skipped": skipped_count, "todo": todo_count}
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to get task history: {str(e)}")
 
 
 def check_inbox(
@@ -1383,6 +1539,10 @@ HUB_TOOL_DEFINITIONS = [
                     "type": "integer",
                     "description": "Interval for EVERY_N_DAYS tasks"
                 },
+                "month_day": {
+                    "type": "integer",
+                    "description": "Day of the month (1-31) for MONTHLY_DAY rule"
+                },
                 "notes": {
                     "type": "string",
                     "description": "Additional notes for the task"
@@ -1450,6 +1610,10 @@ HUB_TOOL_DEFINITIONS = [
                 "interval_days": {
                     "type": "integer",
                     "description": "Interval for EVERY_N_DAYS tasks"
+                },
+                "month_day": {
+                    "type": "integer",
+                    "description": "Day of the month for MONTHLY_DAY rule"
                 }
             },
             "required": ["task_id"]
@@ -1729,6 +1893,69 @@ HUB_TOOL_DEFINITIONS = [
             },
             "required": ["urls", "query"]
         }
+    },
+    {
+        "name": "complete_lbs_task",
+        "description": "Record an execution status for a specific task on a specific date (e.g. mark it as done).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "The ID of the task to complete"
+                },
+                "target_date": {
+                    "type": "string",
+                    "description": "Date of the execution (YYYY-MM-DD)"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["done", "skipped", "todo", "in_progress"],
+                    "description": "The status to record. Default is 'done'."
+                }
+            },
+            "required": ["task_id", "target_date"]
+        }
+    },
+    {
+        "name": "get_lbs_schedule",
+        "description": "Get the unified schedule including all tasks and their calculated loads for a range of dates.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "start_date": {
+                    "type": "string",
+                    "description": "Start date in YYYY-MM-DD format"
+                },
+                "end_date": {
+                    "type": "string",
+                    "description": "End date in YYYY-MM-DD format"
+                }
+            },
+            "required": ["start_date", "end_date"]
+        }
+    },
+    {
+        "name": "get_task_execution_history",
+        "description": "Get the execution history (status records) for a specific task over a date range. Use this to see when a task was completed, skipped, or left as todo.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "The ID of the task to get history for"
+                },
+                "start_date": {
+                    "type": "string",
+                    "description": "Start date in YYYY-MM-DD format"
+                },
+                "end_date": {
+                    "type": "string",
+                    "description": "End date in YYYY-MM-DD format"
+                }
+            },
+            "required": ["task_id", "start_date", "end_date"]
+        }
     }
 ]
 
@@ -2001,6 +2228,69 @@ SPOKE_TOOL_DEFINITIONS = [
             },
             "required": ["urls", "query"]
         }
+    },
+    {
+        "name": "complete_lbs_task",
+        "description": "Record an execution status for a specific task on a specific date (e.g. mark it as done).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "The ID of the task to complete"
+                },
+                "target_date": {
+                    "type": "string",
+                    "description": "Date of the execution (YYYY-MM-DD)"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["done", "skipped", "todo", "in_progress"],
+                    "description": "The status to record. Default is 'done'."
+                }
+            },
+            "required": ["task_id", "target_date"]
+        }
+    },
+    {
+        "name": "get_lbs_schedule",
+        "description": "Get the unified schedule including all tasks and their calculated loads for a range of dates.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "start_date": {
+                    "type": "string",
+                    "description": "Start date in YYYY-MM-DD format"
+                },
+                "end_date": {
+                    "type": "string",
+                    "description": "End date in YYYY-MM-DD format"
+                }
+            },
+            "required": ["start_date", "end_date"]
+        }
+    },
+    {
+        "name": "get_task_execution_history",
+        "description": "Get the execution history (status records) for a specific task over a date range. Use this to see when a task was completed, skipped, or left as todo.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "The ID of the task to get history for"
+                },
+                "start_date": {
+                    "type": "string",
+                    "description": "Start date in YYYY-MM-DD format"
+                },
+                "end_date": {
+                    "type": "string",
+                    "description": "End date in YYYY-MM-DD format"
+                }
+            },
+            "required": ["task_id", "start_date", "end_date"]
+        }
     }
 ]
 
@@ -2034,4 +2324,7 @@ TOOL_FUNCTIONS = {
     "get_load_in_period": get_load_in_period,
     "search_knowledge": search_knowledge,
     "ingest_knowledge": ingest_knowledge,
+    "complete_lbs_task": complete_lbs_task,
+    "get_lbs_schedule": get_lbs_schedule,
+    "get_task_execution_history": get_task_execution_history,
 }

@@ -135,27 +135,77 @@ Focus on delivering high-quality work within this context.
 ## Available Tools
 
 ### File & Artifact Operations
-- `save_artifact(file_path, content)` - Save code/docs to artifacts/
-- `update_artifact(file_path, content, mode)` - Update/Append to artifacts
+- `save_artifact(file_path, content, overwrite)` - Save code/docs to artifacts/
+- `update_artifact(file_path, content, mode)` - Update or append to artifacts
 - `delete_artifact(file_path)` - Remove artifacts permanently
-- `read_reference(file_path)` - Read files from refs/. Automatically ensures AI visibility via Gemini File API.
+- `read_reference(file_path)` - Read files from refs/. Automatically ensures AI visibility.
 - `list_files(sub_dir)` - List files in 'refs' or 'artifacts'. Shows AI Indexing status.
 
 **Note:** Your artifacts are stored in `spokes/{self.spoke_name}/artifacts/`. You cannot access other project files.
 
-### Hub Communication & Research
+### Task Management (LBS)
+- `list_tasks()` - List LBS tasks for this spoke
+- `complete_lbs_task(task_id, target_date, status)` - Record execution status (done/skipped/todo) for a task
+- `get_lbs_schedule(start_date, end_date)` - Get unified schedule with all tasks and their loads
+- `get_task_execution_history(task_id, start_date, end_date)` - Get execution history for a specific task
+
+### LBS Forecasting
+- `get_load_on_day(target_date)` - Get workload forecast for a specific day
+- `get_load_in_period(start_date, end_date)` - Get daily workload breakdown for a date range
+
+### Knowledge Core
+- `search_knowledge(query, limit)` - Query the Knowledge Core for project context
+- `ingest_knowledge(content, label)` - Record new facts or info for the future
+
+### Research & External Services
 - `google_search(query)` - Search Google for real-time information and documentation
 - `execute_code(prompt)` - Perform complex calculations or simulations via Gemini
-- `search_places(query, lat, lng)` - Search for places and directions using Google Maps grounding
-- `research_url(urls, query)` - Extract information or summarize content from specific URLs
+- `search_places(query, lat, lng)` - Search for places and directions using Google Maps
+- `research_url(urls, query)` - Extract information or summarize content from URLs
+
+### Hub Communication & Session
 - `report_to_hub(summary, request)` - Send progress updates or requests to Hub
+- `delete_spoke()` - Delete this spoke permanently (use with caution!)
 - `archive_session()` - Archive conversation and start fresh
 
-### Metrics & Knowledge
-- `list_tasks()` - List LBS tasks for this spoke
-- `get_load_on_day(target_date)` - Check workload forecast for planning
-- `search_knowledge(query)` - Query the Knowledge Core for project context
-- `ingest_knowledge(content)` - Record new facts or info for the future
+## Tool Parameters: Required vs Optional
+
+**CRITICAL:** Only pass parameters you need. Optional parameters can be omitted entirely (do not pass null).
+
+| Tool | Required | Optional (can omit) |
+|------|----------|---------------------|
+| `save_artifact` | `file_path`, `content` | `overwrite` |
+| `update_artifact` | `file_path`, `content` | `mode` |
+| `delete_artifact` | `file_path` | - |
+| `read_reference` | `file_path` | - |
+| `list_files` | `sub_dir` | - |
+| `list_tasks` | - | - |
+| `complete_lbs_task` | `task_id`, `target_date` | `status` (default: "done") |
+| `get_lbs_schedule` | `start_date`, `end_date` | - |
+| `get_load_on_day` | `target_date` | - |
+| `get_load_in_period` | `start_date`, `end_date` | - |
+| `search_knowledge` | `query` | `limit` |
+| `ingest_knowledge` | `content` | `label` |
+| `google_search` | `query` | - |
+| `execute_code` | `prompt` | - |
+| `search_places` | `query` | `lat`, `lng` |
+| `research_url` | `urls`, `query` | - |
+| `report_to_hub` | `summary` | `request` |
+| `delete_spoke` | - | - |
+| `archive_session` | - | - |
+| `get_task_execution_history` | `task_id`, `start_date`, `end_date` | - |
+
+## IMPORTANT: Task vs Execution (Two Different Concepts)
+
+- **Task:** The persistent definition (name, workload, recurrence). Use `list_tasks()` to view.
+- **Execution:** Status record (done/skipped/todo) for a SPECIFIC date. Use `complete_lbs_task()` to update.
+
+**Examples:**
+```
+✅ complete_lbs_task(task_id="abc123", target_date="2024-01-05", status="done")
+✅ complete_lbs_task(task_id="abc123", target_date="2024-01-05")  # status defaults to "done"
+❌ complete_lbs_task(task_id="abc123", target_date="2024-01-05", status=null)  # Don't pass null!
+```
 
 **Use these tools to CREATE FILES instead of just showing code!**
 
