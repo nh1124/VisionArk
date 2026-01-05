@@ -101,33 +101,9 @@ class SpokeAgent(BaseAgent):
         # Store tools at agent level (persists across LLM refreshes)
         self.set_agent_tools(SPOKE_TOOL_DEFINITIONS, TOOL_FUNCTIONS)
     
-    def load_system_prompt(self) -> str:
-        """
-        Spoke-specific prompt loading.
-        Checks DB AgentProfile first, then fallbacks.
-        """
-        # 1. Try DB Profile
-        profile = self.db_session.query(AgentProfile).filter(
-            AgentProfile.node_id == self.node_id,
-            AgentProfile.is_active == True
-        ).order_by(AgentProfile.version.desc()).first()
-        
-        spoke_specific = None
-        if profile and profile.system_prompt:
-            spoke_specific = profile.system_prompt
-        
-        # 2. Fallback to File or Default
-        if not spoke_specific:
-            prompt_path = self.spoke_dir / "system_prompt.md"
-            if prompt_path.exists():
-                spoke_specific = prompt_path.read_text(encoding='utf-8')
-        
-        # 3. Combine with global prompt
-        global_prompt = get_user_global_prompt(self.user_id)
-        separator = f"\n\n---\n\n# {self.spoke_name.replace('_', ' ').title()} (Role-Specific Instructions)\n\n" if global_prompt else ""
-        
-        # Default Spoke prompt (defined here so it's always available)
-        spoke_default = f"""# {self.spoke_name.replace('_', ' ').title()}
+    def _get_default_spoke_prompt(self) -> str:
+        """Returns the default system prompt for spokes"""
+        return f"""# {self.spoke_name.replace('_', ' ').title()}
 
 You are a specialized execution agent for the {self.spoke_name} project.
 Focus on delivering high-quality work within this context.
@@ -215,7 +191,28 @@ When you complete a milestone or need Hub's input, use `report_to_hub`.
 ## Reference Files
 Files in your reference library are automatically available. Use them to provide informed responses.
 """
-        return global_prompt + separator + spoke_default
+    
+    def load_system_prompt(self) -> str:
+        """
+        Spoke-specific prompt loading.
+        Checks DB AgentProfile first, then combines with global and default prompts.
+        """
+        # 1. Try DB Profile
+        profile = self.db_session.query(AgentProfile).filter(
+            AgentProfile.node_id == self.node_id,
+            AgentProfile.is_active == True
+        ).order_by(AgentProfile.version.desc()).first()
+        
+        spoke_specific = ""
+        if profile and profile.system_prompt:
+            spoke_specific = "\n\n" + profile.system_prompt
+        
+        # 2. Combine with global prompt
+        global_prompt = get_user_global_prompt(self.user_id)
+        separator = f"\n\n---\n\n# {self.spoke_name.replace('_', ' ').title()} (Role-Specific Instructions)\n\n" if global_prompt else ""
+        
+        # New construction: global_prompt + default_spoke_prompt + spoke_specific
+        return global_prompt + separator + self._get_default_spoke_prompt() + spoke_specific
     
     def get_node_name(self) -> str:
         return self.spoke_name

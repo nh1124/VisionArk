@@ -801,7 +801,12 @@ def get_system_prompt(
     if profile and profile.system_prompt:
         return {"content": profile.system_prompt}
     
-    return {"content": ""}
+    # Fallback to default prompt for this spoke
+    try:
+        agent = SpokeAgent(user_id=identity.user_id, spoke_name=spoke_name, db_session=db)
+        return {"content": agent._get_default_spoke_prompt()}
+    except Exception:
+        return {"content": ""}
 
 
 @router.put("/spoke/{spoke_name}/prompt")

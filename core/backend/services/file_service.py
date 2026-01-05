@@ -196,7 +196,7 @@ class FileService:
         # Run upload in a thread pool to avoid blocking the event loop
         gemini_file = await asyncio.to_thread(
             client.files.upload,
-            path=str(file_path),
+            file=str(file_path),
             config=types.UploadFileConfig(
                 mime_type=file_record.mime_type,
                 display_name=file_record.filename
