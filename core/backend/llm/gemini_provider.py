@@ -261,7 +261,7 @@ class GeminiProvider(BaseLLMProvider):
                         import inspect
                         
                         # Get execution context from kwargs
-                        tool_context = kwargs.get('tool_context', {})
+                        tool_context = kwargs.get('tool_context') or {}
                         func = active_tool_functions[function_name]
                         
                         # Get the function's signature to know what parameters it accepts
@@ -270,9 +270,22 @@ class GeminiProvider(BaseLLMProvider):
                         
                         # Merge function args with only the injected context that the function accepts
                         full_args = {**function_args}
-                        for key in ['session', 'user_id', 'node_id', 'spoke_name', 'context_name']:
+                        injected_keys = []
+                        for key in ['session', 'user_id', 'node_id', 'node_type', 'spoke_name', 'context_name', 'meta_info']:
                             if key in tool_context and key in accepted_params:
                                 full_args[key] = tool_context[key]
+                                injected_keys.append(key)
+                        
+                        if injected_keys:
+                            print(f"[Gemini] Injected context keys: {', '.join(injected_keys)}")
+                        
+                        # Safety check: log if mandatory params (from sig) are missing in full_args
+                        missing_from_call = [p for p, param in sig.parameters.items() 
+                                           if param.default == inspect.Parameter.empty 
+                                           and p not in full_args 
+                                           and p not in ['kwargs', 'args']]
+                        if missing_from_call:
+                            print(f"[Gemini] WARNING: Missing mandatory params for {function_name}: {missing_from_call}")
                         
                         result = func(**full_args)
                         

@@ -220,12 +220,14 @@ Files in your reference library are automatically available. Use them to provide
     def get_node_name(self) -> str:
         return self.spoke_name
     
-    def chat(self, user_message: str, attached_files=None, preferred_model=None) -> str:
+    def chat(self, 
+             user_message: str, 
+             attached_files: List[AttachedFile] = None, 
+             preferred_model: Optional[str] = None,
+             meta_info: Optional[str] = None) -> str:
         """
         Spoke-specific chat - passes tool context with spoke information
         """
-        from models.message import AttachedFile
-        
         tool_context = {
             'session': self.db_session,
             'user_id': self.user_id,
@@ -239,5 +241,6 @@ Files in your reference library are automatically available. Use them to provide
             user_message, 
             attached_files=attached_files, 
             preferred_model=preferred_model,
-            tool_context=tool_context
+            tool_context=tool_context,
+            meta_info=meta_info
         )

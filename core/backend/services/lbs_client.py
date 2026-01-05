@@ -73,7 +73,7 @@ class LBSClient:
             return resp.json()
 
     def get_task(self, task_id: str, target_date: Optional[Union[date, str]] = None) -> Optional[Dict]:
-        with httpx.Client(base_url=self.base_url) as client:
+        with httpx.Client(base_url=self.base_url, timeout=30.0) as client:
             resp = client.get(f"tasks/{task_id}", headers=self._get_headers())
             resp.raise_for_status()
             task = resp.json()
@@ -81,15 +81,25 @@ class LBSClient:
             if target_date:
                 t_date_str = target_date.isoformat() if isinstance(target_date, date) else target_date
                 # Fetch schedule for that day to get status
-                sched_resp = client.get("schedule", params={"start_date": t_date_str, "end_date": t_date_str}, headers=self._get_headers())
-                if sched_resp.ok:
-                    schedule = sched_resp.json()
-                    for day_data in schedule:
-                        if day_data["date"] == t_date_str:
-                            for t in day_data["tasks"]:
-                                if t["task_id"] == task_id:
-                                    task["status"] = t["status"]
-                                    break
+                try:
+                    sched_resp = client.get("schedule", params={"start_date": t_date_str, "end_date": t_date_str}, headers=self._get_headers())
+                    if sched_resp.is_success:
+                        schedule = sched_resp.json()
+                        # Safely iterate with defensive checks
+                        if isinstance(schedule, list):
+                            for day_data in schedule:
+                                if isinstance(day_data, dict) and day_data.get("date") == t_date_str:
+                                    tasks_list = day_data.get("tasks", [])
+                                    if isinstance(tasks_list, list):
+                                        for t in tasks_list:
+                                            if isinstance(t, dict) and t.get("task_id") == task_id:
+                                                task["status"] = t.get("status", "todo")
+                                                break
+                except (httpx.HTTPError, KeyError, TypeError) as e:
+                    # If schedule fetch fails, default to "todo"
+                    import logging
+                    logging.warning(f"Failed to fetch schedule for task {task_id} on {t_date_str}: {e}")
+                    task["status"] = "todo"
             return task
 
     def update_task(self, task_id: str, task_data: Dict) -> Dict:
@@ -111,28 +121,46 @@ class LBSClient:
         if active is not None:
             params["active"] = str(active).lower()
             
-        with httpx.Client(base_url=self.base_url) as client:
+        with httpx.Client(base_url=self.base_url, timeout=30.0) as client:
             resp = client.get("tasks", params=params, headers=self._get_headers())
             resp.raise_for_status()
-            tasks = resp.json()
+            all_tasks = resp.json()
 
             if target_date:
                 t_date_str = target_date.isoformat() if isinstance(target_date, date) else target_date
-                # Fetch schedule to get execution status for this date
+                # Fetch schedule to get tasks scheduled for this specific date
                 sched_params = {"start_date": t_date_str, "end_date": t_date_str}
-                sched_resp = client.get("schedule", params=sched_params, headers=self._get_headers())
-                if sched_resp.ok:
-                    schedule = sched_resp.json()
-                    status_map = {}
-                    for day_data in schedule:
-                        if day_data["date"] == t_date_str:
-                            for t in day_data["tasks"]:
-                                status_map[t["task_id"]] = t["status"]
-                    
-                    for task in tasks:
-                        task["status"] = status_map.get(task["task_id"], "todo")
+                try:
+                    sched_resp = client.get("schedule", params=sched_params, headers=self._get_headers())
+                    if sched_resp.is_success:
+                        schedule = sched_resp.json()
+                        scheduled_task_ids = set()
+                        status_map = {}
+                        # Extract task IDs and statuses from schedule
+                        if isinstance(schedule, list):
+                            for day_data in schedule:
+                                if isinstance(day_data, dict) and day_data.get("date") == t_date_str:
+                                    tasks_list = day_data.get("tasks", [])
+                                    if isinstance(tasks_list, list):
+                                        for t in tasks_list:
+                                            if isinstance(t, dict) and "task_id" in t:
+                                                scheduled_task_ids.add(t["task_id"])
+                                                status_map[t["task_id"]] = t.get("status", "todo")
+                        
+                        # Filter to only tasks scheduled for this date
+                        filtered_tasks = []
+                        for task in all_tasks:
+                            if task.get("task_id") in scheduled_task_ids:
+                                task["status"] = status_map.get(task.get("task_id"), "todo")
+                                filtered_tasks.append(task)
+                        return filtered_tasks
+                except (httpx.HTTPError, KeyError, TypeError) as e:
+                    import logging
+                    logging.warning(f"Failed to fetch schedule for {t_date_str}: {e}")
+                    # If schedule fetch fails, return empty list for date-specific queries
+                    return []
             
-            return tasks
+            return all_tasks
 
     def calculate_load(self, target_date: date) -> Dict:
         with httpx.Client(base_url=self.base_url) as client:

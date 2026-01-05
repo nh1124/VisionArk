@@ -91,13 +91,16 @@ class BaseAgent(ABC):
         # --- KnowledgeCore Integration (Context) ---
         kc_prompt_augmentation = ""
         if self.user_id:
-            kc_service = KnowledgeCoreService(self.db_session, self.user_id)
-            t0 = time.time()
-            context = kc_service.get_context(query=user_message, agent_id=self.get_node_name())
-            print(f"[{self.get_node_name()}/Timing] KC get_context: {time.time()-t0:.2f}s")
-            if context and context.get("summary"):
-                kc_prompt_augmentation = f"\n\n# Context from KnowledgeCore\n{context['summary']}"
-                print(f"[{self.get_node_name()}] Augmented prompt with KnowledgeCore context")
+            try:
+                kc_service = KnowledgeCoreService(self.db_session, self.user_id)
+                t0 = time.time()
+                context = kc_service.get_context(query=user_message, agent_id=self.get_node_name())
+                print(f"[{self.get_node_name()}/Timing] KC get_context: {time.time()-t0:.2f}s")
+                if context and context.get("summary"):
+                    kc_prompt_augmentation = f"\n\n# Context from KnowledgeCore\n{context['summary']}"
+                    print(f"[{self.get_node_name()}] Augmented prompt with KnowledgeCore context")
+            except Exception as e:
+                print(f"[{self.get_node_name()}] KnowledgeCore context fetch failed: {e}")
         
         # Convert ALL messages to LLM format (NO LIMIT!)
         llm_messages = [m.to_llm_message() for m in self.conversation_history]
@@ -110,16 +113,36 @@ class BaseAgent(ABC):
         )
         
         # Get response from LLM - pass agent-level tools directly
-        t0 = time.time()
-        response = self.llm.complete(
-            messages, 
-            preferred_model=preferred_model,
-            tool_context=tool_context,
-            attached_files=attached_files,
-            tool_definitions=self._agent_tool_definitions,  # Pass tools directly
-            tool_functions=self._agent_tool_functions       # Pass functions directly
-        )
-        print(f"[{self.get_node_name()}/Timing] LLM complete: {time.time()-t0:.2f}s")
+        try:
+            t0 = time.time()
+            
+            # Merge meta_info into tool_context for function injection
+            effective_tool_context = (tool_context or {}).copy()
+            if meta_info:
+                effective_tool_context['meta_info'] = meta_info
+                
+            response = self.llm.complete(
+                messages, 
+                preferred_model=preferred_model,
+                tool_context=effective_tool_context,
+                attached_files=attached_files,
+                tool_definitions=self._agent_tool_definitions,  # Pass tools directly
+                tool_functions=self._agent_tool_functions       # Pass functions directly
+            )
+            print(f"[{self.get_node_name()}/Timing] LLM complete: {time.time()-t0:.2f}s")
+        except Exception as e:
+            # Log the error and return a graceful error message
+            import traceback
+            error_msg = f"LLM call failed: {str(e)}"
+            print(f"[{self.get_node_name()}] ERROR: {error_msg}")
+            print(traceback.format_exc())
+            
+            # Remove the user message from history since we couldn't process it
+            if self.conversation_history and self.conversation_history[-1] == msg:
+                self.conversation_history.pop()
+            
+            # Return error response
+            return (f"⚠️ I encountered an error processing your message: {str(e)}", [])
         
         # Create assistant message
         assistant_msg = Message(
@@ -131,17 +154,42 @@ class BaseAgent(ABC):
         self.conversation_history.append(assistant_msg)
         
         # Save both messages to DB
-        self._save_to_db(msg)
-        self._save_to_db(assistant_msg)
+        try:
+            self._save_to_db(msg)
+            self._save_to_db(assistant_msg)
+        except Exception as e:
+            print(f"[{self.get_node_name()}] Failed to save messages to DB: {e}")
         
-        # --- KnowledgeCore Integration (Ingestion) ---
+        # --- KnowledgeCore Integration (Ingestion) - Run in Background ---
         if self.user_id:
-            # Re-init or reuse kc_service
-            kc_service = KnowledgeCoreService(self.db_session, self.user_id)
-            t0 = time.time()
-            kc_service.ingest_message(text=user_message, role="user", agent_id=self.get_node_name())
-            kc_service.ingest_message(text=response.content, role="assistant", agent_id=self.get_node_name())
-            print(f"[{self.get_node_name()}/Timing] KC ingest: {time.time()-t0:.2f}s")
+            import threading
+            
+            def _background_ingest(user_id, user_msg, assistant_msg, node_name):
+                """Background task for KC ingestion to avoid blocking response"""
+                try:
+                    # Create a new DB engine/session for the background thread
+                    from models.database import get_engine, get_session
+                    bg_session = get_session(get_engine())
+                    try:
+                        kc_service = KnowledgeCoreService(bg_session, user_id)
+                        t0 = time.time()
+                        # Run both ingests sequentially in the background thread (since it's already background)
+                        kc_service.ingest_message(text=user_msg, role="user", agent_id=node_name)
+                        kc_service.ingest_message(text=assistant_msg, role="assistant", agent_id=node_name)
+                        print(f"[{node_name}/Background] KC ingest completed: {time.time()-t0:.2f}s")
+                    finally:
+                        bg_session.close()
+                except Exception as e:
+                    print(f"[{node_name}/Background] KC ingestion failed: {e}")
+            
+            # Start background thread for ingestion
+            thread = threading.Thread(
+                target=_background_ingest,
+                args=(self.user_id, user_message, response.content, self.get_node_name()),
+                daemon=True
+            )
+            thread.start()
+            print(f"[{self.get_node_name()}] KC ingestion started in background")
         
         # Return content and tool_calls separately
         return (response.content, response.tool_calls or [])

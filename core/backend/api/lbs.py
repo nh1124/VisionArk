@@ -132,9 +132,15 @@ async def list_tasks(
     List project tasks with optional filters.
     If target_date is provided, returns execution status for that day.
     """
+    import logging
+    logger = logging.getLogger(__name__)
     try:
-        return lbs.get_tasks(context=context, active=active, target_date=target_date)
+        logger.info(f"list_tasks called: context={context}, active={active}, target_date={target_date}")
+        result = lbs.get_tasks(context=context, active=active, target_date=target_date)
+        logger.info(f"list_tasks returning {len(result)} tasks")
+        return result
     except Exception as e:
+        logger.exception(f"list_tasks failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
