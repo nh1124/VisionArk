@@ -1521,6 +1521,232 @@ def ingest_knowledge(
         return ToolResult(success=False, message=f"Failed to ingest knowledge: {str(e)}")
 
 
+def ask_spoke(
+    spoke_name: str,
+    message: str,
+    *,
+    session: Session,
+    user_id: str,
+    node_type: str,
+    **kwargs
+) -> ToolResult:
+    """
+    Ask another spoke or the Hub a question and get a response.
+    The interaction will be recorded in both the caller's and the receiver's chat history.
+    
+    Args:
+        spoke_name: Name of the spoke to ask
+        message: The message/question to send
+        session: Database session (injected)
+        user_id: User ID (injected)
+        node_type: Current node type (injected)
+    """
+    from agents.spoke_agent import SpokeAgent
+    
+    try:
+        # 1. Enforcement: Spokes cannot direct chat with Hub
+        if node_type.lower() == 'spoke' and spoke_name.lower() == 'hub':
+            return ToolResult(
+                success=False,
+                message="🚫 Direct synchronous chat with the Hub is prohibited for Spokes. "
+                        "Please use the 'report_to_hub' tool to send updates or requests to the Hub's inbox."
+            )
+
+        # 2. Recursion Limit
+        # info can be JSON string or dict
+        meta_info = kwargs.get('meta_info', '{}')
+        if isinstance(meta_info, str) and meta_info.startswith('{'):
+            try:
+                meta_dict = json.loads(meta_info)
+            except:
+                meta_dict = {}
+        elif isinstance(meta_info, dict):
+            meta_dict = meta_info
+        else:
+            meta_dict = {}
+            
+        depth = int(meta_dict.get('depth', 0))
+        if depth >= 3:
+            return ToolResult(
+                success=False,
+                message=f"⚠️ Communication depth limit reached ({depth}). To prevent infinite loops, I cannot ask more agents in this chain."
+            )
+
+        # 3. Get the receiver agent
+        if spoke_name.lower() == 'hub':
+            from agents.hub_agent import HubAgent
+            receiver = HubAgent(user_id=user_id, db_session=session)
+        else:
+            receiver = SpokeAgent(user_id=user_id, spoke_name=spoke_name, db_session=session)
+            
+        # 4. Prepare metadata for receiver
+        caller_label = "Hub" if node_type.lower() == 'hub' else f"Spoke '{kwargs.get('context_name', 'unknown')}'"
+        receiver_meta = {
+            "depth": depth + 1,
+            "caller": caller_label,
+            "original_query": message[:100] + "..." if len(message) > 100 else message
+        }
+            
+        # 5. Send message to receiver
+        response_text, _ = receiver.chat(
+            message, 
+            meta_info=json.dumps(receiver_meta)
+        )
+        
+        return ToolResult(
+            success=True,
+            message=f"💬 Response from {spoke_name}:\n\n{response_text}",
+            data={"response": response_text, "spoke": spoke_name}
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to communicate with {spoke_name}: {str(e)}")
+
+
+def clone_this_spoke(
+    new_name: Optional[str] = None,
+    *,
+    session: Session,
+    user_id: str,
+    spoke_name: str,
+    **kwargs
+) -> ToolResult:
+    """
+    Create a complete copy of the current spoke, including chat history and files.
+    The new spoke will be named '{spoke_name}_copy' by default.
+    """
+    import shutil
+    from utils.paths import get_spoke_dir
+    
+    try:
+        # 1. Verify source exists
+        source_node = session.query(Node).filter(
+            Node.user_id == user_id,
+            Node.name == spoke_name,
+            Node.node_type == "SPOKE",
+            Node.is_archived == False
+        ).first()
+
+        if not source_node:
+            return ToolResult(success=False, message=f"Current spoke '{spoke_name}' node not found")
+
+        # 2. Determine new name
+        final_new_name = new_name if new_name else f"{spoke_name}_copy"
+        
+        # Prevent collision
+        base_new_name = final_new_name
+        counter = 1
+        while session.query(Node).filter(Node.user_id == user_id, Node.name == final_new_name).first():
+            final_new_name = f"{base_new_name}_{counter}"
+            counter += 1
+
+        # 3. Create new Node
+        new_node_id = str(uuid.uuid4())
+        new_node = Node(
+            id=new_node_id,
+            user_id=user_id,
+            name=final_new_name,
+            display_name=f"{source_node.display_name} (Copy)" if source_node.display_name else final_new_name.replace('_', ' ').title(),
+            node_type="SPOKE",
+            lbs_access_level=source_node.lbs_access_level
+        )
+        session.add(new_node)
+        
+        # 4. Copy Agent Profile
+        source_profile = session.query(AgentProfile).filter(
+            AgentProfile.node_id == source_node.id,
+            AgentProfile.is_active == True
+        ).first()
+        
+        if source_profile:
+            new_profile = AgentProfile(
+                id=str(uuid.uuid4()),
+                node_id=new_node_id,
+                system_prompt=source_profile.system_prompt,
+                is_active=True,
+                version=1
+            )
+            session.add(new_profile)
+            
+        # 5. Copy Chat Sessions and Messages
+        from models.database import ChatSession, ChatMessage
+        sessions = session.query(ChatSession).filter(ChatSession.node_id == source_node.id).all()
+        for s in sessions:
+            new_session_id = str(uuid.uuid4())
+            new_session = ChatSession(
+                id=new_session_id,
+                node_id=new_node_id,
+                title=s.title,
+                summary=s.summary,
+                is_archived=s.is_archived,
+                created_at=s.created_at
+            )
+            session.add(new_session)
+            
+            messages = session.query(ChatMessage).filter(ChatMessage.session_id == s.id).all()
+            for msg in messages:
+                new_msg = ChatMessage(
+                    id=str(uuid.uuid4()),
+                    session_id=new_session_id,
+                    role=msg.role,
+                    content=msg.content,
+                    meta_payload=msg.meta_payload,
+                    is_excluded=msg.is_excluded,
+                    created_at=msg.created_at
+                )
+                session.add(new_msg)
+                
+        # 6. Copy UploadedFile records
+        from models.database import UploadedFile
+        files = session.query(UploadedFile).filter(UploadedFile.node_id == source_node.id).all()
+        for f in files:
+            new_file_id = str(uuid4())
+            # Update storage path to new spoke directory
+            import os
+            old_path = Path(f.storage_path)
+            # Use os.path.relpath to find relative part from source dir
+            try:
+                rel = os.path.relpath(old_path, source_dir)
+                new_storage_path = str(new_dir / rel)
+            except:
+                # Fallback if relpath fails
+                new_storage_path = str(new_dir / "files" / f.filename)
+                
+            new_file = UploadedFile(
+                id=new_file_id,
+                node_id=new_node_id,
+                filename=f.filename,
+                mime_type=f.mime_type,
+                size_bytes=f.size_bytes,
+                storage_path=new_storage_path,
+                gemini_file_uri=f.gemini_file_uri,
+                gemini_file_name=f.gemini_file_name,
+                vector_status=f.vector_status,
+                kc_sync_status=f.kc_sync_status,
+                uploaded_at=f.uploaded_at
+            )
+            session.add(new_file)
+            
+        # 6. Physical File Copy
+        source_dir = get_spoke_dir(user_id, spoke_name)
+        new_dir = get_spoke_dir(user_id, final_new_name)
+        new_dir.mkdir(parents=True, exist_ok=True)
+        
+        if source_dir.exists():
+            for sub in ['files', 'artifacts', 'refs']:
+                if (source_dir / sub).exists():
+                    shutil.copytree(source_dir / sub, new_dir / sub, dirs_exist_ok=True)
+                    
+        session.commit()
+        return ToolResult(
+            success=True,
+            message=f"✅ Spoke '{spoke_name}' cloned successfully as '{final_new_name}'",
+            data={"new_spoke_name": final_new_name}
+        )
+    except Exception as e:
+        session.rollback()
+        return ToolResult(success=False, message=f"Failed to clone spoke: {str(e)}")
+
+
 # ==============================================================================
 # Tool Definitions for Gemini Function Calling
 # ==============================================================================
@@ -1557,6 +1783,24 @@ HUB_TOOL_DEFINITIONS = [
                 }
             },
             "required": ["spoke_names"]
+        }
+    },
+    {
+        "name": "ask_spoke",
+        "description": "Ask another spoke or the Hub a question and get a response. This allows synchronous collaboration between agents.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "spoke_name": {
+                    "type": "string",
+                    "description": "Name of the spoke to ask (e.g. 'research_ai') or 'hub' for the central hub."
+                },
+                "message": {
+                    "type": "string",
+                    "description": "The question or message to send."
+                }
+            },
+            "required": ["spoke_name", "message"]
         }
     },
     {
@@ -2125,6 +2369,24 @@ SPOKE_TOOL_DEFINITIONS = [
             "required": ["sub_dir"]
         }
     },
+    {
+        "name": "ask_spoke",
+        "description": "Ask another spoke or the Hub a question and get a response. This allows synchronous collaboration between agents.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "spoke_name": {
+                    "type": "string",
+                    "description": "Name of the spoke to ask (e.g. 'research_ai') or 'hub' for the central hub."
+                },
+                "message": {
+                    "type": "string",
+                    "description": "The question or message to send."
+                }
+            },
+            "required": ["spoke_name", "message"]
+        }
+    },
     # Hub communication tools
     {
         "name": "report_to_hub",
@@ -2166,6 +2428,19 @@ SPOKE_TOOL_DEFINITIONS = [
         "parameters": {
             "type": "object",
             "properties": {}
+        }
+    },
+    {
+        "name": "clone_this_spoke",
+        "description": "Create a complete copy of the current spoke, including its chat history, files, and artifacts.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "new_name": {
+                    "type": "string",
+                    "description": "Optional custom name for the cloned spoke (e.g. 'research_v2')"
+                }
+            }
         }
     },
     {
@@ -2383,6 +2658,8 @@ TOOL_FUNCTIONS = {
     "check_inbox": check_inbox,
     "read_all_inbox_messages": read_all_inbox_messages,
     "process_inbox_message": process_inbox_message,
+    "ask_spoke": ask_spoke,
+    "clone_this_spoke": clone_this_spoke,
     # Spoke tools
     "report_to_hub": report_to_hub,
     "archive_session": archive_session,

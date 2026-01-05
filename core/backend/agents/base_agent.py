@@ -147,16 +147,35 @@ class BaseAgent(ABC):
         # Create assistant message
         assistant_msg = Message(
             role=MessageRole.ASSISTANT,
-            content=response.content
+            content=response.content or ""
         )
         
         # Add to history
         self.conversation_history.append(assistant_msg)
         
         # Save both messages to DB
+        # IMPORTANT: assistant_msg metadata must include tool_calls for display/history
         try:
             self._save_to_db(msg)
-            self._save_to_db(assistant_msg)
+            
+            # For assistant message, we inject tool_calls into the metadata for DB storage
+            files_meta = [f.format_for_display() for f in assistant_msg.attached_files]
+            meta_payload = {
+                "attached_files": files_meta,
+                "meta_info": assistant_msg.meta_info,
+                "tool_calls": response.tool_calls or [] # Save tool calls here!
+            }
+            
+            db_assistant_message = ChatMessage(
+                id=str(uuid4()),
+                session_id=self.current_session_id,
+                role=assistant_msg.role.value,
+                content=assistant_msg.content or "",
+                meta_payload=meta_payload,
+                created_at=assistant_msg.timestamp
+            )
+            self.db_session.add(db_assistant_message)
+            self.db_session.commit()
         except Exception as e:
             print(f"[{self.get_node_name()}] Failed to save messages to DB: {e}")
         
@@ -228,7 +247,7 @@ class BaseAgent(ABC):
             id=str(uuid4()),
             session_id=self.current_session_id,
             role=message.role.value,
-            content=message.content,
+            content=message.content or "", # Extra safety
             meta_payload=meta_payload,
             created_at=message.timestamp
         )

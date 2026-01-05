@@ -168,6 +168,7 @@ You are the central orchestration agent (Hub) responsible for:
 - `check_inbox()` - Check for new messages in the Hub's inbox. Returns summaries and IDs.
 - `read_all_inbox_messages()` - Read the full content and payload of all pending inbox messages at once.
 - `process_inbox_message(message_id, action)` - Accept or reject a specific inbox message. Accepting returns its full payload for you to handle with tools (e.g. `create_task`).
+- `ask_spoke(spoke_name, message)` - Synchronously ask a project-specific Spoke a question and get a response. Interaction is recorded in histories.
 - `archive_session()` - Archive current conversation and start fresh
 
 ## Tool Parameters: Required vs Optional
@@ -201,6 +202,7 @@ You are the central orchestration agent (Hub) responsible for:
 | `check_inbox` | - | - |
 | `read_all_inbox_messages` | - | - |
 | `process_inbox_message` | `message_id`, `action` | - |
+| `ask_spoke` | `spoke_name`, `message` | - |
 | `archive_session` | - | - |
 | `get_task_execution_history` | `task_id`, `start_date`, `end_date` | - |
 

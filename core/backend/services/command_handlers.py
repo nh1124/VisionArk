@@ -275,6 +275,155 @@ def handle_kill(args: List[str], context_type: str = "hub", context_name: str = 
         return CommandResult(success=False, message=f"Failed to delete Spoke: {str(e)}")
 
 
+@register_command("clone", "Clone the current spoke or a specified spoke", ["hub", "spoke"])
+def handle_clone(args: List[str], context_type: str = "hub", context_name: str = "hub", session: Session = None, user_id: str = None, **kwargs) -> CommandResult:
+    """
+    Clone a spoke
+    
+    Usage:
+      From Hub: /clone <spoke_name> [new_name]
+      From Spoke: /clone [new_name]
+    """
+    if not session or not user_id:
+        return CommandResult(success=False, message="Missing database session or user context")
+
+    # Determine source spoke
+    if context_type == "spoke":
+        source_name = context_name
+        new_name_arg = args[0] if args else None
+    elif args:
+        source_name = args[0]
+        new_name_arg = args[1] if len(args) > 1 else None
+    else:
+        return CommandResult(success=False, message="Usage: /clone <spoke_name> [new_name]")
+
+    try:
+        # We'll call the API logic directly or re-implement here. 
+        # Since API is in core/backend/api/agents.py, let's try to import or just re-implement a minimal version.
+        # Actually, let's re-implement the core logic here to avoid circular imports or complex dependencies.
+        
+        # 1. Verify source exists
+        source_node = session.query(Node).filter(
+            Node.user_id == user_id,
+            Node.name == source_name,
+            Node.node_type == "SPOKE",
+            Node.is_archived == False
+        ).first()
+
+        if not source_node:
+            return CommandResult(success=False, message=f"Source spoke '{source_name}' not found")
+
+        # 2. Determine new name
+        final_new_name = new_name_arg if new_name_arg else f"{source_name}_copy"
+        
+        # Prevent collision
+        base_new_name = final_new_name
+        counter = 1
+        while session.query(Node).filter(Node.user_id == user_id, Node.name == final_new_name).first():
+            final_new_name = f"{base_new_name}_{counter}"
+            counter += 1
+
+        # 3. Call the cloning logic (we'll just use the same logic we wrote in agents.py but in a more handler-friendly way)
+        # For simplicity in this handler, we can just say we are triggering it.
+        # But for a real command, we should do the work.
+        
+        # To avoid duplicating too much code, let's assume we might want a service.
+        # But for now, I'll just do the minimal DB copy here.
+        
+        import shutil
+        from utils.paths import get_spoke_dir
+        
+        new_node_id = str(uuid.uuid4())
+        new_node = Node(
+            id=new_node_id,
+            user_id=user_id,
+            name=final_new_name,
+            display_name=f"{source_node.display_name} (Copy)" if source_node.display_name else final_new_name.replace('_', ' ').title(),
+            node_type="SPOKE",
+            lbs_access_level=source_node.lbs_access_level
+        )
+        session.add(new_node)
+        
+        # Copy Profile
+        source_profile = session.query(AgentProfile).filter(AgentProfile.node_id == source_node.id, AgentProfile.is_active == True).first()
+        if source_profile:
+            new_profile = AgentProfile(id=str(uuid.uuid4()), node_id=new_node_id, system_prompt=source_profile.system_prompt, is_active=True, version=1)
+            session.add(new_profile)
+            
+        # 5. Copy Chat Sessions and Messages
+        from models.database import ChatSession, ChatMessage
+        sessions = session.query(ChatSession).filter(ChatSession.node_id == source_node.id).all()
+        for s in sessions:
+            new_session_id = str(uuid.uuid4())
+            new_session = ChatSession(
+                id=new_session_id,
+                node_id=new_node_id,
+                title=s.title,
+                summary=s.summary,
+                is_archived=s.is_archived,
+                created_at=s.created_at
+            )
+            session.add(new_session)
+            
+            messages = session.query(ChatMessage).filter(ChatMessage.session_id == s.id).all()
+            for msg in messages:
+                new_msg = ChatMessage(
+                    id=str(uuid.uuid4()),
+                    session_id=new_session_id,
+                    role=msg.role,
+                    content=msg.content,
+                    meta_payload=msg.meta_payload,
+                    is_excluded=msg.is_excluded,
+                    created_at=msg.created_at
+                )
+                session.add(new_msg)
+            
+        # 6. Copy UploadedFile records
+        from models.database import UploadedFile
+        files = session.query(UploadedFile).filter(UploadedFile.node_id == source_node.id).all()
+        for f in files:
+            new_file_id = str(uuid.uuid4())
+            # Update storage path
+            import os
+            old_path = Path(f.storage_path)
+            try:
+                rel = os.path.relpath(old_path, source_dir)
+                new_storage_path = str(new_dir / rel)
+            except:
+                new_storage_path = str(new_dir / "files" / f.filename)
+                
+            new_file = UploadedFile(
+                id=new_file_id,
+                node_id=new_node_id,
+                filename=f.filename,
+                mime_type=f.mime_type,
+                size_bytes=f.size_bytes,
+                storage_path=new_storage_path,
+                gemini_file_uri=f.gemini_file_uri,
+                gemini_file_name=f.gemini_file_name,
+                vector_status=f.vector_status,
+                kc_sync_status=f.kc_sync_status,
+                uploaded_at=f.uploaded_at
+            )
+            session.add(new_file)
+            
+        # 7. Physical File Copy
+        source_dir = get_spoke_dir(user_id, source_name)
+        new_dir = get_spoke_dir(user_id, final_new_name)
+        new_dir.mkdir(parents=True, exist_ok=True)
+        if source_dir.exists():
+            for sub in ['files', 'artifacts', 'refs']:
+                if (source_dir / sub).exists():
+                    shutil.copytree(source_dir / sub, new_dir / sub, dirs_exist_ok=True)
+        
+        session.commit()
+        return CommandResult(success=True, message=f"✅ Spoke '{source_name}' cloned as '{final_new_name}'", data={"new_spoke_name": final_new_name})
+
+    except Exception as e:
+        if session: session.rollback()
+        return CommandResult(success=False, message=f"Cloning failed: {str(e)}")
+
+
 @register_command("archive", "Archive conversation and start fresh", ["hub", "spoke"])
 def handle_archive(args: List[str], context_type: str = "hub", context_name: str = "hub", session: Session = None, user_id: str = None, **kwargs) -> CommandResult:
     """

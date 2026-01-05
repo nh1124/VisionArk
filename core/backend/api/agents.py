@@ -5,8 +5,12 @@ Chat with Hub and Spoke agents, create new Spokes
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header
 from pydantic import BaseModel
 import time
+import shutil
+from pathlib import Path
+import uuid
+import asyncio
 from sqlalchemy.orm import Session
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 from agents.hub_agent import HubAgent
 from agents.spoke_agent import SpokeAgent
@@ -40,6 +44,14 @@ class CreateSpoke(BaseModel):
 
 class UpdatePrompt(BaseModel):
     content: str
+
+
+class RenameSpoke(BaseModel):
+    new_display_name: str
+
+
+class SpokeClone(BaseModel):
+    new_name: Optional[str] = None
 
 
 # Per-user agent cache instances (TTL/LRU managed)
@@ -654,6 +666,30 @@ def list_spokes(
     return {"spokes": spokes}
 
 
+@router.get("/spoke/{spoke_name}")
+def get_spoke_metadata(
+    spoke_name: str,
+    identity: Identity = Depends(resolve_identity),
+    db: Session = Depends(get_db)
+):
+    """Get metadata for a specific spoke"""
+    node = db.query(Node).filter(
+        Node.user_id == identity.user_id,
+        Node.name == spoke_name,
+        Node.node_type == "SPOKE"
+    ).first()
+    
+    if not node:
+        raise HTTPException(status_code=404, detail=f"Spoke '{spoke_name}' not found")
+        
+    return {
+        "name": node.name,
+        "display_name": node.display_name,
+        "node_id": node.id,
+        "created_at": node.created_at
+    }
+
+
 @router.delete("/spoke/{spoke_name}")
 def delete_spoke(
     spoke_name: str,
@@ -852,3 +888,180 @@ def update_system_prompt(
     _spoke_cache.remove(cache_key)
     
     return {"success": True, "message": "System prompt updated in DB"}
+
+
+@router.patch("/spoke/{spoke_name}/rename")
+def rename_spoke(
+    spoke_name: str,
+    update: RenameSpoke,
+    identity: Identity = Depends(resolve_identity),
+    db: Session = Depends(get_db)
+):
+    """Rename a spoke's display name"""
+    # 1. Find the spoke node
+    node = db.query(Node).filter(
+        Node.user_id == identity.user_id,
+        Node.name == spoke_name,
+        Node.node_type == "SPOKE"
+    ).first()
+    
+    if not node:
+        raise HTTPException(status_code=404, detail=f"Spoke '{spoke_name}' not found")
+    
+    try:
+        # Update display name
+        node.display_name = update.new_display_name
+        db.commit()
+        
+        # Clear cache to reflect name changes if stored there
+        cache_key = f"{identity.user_id}:{spoke_name}"
+        _spoke_cache.remove(cache_key)
+        
+        return {
+            "success": True, 
+            "message": f"Spoke renamed to '{update.new_display_name}'",
+            "new_display_name": update.new_display_name
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to rename spoke: {str(e)}")
+@router.post("/spoke/{spoke_name}/clone")
+async def clone_spoke(
+    spoke_name: str,
+    clone_data: Optional[SpokeClone] = None,
+    identity: Identity = Depends(resolve_identity),
+    db: Session = Depends(get_db)
+):
+    """
+    Clone an existing spoke, including chat history, files, and artifacts.
+    """
+    # 1. Verify source spoke exists
+    source_node = db.query(Node).filter(
+        Node.user_id == identity.user_id,
+        Node.name == spoke_name,
+        Node.node_type == "SPOKE",
+        Node.is_archived == False
+    ).first()
+    
+    if not source_node:
+        raise HTTPException(status_code=404, detail=f"Spoke '{spoke_name}' not found")
+        
+    # 2. Determine new name
+    new_name = clone_data.new_name if clone_data and clone_data.new_name else f"{spoke_name}_copy"
+    
+    # Prevent collision - add numeric suffix if needed
+    base_new_name = new_name
+    counter = 1
+    while db.query(Node).filter(Node.user_id == identity.user_id, Node.name == new_name).first():
+        new_name = f"{base_new_name}_{counter}"
+        counter += 1
+        
+    # Validate new name
+    is_valid, err = validate_name(new_name, "new_name")
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=err)
+        
+    try:
+        # 3. Create new Node
+        new_node_id = str(uuid.uuid4())
+        new_node = Node(
+            id=new_node_id,
+            user_id=identity.user_id,
+            name=new_name,
+            display_name=f"{source_node.display_name} (Copy)" if source_node.display_name else new_name.replace('_', ' ').title(),
+            node_type="SPOKE",
+            lbs_access_level=source_node.lbs_access_level
+        )
+        db.add(new_node)
+        
+        # 4. Copy Agent Profile
+        source_profile = db.query(AgentProfile).filter(
+            AgentProfile.node_id == source_node.id,
+            AgentProfile.is_active == True
+        ).first()
+        
+        if source_profile:
+            new_profile = AgentProfile(
+                id=str(uuid.uuid4()),
+                node_id=new_node_id,
+                system_prompt=source_profile.system_prompt,
+                is_active=True,
+                version=1
+            )
+            db.add(new_profile)
+            
+        # 5. Copy Chat Sessions and Messages
+        from models.database import ChatSession, ChatMessage
+        sessions = db.query(ChatSession).filter(ChatSession.node_id == source_node.id).all()
+        for session in sessions:
+            new_session_id = str(uuid.uuid4())
+            new_session = ChatSession(
+                id=new_session_id,
+                node_id=new_node_id,
+                title=session.title,
+                is_archived=session.is_archived,
+                summary=session.summary,
+                created_at=session.created_at
+            )
+            db.add(new_session)
+            
+            messages = db.query(ChatMessage).filter(ChatMessage.session_id == session.id).all()
+            for msg in messages:
+                new_msg = ChatMessage(
+                    id=str(uuid.uuid4()),
+                    session_id=new_session_id,
+                    role=msg.role,
+                    content=msg.content,
+                    meta_payload=msg.meta_payload,
+                    is_excluded=msg.is_excluded,
+                    created_at=msg.created_at
+                )
+                db.add(new_msg)
+                
+        # 6. Copy Files Database Records
+        from models.database import UploadedFile
+        files = db.query(UploadedFile).filter(UploadedFile.node_id == source_node.id).all()
+        source_spoke_dir = get_spoke_dir(identity.user_id, spoke_name)
+        new_spoke_dir = get_spoke_dir(identity.user_id, new_name)
+        new_spoke_dir.mkdir(parents=True, exist_ok=True)
+        
+        for f in files:
+            new_file_id = str(uuid.uuid4())
+            # We need to update the storage path to the new spoke directory
+            old_path = Path(f.storage_path)
+            # Find relative part after 'spoke_name'
+            import os
+            relative_path = os.path.relpath(old_path, source_spoke_dir)
+            new_storage_path = str(new_spoke_dir / relative_path)
+            
+            new_file = UploadedFile(
+                id=new_file_id,
+                node_id=new_node_id,
+                filename=f.filename,
+                mime_type=f.mime_type,
+                size_bytes=f.size_bytes,
+                storage_path=new_storage_path,
+                gemini_file_uri=f.gemini_file_uri,
+                gemini_file_name=f.gemini_file_name,
+                vector_status=f.vector_status,
+                kc_sync_status=f.kc_sync_status,
+                uploaded_at=f.uploaded_at
+            )
+            db.add(new_file)
+            
+        # 7. Physical File Copy
+        if source_spoke_dir.exists():
+            # Copy 'files' and 'artifacts' and 'refs' directories if they exist
+            for sub in ['files', 'artifacts', 'refs']:
+                src_sub = source_spoke_dir / sub
+                if src_sub.exists():
+                    dest_sub = new_spoke_dir / sub
+                    shutil.copytree(src_sub, dest_sub, dirs_exist_ok=True)
+                    
+        db.commit()
+        return {"success": True, "message": f"Spoke '{spoke_name}' cloned to '{new_name}'", "new_spoke_name": new_name}
+        
+    except Exception as e:
+        db.rollback()
+        print(f"[agents/clone_spoke] Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -114,8 +114,8 @@ Focus on delivering high-quality work within this context.
 - `save_artifact(file_path, content, overwrite)` - Save code/docs to artifacts/
 - `update_artifact(file_path, content, mode)` - Update or append to artifacts
 - `delete_artifact(file_path)` - Remove artifacts permanently
-- `read_reference(file_path)` - Read files from refs/. Automatically ensures AI visibility.
-- `list_files(sub_dir)` - List files in 'refs' or 'artifacts'. Shows AI Indexing status.
+- `read_reference(file_path)` - Read files from references or artifacts. Automatically ensures AI visibility.
+- `list_files(sub_dir)` - List files in 'references' or 'artifacts'. Shows AI Indexing status.
 
 **Note:** Your artifacts are stored in `spokes/{self.spoke_name}/artifacts/`. You cannot access other project files.
 
@@ -140,7 +140,8 @@ Focus on delivering high-quality work within this context.
 - `research_url(urls, query)` - Extract information or summarize content from URLs
 
 ### Hub Communication & Session
-- `report_to_hub(summary, request)` - Send progress updates or requests to Hub
+- `report_to_hub(summary, request)` - Send updates or requests to the Hub's inbox. This is the **required** way to communicate with the Hub.
+- `ask_spoke(spoke_name, message)` - Synchronously ask **another spoke** a question and get a response. NOTE: Direct synchronous chat with the Hub is prohibited.
 - `delete_spoke()` - Delete this spoke permanently (use with caution!)
 - `archive_session()` - Archive conversation and start fresh
 
@@ -167,6 +168,7 @@ Focus on delivering high-quality work within this context.
 | `search_places` | `query` | `lat`, `lng` |
 | `research_url` | `urls`, `query` | - |
 | `report_to_hub` | `summary` | `request` |
+| `ask_spoke` | `spoke_name`, `message` | - |
 | `delete_spoke` | - | - |
 | `archive_session` | - | - |
 | `get_task_execution_history` | `task_id`, `start_date`, `end_date` | - |
