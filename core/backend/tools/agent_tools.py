@@ -1573,11 +1573,7 @@ def ask_spoke(
             )
 
         # 3. Get the receiver agent
-        if spoke_name.lower() == 'hub':
-            from agents.hub_agent import HubAgent
-            receiver = HubAgent(user_id=user_id, db_session=session)
-        else:
-            receiver = SpokeAgent(user_id=user_id, spoke_name=spoke_name, db_session=session)
+        receiver = SpokeAgent(user_id=user_id, spoke_name=spoke_name, db_session=session)
             
         # 4. Prepare metadata for receiver
         caller_label = "Hub" if node_type.lower() == 'hub' else f"Spoke '{kwargs.get('context_name', 'unknown')}'"

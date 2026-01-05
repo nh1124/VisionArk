@@ -925,6 +925,7 @@ def rename_spoke(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to rename spoke: {str(e)}")
+        
 @router.post("/spoke/{spoke_name}/clone")
 async def clone_spoke(
     spoke_name: str,
