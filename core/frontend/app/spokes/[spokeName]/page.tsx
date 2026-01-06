@@ -260,9 +260,12 @@ export default function SpokeChatPage({
                             </div>
                         )}
 
-                        {messages.map((msg, idx) => (
-                            <MessageWithAttachments key={idx} role={msg.role} content={msg.content} attached_files={msg.attached_files} tool_calls={msg.tool_calls} />
-                        ))}
+                        {messages.map((msg, idx) => {
+                            // Skip rendering the last empty assistant message while loading
+                            const isLastEmptyAssistant = loading && idx === messages.length - 1 && msg.role === "assistant" && !msg.content && (!msg.tool_calls || msg.tool_calls.length === 0);
+                            if (isLastEmptyAssistant) return null;
+                            return <MessageWithAttachments key={idx} role={msg.role} content={msg.content} attached_files={msg.attached_files} tool_calls={msg.tool_calls} />;
+                        })}
 
                         {loading && (
                             <div className="flex justify-start">
