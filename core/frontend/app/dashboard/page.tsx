@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 import { apiFetch } from "@/lib/api";
 import HeatMapCalendar from "@/components/HeatMapCalendar";
 import TrendLineChart from "@/components/TrendLineChart";
+import HubSuggestionBanner from "@/components/HubSuggestionBanner";
 
 interface DashboardData {
     today: {
@@ -132,6 +133,9 @@ export default function DashboardPage() {
                         <span>↺</span> Refresh
                     </button>
                 </div>
+
+                {/* Hub Proactive Suggestions */}
+                <HubSuggestionBanner onRefresh={() => setRefreshKey(k => k + 1)} />
 
                 {/* Primary Metrics */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">

@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 from models.database import init_database
 from api import lbs, inbox, agents, commands, rag, context, files, auth, settings as settings_api
+from api import decomposer, suggestions
 
 from config import settings
 
@@ -63,6 +64,8 @@ app.include_router(context.router)
 app.include_router(files.router)
 app.include_router(files.files_router)  # New generic file management endpoints
 app.include_router(settings_api.router)
+app.include_router(decomposer.router)
+app.include_router(suggestions.router)
 
 
 @app.get("/")

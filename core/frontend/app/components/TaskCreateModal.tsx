@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
+import TaskDecomposer from "./TaskDecomposer";
 
 interface TaskCreateModalProps {
     isOpen: boolean;
@@ -177,6 +178,24 @@ export default function TaskCreateModal({
                                 <span className="font-medium">{status.message}</span>
                             </div>
                         )}
+
+                        {/* AI Task Decomposer */}
+                        <TaskDecomposer
+                            defaultContext={formData.context}
+                            onSelectTask={(task) => {
+                                setFormData({
+                                    ...formData,
+                                    task_name: task.task_name,
+                                    context: task.spoke,
+                                    base_load_score: task.workload,
+                                    notes: task.notes || "",
+                                });
+                                // Check if the spoke is new
+                                if (!availableSpokes.includes(task.spoke)) {
+                                    setIsNewSpoke(true);
+                                }
+                            }}
+                        />
                         {/* Task Name */}
                         <div>
                             <label className="block text-sm font-medium text-gray-400 mb-2">
