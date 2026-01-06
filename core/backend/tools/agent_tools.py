@@ -2696,7 +2696,6 @@ HUB_TOOL_DEFINITIONS = [
             },
             "required": ["task_id", "start_date", "end_date"]
         }
-    }
     },
     {
         "name": "get_md_structure",
@@ -3190,7 +3189,6 @@ SPOKE_TOOL_DEFINITIONS = [
             },
             "required": ["task_id", "start_date", "end_date"]
         }
-    }
     },
     {
         "name": "get_md_structure",
