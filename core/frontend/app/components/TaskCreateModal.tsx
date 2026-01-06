@@ -248,10 +248,10 @@ export default function TaskCreateModal({
                             )}
                         </div>
 
-                        {/* Workload */}
+                        {/* Impact */}
                         <div>
                             <label className="block text-sm font-medium text-gray-400 mb-2">
-                                Workload (0-10) *
+                                Impact (0-10) *
                             </label>
                             <input
                                 type="number"

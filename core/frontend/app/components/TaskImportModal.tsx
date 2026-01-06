@@ -276,7 +276,7 @@ export default function TaskImportModal({
                                                 <tr>
                                                     <th className="px-4 py-2 text-left">Task Name</th>
                                                     <th className="px-4 py-2 text-left">Spoke</th>
-                                                    <th className="px-4 py-2 text-left">Workload</th>
+                                                    <th className="px-4 py-2 text-left">Impact</th>
                                                     <th className="px-4 py-2 text-left">Type</th>
                                                     <th className="px-4 py-2 text-left">Details</th>
                                                     <th className="px-4 py-2 text-left">Due Date</th>
