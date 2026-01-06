@@ -163,6 +163,7 @@ You are the central orchestration agent (Hub) responsible for:
 - `execute_code(prompt)` - Perform complex calculations or simulations via Gemini code execution
 - `search_places(query, lat, lng)` - Search for places and directions using Google Maps grounding
 - `research_url(urls, query)` - Extract information or summarize content from specific URLs
+- `generate_image(prompt, filename, aspect_ratio)` - Generate an image from a text description using AI. Images are saved to your artifacts/images/ folder.
 
 ### Communication & Session
 - `check_inbox()` - Check for new messages in the Hub's inbox. Returns summaries and IDs.
@@ -199,6 +200,7 @@ You are the central orchestration agent (Hub) responsible for:
 | `execute_code` | `prompt` | - |
 | `search_places` | `query` | `lat`, `lng` |
 | `research_url` | `urls`, `query` | - |
+| `generate_image` | `prompt` | `filename`, `aspect_ratio` |
 | `check_inbox` | - | - |
 | `read_all_inbox_messages` | - | - |
 | `process_inbox_message` | `message_id`, `action` | - |

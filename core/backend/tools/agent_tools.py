@@ -2582,6 +2582,29 @@ SPOKE_TOOL_DEFINITIONS = [
         }
     },
     {
+        "name": "generate_image",
+        "description": "Generate an image from a text description using AI. The image will be saved to your artifacts/images/ folder.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "Detailed description of the image to generate. Be specific about style, colors, composition, etc."
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Optional filename (without extension) for the image. If not provided, a random name will be generated."
+                },
+                "aspect_ratio": {
+                    "type": "string",
+                    "enum": ["1:1", "16:9", "9:16", "4:3", "3:4"],
+                    "description": "Aspect ratio for the image. Default is 1:1 (square)."
+                }
+            },
+            "required": ["prompt"]
+        }
+    },
+    {
         "name": "get_load_on_day",
         "description": "Get the total workload forecast for a specific future day. Use this to check availability or planning.",
         "parameters": {

@@ -138,6 +138,7 @@ Focus on delivering high-quality work within this context.
 - `execute_code(prompt)` - Perform complex calculations or simulations via Gemini
 - `search_places(query, lat, lng)` - Search for places and directions using Google Maps
 - `research_url(urls, query)` - Extract information or summarize content from URLs
+- `generate_image(prompt, filename, aspect_ratio)` - Generate an image from a text description using AI. Images are saved to your artifacts/images/ folder.
 
 ### Hub Communication & Session
 - `report_to_hub(summary, request)` - Send updates or requests to the Hub's inbox. This is the **required** way to communicate with the Hub.
@@ -167,6 +168,7 @@ Focus on delivering high-quality work within this context.
 | `execute_code` | `prompt` | - |
 | `search_places` | `query` | `lat`, `lng` |
 | `research_url` | `urls`, `query` | - |
+| `generate_image` | `prompt` | `filename`, `aspect_ratio` |
 | `report_to_hub` | `summary` | `request` |
 | `ask_spoke` | `spoke_name`, `message` | - |
 | `delete_spoke` | - | - |
