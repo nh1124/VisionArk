@@ -13,6 +13,8 @@ from datetime import datetime
 from uuid import uuid4
 import json
 import time
+import threading
+import traceback
 from services.knowledge_core_service import KnowledgeCoreService
 from services.context_manager import ContextManager
 
@@ -132,10 +134,9 @@ class BaseAgent(ABC):
             print(f"[{self.get_node_name()}/Timing] LLM complete: {time.time()-t0:.2f}s")
         except Exception as e:
             # Log the error and return a graceful error message
-            import traceback
             error_msg = f"LLM call failed: {str(e)}"
             print(f"[{self.get_node_name()}] ERROR: {error_msg}")
-            print(traceback.format_exc())
+            traceback.print_exc()
             
             # Remove the user message from history since we couldn't process it
             if self.conversation_history and self.conversation_history[-1] == msg:
@@ -181,8 +182,6 @@ class BaseAgent(ABC):
         
         # --- KnowledgeCore Integration (Ingestion) - Run in Background ---
         if self.user_id:
-            import threading
-            
             def _background_ingest(user_id, user_msg, assistant_msg, node_name):
                 """Background task for KC ingestion to avoid blocking response"""
                 try:
@@ -237,7 +236,7 @@ class BaseAgent(ABC):
     def _save_to_db(self, message: Message):
         """Save a message to the ChatMessage table"""
         # Convert attached files to meta_payload
-        files_meta = [f.format_for_display() for f in message.attached_files]
+        files_meta = [f.to_dict() for f in message.attached_files]
         meta_payload = {
             "attached_files": files_meta,
             "meta_info": message.meta_info
@@ -264,24 +263,34 @@ class BaseAgent(ABC):
         ).order_by(ChatMessage.created_at.asc()).all()
         
         for db_msg in db_messages:
-            # Reconstruct attached files (metadata only)
-            files = []
-            if db_msg.meta_payload and "attached_files" in db_msg.meta_payload:
-                for f_data in db_msg.meta_payload["attached_files"]:
-                    files.append(AttachedFile(
-                        filename=f_data.get("name") or f_data.get("filename"),
-                        file_type=f_data.get("type") or f_data.get("file_type"),
-                        size_bytes=f_data.get("size") or f_data.get("size_bytes", 0)
-                    ))
-            
-            msg = Message(
-                role=MessageRole(db_msg.role),
-                content=db_msg.content,
-                timestamp=db_msg.created_at,
-                attached_files=files,
-                meta_info=db_msg.meta_payload.get("meta_info") if db_msg.meta_payload else None
-            )
-            self.conversation_history.append(msg)
+            try:
+                # Reconstruct attached files using new robust from_dict
+                files = []
+                if db_msg.meta_payload and isinstance(db_msg.meta_payload, dict) and "attached_files" in db_msg.meta_payload:
+                    files = [AttachedFile.from_dict(f) for f in db_msg.meta_payload["attached_files"] if isinstance(f, dict)]
+                
+                # Case-insensitive role mapping
+                role_val = db_msg.role.lower() if db_msg.role else "user"
+                try:
+                    role_enum = MessageRole(role_val)
+                except ValueError:
+                    print(f"[{self.get_node_name()}] Warning: Invalid role '{db_msg.role}' in history. Defaulting to user.")
+                    role_enum = MessageRole.USER
+
+                msg = Message(
+                    role=role_enum,
+                    content=db_msg.content or "",
+                    timestamp=db_msg.created_at or datetime.now(),
+                    attached_files=files,
+                    meta_info=db_msg.meta_payload.get("meta_info") if (db_msg.meta_payload and isinstance(db_msg.meta_payload, dict)) else None
+                )
+                self.conversation_history.append(msg)
+            except Exception as e:
+                print(f"[{self.get_node_name()}] Critical error loading history message {db_msg.id}: {e}")
+                import traceback
+                traceback.print_exc()
+                # Continue loading other messages instead of crashing the whole history
+                continue
             
         # Optional: Load summary from parent sessions if context rotation is needed
         # (Phase 3 logic can be expanded here)
@@ -306,12 +315,113 @@ class BaseAgent(ABC):
             
         return ""
     
-    def chat_with_context(self, context_message: str, preferred_model: Optional[str] = None) -> str:
+    def chat_stream(self, user_message: str, attached_files: List[AttachedFile] = None, preferred_model: Optional[str] = None, tool_context: dict = None, meta_info: Optional[str] = None):
         """
-        Special chat method for injecting context or notifications.
-        Acts as a normal chat but can be used for automated messages.
+        Streaming version of chat logic.
+        Yields events: status, content, tool_calls, final_response
         """
-        return self.chat(context_message, preferred_model=preferred_model)
+        if not self.system_prompt:
+            self.system_prompt = self.load_system_prompt()
+        
+        current_time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S (%A)')
+        time_context = f"\n\n## Current Context\n- **Current Date & Time**: {current_time_str}\n"
+
+        msg = Message(
+            role=MessageRole.USER,
+            content=user_message,
+            attached_files=attached_files or [],
+            meta_info=meta_info
+        )
+        self.conversation_history.append(msg)
+        
+        kc_prompt_augmentation = ""
+        if self.user_id:
+            try:
+                kc_service = KnowledgeCoreService(self.db_session, self.user_id)
+                context = kc_service.get_context(query=user_message, agent_id=self.get_node_name())
+                if context and context.get("summary"):
+                    kc_prompt_augmentation = f"\n\n# Context from KnowledgeCore\n{context['summary']}"
+            except Exception as e:
+                print(f"[{self.get_node_name()}] KnowledgeCore context fetch failed: {e}")
+        
+        llm_messages = [m.to_llm_message() for m in self.conversation_history]
+        effective_system_prompt = self.system_prompt + time_context + kc_prompt_augmentation
+        messages = self.llm.format_messages(effective_system_prompt, llm_messages)
+        
+        effective_tool_context = (tool_context or {}).copy()
+        if meta_info:
+            effective_tool_context['meta_info'] = meta_info
+
+        # Track the final result for history saving
+        final_content = ""
+        final_tool_calls = []
+
+        # Stream from LLM
+        for event in self.llm.stream_chat(
+            messages,
+            preferred_model=preferred_model,
+            tool_context=effective_tool_context,
+            attached_files=attached_files,
+            tool_definitions=self._agent_tool_definitions,
+            tool_functions=self._agent_tool_functions
+        ):
+            if event["type"] == "content":
+                final_content += event["data"]
+            elif event["type"] == "final_response":
+                # Don't yield final_response directly yet, or yield it but use data for DB
+                final_tool_calls = event["data"].get("tool_calls", [])
+            
+            yield event
+
+        # Save to DB after stream finishes
+        try:
+            self._save_to_db(msg)
+            
+            assistant_msg = Message(
+                role=MessageRole.ASSISTANT,
+                content=final_content
+            )
+            self.conversation_history.append(assistant_msg)
+            
+            meta_payload = {
+                "attached_files": [f.format_for_display() for f in assistant_msg.attached_files],
+                "meta_info": assistant_msg.meta_info,
+                "tool_calls": final_tool_calls
+            }
+            
+            db_assistant_message = ChatMessage(
+                id=str(uuid4()),
+                session_id=self.current_session_id,
+                role=assistant_msg.role.value,
+                content=assistant_msg.content or "",
+                meta_payload=meta_payload,
+                created_at=assistant_msg.timestamp
+            )
+            self.db_session.add(db_assistant_message)
+            self.db_session.commit()
+            
+            # Start background ingestion
+            if self.user_id:
+                def _background_ingest(user_id, user_msg, assistant_msg, node_name):
+                    try:
+                        from models.database import get_engine, get_session
+                        bg_session = get_session(get_engine())
+                        try:
+                            kc_service = KnowledgeCoreService(bg_session, user_id)
+                            kc_service.ingest_message(text=user_msg, role="user", agent_id=node_name)
+                            kc_service.ingest_message(text=assistant_msg, role="assistant", agent_id=node_name)
+                        finally:
+                            bg_session.close()
+                    except Exception as e:
+                        print(f"[{node_name}/Background] KC ingestion failed: {e}")
+                
+                threading.Thread(
+                    target=_background_ingest,
+                    args=(self.user_id, user_message, final_content, self.get_node_name()),
+                    daemon=True
+                ).start()
+        except Exception as e:
+            print(f"[{self.get_node_name()}] Failed to save streamed messages to DB: {e}")
 
     def clear_history(self):
         """Clear conversation history"""

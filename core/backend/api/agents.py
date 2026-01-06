@@ -3,7 +3,9 @@ Agent API endpoints
 Chat with Hub and Spoke agents, create new Spokes
 """
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+import json
 import time
 import shutil
 from pathlib import Path
@@ -20,6 +22,7 @@ from models.database import Node, AgentProfile
 from utils.paths import get_spoke_dir, get_user_spokes_dir, validate_name
 from utils.agent_cache import get_hub_agent_cache, get_spoke_agent_cache
 from uuid import uuid4
+from datetime import datetime
 
 router = APIRouter(prefix="/api/agents", tags=["Agents"])
 
@@ -100,6 +103,7 @@ def get_spoke_agent(user_id: str, spoke_name: str, db: Session) -> SpokeAgent:
 async def chat_with_hub(
     message: str = Form(...),
     files: List[UploadFile] = File(default=[]),
+    stream: bool = Form(False),
     identity: Identity = Depends(resolve_identity),
     db: Session = Depends(get_db),
     x_preferred_model: Optional[str] = Header(None, alias="X-Preferred-Model")
@@ -278,6 +282,46 @@ async def chat_with_hub(
     # 4. Get Hub's response
     t0 = time.time()
     hub = get_hub_agent(identity.user_id, db)
+    
+    if stream:
+        async def event_generator():
+            # Use a wrapper for tool context
+            tool_context = {
+                'session': db,
+                'user_id': identity.user_id,
+                'node_id': hub.node_id,
+                'node_type': 'HUB',
+                'context_name': 'hub'
+            }
+            # We need to calculate load for meta_info once if needed
+            meta_info_str = None
+            try:
+                from services.lbs_client import LBSClient
+                from models.database import ServiceRegistry
+                from utils.encryption import decrypt_string
+                from datetime import date
+                lbs_api_key = None
+                lbs_url = None
+                service = db.query(ServiceRegistry).filter(
+                    ServiceRegistry.user_id == identity.user_id,
+                    ServiceRegistry.service_name == "lbs"
+                ).first()
+                if service:
+                    lbs_url = service.base_url
+                    if service.api_key_encrypted:
+                        try: lbs_api_key = decrypt_string(service.api_key_encrypted)
+                        except Exception: pass
+                client = LBSClient(base_url=lbs_url, api_key=lbs_api_key)
+                daily_data = client.calculate_load(date.today())
+                load = daily_data.get("adjusted_load", 0.0)
+                meta_info_str = f"Load: {load:.1f}/10.0 | Capacity: 10.0"
+            except Exception: pass
+
+            for event in hub.chat_stream(message, attached_files, preferred_model=x_preferred_model, tool_context=tool_context, meta_info=meta_info_str):
+                yield f"data: {json.dumps(event)}\n\n"
+        
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
+
     response_text, tool_calls = hub.chat(message, attached_files, preferred_model=x_preferred_model)
     print(f"[Hub/Timing] hub.chat: {time.time()-t0:.2f}s")
     print(f"[Hub/Timing] === Total: {time.time()-_chat_start:.2f}s ===")
@@ -377,6 +421,7 @@ async def chat_with_spoke(
     spoke_name: str,
     message: str = Form(...),
     files: List[UploadFile] = File(default=[]),
+    stream: bool = Form(False),
     identity: Identity = Depends(resolve_identity),
     db: Session = Depends(get_db),
     x_preferred_model: Optional[str] = Header(None, alias="X-Preferred-Model")
@@ -563,6 +608,37 @@ async def chat_with_spoke(
 
     # 4. Get Spoke's response
     spoke = get_spoke_agent(identity.user_id, spoke_name, db)
+    
+    if stream:
+        async def spoke_event_generator():
+            tool_context = {
+                'session': db,
+                'user_id': identity.user_id,
+                'node_id': spoke.node_id,
+                'node_type': 'SPOKE',
+                'spoke_name': spoke_name,
+                'context_name': spoke_name
+            }
+            final_content = ""
+            for event in spoke.chat_stream(user_message, attached_file_objects, preferred_model=x_preferred_model, tool_context=tool_context):
+                if event["type"] == "content":
+                    final_content += event["data"]
+                elif event["type"] == "final_response":
+                    final_content = event["data"].get("content", final_content)
+                yield f"data: {json.dumps(event)}\n\n"
+            
+            # After stream finishes, process meta-actions
+            try:
+                meta_actions = extract_meta_actions_from_chat(final_content)
+                if meta_actions:
+                    inbox = InboxHandler(db, user_id=identity.user_id)
+                    for meta_xml in meta_actions:
+                        inbox.push_to_inbox("hub", meta_xml)
+            except Exception as e:
+                print(f"[Spoke Streaming] Meta-action processing failed: {e}")
+        
+        return StreamingResponse(spoke_event_generator(), media_type="text/event-stream")
+
     response_text, tool_calls = spoke.chat(user_message, attached_file_objects, preferred_model=x_preferred_model)
     
     # Extract meta-actions
@@ -601,6 +677,9 @@ def get_spoke_history(
             "message_count": len(spoke.conversation_history)
         }
     except Exception as e:
+        import traceback
+        print(f"!!! Error in get_spoke_history for {spoke_name}: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 

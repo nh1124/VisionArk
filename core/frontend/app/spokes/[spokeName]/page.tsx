@@ -81,6 +81,8 @@ export default function SpokeChatPage({
         loadHistory();
     }, [spokeName]);
 
+    const [statusText, setStatusText] = useState("");
+
     const sendMessage = async (message: string, files: File[]) => {
         if (!message.trim() && files.length === 0) return;
 
@@ -96,11 +98,13 @@ export default function SpokeChatPage({
         setMessages((prev) => [...prev, userMessage]);
         setInput("");
         setLoading(true);
+        setStatusText("Thinking...");
 
         try {
             const formData = new FormData();
             formData.append("message", message);
             files.forEach((file) => formData.append("files", file));
+            formData.append("stream", "true");
 
             const response = await apiFetch(`/api/agents/spoke/${spokeName}/chat`, {
                 method: "POST",
@@ -110,40 +114,73 @@ export default function SpokeChatPage({
                 }
             });
 
-            const data = await response.json();
+            if (!response.ok) throw new Error("Failed to send message");
 
-            // Handle executed commands (e.g., /kill, /move)
-            if (data.executed_commands && data.executed_commands.length > 0) {
-                for (const cmd of data.executed_commands) {
-                    if (cmd.success && cmd.data?.redirect_url) {
-                        setMessages((prev) => [...prev, { role: "assistant", content: cmd.message }]);
-                        setTimeout(() => {
-                            window.location.href = cmd.data.redirect_url;
-                        }, 1500);
-                        return; // Stop further processing if redirecting
+            // Handle streaming response
+            const reader = response.body?.getReader();
+            if (!reader) throw new Error("No reader");
+
+            const decoder = new TextDecoder();
+            let assistantContent = "";
+            let toolCalls: any[] = [];
+            let buffer = "";
+
+            // Create a temporary assistant message that we will update
+            setMessages((prev) => [...prev, { role: "assistant", content: "", attached_files: [] }]);
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n\n");
+                buffer = lines.pop() || "";
+
+                for (const line of lines) {
+                    if (line.trim().startsWith("data: ")) {
+                        try {
+                            const event = JSON.parse(line.trim().substring(6));
+                            if (event.type === "status") {
+                                setStatusText(event.data);
+                            } else if (event.type === "content") {
+                                assistantContent += event.data;
+                                setMessages((prev) => {
+                                    const next = [...prev];
+                                    if (next.length > 0) {
+                                        next[next.length - 1] = {
+                                            ...next[next.length - 1],
+                                            content: assistantContent
+                                        };
+                                    }
+                                    return next;
+                                });
+                            } else if (event.type === "final_response") {
+                                toolCalls = event.data.tool_calls || [];
+                                setMessages((prev) => {
+                                    const next = [...prev];
+                                    if (next.length > 0) {
+                                        next[next.length - 1] = {
+                                            ...next[next.length - 1],
+                                            content: event.data.content,
+                                            tool_calls: toolCalls,
+                                            attached_files: event.data.attached_files || []
+                                        };
+                                    }
+                                    return next;
+                                });
+                            }
+                        } catch (e) {
+                            console.error("Failed to parse event:", e, "Line:", line);
+                        }
                     }
                 }
-            }
-
-            const assistantMessage: Message = {
-                role: "assistant",
-                content: data.response,
-                attached_files: data.attached_files || [],
-                tool_calls: data.tool_calls || []
-            };
-            setMessages((prev) => [...prev, assistantMessage]);
-
-            if (data.meta_actions && data.meta_actions.length > 0) {
-                setMessages((prev) => [...prev, {
-                    role: "assistant",
-                    content: `📤 Sent ${data.meta_actions.length} message(s) to Hub Inbox`
-                }]);
             }
         } catch (error) {
             console.error("Error:", error);
             setMessages((prev) => [...prev, { role: "assistant", content: "Error: Could not connect to Spoke agent." }]);
         } finally {
             setLoading(false);
+            setStatusText("");
         }
     };
 
@@ -221,8 +258,13 @@ export default function SpokeChatPage({
 
                         {loading && (
                             <div className="flex justify-start">
-                                <div className="bg-gray-800/40 border border-gray-700/50 rounded-2xl px-6 py-4 animate-pulse">
-                                    <p className="text-sm text-gray-400">Thinking...</p>
+                                <div className="bg-gray-800/40 border border-gray-700/50 rounded-2xl px-6 py-4 animate-pulse flex items-center gap-3">
+                                    <div className="flex gap-1.5">
+                                        <div className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                                        <div className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                                        <div className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                                    </div>
+                                    <p className="text-sm text-gray-400">{statusText || "Thinking..."}</p>
                                 </div>
                             </div>
                         )}

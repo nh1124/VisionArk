@@ -13,7 +13,7 @@ class GeminiProvider(BaseLLMProvider):
     def __init__(self, model_name: str = "gemini-2.5-flash-lite", api_key: str = None, **kwargs):
         super().__init__(model_name, api_key, **kwargs)
         # Initialize the new SDK client
-        self.client = Client(api_key=self.api_key, http_options={'api_version': 'v1alpha', 'timeout': 600})
+        self.client = Client(api_key=self.api_key, http_options={'api_version': 'v1alpha', 'timeout': 600000})
         self.tools = []  # Store tools for function calling
     
     def set_tools(self, tools: List[Any]):
@@ -420,20 +420,184 @@ class GeminiProvider(BaseLLMProvider):
         temperature: float = 0.7,
         **kwargs
     ):
-        """Stream completion tokens"""
+        """
+        Stream completion tokens as they are generated.
+        Yields string chunks.
+        """
+        model_name = kwargs.get('preferred_model') or self.model_name
         full_prompt = self._build_prompt(messages)
         
-        # Generate with simple text for streaming
-        response = self.client.models.generate_content_stream(
-            model=self.model_name,
-            contents=full_prompt,
-            config=types.GenerateContentConfig(temperature=temperature)
+        try:
+            stream = self.client.models.generate_content_stream(
+                model=model_name,
+                contents=full_prompt,
+                config=types.GenerateContentConfig(temperature=temperature)
+            )
+            for chunk in stream:
+                if chunk.text:
+                    yield chunk.text
+        except Exception as e:
+            print(f"[Gemini] stream_complete error: {e}")
+            yield f"Error: {str(e)}"
+
+    def stream_chat(
+        self,
+        messages: List[Message],
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        preferred_model: Optional[str] = None,
+        attached_files: List = None,
+        tool_definitions: List = None,
+        tool_functions: dict = None,
+        **kwargs
+    ):
+        """
+        Stream chat events including status updates during function calling.
+        """
+        model_name = preferred_model or self.model_name
+        full_prompt = self._build_prompt(messages)
+        content_parts = []
+        
+        if attached_files:
+            for attached_file in attached_files:
+                if hasattr(attached_file, 'gemini_file_uri') and attached_file.gemini_file_uri:
+                    try:
+                        file_part = types.Part.from_uri(
+                            file_uri=attached_file.gemini_file_uri,
+                            mime_type=attached_file.file_type
+                        )
+                        content_parts.append(file_part)
+                    except Exception as e:
+                        print(f"[Gemini] Failed to add file part: {e}")
+        
+        content_parts.append(types.Part.from_text(text=full_prompt))
+        
+        active_tool_functions = tool_functions or getattr(self, '_tool_functions', {})
+        if tool_definitions:
+            tools_for_model = self._convert_dict_tools_to_gemini(tool_definitions)
+        elif hasattr(self, '_tool_definitions') and self._tool_definitions:
+            tools_for_model = self._convert_dict_tools_to_gemini(self._tool_definitions)
+        else:
+            tools_for_model = []
+        
+        generation_config = types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+            tools=tools_for_model if tools_for_model else None,
         )
         
-        for chunk in response:
-            if chunk.text:
-                yield chunk.text
-    
+        if tools_for_model and hasattr(tools_for_model[0], 'function_declarations') and tools_for_model[0].function_declarations:
+            generation_config.tool_config = types.ToolConfig(
+                function_calling_config=types.FunctionCallingConfig(mode="AUTO")
+            )
+
+        history = [types.Content(role="user", parts=content_parts)]
+        turn_count = 0
+        max_turns = 30
+        accumulated_tool_results = []
+        
+        yield {"type": "status", "data": "Thinking..."}
+        
+        while turn_count < max_turns:
+            turn_count += 1
+            try:
+                # Use generate_content instead of generate_content_stream for stability
+                # This aligns with the stable complete() method
+                response = self.client.models.generate_content(
+                    model=model_name,
+                    contents=history,
+                    config=generation_config
+                )
+                
+                # Check if valid response
+                if not response.candidates or not response.candidates[0].content.parts:
+                    break
+                    
+                model_content = response.candidates[0].content
+                history.append(model_content)
+                
+                # Extract all function calls in this turn
+                function_calls = [p.function_call for p in model_content.parts if p.function_call]
+                
+                if not function_calls:
+                    # Final response reached
+                    final_text = response.text
+                    yield {"type": "content", "data": final_text}
+                    
+                    yield {
+                        "type": "final_response",
+                        "data": {
+                            "content": final_text,
+                            "tool_calls": accumulated_tool_results,
+                            "usage": None # Usage can be added if needed
+                        }
+                    }
+                    return
+                
+                # Process tool calls
+                tool_response_parts = []
+                for fc in function_calls:
+                    function_name = fc.name
+                    function_args = fc.args
+                    
+                    # Emit status update for the tool call
+                    status_msg = f"Executing: {function_name}..."
+                    if function_name == "search_knowledge": status_msg = "Searching facts & memories..."
+                    elif function_name == "google_search": status_msg = "Searching Google..."
+                    elif function_name == "create_task": status_msg = "Adding task to schedule..."
+                    elif function_name == "get_lbs_schedule": status_msg = "Checking workload..."
+                    elif function_name == "ask_spoke": status_msg = f"Messaging Spoke: {function_args.get('spoke_name')}..."
+                    
+                    yield {"type": "status", "data": status_msg}
+                    
+                    tool_result = None
+                    if function_name in active_tool_functions:
+                        try:
+                            import inspect
+                            tool_context = kwargs.get('tool_context') or {}
+                            func = active_tool_functions[function_name]
+                            sig = inspect.signature(func)
+                            accepted_params = set(sig.parameters.keys())
+                            
+                            full_args = {**function_args}
+                            for key in ['session', 'user_id', 'node_id', 'node_type', 'spoke_name', 'context_name', 'meta_info']:
+                                if key in tool_context and key in accepted_params:
+                                    full_args[key] = tool_context[key]
+                            
+                            result = func(**full_args)
+                            if hasattr(result, 'to_dict'):
+                                tool_result = result.message
+                            else:
+                                tool_result = str(result)
+                        except Exception as e:
+                            import traceback
+                            traceback.print_exc()
+                            tool_result = f"Error executing {function_name}: {str(e)}"
+                    
+                    if tool_result is None:
+                        tool_result = f"Function {function_name} not found"
+                    
+                    accumulated_tool_results.append({
+                        "name": function_name,
+                        "result": tool_result,
+                        "success": not (tool_result.startswith("Error") or tool_result.startswith("Failed"))
+                    })
+                    
+                    tool_response_parts.append(types.Part.from_function_response(
+                        name=function_name,
+                        response={'result': tool_result}
+                    ))
+                
+                # Add tool responses to history for next turn
+                history.append(types.Content(role="tool", parts=tool_response_parts))
+                yield {"type": "status", "data": "Synthesizing result..."}
+
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                yield {"type": "error", "data": str(e)}
+                return
+
     def _build_prompt(self, messages: List[Message]) -> str:
         """Convert Message list to Gemini prompt format"""
         prompt_parts = []

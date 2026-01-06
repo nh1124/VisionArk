@@ -68,6 +68,41 @@ class AttachedFile:
             "has_gemini_ref": self.has_gemini_reference()
         }
     
+    def to_dict(self) -> dict:
+        """
+        Full serialization for DB persistence (meta_payload)
+        Contains both internal keys and frontend-friendly keys.
+        """
+        return {
+            "filename": self.filename,
+            "file_type": self.file_type,
+            "size_bytes": self.size_bytes,
+            "gemini_file_uri": self.gemini_file_uri,
+            "gemini_file_name": self.gemini_file_name,
+            "storage_path": self.storage_path,
+            # Keys expected by frontend (compatibility)
+            "name": self.filename,
+            "type": self.file_type,
+            "size": self.size_bytes
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'AttachedFile':
+        """
+        Reconstruct AttachedFile from dictionary, handling various key mappings.
+        """
+        if not data:
+            return None
+            
+        return cls(
+            filename=data.get("filename") or data.get("name") or "unknown_file",
+            file_type=data.get("file_type") or data.get("type") or "application/octet-stream",
+            size_bytes=data.get("size_bytes") or data.get("size") or 0,
+            gemini_file_uri=data.get("gemini_file_uri"),
+            gemini_file_name=data.get("gemini_file_name"),
+            storage_path=data.get("storage_path")
+        )
+    
     def to_gemini_part(self):
         """
         Convert to Gemini content part for multimodal API calls.

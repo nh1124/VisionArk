@@ -85,6 +85,21 @@ class BaseLLMProvider(ABC):
             String chunks as they are generated
         """
         pass
+
+    @abstractmethod
+    def stream_chat(
+        self,
+        messages: List[Message],
+        temperature: float = 0.7,
+        **kwargs
+    ):
+        """
+        Stream chat events including status updates and content chunks.
+        
+        Each yielded item should be a dict with 'type' and 'data'.
+        Types: 'status', 'content', 'tool_call', 'final_response'
+        """
+        pass
     
     def format_messages(self, system_prompt: str, conversation: List[Dict[str, str]]) -> List[Message]:
         """
