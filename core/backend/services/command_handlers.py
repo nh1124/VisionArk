@@ -8,7 +8,7 @@ from datetime import datetime, date
 from sqlalchemy.orm import Session
 import uuid
 
-from services.command_parser import register_command, CommandResult
+from services.command_parser import register_command, CommandResult, _registry
 from services.inbox_handler import InboxHandler
 from services.lbs_client import LBSClient
 from utils.paths import get_spoke_dir, get_user_hub_dir
@@ -268,7 +268,7 @@ def handle_kill(args: List[str], context_type: str = "hub", context_name: str = 
         return CommandResult(
             success=True,
             message=f"🗑️ Deleted Spoke: {spoke_name}",
-            data={"spoke_name": spoke_name, "deleted": True, "redirect": True}
+            data={"spoke_name": spoke_name, "deleted": True, "redirect_url": "/spokes"}
         )
     except Exception as e:
         if session: session.rollback()
@@ -689,5 +689,45 @@ def handle_create_task(args: List[str], session: Session = None, context_name: s
     
     except ValueError as e:
         return CommandResult(success=False, message=f"Invalid value: {str(e)}")
-    except Exception as e:
-        return CommandResult(success=False, message=f"Failed to create task: {str(e)}")
+@register_command("move", "Move to a different chat page (Hub or Spoke)", ["hub", "spoke"])
+def handle_move(args: List[str], session: Session = None, user_id: str = None, **kwargs) -> CommandResult:
+    """
+    Navigate between Hub and Spokes
+    
+    Usage: /move [hub|spoke_name]
+    Aliases: /mv
+    """
+    if not session or not user_id:
+        return CommandResult(success=False, message="Missing database session or user context")
+
+    target = args[0].lower() if args else "hub"
+    
+    if target == "hub":
+        return CommandResult(
+            success=True,
+            message="🚀 Moving to Hub page...",
+            data={"redirect_url": "/hub"}
+        )
+    
+    # Check if Spoke exists
+    node = session.query(Node).filter(
+        Node.user_id == user_id,
+        Node.name == target,
+        Node.node_type == "SPOKE",
+        Node.is_archived == False
+    ).first()
+    
+    if node:
+        return CommandResult(
+            success=True,
+            message=f"🚀 Moving to {target} spoke...",
+            data={"redirect_url": f"/spokes/{target}"}
+        )
+    else:
+        return CommandResult(
+            success=False,
+            message=f"❌ Spoke '{target}' not found or is archived."
+        )
+
+# Register alias
+_registry.register("mv", handle_move, "Move to a different chat page (alias for /move)", ["hub", "spoke"])
