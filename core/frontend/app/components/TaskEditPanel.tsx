@@ -1,0 +1,607 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { getSpokeColor } from "../../lib/colors";
+import { apiFetch } from "@/lib/api";
+
+interface Task {
+    task_id: string;
+    task_name: string;
+    context: string;
+    base_load_score: number;
+    active: boolean;
+    rule_type: string;
+    due_date: string | null;
+    notes: string | null;
+    // Rule-specific fields
+    mon?: boolean;
+    tue?: boolean;
+    wed?: boolean;
+    thu?: boolean;
+    fri?: boolean;
+    sat?: boolean;
+    sun?: boolean;
+    interval_days?: number;
+    anchor_date?: string | null;
+    month_day?: number;
+    nth_in_month?: number;
+    weekday_mon1?: number;
+    start_date?: string | null;
+    end_date?: string | null;
+    // Execution status for a target date
+    status?: string;
+}
+
+interface TaskEditPanelProps {
+    task: Task | null;
+    isOpen: boolean;
+    onClose: () => void;
+    onSave: (task: Task) => void;
+    onDelete: (taskId: string) => void;
+}
+
+export default function TaskEditPanel({
+    task,
+    isOpen,
+    onClose,
+    onSave,
+    onDelete
+}: TaskEditPanelProps) {
+    const [editedTask, setEditedTask] = useState<Task | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [status, setStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+    const [history, setHistory] = useState<any[]>([]);
+    const [historyLoading, setHistoryLoading] = useState(false);
+
+    const fetchHistory = async (taskId: string) => {
+        setHistoryLoading(true);
+        try {
+            const end = new Date();
+            const start = new Date();
+            start.setDate(start.getDate() - 14); // Last 2 weeks
+            const res = await apiFetch(`/api/lbs/tasks/${taskId}/history?start_date=${start.toISOString().split('T')[0]}&end_date=${end.toISOString().split('T')[0]}`);
+            if (res.ok) {
+                const data = await res.json();
+                setHistory(data);
+            }
+        } catch (err) {
+            console.error("Failed to fetch history:", err);
+        } finally {
+            setHistoryLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        if (task && isOpen) {
+            setLoading(true);
+            const today = new Date().toISOString().split('T')[0];
+            // Fetch full task details including today's status
+            apiFetch(`/api/lbs/tasks/${task.task_id}?target_date=${today}`)
+                .then(res => {
+                    if (!res.ok) throw new Error("Failed to load task details");
+                    return res.json();
+                })
+                .then(data => {
+                    setEditedTask(data);
+                })
+                .catch(err => {
+                    console.error("Failed to load task details:", err);
+                    setEditedTask(task);
+                })
+                .finally(() => setLoading(false));
+
+            fetchHistory(task.task_id);
+        }
+    }, [task, isOpen]);
+
+    if (!isOpen || !editedTask) return null;
+
+    const handleSave = async () => {
+        setLoading(true);
+        try {
+            const payload: any = {
+                task_name: editedTask.task_name,
+                context: editedTask.context,
+                base_load_score: editedTask.base_load_score,
+                active: editedTask.active,
+                notes: editedTask.notes,
+                rule_type: editedTask.rule_type,
+            };
+
+            // Add rule-specific fields based on current rule_type
+            if (editedTask.rule_type === "ONCE") {
+                payload.due_date = editedTask.due_date;
+            } else if (editedTask.rule_type === "WEEKLY") {
+                payload.mon = editedTask.mon;
+                payload.tue = editedTask.tue;
+                payload.wed = editedTask.wed;
+                payload.thu = editedTask.thu;
+                payload.fri = editedTask.fri;
+                payload.sat = editedTask.sat;
+                payload.sun = editedTask.sun;
+            } else if (editedTask.rule_type === "EVERY_N_DAYS") {
+                payload.interval_days = editedTask.interval_days;
+                payload.anchor_date = editedTask.anchor_date;
+            } else if (editedTask.rule_type === "MONTHLY_DAY") {
+                payload.month_day = editedTask.month_day;
+            } else if (editedTask.rule_type === "MONTHLY_NTH_WEEKDAY") {
+                payload.nth_in_month = editedTask.nth_in_month;
+                payload.weekday_mon1 = editedTask.weekday_mon1;
+            }
+
+            const response = await apiFetch(`/api/lbs/tasks/${editedTask.task_id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            });
+
+            if (response.ok) {
+                setStatus({ type: "success", message: "Task updated successfully!" });
+                setTimeout(() => {
+                    onSave(editedTask);
+                    onClose();
+                    setStatus(null);
+                }, 1000);
+            } else {
+                const errorData = await response.json().catch(() => ({ detail: "Failed to save task" }));
+                setStatus({ type: "error", message: errorData.detail || "Failed to save task" });
+            }
+        } catch (error) {
+            console.error("Failed to save task:", error);
+            setStatus({ type: "error", message: "Network error or server is down" });
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleDelete = async () => {
+        if (!confirm(`Delete task "${editedTask.task_name}"?`)) return;
+
+        setLoading(true);
+        try {
+            const response = await apiFetch(`/api/lbs/tasks/${editedTask.task_id}`, {
+                method: "DELETE",
+            });
+
+            if (response.ok) {
+                onDelete(editedTask.task_id);
+                onClose();
+            }
+        } catch (error) {
+            console.error("Failed to delete task:", error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleToggleExecution = async (status: string) => {
+        if (!editedTask) return;
+        setLoading(true);
+        try {
+            const today = new Date().toISOString().split('T')[0];
+            const response = await apiFetch(`/api/lbs/tasks/${editedTask.task_id}/complete`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ target_date: today, status }),
+            });
+
+            if (response.ok) {
+                setEditedTask({ ...editedTask, status });
+                fetchHistory(editedTask.task_id);
+            } else {
+                setStatus({ type: "error", message: "Failed to update today's status" });
+            }
+        } catch (error) {
+            console.error("Failed to toggle execution:", error);
+            setStatus({ type: "error", message: "Network error" });
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const spokeColor = getSpokeColor(editedTask.context);
+
+    return (
+        <>
+            {/* Backdrop */}
+            <div
+                className="fixed inset-0 bg-black/50 z-40 transition-opacity"
+                onClick={onClose}
+            />
+
+            {/* Slide-in Panel */}
+            <div className="fixed top-0 right-0 h-full w-full md:w-[600px] bg-gray-900 shadow-xl z-50 transform transition-transform overflow-y-auto">
+                {/* Header */}
+                <div className="sticky top-0 bg-gray-900 border-b border-gray-800 p-6 flex items-center justify-between z-10">
+                    <h2 className="text-xl font-semibold">Edit Task</h2>
+                    <button
+                        onClick={onClose}
+                        className="text-gray-400 hover:text-white"
+                    >
+                        ✕
+                    </button>
+                </div>
+
+                {/* Content */}
+                <div className="p-6 space-y-6">
+                    {status && (
+                        <div className={`p-4 rounded-lg flex items-center gap-3 animate-in fade-in slide-in-from-top-4 ${status.type === 'success' ? 'bg-green-500/10 text-green-500 border border-green-500/20' : 'bg-red-500/10 text-red-500 border border-red-500/20'}`}>
+                            <span className="text-xl">{status.type === 'success' ? '✓' : '⚠️'}</span>
+                            <span className="font-medium">{status.message}</span>
+                        </div>
+                    )}
+                    {/* Task Name */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-2">
+                            Task Name *
+                        </label>
+                        <input
+                            type="text"
+                            value={editedTask.task_name}
+                            onChange={(e) =>
+                                setEditedTask({ ...editedTask, task_name: e.target.value })
+                            }
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-lg focus:outline-none focus:border-purple-500"
+                        />
+                    </div>
+
+                    {/* Spoke/Context - Now Editable */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-2">
+                            Spoke *
+                        </label>
+                        <input
+                            type="text"
+                            value={editedTask.context}
+                            onChange={(e) =>
+                                setEditedTask({ ...editedTask, context: e.target.value })
+                            }
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500"
+                            style={{
+                                borderLeftWidth: "4px",
+                                borderLeftColor: spokeColor,
+                            }}
+                        />
+                    </div>
+
+                    {/* Workload */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-2">
+                            Workload (0-10) *
+                        </label>
+                        <input
+                            type="number"
+                            min="0"
+                            max="10"
+                            step="0.5"
+                            value={editedTask.base_load_score}
+                            onChange={(e) =>
+                                setEditedTask({
+                                    ...editedTask,
+                                    base_load_score: parseFloat(e.target.value),
+                                })
+                            }
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500"
+                        />
+                    </div>
+
+                    {/* Rule Type - Now Editable */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-2">
+                            Recurrence Type *
+                        </label>
+                        <select
+                            value={editedTask.rule_type}
+                            onChange={(e) =>
+                                setEditedTask({ ...editedTask, rule_type: e.target.value })
+                            }
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500"
+                        >
+                            <option value="ONCE">Once (single task)</option>
+                            <option value="WEEKLY">Weekly (specific days)</option>
+                            <option value="EVERY_N_DAYS">Every N Days</option>
+                            <option value="MONTHLY_DAY">Monthly (fixed date)</option>
+                            <option value="MONTHLY_NTH_WEEKDAY">Monthly (nth weekday)</option>
+                        </select>
+                    </div>
+
+                    {/* Conditional Fields based on Rule Type */}
+
+                    {/* ONCE: Due Date */}
+                    {editedTask.rule_type === "ONCE" && (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-400 mb-2">
+                                Due Date
+                            </label>
+                            <input
+                                type="date"
+                                value={editedTask.due_date || ""}
+                                onChange={(e) =>
+                                    setEditedTask({ ...editedTask, due_date: e.target.value })
+                                }
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500"
+                            />
+                        </div>
+                    )}
+
+                    {/* WEEKLY: Day selection */}
+                    {editedTask.rule_type === "WEEKLY" && (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-400 mb-2">
+                                Repeat on Days *
+                            </label>
+                            <div className="grid grid-cols-7 gap-2">
+                                {[
+                                    { key: "mon", label: "Mon" },
+                                    { key: "tue", label: "Tue" },
+                                    { key: "wed", label: "Wed" },
+                                    { key: "thu", label: "Thu" },
+                                    { key: "fri", label: "Fri" },
+                                    { key: "sat", label: "Sat" },
+                                    { key: "sun", label: "Sun" },
+                                ].map((day) => (
+                                    <button
+                                        key={day.key}
+                                        type="button"
+                                        onClick={() =>
+                                            setEditedTask({
+                                                ...editedTask,
+                                                [day.key]: !editedTask[day.key as keyof Task],
+                                            })
+                                        }
+                                        className={`py-2 px-3 rounded-lg font-medium transition-colors ${editedTask[day.key as keyof Task]
+                                            ? "bg-purple-500 text-white"
+                                            : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+                                            }`}
+                                    >
+                                        {day.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* EVERY_N_DAYS: Interval and Anchor */}
+                    {editedTask.rule_type === "EVERY_N_DAYS" && (
+                        <>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-400 mb-2">
+                                    Interval (days) *
+                                </label>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    value={editedTask.interval_days || 7}
+                                    onChange={(e) =>
+                                        setEditedTask({
+                                            ...editedTask,
+                                            interval_days: parseInt(e.target.value),
+                                        })
+                                    }
+                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-400 mb-2">
+                                    Anchor Date
+                                </label>
+                                <input
+                                    type="date"
+                                    value={editedTask.anchor_date || ""}
+                                    onChange={(e) =>
+                                        setEditedTask({ ...editedTask, anchor_date: e.target.value })
+                                    }
+                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500"
+                                />
+                            </div>
+                        </>
+                    )}
+
+                    {/* MONTHLY_DAY: Day of month */}
+                    {editedTask.rule_type === "MONTHLY_DAY" && (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-400 mb-2">
+                                Day of Month *
+                            </label>
+                            <input
+                                type="number"
+                                min="1"
+                                max="31"
+                                value={editedTask.month_day || 1}
+                                onChange={(e) =>
+                                    setEditedTask({
+                                        ...editedTask,
+                                        month_day: parseInt(e.target.value),
+                                    })
+                                }
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500"
+                            />
+                        </div>
+                    )}
+
+                    {/* MONTHLY_NTH_WEEKDAY: Nth day of week */}
+                    {editedTask.rule_type === "MONTHLY_NTH_WEEKDAY" && (
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-400 mb-2">
+                                    Nth Week in Month
+                                </label>
+                                <select
+                                    value={editedTask.nth_in_month || 1}
+                                    onChange={(e) =>
+                                        setEditedTask({ ...editedTask, nth_in_month: parseInt(e.target.value) })
+                                    }
+                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500"
+                                >
+                                    <option value={1}>1st</option>
+                                    <option value={2}>2nd</option>
+                                    <option value={3}>3rd</option>
+                                    <option value={4}>4th</option>
+                                    <option value={-1}>Last</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-400 mb-2">
+                                    Day of Week
+                                </label>
+                                <select
+                                    value={editedTask.weekday_mon1 || 1}
+                                    onChange={(e) =>
+                                        setEditedTask({ ...editedTask, weekday_mon1: parseInt(e.target.value) })
+                                    }
+                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500"
+                                >
+                                    <option value={1}>Monday</option>
+                                    <option value={2}>Tuesday</option>
+                                    <option value={3}>Wednesday</option>
+                                    <option value={4}>Thursday</option>
+                                    <option value={5}>Friday</option>
+                                    <option value={6}>Saturday</option>
+                                    <option value={7}>Sunday</option>
+                                </select>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Date Range (for recurring tasks) */}
+                    {editedTask.rule_type !== "ONCE" && (
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-400 mb-2">
+                                    Start Date
+                                </label>
+                                <input
+                                    type="date"
+                                    value={editedTask.start_date || ""}
+                                    onChange={(e) =>
+                                        setEditedTask({ ...editedTask, start_date: e.target.value })
+                                    }
+                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-400 mb-2">
+                                    End Date
+                                </label>
+                                <input
+                                    type="date"
+                                    value={editedTask.end_date || ""}
+                                    onChange={(e) =>
+                                        setEditedTask({ ...editedTask, end_date: e.target.value })
+                                    }
+                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500"
+                                />
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Status */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-2">
+                            Status
+                        </label>
+                        <button
+                            type="button"
+                            onClick={() =>
+                                setEditedTask({ ...editedTask, active: !editedTask.active })
+                            }
+                            className={`w-full px-4 py-3 rounded-lg font-medium transition-colors ${editedTask.active
+                                ? "bg-green-500/20 border border-green-500 text-green-400"
+                                : "bg-gray-800 border border-gray-700 text-gray-400"
+                                }`}
+                        >
+                            {editedTask.active ? "● Active" : "○ Completed"}
+                        </button>
+                    </div>
+
+                    {/* Execution Status for Today */}
+                    {editedTask.active && (
+                        <div className="p-4 bg-purple-500/5 border border-purple-500/10 rounded-lg">
+                            <label className="block text-sm font-medium text-purple-400 mb-3">
+                                Today's status (Source of Truth)
+                            </label>
+                            <div className="flex gap-2">
+                                {["todo", "done", "skipped"].map(s => (
+                                    <button
+                                        key={s}
+                                        type="button"
+                                        onClick={() => handleToggleExecution(s)}
+                                        className={`flex-1 py-2 px-3 rounded text-sm font-medium transition-colors ${editedTask.status === s
+                                                ? "bg-purple-500 text-white shadow-lg shadow-purple-500/20"
+                                                : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+                                            }`}
+                                    >
+                                        {s.toUpperCase()}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Execution History */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-3">
+                            Recent History (Last 14 days)
+                        </label>
+                        <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
+                            {historyLoading ? (
+                                <div className="p-4 text-center text-sm text-gray-500">Loading history...</div>
+                            ) : history.length === 0 ? (
+                                <div className="p-4 text-center text-sm text-gray-500">No recent history</div>
+                            ) : (
+                                <div className="divide-y divide-gray-700">
+                                    {history.map((item, idx) => (
+                                        <div key={idx} className="flex items-center justify-between p-3">
+                                            <span className="text-sm text-gray-300 font-mono">{item.target_date}</span>
+                                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${item.status === 'done' ? 'bg-green-500/20 text-green-400' :
+                                                    item.status === 'skipped' ? 'bg-yellow-500/20 text-yellow-400' :
+                                                        'bg-gray-700 text-gray-400'
+                                                }`}>
+                                                {item.status}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Notes */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-2">
+                            Notes
+                        </label>
+                        <textarea
+                            value={editedTask.notes || ""}
+                            onChange={(e) =>
+                                setEditedTask({ ...editedTask, notes: e.target.value })
+                            }
+                            rows={4}
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500 resize-none"
+                            placeholder="Add notes..."
+                        />
+                    </div>
+                </div>
+
+                {/* Footer Actions */}
+                <div className="sticky bottom-0 bg-gray-900 border-t border-gray-800 p-6 flex gap-3">
+                    <button
+                        onClick={handleSave}
+                        disabled={loading}
+                        className="flex-1 bg-purple-500 hover:bg-purple-600 disabled:bg-gray-700 px-6 py-3 rounded-lg font-medium transition-colors"
+                    >
+                        {loading ? "Saving..." : "Save Changes"}
+                    </button>
+                    <button
+                        onClick={handleDelete}
+                        disabled={loading}
+                        className="px-6 py-3 bg-red-500/20 border border-red-500 text-red-400 hover:bg-red-500/30 rounded-lg font-medium transition-colors"
+                    >
+                        Delete
+                    </button>
+                </div>
+            </div >
+        </>
+    );
+}
