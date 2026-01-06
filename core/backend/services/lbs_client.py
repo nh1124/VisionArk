@@ -162,6 +162,8 @@ class LBSClient:
             
             return all_tasks
 
+    def calculate_load(self, target_date: date) -> Dict:
+        """Calculate load for a specific date from LBS service."""
         with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
             resp = client.get(f"calculate/{target_date.isoformat()}", headers=self._get_headers())
             resp.raise_for_status()

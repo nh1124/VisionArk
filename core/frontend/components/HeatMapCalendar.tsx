@@ -15,37 +15,38 @@ interface DayData {
 interface HeatMapCalendarProps {
     month: Date;
     onDayClick?: (date: string) => void;
-    refreshKey?: number;  // ✅ NEW: Parent can increment this to trigger refresh
+    refreshKey?: number;
+    includeCompleted?: boolean;
 }
 
 export default function HeatMapCalendar({
     month,
     onDayClick,
-    refreshKey = 0  // ✅ Default to 0
+    refreshKey = 0,
+    includeCompleted = true
 }: HeatMapCalendarProps) {
     const [daysData, setDaysData] = useState<DayData[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         loadMonthData();
-    }, [month, refreshKey]);  // ✅ Reload when refreshKey changes
+    }, [month, refreshKey, includeCompleted]);
 
     const loadMonthData = async () => {
-        // Get first and last day of month
+        setLoading(true);
         const firstDay = new Date(month.getFullYear(), month.getMonth(), 1);
         const lastDay = new Date(month.getFullYear(), month.getMonth() + 1, 0);
 
-        // Build date strings WITHOUT timezone conversion
         const startDate = `${firstDay.getFullYear()}-${String(firstDay.getMonth() + 1).padStart(2, '0')}-01`;
         const endDate = `${lastDay.getFullYear()}-${String(lastDay.getMonth() + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
 
         try {
+            // Note: The backend needs to handle include_completed if we want exact filtering there.
+            // For now we pass it as a param.
             const response = await apiFetch(
-                `/api/lbs/heatmap?start=${startDate}&end=${endDate}`
+                `/api/lbs/heatmap?start=${startDate}&end=${endDate}&include_completed=${includeCompleted}`
             );
             const data = await response.json();
-
-            // Handle both { days: [...] } and plain array [...]
             const days = Array.isArray(data) ? data : (data.days || []);
             setDaysData(days);
         } catch (error) {
@@ -55,63 +56,52 @@ export default function HeatMapCalendar({
         }
     };
 
-    const getLevelColor = (level: string) => {
+    const getLevelDotColor = (level: string) => {
         switch (level) {
-            case "SAFE":
-                return "bg-green-500/30 hover:bg-green-500/50 border-green-500";
-            case "WARNING":
-                return "bg-yellow-500/30 hover:bg-yellow-500/50 border-yellow-500";
-            case "DANGER":
-                return "bg-orange-500/30 hover:bg-orange-500/50 border-orange-500";
-            case "CRITICAL":
-                return "bg-red-500/30 hover:bg-red-500/50 border-red-500";
-            default:
-                return "bg-gray-700/30 hover:bg-gray-700/50 border-gray-700";
+            case "SAFE": return "bg-emerald-500";
+            case "WARNING": return "bg-amber-500";
+            case "DANGER": return "bg-orange-500";
+            case "CRITICAL": return "bg-red-500";
+            default: return "bg-gray-700";
         }
     };
 
-    // Generate calendar grid
+    const getLevelBgColor = (level: string) => {
+        switch (level) {
+            case "SAFE": return "bg-gray-900/40 hover:bg-gray-800/60 border-gray-800";
+            case "WARNING": return "bg-amber-950/10 hover:bg-amber-900/20 border-amber-900/30";
+            case "DANGER": return "bg-orange-950/20 hover:bg-orange-900/30 border-orange-900/40";
+            case "CRITICAL": return "bg-red-950/20 hover:bg-red-900/30 border-red-900/40";
+            default: return "bg-gray-900/40 border-gray-800";
+        }
+    };
+
     const firstDayOfMonth = new Date(month.getFullYear(), month.getMonth(), 1);
-    const lastDayOfMonth = new Date(
-        month.getFullYear(),
-        month.getMonth() + 1,
-        0
-    );
-    const startingDayOfWeek = firstDayOfMonth.getDay(); // 0 = Sunday
+    const lastDayOfMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0);
+    const startingDayOfWeek = firstDayOfMonth.getDay();
     const daysInMonth = lastDayOfMonth.getDate();
 
     const weeks = [];
     let currentWeek = [];
 
-    // Add empty cells for days before month starts
     for (let i = 0; i < startingDayOfWeek; i++) {
         currentWeek.push(null);
     }
 
-    // Add all days of month
     for (let day = 1; day <= daysInMonth; day++) {
-        // Build date string WITHOUT timezone conversion
         const year = month.getFullYear();
         const monthNum = String(month.getMonth() + 1).padStart(2, '0');
         const dayNum = String(day).padStart(2, '0');
         const dateStr = `${year}-${monthNum}-${dayNum}`;
-
         const dayData = daysData.find((d) => d.date === dateStr);
 
-        currentWeek.push({
-            day,
-            dateStr,
-            data: dayData,
-        });
-
-        // Start new week on Sunday
+        currentWeek.push({ day, dateStr, data: dayData });
         if (currentWeek.length === 7) {
             weeks.push(currentWeek);
             currentWeek = [];
         }
     }
 
-    // Add remaining days to last week
     if (currentWeek.length > 0) {
         while (currentWeek.length < 7) {
             currentWeek.push(null);
@@ -120,82 +110,82 @@ export default function HeatMapCalendar({
     }
 
     if (loading) {
-        return (
-            <div className="animate-pulse">
-                <div className="h-64 bg-gray-800 rounded"></div>
-            </div>
-        );
+        return <div className="animate-pulse h-96 bg-gray-900/50 rounded-xl border border-gray-800"></div>;
     }
 
     return (
-        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-            <div className="mb-4 flex items-center justify-end">
-                <div className="flex gap-2 text-xs">
-                    <div className="flex items-center gap-1">
-                        <div className="w-3 h-3 rounded bg-green-500/30 border border-green-500"></div>
-                        <span className="text-gray-400">Safe</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                        <div className="w-3 h-3 rounded bg-yellow-500/30 border border-yellow-500"></div>
-                        <span className="text-gray-400">Warning</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                        <div className="w-3 h-3 rounded bg-orange-500/30 border border-orange-500"></div>
-                        <span className="text-gray-400">Danger</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                        <div className="w-3 h-3 rounded bg-red-500/30 border border-red-500"></div>
-                        <span className="text-gray-400">Critical</span>
-                    </div>
-                </div>
-            </div>
-
-            {/* Weekday headers */}
-            <div className="grid grid-cols-7 gap-1 mb-2">
-                {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
-                    <div
-                        key={day}
-                        className="text-center text-xs font-semibold text-gray-500 py-1"
-                    >
+        <div className="w-full">
+            <div className="grid grid-cols-7 gap-3 mb-4">
+                {["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"].map((day) => (
+                    <div key={day} className="text-center text-[10px] font-bold text-gray-600 tracking-wider">
                         {day}
                     </div>
                 ))}
             </div>
 
-            {/* Calendar grid */}
-            <div className="space-y-1">
+            <div className="space-y-3">
                 {weeks.map((week, weekIdx) => (
-                    <div key={weekIdx} className="grid grid-cols-7 gap-1">
-                        {week.map((cell, cellIdx) => (
-                            <div
-                                key={cellIdx}
-                                className={`
-                  aspect-square rounded border transition-all cursor-pointer
-                  ${cell
-                                        ? getLevelColor(cell.data?.level || "")
-                                        : "bg-transparent border-transparent"
-                                    }
-                `}
-                                onClick={() => {
-                                    if (cell && onDayClick) {
-                                        onDayClick(cell.dateStr);
-                                    }
-                                }}
-                            >
-                                {cell && (
-                                    <div className="w-full h-full flex flex-col items-center justify-center p-1">
-                                        <div className="text-sm font-semibold">{cell.day}</div>
+                    <div key={weekIdx} className="grid grid-cols-7 gap-3">
+                        {week.map((cell, cellIdx) => {
+                            if (!cell) return <div key={cellIdx} className="aspect-square"></div>;
+                            const level = cell.data?.level || "UNKNOWN";
+                            const isActive = cell.dateStr === new Date().toISOString().split('T')[0];
+
+                            return (
+                                <div
+                                    key={cellIdx}
+                                    onClick={() => onDayClick?.(cell.dateStr)}
+                                    className={`
+                                        aspect-square rounded-2xl border-2 p-3 flex flex-col justify-between transition-all cursor-pointer relative group
+                                        ${getLevelBgColor(level)}
+                                        ${isActive ? 'ring-2 ring-blue-500/50 ring-offset-4 ring-offset-gray-950' : ''}
+                                        hover:scale-[1.02] active:scale-[0.98]
+                                    `}
+                                >
+                                    <div className="flex justify-between items-start">
+                                        <span className={`text-sm font-semibold tracking-wide ${cell.data ? 'text-gray-400' : 'text-gray-700'}`}>
+                                            {cell.day}
+                                        </span>
                                         {cell.data && (
-                                            <div className="text-xs text-gray-400">
-                                                {((cell.data.load ?? cell.data.adjusted_load) ?? 0).toFixed(1)}
-                                            </div>
+                                            <div className={`w-2 h-2 rounded-full shadow-sm ${getLevelDotColor(level)}`} />
                                         )}
                                     </div>
-                                )}
-                            </div>
-                        ))}
+
+                                    <div className="flex flex-col items-center justify-center -mt-2 font-display">
+                                        <span className={`text-2xl font-bold tracking-tight tabular-nums ${level === 'CRITICAL' ? 'text-red-400' : level === 'DANGER' ? 'text-orange-400' : level === 'WARNING' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                                            {cell.data ? (cell.data.load ?? cell.data.adjusted_load ?? 0).toFixed(1) : '0.0'}
+                                        </span>
+                                        <span className="text-[10px] font-semibold text-gray-600 uppercase mt-0.5 tracking-wide">
+                                            TASKS: {cell.data ? (cell.data.taskCount ?? cell.data.task_count ?? 0) : 0}
+                                        </span>
+                                    </div>
+
+                                    {/* Glass reflection effect */}
+                                    <div className="absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/5 to-transparent rounded-t-2xl pointer-events-none" />
+                                </div>
+                            );
+                        })}
                     </div>
                 ))}
+            </div>
+
+            <div className="mt-8 flex justify-center gap-6 text-[10px] font-bold uppercase tracking-widest text-gray-500">
+                <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                    <span>Safe</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-amber-500" />
+                    <span>Warning</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-orange-500" />
+                    <span>Danger</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-red-500" />
+                    <span>Critical</span>
+                </div>
             </div>
         </div>
     );
