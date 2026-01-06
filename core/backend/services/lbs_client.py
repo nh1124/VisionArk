@@ -61,19 +61,19 @@ class LBSClient:
         if start_date:
             params["start_date"] = start_date.isoformat()
         
-        with httpx.Client(base_url=self.base_url) as client:
+        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
             resp = client.get("dashboard", params=params, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
     def create_task(self, task_data: Dict) -> Dict:
-        with httpx.Client(base_url=self.base_url) as client:
+        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
             resp = client.post("tasks", json=task_data, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
     def get_task(self, task_id: str, target_date: Optional[Union[date, str]] = None) -> Optional[Dict]:
-        with httpx.Client(base_url=self.base_url, timeout=30.0) as client:
+        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
             resp = client.get(f"tasks/{task_id}", headers=self._get_headers())
             resp.raise_for_status()
             task = resp.json()
@@ -103,13 +103,13 @@ class LBSClient:
             return task
 
     def update_task(self, task_id: str, task_data: Dict) -> Dict:
-        with httpx.Client(base_url=self.base_url) as client:
+        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
             resp = client.put(f"tasks/{task_id}", json=task_data, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
     def delete_task(self, task_id: str) -> Dict:
-        with httpx.Client(base_url=self.base_url) as client:
+        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
             resp = client.delete(f"tasks/{task_id}", headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
@@ -121,7 +121,7 @@ class LBSClient:
         if active is not None:
             params["active"] = str(active).lower()
             
-        with httpx.Client(base_url=self.base_url, timeout=30.0) as client:
+        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
             resp = client.get("tasks", params=params, headers=self._get_headers())
             resp.raise_for_status()
             all_tasks = resp.json()
@@ -162,21 +162,20 @@ class LBSClient:
             
             return all_tasks
 
-    def calculate_load(self, target_date: date) -> Dict:
-        with httpx.Client(base_url=self.base_url) as client:
+        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
             resp = client.get(f"calculate/{target_date.isoformat()}", headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
     def create_exception(self, exception_data: Dict) -> Dict:
-        with httpx.Client(base_url=self.base_url) as client:
+        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
             resp = client.post("exceptions", json=exception_data, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
     def get_heatmap(self, start: date, end: date) -> List[Dict]:
         params = {"start": start.isoformat(), "end": end.isoformat()}
-        with httpx.Client(base_url=self.base_url) as client:
+        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
             resp = client.get("heatmap", params=params, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
@@ -185,26 +184,26 @@ class LBSClient:
         params = {"weeks": weeks}
         if start_date:
             params["start_date"] = start_date.isoformat()
-        with httpx.Client(base_url=self.base_url) as client:
+        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
             resp = client.get("trends", params=params, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
     def get_context_distribution(self, start: date, end: date) -> Dict:
         params = {"start": start.isoformat(), "end": end.isoformat()}
-        with httpx.Client(base_url=self.base_url) as client:
+        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
             resp = client.get("context-distribution", params=params, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
     def bulk_delete_tasks(self, task_ids: List[str]) -> Dict:
-        with httpx.Client(base_url=self.base_url) as client:
+        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
             resp = client.post("tasks/bulk-delete", json={"task_ids": task_ids}, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
     def bulk_update_active(self, task_ids: List[str], active: bool) -> Dict:
-        with httpx.Client(base_url=self.base_url) as client:
+        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
             resp = client.post("tasks/bulk-update-active", json={"task_ids": task_ids, "active": active}, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
@@ -214,7 +213,7 @@ class LBSClient:
         with httpx.Client(base_url=self.base_url) as client:
             # We need to explicitly set timeout for large file uploads
             files = {"file": (filename, file_content, "text/csv")}
-            resp = client.post("tasks/upload-csv", files=files, headers=self._get_headers(), timeout=30.0)
+            resp = client.post("tasks/upload-csv", files=files, headers=self._get_headers(), timeout=300.0)
             resp.raise_for_status()
             return resp.json()
 
@@ -235,7 +234,7 @@ class LBSClient:
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat()
         }
-        with httpx.Client(base_url=self.base_url) as client:
+        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
             resp = client.post("expand", params=params, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
@@ -252,7 +251,7 @@ class LBSClient:
         else:
             status_val = status
             
-        with httpx.Client(base_url=self.base_url) as client:
+        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
             resp = client.post(f"tasks/{task_id}/complete", json={
                 "target_date": date_str, 
                 "status": status_val.value if isinstance(status_val, TaskStatus) else status_val
@@ -266,7 +265,7 @@ class LBSClient:
             "start_date": start_date.isoformat() if isinstance(start_date, date) else start_date,
             "end_date": end_date.isoformat() if isinstance(end_date, date) else end_date
         }
-        with httpx.Client(base_url=self.base_url) as client:
+        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
             resp = client.get(f"tasks/{task_id}/history", params=params, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()

@@ -13,7 +13,7 @@ class GeminiProvider(BaseLLMProvider):
     def __init__(self, model_name: str = "gemini-2.5-flash-lite", api_key: str = None, **kwargs):
         super().__init__(model_name, api_key, **kwargs)
         # Initialize the new SDK client
-        self.client = Client(api_key=self.api_key, http_options={'api_version': 'v1alpha'})
+        self.client = Client(api_key=self.api_key, http_options={'api_version': 'v1alpha', 'timeout': 600})
         self.tools = []  # Store tools for function calling
     
     def set_tools(self, tools: List[Any]):

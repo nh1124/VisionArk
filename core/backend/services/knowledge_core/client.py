@@ -24,7 +24,7 @@ from .models import (
 class KnowledgeCoreClient:
     """A comprehensive Python client for the KnowledgeCore API."""
 
-    def __init__(self, base_url: str = "http://localhost:8200", timeout: float = 30.0):
+    def __init__(self, base_url: str = "http://localhost:8200", timeout: float = 300.0):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.token: Optional[str] = None
