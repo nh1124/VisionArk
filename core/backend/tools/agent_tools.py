@@ -12,6 +12,9 @@ from services.lbs_client import LBSClient
 from services.knowledge_core_service import KnowledgeCoreService
 import asyncio
 from pathlib import Path
+import re
+
+CURRENT_PLAN_FILE = "PLAN.md"
 
 
 # ==============================================================================
@@ -790,6 +793,299 @@ def process_inbox_message(
     except Exception as e:
         session.rollback()
         return ToolResult(success=False, message=f"Failed to process message: {str(e)}")
+
+
+# ==============================================================================
+# Markdown Structure & Section Tools (MD Tools)
+# ==============================================================================
+
+def get_md_structure(
+    file_path: str,
+    *,
+    session: Optional[Session] = None,
+    user_id: Optional[str] = None,
+    node_type: Optional[str] = None,
+    spoke_name: Optional[str] = None
+) -> ToolResult:
+    """
+    Extract the heading hierarchy (# to ######) from a Markdown file to understand its structure.
+    
+    Args:
+        file_path: Path to the Markdown file within artifacts/
+    """
+    if not user_id or not node_type:
+        return ToolResult(success=False, message="Error: Missing context for get_md_structure")
+        
+    try:
+        artifacts_dir = _resolve_agent_artifacts_dir(user_id, node_type, spoke_name)
+        full_path = artifacts_dir / file_path
+        
+        if not full_path.exists():
+            return ToolResult(success=False, message=f"File not found: {file_path}")
+            
+        content = full_path.read_text(encoding='utf-8')
+        lines = content.splitlines()
+        
+        structure = []
+        for line in lines:
+            match = re.match(r'^(#{1,6})\s+(.*)$', line)
+            if match:
+                level = len(match.group(1))
+                title = match.group(2).strip()
+                structure.append(f"{'  ' * (level-1)}- {title}")
+                
+        if not structure:
+            return ToolResult(success=True, message=f"No headings found in {file_path}", data={"structure": ""})
+            
+        result_text = "\n".join(structure)
+        return ToolResult(
+            success=True,
+            message=f"Markdown structure for {file_path}:\n{result_text}",
+            data={"structure": result_text}
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to get MD structure: {str(e)}")
+
+
+def read_md_section(
+    file_path: str,
+    section_title: str,
+    *,
+    session: Optional[Session] = None,
+    user_id: Optional[str] = None,
+    node_type: Optional[str] = None,
+    spoke_name: Optional[str] = None
+) -> ToolResult:
+    """
+    Read a specific section of a Markdown file based on its heading.
+    
+    Args:
+        file_path: Path to the Markdown file within artifacts/
+        section_title: Title of the section to read (case-insensitive, partial match supported)
+    """
+    if not user_id or not node_type:
+        return ToolResult(success=False, message="Error: Missing context for read_md_section")
+        
+    try:
+        artifacts_dir = _resolve_agent_artifacts_dir(user_id, node_type, spoke_name)
+        full_path = artifacts_dir / file_path
+        
+        if not full_path.exists():
+            return ToolResult(success=False, message=f"File not found: {file_path}")
+            
+        content = full_path.read_text(encoding='utf-8')
+        lines = content.splitlines()
+        
+        section_content = []
+        found = False
+        target_level = None
+        
+        for line in lines:
+            match = re.match(r'^(#{1,6})\s+(.*)$', line)
+            if match:
+                level = len(match.group(1))
+                title = match.group(2).strip()
+                
+                if not found:
+                    if section_title.lower() in title.lower():
+                        found = True
+                        target_level = level
+                        section_content.append(line)
+                else:
+                    if level <= target_level:
+                        break
+                    section_content.append(line)
+            elif found:
+                section_content.append(line)
+                
+        if not found:
+            return ToolResult(success=False, message=f"Section '{section_title}' not found in {file_path}")
+            
+        result_text = "\n".join(section_content).strip()
+        return ToolResult(
+            success=True,
+            message=f"Content of section '{section_title}' in {file_path}:\n\n{result_text}",
+            data={"content": result_text}
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to read MD section: {str(e)}")
+
+
+def update_md_section(
+    file_path: str,
+    section_title: str,
+    content: str,
+    mode: str = "replace",
+    *,
+    session: Optional[Session] = None,
+    user_id: Optional[str] = None,
+    node_type: Optional[str] = None,
+    spoke_name: Optional[str] = None
+) -> ToolResult:
+    """
+    Update or append content to a specific Markdown section.
+    
+    Args:
+        file_path: Path to the Markdown file within artifacts/
+        section_title: Title of the section (e.g., "Strategy")
+        content: New content for the section
+        mode: "replace" (default) to overwrite section content, or "append" to add to it.
+    """
+    if not user_id or not node_type:
+        return ToolResult(success=False, message="Error: Missing context for update_md_section")
+        
+    try:
+        artifacts_dir = _resolve_agent_artifacts_dir(user_id, node_type, spoke_name)
+        full_path = artifacts_dir / file_path
+        
+        file_exists = full_path.exists()
+        original_content = full_path.read_text(encoding='utf-8') if file_exists else ""
+        lines = original_content.splitlines()
+        
+        new_lines = []
+        found = False
+        target_level = None
+        section_updated = False
+        
+        for i, line in enumerate(lines):
+            match = re.match(r'^(#{1,6})\s+(.*)$', line)
+            if match:
+                level = len(match.group(1))
+                title = match.group(2).strip()
+                
+                if not found:
+                    if section_title.lower() in title.lower():
+                        found = True
+                        target_level = level
+                        new_lines.append(line)
+                        if mode == "replace":
+                            new_lines.append(content)
+                        else: # append
+                            # We'll append at the end of the section, so we don't do it here
+                            pass
+                else:
+                    if level <= target_level:
+                        if mode == "append" and not section_updated:
+                            new_lines.append(content)
+                            section_updated = True
+                        found = False # End of target section
+                        new_lines.append(line)
+                    else:
+                        if mode == "replace":
+                            continue # Skip old content
+                        new_lines.append(line)
+            else:
+                if found and mode == "replace":
+                    continue
+                new_lines.append(line)
+        
+        # If section was the last one and we were in found state
+        if found:
+            if mode == "append" and not section_updated:
+                new_lines.append(content)
+            # if replace, the content was already added after the header
+        
+        # If section not found, create it at the end
+        if not found and not section_updated:
+            if original_content and not original_content.endswith("\n"):
+                new_lines.append("")
+            new_lines.append(f"# {section_title}")
+            new_lines.append(content)
+            
+        final_content = "\n".join(new_lines)
+        full_path.write_text(final_content, encoding='utf-8')
+        
+        return ToolResult(
+            success=True,
+            message=f"Successfully updated section '{section_title}' in {file_path} ({mode})",
+            data={"file_path": file_path, "section": section_title}
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to update MD section: {str(e)}")
+
+
+# ==============================================================================
+# Plan Management Tools (Plan Tools)
+# ==============================================================================
+
+def init_plan(
+    goal: str,
+    strategy: str,
+    *,
+    session: Optional[Session] = None,
+    user_id: Optional[str] = None,
+    node_type: Optional[str] = None,
+    spoke_name: Optional[str] = None
+) -> ToolResult:
+    """
+    Initialize a PLAN.md file with a standard template.
+    """
+    template = f"""# Goal
+{goal}
+
+# Strategy
+{strategy}
+
+# Current Status
+Wait for initialization...
+
+# Todo List
+- [ ] Define initial tasks
+
+# Logs
+[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Plan initialized.
+"""
+    try:
+        res = save_artifact(CURRENT_PLAN_FILE, template, overwrite=False, session=session, user_id=user_id, node_type=node_type, spoke_name=spoke_name)
+        if not res.success:
+            return res
+        return ToolResult(success=True, message=f"✅ {CURRENT_PLAN_FILE} initialized.", data={"file": CURRENT_PLAN_FILE})
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to init plan: {str(e)}")
+
+
+def get_current_status(
+    *,
+    session: Optional[Session] = None,
+    user_id: Optional[str] = None,
+    node_type: Optional[str] = None,
+    spoke_name: Optional[str] = None
+) -> ToolResult:
+    """
+    Get the '# Current Status' section from PLAN.md.
+    """
+    return read_md_section(CURRENT_PLAN_FILE, "Current Status", session=session, user_id=user_id, node_type=node_type, spoke_name=spoke_name)
+
+
+def update_plan_progress(
+    summary: str,
+    percent_complete: Optional[int] = None,
+    *,
+    session: Optional[Session] = None,
+    user_id: Optional[str] = None,
+    node_type: Optional[str] = None,
+    spoke_name: Optional[str] = None
+) -> ToolResult:
+    """
+    Update '# Current Status' and add a log entry to PLAN.md.
+    """
+    try:
+        progress_text = f"{summary}"
+        if percent_complete is not None:
+            progress_text += f" ({percent_complete}%)"
+            
+        # Update Status
+        res_status = update_md_section(CURRENT_PLAN_FILE, "Current Status", progress_text, mode="replace", session=session, user_id=user_id, node_type=node_type, spoke_name=spoke_name)
+        if not res_status.success:
+            return res_status
+            
+        # Add Log
+        log_entry = f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {summary}"
+        res_log = update_md_section(CURRENT_PLAN_FILE, "Logs", log_entry, mode="append", session=session, user_id=user_id, node_type=node_type, spoke_name=spoke_name)
+        
+        return ToolResult(success=True, message=f"✅ Plan progress updated: {summary}")
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to update plan progress: {str(e)}")
 
 
 # ==============================================================================
@@ -2401,7 +2697,112 @@ HUB_TOOL_DEFINITIONS = [
             "required": ["task_id", "start_date", "end_date"]
         }
     }
+    },
+    {
+        "name": "get_md_structure",
+        "description": "Extract the heading hierarchy from a Markdown file to understand its structure.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Path to the Markdown file within artifacts/"
+                }
+            },
+            "required": ["file_path"]
+        }
+    },
+    {
+        "name": "read_md_section",
+        "description": "Read a specific section of a Markdown file based on its heading.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Path to the Markdown file within artifacts/"
+                },
+                "section_title": {
+                    "type": "string",
+                    "description": "Title of the section to read"
+                }
+            },
+            "required": ["file_path", "section_title"]
+        }
+    },
+    {
+        "name": "update_md_section",
+        "description": "Update or append content to a specific Markdown section.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Path to the Markdown file within artifacts/"
+                },
+                "section_title": {
+                    "type": "string",
+                    "description": "Title of the section"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "New content for the section"
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["replace", "append"],
+                    "description": "Mode: 'replace' to overwrite section content, or 'append' to add to it. Default is 'replace'."
+                }
+            },
+            "required": ["file_path", "section_title", "content"]
+        }
+    },
+    {
+        "name": "init_plan",
+        "description": "Initialize a PLAN.md file with a standard template (Goal, Strategy, etc).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "goal": {
+                    "type": "string",
+                    "description": "The high-level goal"
+                },
+                "strategy": {
+                    "type": "string",
+                    "description": "The proposed strategy"
+                }
+            },
+            "required": ["goal", "strategy"]
+        }
+    },
+    {
+        "name": "get_current_status",
+        "description": "Get the current plan status from PLAN.md.",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "update_plan_progress",
+        "description": "Update current status and add a log entry to PLAN.md.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "type": "string",
+                    "description": "Summary of progress"
+                },
+                "percent_complete": {
+                    "type": "integer",
+                    "description": "Optional completion percentage"
+                }
+            },
+            "required": ["summary"]
+        }
+    }
 ]
+
 
 
 SPOKE_TOOL_DEFINITIONS = [
@@ -2790,7 +3191,112 @@ SPOKE_TOOL_DEFINITIONS = [
             "required": ["task_id", "start_date", "end_date"]
         }
     }
+    },
+    {
+        "name": "get_md_structure",
+        "description": "Extract the heading hierarchy from a Markdown file to understand its structure.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Path to the Markdown file within artifacts/"
+                }
+            },
+            "required": ["file_path"]
+        }
+    },
+    {
+        "name": "read_md_section",
+        "description": "Read a specific section of a Markdown file based on its heading.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Path to the Markdown file within artifacts/"
+                },
+                "section_title": {
+                    "type": "string",
+                    "description": "Title of the section to read"
+                }
+            },
+            "required": ["file_path", "section_title"]
+        }
+    },
+    {
+        "name": "update_md_section",
+        "description": "Update or append content to a specific Markdown section.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Path to the Markdown file within artifacts/"
+                },
+                "section_title": {
+                    "type": "string",
+                    "description": "Title of the section"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "New content for the section"
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["replace", "append"],
+                    "description": "Mode: 'replace' to overwrite section content, or 'append' to add to it. Default is 'replace'."
+                }
+            },
+            "required": ["file_path", "section_title", "content"]
+        }
+    },
+    {
+        "name": "init_plan",
+        "description": "Initialize a PLAN.md file with a standard template (Goal, Strategy, etc).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "goal": {
+                    "type": "string",
+                    "description": "The high-level goal"
+                },
+                "strategy": {
+                    "type": "string",
+                    "description": "The proposed strategy"
+                }
+            },
+            "required": ["goal", "strategy"]
+        }
+    },
+    {
+        "name": "get_current_status",
+        "description": "Get the current plan status from PLAN.md.",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "update_plan_progress",
+        "description": "Update current status and add a log entry to PLAN.md.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "type": "string",
+                    "description": "Summary of progress"
+                },
+                "percent_complete": {
+                    "type": "integer",
+                    "description": "Optional completion percentage"
+                }
+            },
+            "required": ["summary"]
+        }
+    }
 ]
+
 
 # Map tool names to functions
 TOOL_FUNCTIONS = {
@@ -2829,4 +3335,14 @@ TOOL_FUNCTIONS = {
     "complete_lbs_task": complete_lbs_task,
     "get_lbs_schedule": get_lbs_schedule,
     "get_task_execution_history": get_task_execution_history,
+    
+    # MD Tools
+    "get_md_structure": get_md_structure,
+    "read_md_section": read_md_section,
+    "update_md_section": update_md_section,
+    
+    # Plan Tools
+    "init_plan": init_plan,
+    "get_current_status": get_current_status,
+    "update_plan_progress": update_plan_progress,
 }

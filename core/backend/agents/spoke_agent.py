@@ -140,6 +140,14 @@ Focus on delivering high-quality work within this context.
 - `research_url(urls, query)` - Extract information or summarize content from URLs
 - `generate_image(prompt, filename, aspect_ratio)` - Generate an image from a text description using AI. Images are saved to your artifacts/images/ folder.
 
+### MD & Plan Management (Extended Tools)
+- `get_md_structure(file_path)` - Extract heading hierarchy from a Markdown file
+- `read_md_section(file_path, section_title)` - Read a specific section of a Markdown file
+- `update_md_section(file_path, section_title, content, mode)` - Update or append to a Markdown section
+- `init_plan(goal, strategy)` - Initialize `PLAN.md` with a standard template
+- `get_current_status()` - Get `# Current Status` from `PLAN.md`
+- `update_plan_progress(summary, percent_complete)` - Update progress and logs in `PLAN.md`
+
 ### Hub Communication & Session
 - `report_to_hub(summary, request)` - Send updates or requests to the Hub's inbox. This is the **required** way to communicate with the Hub.
 - `ask_spoke(spoke_name, message)` - Synchronously ask **another spoke** a question and get a response. NOTE: Direct synchronous chat with the Hub is prohibited.
@@ -174,6 +182,12 @@ Focus on delivering high-quality work within this context.
 | `delete_spoke` | - | - |
 | `archive_session` | - | - |
 | `get_task_execution_history` | `task_id`, `start_date`, `end_date` | - |
+| `get_md_structure` | `file_path` | - |
+| `read_md_section` | `file_path`, `section_title` | - |
+| `update_md_section` | `file_path`, `section_title`, `content` | `mode` |
+| `init_plan` | `goal`, `strategy` | - |
+| `get_current_status` | - | - |
+| `update_plan_progress` | `summary` | `percent_complete` |
 
 ## IMPORTANT: Task vs Execution (Two Different Concepts)
 

@@ -500,6 +500,8 @@ class GeminiProvider(BaseLLMProvider):
         
         while turn_count < max_turns:
             turn_count += 1
+            yield {"type": "status", "data": f"Thinking (Turn {turn_count})..."}
+            
             try:
                 # Use generate_content instead of generate_content_stream for stability
                 # This aligns with the stable complete() method

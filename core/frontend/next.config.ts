@@ -5,6 +5,7 @@ const nextConfig = {
     serverActions: {
       bodySizeLimit: '100mb',
     },
+    proxyTimeout: 300000, // 5 minutes (in ms)
   },
   // Server external packages for proper proxying
   serverExternalPackages: [],
