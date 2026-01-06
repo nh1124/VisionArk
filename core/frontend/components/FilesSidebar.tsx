@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { apiFetch } from "@/lib/api";
 
 interface FileInfo {
@@ -25,6 +25,64 @@ interface FilesSidebarProps {
     onSyncComplete?: (files: FileInfo[]) => void;
 }
 
+interface TreeNode {
+    name: string;
+    path: string;
+    type: "file" | "folder";
+    children: TreeNode[];
+    size?: number;
+    modified?: number;
+}
+
+const buildFileTree = (artifacts: ArtifactInfo[]): TreeNode[] => {
+    const root: TreeNode[] = [];
+
+    artifacts.forEach((artifact) => {
+        const parts = artifact.path.split(/[/\\]/);
+        let currentLevel = root;
+        let currentPath = "";
+
+        parts.forEach((part, index) => {
+            currentPath = currentPath ? `${currentPath}/${part}` : part;
+            const isLast = index === parts.length - 1;
+
+            let existingNode = currentLevel.find((node) => node.name === part);
+
+            if (!existingNode) {
+                existingNode = {
+                    name: part,
+                    path: currentPath,
+                    type: isLast ? "file" : "folder",
+                    children: [],
+                    size: isLast ? artifact.size : undefined,
+                    modified: isLast ? artifact.modified : undefined,
+                };
+                currentLevel.push(existingNode);
+            }
+
+            currentLevel = existingNode.children;
+        });
+    });
+
+    // Sort: folders first, then files alphabetically
+    const sortTree = (nodes: TreeNode[]) => {
+        nodes.sort((a, b) => {
+            if (a.type !== b.type) {
+                return a.type === "folder" ? -1 : 1;
+            }
+            return a.name.localeCompare(b.name);
+        });
+        nodes.forEach((node) => {
+            if (node.children.length > 0) {
+                sortTree(node.children);
+            }
+        });
+    };
+
+    sortTree(root);
+    return root;
+};
+
 export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: FilesSidebarProps) {
     const [files, setFiles] = useState<FileInfo[]>([]);
     const [artifacts, setArtifacts] = useState<ArtifactInfo[]>([]);
@@ -36,6 +94,56 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
     const [error, setError] = useState<string | null>(null);
     const [dragActive, setDragActive] = useState(false);
     const [selectedArtifact, setSelectedArtifact] = useState<{ name: string, content: string } | null>(null);
+    const [collapsedDirs, setCollapsedDirs] = useState<Record<string, boolean>>({});
+
+    const toggleDir = (path: string) => {
+        setCollapsedDirs(prev => ({ ...prev, [path]: !prev[path] }));
+    };
+
+    const artifactTree = useMemo(() => buildFileTree(artifacts), [artifacts]);
+
+    // Recursive component to render tree nodes
+    const TreeItem = ({ node }: { node: TreeNode }) => {
+        const isCollapsed = collapsedDirs[node.path];
+
+        if (node.type === "folder") {
+            return (
+                <div className="ml-2">
+                    <div
+                        onClick={() => toggleDir(node.path)}
+                        className="flex items-center gap-2 p-1 hover:bg-gray-800 rounded cursor-pointer text-sm text-gray-300"
+                    >
+                        <span>{isCollapsed ? "📁" : "📂"}</span>
+                        <span className="truncate">{node.name}</span>
+                    </div>
+                    {!isCollapsed && (
+                        <div className="ml-2 border-l border-gray-700">
+                            {node.children.map((child) => (
+                                <TreeItem key={child.path} node={child} />
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        return (
+            <div
+                onClick={() => viewArtifact(node.path, node.name)}
+                className="flex items-center justify-between ml-4 p-1 hover:bg-gray-800 rounded cursor-pointer text-sm group"
+            >
+                <div className="flex items-center gap-2 min-w-0">
+                    <span className={nodeType === "hub" ? "text-purple-400" : "text-cyan-400"}>📄</span>
+                    <span className="truncate text-gray-200" title={node.path}>{node.name}</span>
+                </div>
+                {node.size !== undefined && (
+                    <span className="text-gray-500 text-[10px] ml-2 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                        {formatSize(node.size)}
+                    </span>
+                )}
+            </div>
+        );
+    };
 
     // Load files list
     const loadFiles = useCallback(async () => {
@@ -328,20 +436,10 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
             {/* Artifacts Tab Content */}
             {activeTab === "artifacts" && (
                 <div className="flex-1 overflow-y-auto">
-                    <p className="text-xs text-gray-400 mb-3">Files created by AI</p>
-                    <div className="space-y-2">
-                        {artifacts.map((artifact) => (
-                            <div
-                                key={artifact.path}
-                                onClick={() => viewArtifact(artifact.path, artifact.name)}
-                                className="flex items-center justify-between bg-gray-800 p-2 rounded text-sm hover:bg-gray-700 cursor-pointer"
-                            >
-                                <div className="flex items-center gap-2 flex-1 min-w-0">
-                                    <span className={nodeType === "hub" ? "text-purple-400" : "text-cyan-400"}>📄</span>
-                                    <span className="truncate text-gray-200" title={artifact.path}>{artifact.name}</span>
-                                </div>
-                                <span className="text-gray-500 text-xs">{formatSize(artifact.size)}</span>
-                            </div>
+                    <p className="text-xs text-gray-400 mb-3">Files created by AI (Hierarchical view)</p>
+                    <div className="py-2">
+                        {artifactTree.map((node) => (
+                            <TreeItem key={node.path} node={node} />
                         ))}
                         {artifacts.length === 0 && (
                             <p className="text-gray-500 text-xs text-center py-4">No artifacts yet. Ask AI to create files!</p>

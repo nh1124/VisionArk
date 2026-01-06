@@ -19,7 +19,7 @@ from agents.spoke_agent import SpokeAgent
 from services.inbox_handler import InboxHandler, extract_meta_actions_from_chat
 from services.auth import resolve_identity, Identity, get_db
 from models.database import Node, AgentProfile
-from utils.paths import get_spoke_dir, get_user_spokes_dir, validate_name
+from utils.paths import get_spoke_dir, get_user_spokes_dir, validate_name, secure_path_join
 from utils.agent_cache import get_hub_agent_cache, get_spoke_agent_cache
 from uuid import uuid4
 from datetime import datetime
@@ -393,13 +393,9 @@ def get_hub_artifact(
     from fastapi.responses import FileResponse
     from utils.paths import get_user_hub_dir
     
-    # Prevent path traversal
-    if '..' in file_path:
-        raise HTTPException(status_code=400, detail="Invalid path")
-    
     try:
         hub_dir = get_user_hub_dir(identity.user_id)
-        full_path = hub_dir / "artifacts" / file_path
+        full_path = secure_path_join(hub_dir / "artifacts", file_path)
         
         if not full_path.exists():
             raise HTTPException(status_code=404, detail="File not found")
@@ -867,13 +863,9 @@ def get_spoke_artifact(
     if not valid:
         raise HTTPException(status_code=400, detail=error)
     
-    # Prevent path traversal
-    if '..' in file_path:
-        raise HTTPException(status_code=400, detail="Invalid path")
-    
     try:
         spoke_dir = get_spoke_dir(identity.user_id, spoke_name)
-        full_path = spoke_dir / "artifacts" / file_path
+        full_path = secure_path_join(spoke_dir / "artifacts", file_path)
         
         if not full_path.exists():
             raise HTTPException(status_code=404, detail="File not found")

@@ -12,6 +12,7 @@ from services.lbs_client import LBSClient
 from services.knowledge_core_service import KnowledgeCoreService
 import asyncio
 from pathlib import Path
+from utils.paths import secure_path_join
 import re
 
 CURRENT_PLAN_FILE = "PLAN.md"
@@ -818,7 +819,7 @@ def get_md_structure(
         
     try:
         artifacts_dir = _resolve_agent_artifacts_dir(user_id, node_type, spoke_name)
-        full_path = artifacts_dir / file_path
+        full_path = secure_path_join(artifacts_dir, file_path)
         
         if not full_path.exists():
             return ToolResult(success=False, message=f"File not found: {file_path}")
@@ -868,7 +869,7 @@ def read_md_section(
         
     try:
         artifacts_dir = _resolve_agent_artifacts_dir(user_id, node_type, spoke_name)
-        full_path = artifacts_dir / file_path
+        full_path = secure_path_join(artifacts_dir, file_path)
         
         if not full_path.exists():
             return ToolResult(success=False, message=f"File not found: {file_path}")
@@ -936,7 +937,11 @@ def update_md_section(
         
     try:
         artifacts_dir = _resolve_agent_artifacts_dir(user_id, node_type, spoke_name)
-        full_path = artifacts_dir / file_path
+        full_path = secure_path_join(artifacts_dir, file_path)
+        
+        # Ensure parent directory exists for new files
+        if not full_path.parent.exists():
+            full_path.parent.mkdir(parents=True, exist_ok=True)
         
         file_exists = full_path.exists()
         original_content = full_path.read_text(encoding='utf-8') if file_exists else ""
@@ -1212,11 +1217,8 @@ def save_artifact(
     if not user_id or not node_type:
         return ToolResult(success=False, message="Error: Missing user context or node type for save_artifact")
     try:
-        if '..' in file_path or file_path.startswith('/') or file_path.startswith('\\'):
-            return ToolResult(success=False, message="Path traversal not allowed")
-        
         artifacts_dir = _resolve_agent_artifacts_dir(user_id, node_type, spoke_name)
-        full_path = artifacts_dir / file_path
+        full_path = secure_path_join(artifacts_dir, file_path)
         
         full_path.parent.mkdir(parents=True, exist_ok=True)
         
@@ -1256,11 +1258,8 @@ def update_artifact(
         return ToolResult(success=False, message="Mode must be 'w' (overwrite) or 'a' (append)")
     
     try:
-        if '..' in file_path or file_path.startswith('/') or file_path.startswith('\\'):
-            return ToolResult(success=False, message="Path traversal not allowed")
-        
         artifacts_dir = _resolve_agent_artifacts_dir(user_id, node_type, spoke_name)
-        full_path = artifacts_dir / file_path
+        full_path = secure_path_join(artifacts_dir, file_path)
         
         full_path.parent.mkdir(parents=True, exist_ok=True)
         
@@ -1296,11 +1295,8 @@ def delete_artifact(
     if not user_id or not node_type:
         return ToolResult(success=False, message="Error: Missing user context or node type for delete_artifact")
     try:
-        if '..' in file_path or file_path.startswith('/') or file_path.startswith('\\'):
-            return ToolResult(success=False, message="Path traversal not allowed")
-        
         artifacts_dir = _resolve_agent_artifacts_dir(user_id, node_type, spoke_name)
-        full_path = artifacts_dir / file_path
+        full_path = secure_path_join(artifacts_dir, file_path)
         
         if not full_path.exists():
             return ToolResult(success=False, message=f"File not found: {file_path}")
@@ -1338,9 +1334,6 @@ def read_reference(
     import asyncio
     
     try:
-        if '..' in file_path or file_path.startswith('/') or file_path.startswith('\\'):
-            return ToolResult(success=False, message="Path traversal not allowed")
-        
         if node_type == 'HUB':
             agent_base_dir = get_user_hub_dir(user_id)
         else:
@@ -1369,11 +1362,23 @@ def read_reference(
         if storage_path:
             potential_paths.append(storage_path)
             
-        potential_paths.extend([
-            agent_base_dir / "refs" / file_path,
-            agent_base_dir / "files" / file_path,
-            agent_base_dir / "artifacts" / file_path
-        ])
+        # 2. Add potential sub-directory paths safely
+        # If the user-provided path already starts with a valid subdirectory, try it directly
+        for sub in ["refs", "files", "artifacts"]:
+            if file_path.startswith(f"{sub}/"):
+                try:
+                    p = secure_path_join(agent_base_dir, file_path)
+                    potential_paths.append(p)
+                except ValueError:
+                    pass
+            
+            # Also try as a relative path within each subdirectory
+            try:
+                p = secure_path_join(agent_base_dir / sub, file_path)
+                potential_paths.append(p)
+            except ValueError:
+                # Path traversal attempt or invalid path
+                continue
         
         full_path = None
         for p in potential_paths:
@@ -1460,7 +1465,7 @@ def list_files(
         if target_dir.exists():
             for item in target_dir.rglob('*'):
                 if item.is_file():
-                    name = str(item.relative_to(target_dir))
+                    name = str(item.relative_to(target_dir)).replace('\\', '/')
                     if name not in found_files:
                         found_files[name] = {
                             "size": item.stat().st_size / 1024,
@@ -1471,29 +1476,60 @@ def list_files(
         if sub_dir == 'refs' and (agent_base_dir / "files").exists():
             for item in (agent_base_dir / "files").rglob('*'):
                 if item.is_file():
-                    if item.name not in found_files:
-                        found_files[item.name] = {
+                    name = item.name.replace('\\', '/')
+                    if name not in found_files:
+                        found_files[name] = {
                             "size": item.stat().st_size / 1024,
                             "uploaded": False
                         }
 
-        # 4. Format Output
-        files_list = sorted(found_files.keys())
+        # 4. Format Output as Tree
         context_label = f"spokes/{spoke_name}" if node_type == 'SPOKE' else "hub_data"
-        
-        if not files_list:
+        if not found_files:
             return ToolResult(success=True, message=f"📁 {sub_dir}/ is empty", data={"files": []})
+
+        # Build tree structure
+        tree = {}
+        for path_str in sorted(found_files.keys()):
+            parts = path_str.split('/')
+            curr = tree
+            for part in parts:
+                if part not in curr:
+                    curr[part] = {}
+                curr = curr[part]
+
+        # Re-implementing with full path tracking
+        def render_hierarchy(curr_tree, curr_rel_path=""):
+            lines = []
+            keys = sorted(curr_tree.keys())
+            for i, name in enumerate(keys):
+                is_last = (i == len(keys) - 1)
+                char = "└── " if is_last else "├── "
+                
+                sub_path = f"{curr_rel_path}/{name}" if curr_rel_path else name
+                
+                if sub_path in found_files:
+                    # It's a file
+                    meta = found_files[sub_path]
+                    status = "✅" if meta['uploaded'] else "⚠️"
+                    lines.append(f"{char}{name} ({meta['size']:.1f} KB) {status}")
+                else:
+                    # It's a directory
+                    lines.append(f"{char}{name}/")
+                    # Recurse
+                    sub_lines = render_hierarchy(curr_tree[name], sub_path)
+                    indent = "    " if is_last else "│   "
+                    for sl in sub_lines:
+                        lines.append(f"{indent}{sl}")
+            return lines
+
+        tree_lines = render_hierarchy(tree)
+        header = f"📁 Hierarchical view of {context_label} ({sub_dir}):\n(Legend: ✅ AI Indexed, ⚠️ Local only)\n"
         
-        lines = [f"📁 Files available in {context_label} ({sub_dir}):"]
-        for name in files_list:
-            meta = found_files[name]
-            status = "✅ AI Indexed" if meta['uploaded'] else "⚠️ Local only"
-            lines.append(f"  • {name} ({meta['size']:.1f} KB) - {status}")
-            
         return ToolResult(
             success=True,
-            message="\n".join(lines),
-            data={"files": found_files}
+            message=header + "\n".join(tree_lines),
+            data={"files": found_files, "tree": tree}
         )
     except Exception as e:
         return ToolResult(success=False, message=f"Failed to list files: {str(e)}")
@@ -1528,7 +1564,7 @@ def google_search(query: str, user_id: str, session: Session) -> ToolResult:
     try:
         # Use latest model for research
         response = client.models.generate_content(
-            model="gemini-3-pro-preview",
+            model="gemini-3-pro",
             contents=query,
             config=types.GenerateContentConfig(
                 tools=[types.Tool(google_search=types.GoogleSearch())],
