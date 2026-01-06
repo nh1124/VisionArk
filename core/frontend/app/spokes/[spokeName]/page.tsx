@@ -33,7 +33,7 @@ export default function SpokeChatPage({
     const [loading, setLoading] = useState(false);
     const [showSidebar, setShowSidebar] = useState(false);
     const [showCommandHelp, setShowCommandHelp] = useState(false);
-    const [selectedModel, setSelectedModel] = useState("gemini-3-pro");
+    const [selectedModel, setSelectedModel] = useState("gemini-3-pro-preview");
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const [displayName, setDisplayName] = useState("");
     const [elapsedTime, setElapsedTime] = useState(0);

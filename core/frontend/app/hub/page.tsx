@@ -27,7 +27,7 @@ export default function HubPage() {
     const [input, setInput] = useState("");
     const [loading, setLoading] = useState(false);
     const [showSidebar, setShowSidebar] = useState(false);
-    const [selectedModel, setSelectedModel] = useState("gemini-3-pro");
+    const [selectedModel, setSelectedModel] = useState("gemini-3-pro-preview");
     const [view, setView] = useState<"chat" | "inbox">("chat");
     const messagesEndRef = useRef<HTMLDivElement>(null);
 

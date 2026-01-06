@@ -15,6 +15,7 @@ import asyncio
 from pathlib import Path
 from utils.paths import secure_path_join
 import re
+import json
 
 CURRENT_PLAN_FILE = "PLAN.md"
 

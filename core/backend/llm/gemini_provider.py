@@ -12,7 +12,7 @@ from .base_provider import BaseLLMProvider, Message, CompletionResponse
 class GeminiProvider(BaseLLMProvider):
     """Google Gemini API provider with function calling support"""
     
-    def __init__(self, model_name: str = "gemini-3-pro", api_key: str = None, **kwargs):
+    def __init__(self, model_name: str = "gemini-3-pro-preview", api_key: str = None, **kwargs):
         super().__init__(model_name, api_key, **kwargs)
         # Initialize the new SDK client
         self.client = Client(api_key=self.api_key, http_options={'api_version': 'v1alpha', 'timeout': 600000})
