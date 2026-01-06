@@ -60,72 +60,44 @@ function MessageWithAttachmentsBase({
             )}
 
             <div
-                className={`max-w-[70%] ${role === "user"
-                    ? "bg-purple-600 text-white rounded-2xl rounded-tr-sm"
+                className={`max-w-[85%] ${role === "user"
+                    ? "bg-gradient-to-br from-purple-600 to-purple-800 text-white rounded-2xl rounded-tr-sm shadow-lg shadow-purple-900/20"
                     : type === "system"
-                        ? "bg-blue-900/50 border border-blue-700 text-blue-100 rounded-2xl rounded-tl-sm"
-                        : "bg-gray-800 text-gray-100 rounded-2xl rounded-tl-sm"
-                    } p-4`}
+                        ? "bg-gray-900/80 backdrop-blur-md border border-blue-500/30 text-blue-100 rounded-2xl rounded-tl-sm shadow-xl"
+                        : "bg-gray-800/80 backdrop-blur-md border border-gray-700/50 text-gray-100 rounded-2xl rounded-tl-sm shadow-xl"
+                    } p-5 transition-all hover:shadow-2xl hover:border-gray-600/50`}
             >
-                {/* Tool Calls Section - Collapsible with indentation */}
-                {role === "assistant" && tool_calls.length > 0 && (
-                    <div className="mb-3 border border-gray-700/50 rounded-lg overflow-hidden">
-                        <button
-                            onClick={() => setToolsExpanded(!toolsExpanded)}
-                            className="w-full flex items-center gap-2 px-3 py-2 bg-gray-900/50 hover:bg-gray-900/70 transition-colors text-sm"
-                        >
-                            <span className="text-gray-400">
-                                {toolsExpanded ? "▼" : "▶"}
-                            </span>
-                            <span className="text-purple-400 font-medium">🔧 Tool Calls</span>
-                            <span className="text-gray-500 text-xs">({tool_calls.length})</span>
-                        </button>
-
-                        {toolsExpanded && (
-                            <div className="px-3 py-2 bg-gray-900/30 space-y-1">
-                                {tool_calls.map((tool, idx) => (
-                                    <div key={idx} className="flex items-start gap-2 text-sm font-mono">
-                                        <span className="text-gray-600 select-none">├─</span>
-                                        <span className="text-cyan-400">{tool.name}</span>
-                                        <span className="text-gray-500">→</span>
-                                        <span className={tool.success ? "text-green-400" : "text-red-400"}>
-                                            {tool.result}
-                                        </span>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                )}
-
                 {/* Message Content - AI Response */}
-                {role === "assistant" ? (
-                    content ? (
-                        <MarkdownRenderer content={content} />
-                    ) : tool_calls.length === 0 ? (
-                        <span className="text-gray-400">(No response)</span>
-                    ) : null
-                ) : (
-                    <div className="whitespace-pre-wrap break-words">{content}</div>
-                )}
+                <div className="prose prose-invert max-w-none">
+                    {role === "assistant" ? (
+                        content ? (
+                            <MarkdownRenderer content={content} />
+                        ) : tool_calls.length === 0 ? (
+                            <span className="text-gray-400 italic">(No response)</span>
+                        ) : null
+                    ) : (
+                        <div className="whitespace-pre-wrap break-words leading-relaxed">{content}</div>
+                    )}
+                </div>
 
                 {/* Attachments */}
                 {attached_files.length > 0 && (
-                    <div className="mt-3 space-y-2">
+                    <div className="mt-4 pt-4 border-t border-gray-700/30 space-y-2">
+                        <p className="text-[10px] uppercase tracking-wider text-gray-500 font-bold mb-2">Attached Files</p>
                         {attached_files.map((file, index) => (
                             <div
                                 key={index}
-                                className={`flex items-center gap-2 p-2 rounded-lg ${role === "user"
-                                    ? "bg-purple-700/50"
-                                    : "bg-gray-700/50"
+                                className={`flex items-center gap-3 p-3 rounded-xl transition-colors ${role === "user"
+                                    ? "bg-white/10 hover:bg-white/20"
+                                    : "bg-gray-900/50 hover:bg-gray-900/80 border border-gray-700/50"
                                     }`}
                             >
-                                <div className="text-xl">{getFileIcon(file.type)}</div>
+                                <div className="text-2xl drop-shadow-sm">{getFileIcon(file.type)}</div>
                                 <div className="flex-1 min-w-0">
-                                    <div className="text-sm font-medium truncate">
+                                    <div className="text-sm font-semibold truncate">
                                         {file.name}
                                     </div>
-                                    <div className="text-xs opacity-70">
+                                    <div className="text-[11px] opacity-60 font-mono">
                                         {formatFileSize(file.size)}
                                     </div>
                                 </div>
@@ -133,20 +105,69 @@ function MessageWithAttachmentsBase({
                                     <a
                                         href={file.url}
                                         download={file.name}
-                                        className="text-xs hover:underline opacity-70 hover:opacity-100"
+                                        className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                                        title="Download file"
                                     >
-                                        Download
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="Vertical 4v12m0 0l-4-4m4 4l4-4M4 16h16" />
+                                        </svg>
                                     </a>
                                 )}
                             </div>
                         ))}
                     </div>
                 )}
+
+                {/* Tool Calls Section - Now at the bottom */}
+                {role === "assistant" && tool_calls.length > 0 && (
+                    <div className="mt-4 pt-4 border-t border-gray-700/30">
+                        <div className="rounded-xl border border-gray-700/50 bg-gray-950/50 overflow-hidden shadow-inner">
+                            <button
+                                onClick={() => setToolsExpanded(!toolsExpanded)}
+                                className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-900/50 transition-colors group"
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className="w-6 h-6 rounded-md bg-purple-500/20 border border-purple-500/30 flex items-center justify-center">
+                                        <span className="text-xs">🔧</span>
+                                    </div>
+                                    <span className="text-sm font-semibold text-gray-300 group-hover:text-purple-400 transition-colors">Internal Operations</span>
+                                    <span className="px-2 py-0.5 rounded-full bg-gray-800 text-[10px] text-gray-500 font-mono">
+                                        {tool_calls.length} steps
+                                    </span>
+                                </div>
+                                <span className={`text-gray-500 text-xs transition-transform duration-200 ${toolsExpanded ? "rotate-180" : ""}`}>
+                                    ▼
+                                </span>
+                            </button>
+
+                            {toolsExpanded && (
+                                <div className="px-4 pb-4 space-y-3 pt-1 border-t border-gray-800/50">
+                                    {tool_calls.map((tool, idx) => (
+                                        <div key={idx} className="flex flex-col gap-1">
+                                            <div className="flex items-center gap-2 text-[11px] font-mono">
+                                                <span className="text-purple-500/60 font-bold">EXEC</span>
+                                                <span className="text-cyan-400 font-semibold">{tool.name}</span>
+                                                <span className={`ml-auto px-1.5 py-0.5 rounded text-[9px] uppercase font-bold ${tool.success ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"}`}>
+                                                    {tool.success ? "Success" : "Failed"}
+                                                </span>
+                                            </div>
+                                            <div className="pl-4 border-l border-gray-800 ml-1 mt-1">
+                                                <div className="text-[12px] text-gray-500 font-mono line-clamp-2 hover:line-clamp-none transition-all cursor-pointer bg-gray-900/50 p-2 rounded-lg border border-gray-800/30">
+                                                    {tool.result}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
             </div>
 
             {role === "user" && (
-                <div className="w-8 h-8 rounded-full bg-cyan-600 flex items-center justify-center text-white font-bold flex-shrink-0">
-                    You
+                <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-cyan-600 to-cyan-400 flex items-center justify-center text-white font-black flex-shrink-0 shadow-lg shadow-cyan-900/20 text-xs tracking-tighter">
+                    YOU
                 </div>
             )}
         </div>

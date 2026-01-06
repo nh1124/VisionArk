@@ -5,8 +5,9 @@ Combines PDF processing and vector store for complete RAG workflow
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
+import asyncio
 
 from .pdf_processor import PDFProcessor
 from .vector_store import get_vector_store
@@ -16,7 +17,7 @@ from utils.paths import get_spoke_dir
 class RAGService:
     """High-level RAG operations for a Spoke (per-user)"""
     
-    def __init__(self, user_id: str, spoke_name: str, session: Optional[Session] = None):
+    def __init__(self, user_id: str, spoke_name: str, session: Optional[AsyncSession] = None):
         self.user_id = user_id
         self.spoke_name = spoke_name
         self.session = session
@@ -25,15 +26,15 @@ class RAGService:
         self.refs_dir = get_spoke_dir(user_id, spoke_name) / "refs"
         self.refs_dir.mkdir(parents=True, exist_ok=True)
     
-    def index_pdf(self, pdf_path: Path, reindex: bool = False) -> Dict:
+    async def index_pdf(self, pdf_path: Path, reindex: bool = False) -> Dict:
         """
         Index a PDF file into the vector store
         """
         # Check if already indexed
-        file_info = self.pdf_processor.get_file_info(pdf_path)
+        file_info = await asyncio.to_thread(self.pdf_processor.get_file_info, pdf_path)
         file_hash = file_info["file_hash"]
         
-        if not reindex and self._is_indexed(pdf_path, file_hash):
+        if not reindex and await self._is_indexed(pdf_path, file_hash):
             return {
                 "status": "skipped",
                 "reason": "already_indexed",
@@ -41,7 +42,7 @@ class RAGService:
             }
         
         # Process PDF into chunks
-        chunks_data = self.pdf_processor.process_pdf(pdf_path, chunk=True)
+        chunks_data = await asyncio.to_thread(self.pdf_processor.process_pdf, pdf_path, chunk=True)
         
         # Add to vector store
         contents = [chunk["content"] for chunk in chunks_data]
@@ -50,11 +51,11 @@ class RAGService:
         # Generate IDs from content + metadata
         ids = [f"{file_hash}_{i}" for i in range(len(chunks_data))]
         
-        self.vector_store.add_documents_batch(contents, metadatas, ids)
+        await asyncio.to_thread(self.vector_store.add_documents_batch, contents, metadatas, ids)
         
         # Update database tracking
         if self.session:
-            self._update_index_metadata(pdf_path, file_hash, len(chunks_data))
+            await self._update_index_metadata(pdf_path, file_hash, len(chunks_data))
         
         return {
             "status": "indexed",
@@ -63,7 +64,7 @@ class RAGService:
             "pages": file_info["page_count"]
         }
     
-    def index_directory(self, directory: Optional[Path] = None) -> Dict:
+    async def index_directory(self, directory: Optional[Path] = None) -> Dict:
         """
         Index all PDFs in a directory (defaults to refs/ folder)
         """
@@ -82,7 +83,7 @@ class RAGService:
         
         for pdf_path in pdf_files:
             try:
-                result = self.index_pdf(pdf_path)
+                result = await self.index_pdf(pdf_path)
                 results["details"].append(result)
                 
                 if result["status"] == "indexed":
@@ -99,7 +100,7 @@ class RAGService:
         
         return results
     
-    def search(
+    async def search(
         self,
         query: str,
         n_results: int = 5,
@@ -114,7 +115,7 @@ class RAGService:
             filter_metadata = {"filename": filter_file}
         
         # Search vector store
-        results = self.vector_store.search(query, n_results, filter_metadata)
+        results = await asyncio.to_thread(self.vector_store.search, query, n_results, filter_metadata)
         
         # Format with citations
         formatted_results = []
@@ -130,7 +131,7 @@ class RAGService:
         
         return formatted_results
     
-    def get_indexed_files(self) -> List[Dict]:
+    async def get_indexed_files(self) -> List[Dict]:
         """Get list of indexed files with metadata"""
         if not self.session:
             return []
@@ -142,7 +143,7 @@ class RAGService:
             ORDER BY indexed_at DESC
         """)
         
-        result = self.session.execute(query, {
+        result = await self.session.execute(query, {
             "spoke_name": self.spoke_name,
             "user_id": self.user_id
         })
@@ -162,14 +163,14 @@ class RAGService:
         """Remove a file from the index"""
         pass
     
-    def rebuild_index(self):
+    async def rebuild_index(self):
         """Rebuild the entire index from scratch"""
-        self.vector_store.clear()
-        return self.index_directory()
+        await asyncio.to_thread(self.vector_store.clear)
+        return await self.index_directory()
     
-    def get_stats(self) -> Dict:
+    async def get_stats(self) -> Dict:
         """Get RAG statistics for this Spoke"""
-        vector_stats = self.vector_store.get_stats()
+        vector_stats = await asyncio.to_thread(self.vector_store.get_stats)
         
         stats = {
             "user_id": self.user_id,
@@ -180,13 +181,13 @@ class RAGService:
         }
         
         if self.session:
-            indexed_files = self.get_indexed_files()
+            indexed_files = await self.get_indexed_files()
             stats["indexed_files"] = len(indexed_files)
             stats["total_chunks"] = sum(f["chunk_count"] for f in indexed_files)
         
         return stats
     
-    def _is_indexed(self, pdf_path: Path, file_hash: str) -> bool:
+    async def _is_indexed(self, pdf_path: Path, file_hash: str) -> bool:
         """Check if a file is already indexed with the same hash"""
         if not self.session:
             return False
@@ -196,15 +197,15 @@ class RAGService:
             WHERE spoke_name = :spoke_name AND user_id = :user_id AND file_path = :file_path
         """)
         
-        result = self.session.execute(query, {
+        result = (await self.session.execute(query, {
             "spoke_name": self.spoke_name,
             "user_id": self.user_id,
             "file_path": str(pdf_path)
-        }).fetchone()
+        })).fetchone()
         
         return result and result[0] == file_hash
     
-    def _update_index_metadata(self, pdf_path: Path, file_hash: str, chunk_count: int):
+    async def _update_index_metadata(self, pdf_path: Path, file_hash: str, chunk_count: int):
         """Update database tracking for indexed files"""
         upsert_query = text("""
             INSERT INTO rag_metadata (spoke_name, user_id, file_name, file_path, file_hash, chunk_count, indexed_at)
@@ -215,7 +216,7 @@ class RAGService:
                 indexed_at = :indexed_at
         """)
         
-        self.session.execute(upsert_query, {
+        await self.session.execute(upsert_query, {
             "spoke_name": self.spoke_name,
             "user_id": self.user_id,
             "file_name": pdf_path.name,
@@ -224,7 +225,7 @@ class RAGService:
             "chunk_count": chunk_count,
             "indexed_at": datetime.utcnow()
         })
-        self.session.commit()
+        await self.session.commit()
     
     def _format_citation(self, metadata: Dict) -> str:
         """Format a citation string"""

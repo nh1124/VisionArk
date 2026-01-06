@@ -12,7 +12,10 @@ from uuid import uuid4
 
 from utils.paths import get_spoke_dir, get_user_spokes_dir
 from services.auth import resolve_identity, Identity
-from models.database import UploadedFile, Node, get_engine, get_session
+from models.database import UploadedFile, Node, get_async_db
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+import aiofiles
 
 router = APIRouter(prefix="/api/spokes", tags=["Spokes"])
 
@@ -33,7 +36,8 @@ async def upload_file(
     spoke_name: str,
     file: UploadFile = File(...),
     identity: Identity = Depends(resolve_identity),
-    upload_to_gemini: bool = Query(False, description="Upload to Gemini File API for multimodal processing")
+    upload_to_gemini: bool = Query(False, description="Upload to Gemini File API for multimodal processing"),
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Upload a file to a spoke's refs directory (max 100MB)"""
     user_id = identity.user_id
@@ -55,36 +59,35 @@ async def upload_file(
     try:
         # Read and write file in chunks to handle large files
         total_size = 0
-        with open(file_path, "wb") as buffer:
+        async with aiofiles.open(file_path, "wb") as buffer:
             while chunk := await file.read(8192):  # 8KB chunks
                 total_size += len(chunk)
                 
                 # Check file size limit
                 if total_size > MAX_FILE_SIZE:
                     # Clean up partial file
-                    buffer.close()
+                    await buffer.close()
                     file_path.unlink(missing_ok=True)
                     raise HTTPException(
                         status_code=413,
                         detail=f"File too large. Maximum size is 100MB, got {total_size / 1024 / 1024:.1f}MB"
                     )
                 
-                buffer.write(chunk)
+                await buffer.write(chunk)
         
         # Detect MIME type
         mime_type, _ = mimetypes.guess_type(str(file_path))
         mime_type = mime_type or "application/octet-stream"
         
         # Get or create database session
-        db_session = get_session(get_engine())
-        
         try:
             # Find the spoke node
-            node = db_session.query(Node).filter(
+            result = await db.execute(select(Node).filter(
                 Node.user_id == user_id,
                 Node.name == spoke_name,
                 Node.node_type == "SPOKE"
-            ).first()
+            ))
+            node = result.scalars().first()
             
             gemini_file_uri = None
             gemini_file_name = None
@@ -97,20 +100,32 @@ async def upload_file(
                     from models.database import UserSettings
                     
                     # Get user's Gemini API key
-                    settings = db_session.query(UserSettings).filter(
+                    res = await db.execute(select(UserSettings).filter(
                         UserSettings.user_id == user_id
-                    ).first()
+                    ))
+                    settings = res.scalars().first()
                     
                     if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
                         api_key = decrypt_string(settings.ai_config["gemini_api_key"])
                         provider = get_provider(api_key=api_key)
                         
                         if hasattr(provider, 'upload_file'):
-                            result = provider.upload_file(
-                                str(file_path),
-                                mime_type=mime_type,
-                                display_name=file.filename
-                            )
+                            # upload_file is likely sync in current implementation, wrap it?
+                            # Actually, FileService is better. Let's use FileService later.
+                            # For now, keeping the manual logic but making DB part async.
+                            # Wait, provider.upload_file should be async if possible.
+                            if asyncio.iscoroutinefunction(provider.upload_file):
+                                result = await provider.upload_file(
+                                    str(file_path),
+                                    mime_type=mime_type,
+                                    display_name=file.filename
+                                )
+                            else:
+                                result = await asyncio.to_thread(provider.upload_file,
+                                    str(file_path),
+                                    mime_type=mime_type,
+                                    display_name=file.filename
+                                )
                             gemini_file_uri = result["file_uri"]
                             gemini_file_name = result["file_name"]
                 except Exception as gemini_err:
@@ -128,8 +143,8 @@ async def upload_file(
                     gemini_file_uri=gemini_file_uri,
                     gemini_file_name=gemini_file_name
                 )
-                db_session.add(db_file)
-                db_session.commit()
+                db.add(db_file)
+                await db.commit()
                 
                 return {
                     "message": f"File '{file.filename}' uploaded successfully",
@@ -150,8 +165,9 @@ async def upload_file(
                     "size": file_path.stat().st_size,
                     "warning": "File not recorded in database - spoke node not found"
                 }
-        finally:
-            db_session.close()
+        except Exception as e:
+            await db.rollback()
+            raise e
             
     except HTTPException:
         raise
@@ -162,7 +178,7 @@ async def upload_file(
 
 
 @router.get("/{spoke_name}/files")
-def list_files(
+async def list_files(
     spoke_name: str,
     identity: Identity = Depends(resolve_identity)
 ):
@@ -208,7 +224,7 @@ def list_files(
 
 
 @router.get("/{spoke_name}/files/{directory}/{filename}")
-def download_file(
+async def download_file(
     spoke_name: str,
     directory: str,
     filename: str,
@@ -233,11 +249,12 @@ def download_file(
 
 
 @router.delete("/{spoke_name}/files/{directory}/{filename}")
-def delete_file(
+async def delete_file(
     spoke_name: str,
     directory: str,
     filename: str,
-    identity: Identity = Depends(resolve_identity)
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Delete a file from spoke's refs or artifacts directory"""
     user_id = identity.user_id
@@ -256,20 +273,18 @@ def delete_file(
     
     try:
         # Also remove from database
-        db_session = get_session(get_engine())
-        try:
-            db_file = db_session.query(UploadedFile).filter(
-                UploadedFile.storage_path == str(file_path)
-            ).first()
-            if db_file:
-                db_session.delete(db_file)
-                db_session.commit()
-        finally:
-            db_session.close()
+        result = await db.execute(select(UploadedFile).filter(
+            UploadedFile.storage_path == str(file_path)
+        ))
+        db_file = result.scalars().first()
+        if db_file:
+            await db.delete(db_file)
+            await db.commit()
         
         file_path.unlink()
         return {"message": f"File '{filename}' deleted successfully"}
     except Exception as e:
+        await db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}")
 
 
@@ -282,21 +297,12 @@ from utils.encryption import decrypt_string
 from models.database import UserSettings
 
 
-def get_db():
-    """Get database session"""
-    engine = get_engine()
-    session = get_session(engine)
-    try:
-        yield session
-    finally:
-        session.close()
-
-
-def _get_user_api_key(db: Session, user_id: str) -> Optional[str]:
+async def _get_user_api_key(db: AsyncSession, user_id: str) -> Optional[str]:
     """Get user's Gemini API key from settings"""
-    settings = db.query(UserSettings).filter(
+    result = await db.execute(select(UserSettings).filter(
         UserSettings.user_id == user_id
-    ).first()
+    ))
+    settings = result.scalars().first()
     
     if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
         return decrypt_string(settings.ai_config["gemini_api_key"])
@@ -312,16 +318,16 @@ async def list_node_files(
     node_type: str,
     node_name: str,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """List all files for a Hub or Spoke"""
     if node_type.lower() not in ["hub", "spoke"]:
         raise HTTPException(status_code=400, detail="node_type must be 'hub' or 'spoke'")
     
-    api_key = _get_user_api_key(db, identity.user_id)
+    api_key = await _get_user_api_key(db, identity.user_id)
     service = FileService(db, identity.user_id, api_key)
     
-    files = service.list_files(node_type, node_name)
+    files = await service.list_files(node_type, node_name)
     return {"files": files, "count": len(files)}
 
 
@@ -331,7 +337,7 @@ async def upload_node_file(
     node_name: str,
     file: UploadFile = File(...),
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Upload a file to Hub or Spoke storage"""
     if node_type.lower() not in ["hub", "spoke"]:
@@ -344,11 +350,11 @@ async def upload_node_file(
     mime_type, _ = mimetypes.guess_type(file.filename)
     mime_type = mime_type or file.content_type or "application/octet-stream"
     
-    api_key = _get_user_api_key(db, identity.user_id)
+    api_key = await _get_user_api_key(db, identity.user_id)
     service = FileService(db, identity.user_id, api_key)
     
     try:
-        uploaded_file = service.save_file(
+        uploaded_file = await service.save_file(
             content=content,
             filename=file.filename,
             mime_type=mime_type,
@@ -372,7 +378,7 @@ async def sync_gemini_files(
     node_type: str,
     node_name: str,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Sync all files for a node to Gemini File API.
@@ -381,7 +387,7 @@ async def sync_gemini_files(
     if node_type.lower() not in ["hub", "spoke"]:
         raise HTTPException(status_code=400, detail="node_type must be 'hub' or 'spoke'")
     
-    api_key = _get_user_api_key(db, identity.user_id)
+    api_key = await _get_user_api_key(db, identity.user_id)
     if not api_key:
         raise HTTPException(status_code=400, detail="Gemini API key not configured")
     
@@ -404,7 +410,7 @@ async def cleanup_gemini_files(
     node_type: str,
     node_name: str,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Delete all Gemini files for a node (preserves local files).
@@ -413,7 +419,7 @@ async def cleanup_gemini_files(
     if node_type.lower() not in ["hub", "spoke"]:
         raise HTTPException(status_code=400, detail="node_type must be 'hub' or 'spoke'")
     
-    api_key = _get_user_api_key(db, identity.user_id)
+    api_key = await _get_user_api_key(db, identity.user_id)
     service = FileService(db, identity.user_id, api_key)
     
     cleaned = await service.cleanup_gemini_files(node_type, node_name)
@@ -425,29 +431,31 @@ async def cleanup_gemini_files(
 
 
 @files_router.delete("/{file_id}")
-def delete_file_by_id(
+async def delete_file_by_id(
     file_id: str,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Delete a file by ID (from disk, Gemini, and database)"""
     # Verify ownership
-    file_record = db.query(UploadedFile).filter(
+    result = await db.execute(select(UploadedFile).filter(
         UploadedFile.id == file_id
-    ).first()
+    ))
+    file_record = result.scalars().first()
     
     if not file_record:
         raise HTTPException(status_code=404, detail="File not found")
     
     # Check ownership via node
-    node = db.query(Node).filter(Node.id == file_record.node_id).first()
+    result = await db.execute(select(Node).filter(Node.id == file_record.node_id))
+    node = result.scalars().first()
     if not node or node.user_id != identity.user_id:
         raise HTTPException(status_code=403, detail="Access denied")
     
-    api_key = _get_user_api_key(db, identity.user_id)
+    api_key = await _get_user_api_key(db, identity.user_id)
     service = FileService(db, identity.user_id, api_key)
     
-    if service.delete_file(file_id):
+    if await service.delete_file(file_id):
         return {"message": "File deleted successfully"}
     else:
         raise HTTPException(status_code=500, detail="Failed to delete file")

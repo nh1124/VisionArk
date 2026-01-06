@@ -7,7 +7,8 @@ from pathlib import Path
 from uuid import uuid4
 
 from google.genai import Client, types
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, delete
 
 from models.database import UploadedFile, Node
 from config import get_settings
@@ -21,7 +22,7 @@ MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024
 class FileService:
     """Service for managing files with Gemini File API integration (New SDK)"""
     
-    def __init__(self, db: Session, user_id: str, api_key: str = None):
+    def __init__(self, db: AsyncSession, user_id: str, api_key: str = None):
         self.db = db
         self.user_id = user_id
         self.api_key = api_key
@@ -52,23 +53,25 @@ class FileService:
         """Compute SHA256 hash of file content"""
         return hashlib.sha256(content).hexdigest()
     
-    def _get_node(self, node_type: str, node_name: str) -> Optional[Node]:
-        """Get node from database"""
+    async def _get_node(self, node_type: str, node_name: str) -> Optional[Node]:
+        """Get node from database asynchronously"""
         if node_type.lower() == "hub":
-            return self.db.query(Node).filter(
+            result = await self.db.execute(select(Node).filter(
                 Node.user_id == self.user_id,
                 Node.node_type == "HUB"
-            ).first()
+            ))
+            return result.scalars().first()
         else:
-            return self.db.query(Node).filter(
+            result = await self.db.execute(select(Node).filter(
                 Node.user_id == self.user_id,
                 Node.name == node_name,
                 Node.node_type == "SPOKE"
-            ).first()
+            ))
+            return result.scalars().first()
     
-    def _get_or_create_node(self, node_type: str, node_name: str) -> Node:
-        """Get or create node in database"""
-        node = self._get_node(node_type, node_name)
+    async def _get_or_create_node(self, node_type: str, node_name: str) -> Node:
+        """Get or create node in database asynchronously"""
+        node = await self._get_node(node_type, node_name)
         if node:
             return node
         
@@ -97,7 +100,7 @@ class FileService:
             )
         
         self.db.add(node)
-        self.db.commit()
+        await self.db.commit()
         
         # Create default profile
         profile = AgentProfile(
@@ -107,12 +110,12 @@ class FileService:
             is_active=True
         )
         self.db.add(profile)
-        self.db.commit()
+        await self.db.commit()
         
         print(f"[FileService] Created node: {node_type}/{node_name}")
         return node
     
-    def save_file(
+    async def save_file(
         self,
         content: bytes,
         filename: str,
@@ -121,30 +124,19 @@ class FileService:
         node_name: str
     ) -> UploadedFile:
         """
-        Save file to filesystem and database.
-        
-        Args:
-            content: File binary content
-            filename: Original filename  
-            mime_type: MIME type
-            node_type: "hub" or "spoke"
-            node_name: Node name (spoke name or "hub")
-        
-        Returns:
-            UploadedFile database record
+        Save file to filesystem and database asynchronously.
         """
         # Validate file size
         if len(content) > MAX_FILE_SIZE_BYTES:
             raise ValueError(f"File size exceeds limit of {MAX_FILE_SIZE_BYTES // (1024*1024)}MB")
         
-        # Get existing node (should be created when spoke/hub is created)
-        node = self._get_node(node_type, node_name)
+        # Get existing node
+        node = await self._get_node(node_type, node_name)
         if not node:
-            # Log for debugging
             print(f"[FileService] Node not found: {node_type}/{node_name} for user {self.user_id}")
             raise ValueError(f"Node not found: {node_type}/{node_name}. Please create the spoke first.")
         
-        # Generate unique filename to avoid collisions
+        # Generate unique filename
         file_id = str(uuid4())
         ext = Path(filename).suffix
         safe_filename = f"{file_id}{ext}"
@@ -152,10 +144,7 @@ class FileService:
         # Save to filesystem
         files_dir = self.get_files_dir(node_type, node_name)
         file_path = files_dir / safe_filename
-        file_path.write_bytes(content)
-        
-        # Compute hash
-        # content_hash = self._compute_hash(content)
+        await asyncio.to_thread(file_path.write_bytes, content)
         
         # Create database record
         uploaded_file = UploadedFile(
@@ -171,8 +160,7 @@ class FileService:
         )
         
         self.db.add(uploaded_file)
-        self.db.commit()
-        self.db.refresh(uploaded_file)
+        await self.db.commit()
         
         print(f"[FileService] Saved file: {filename} -> {file_path}")
         return uploaded_file
@@ -215,7 +203,7 @@ class FileService:
         # Update database record
         file_record.gemini_file_uri = gemini_file.uri
         file_record.gemini_file_name = gemini_file.name
-        self.db.commit()
+        await self.db.commit()
         
         print(f"[FileService] Uploaded to Gemini: {gemini_file.name}")
         return {
@@ -254,13 +242,14 @@ class FileService:
         Returns:
             List of file status dicts
         """
-        node = self._get_node(node_type, node_name)
+        node = await self._get_node(node_type, node_name)
         if not node:
             return []
         
-        files = self.db.query(UploadedFile).filter(
+        result = await self.db.execute(select(UploadedFile).filter(
             UploadedFile.node_id == node.id
-        ).all()
+        ))
+        files = result.scalars().all()
         
         results = []
         for file_record in files:
@@ -282,7 +271,7 @@ class FileService:
                     # Clear stale reference
                     file_record.gemini_file_uri = None
                     file_record.gemini_file_name = None
-                    self.db.commit()
+                    await self.db.commit()
             
             # Upload if not available
             if not status["gemini_available"]:
@@ -316,14 +305,15 @@ class FileService:
         Returns:
             Number of files cleaned up
         """
-        node = self._get_node(node_type, node_name)
+        node = await self._get_node(node_type, node_name)
         if not node:
             return 0
         
-        files = self.db.query(UploadedFile).filter(
+        result = await self.db.execute(select(UploadedFile).filter(
             UploadedFile.node_id == node.id,
             UploadedFile.gemini_file_name.isnot(None)
-        ).all()
+        ))
+        files = result.scalars().all()
         
         cleaned = 0
         client = self._ensure_client()
@@ -339,22 +329,17 @@ class FileService:
             file_record.gemini_file_name = None
             cleaned += 1
         
-        self.db.commit()
+        await self.db.commit()
         return cleaned
     
-    def delete_file(self, file_id: str) -> bool:
+    async def delete_file(self, file_id: str) -> bool:
         """
-        Delete a file from disk, Gemini, and database.
-        
-        Args:
-            file_id: UploadedFile ID
-        
-        Returns:
-            True if deleted successfully
+        Delete a file from disk, Gemini, and database asynchronously.
         """
-        file_record = self.db.query(UploadedFile).filter(
+        result = await self.db.execute(select(UploadedFile).filter(
             UploadedFile.id == file_id
-        ).first()
+        ))
+        file_record = result.scalars().first()
         
         if not file_record:
             return False
@@ -373,15 +358,15 @@ class FileService:
             file_path.unlink()
         
         # Delete from database
-        self.db.delete(file_record)
-        self.db.commit()
+        await self.db.delete(file_record)
+        await self.db.commit()
         
         print(f"[FileService] Deleted file: {file_record.filename}")
         return True
     
-    def list_files(self, node_type: str, node_name: str) -> List[Dict[str, Any]]:
+    async def list_files(self, node_type: str, node_name: str) -> List[Dict[str, Any]]:
         """
-        List all files for a node.
+        List all files for a node asynchronously.
         
         Args:
             node_type: "hub" or "spoke"
@@ -390,13 +375,14 @@ class FileService:
         Returns:
             List of file metadata dicts
         """
-        node = self._get_node(node_type, node_name)
+        node = await self._get_node(node_type, node_name)
         if not node:
             return []
         
-        files = self.db.query(UploadedFile).filter(
+        result = await self.db.execute(select(UploadedFile).filter(
             UploadedFile.node_id == node.id
-        ).order_by(UploadedFile.uploaded_at.desc()).all()
+        ).order_by(UploadedFile.uploaded_at.desc()))
+        files = result.scalars().all()
         
         return [
             {
@@ -422,14 +408,15 @@ class FileService:
         Returns:
             List of Gemini file objects for API calls
         """
-        node = self._get_node(node_type, node_name)
+        node = await self._get_node(node_type, node_name)
         if not node:
             return []
         
-        files = self.db.query(UploadedFile).filter(
+        result = await self.db.execute(select(UploadedFile).filter(
             UploadedFile.node_id == node.id,
             UploadedFile.gemini_file_name.isnot(None)
-        ).all()
+        ))
+        files = result.scalars().all()
         
         parts = []
         client = self._ensure_client()

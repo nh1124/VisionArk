@@ -95,9 +95,31 @@ class BaseLLMProvider(ABC):
     ):
         """
         Stream chat events including status updates and content chunks.
-        
-        Each yielded item should be a dict with 'type' and 'data'.
-        Types: 'status', 'content', 'tool_call', 'final_response'
+        """
+        pass
+
+    @abstractmethod
+    async def complete_async(
+        self,
+        messages: List[Message],
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs
+    ) -> CompletionResponse:
+        """
+        Asynchronously generate a completion from the LLM
+        """
+        pass
+
+    @abstractmethod
+    async def stream_chat_async(
+        self,
+        messages: List[Message],
+        temperature: float = 0.7,
+        **kwargs
+    ):
+        """
+        Asynchronously stream chat events.
         """
         pass
     

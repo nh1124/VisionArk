@@ -47,7 +47,7 @@ export default function MarkdownRenderer({ content, className = "" }: MarkdownRe
                                         style={atomDark}
                                         language={match[1]}
                                         PreTag="div"
-                                        className="rounded-xl !bg-gray-900/50 !mt-0 !pt-8"
+                                        className="rounded-xl !bg-gray-950/80 !mt-0 !pt-10 !pb-4 !px-4 border border-gray-800/50 shadow-inner"
                                         {...props}
                                     >
                                         {String(children).replace(/\n$/, "")}
@@ -64,8 +64,8 @@ export default function MarkdownRenderer({ content, className = "" }: MarkdownRe
                     },
                     table({ children }) {
                         return (
-                            <div className="overflow-x-auto my-4 rounded-lg border border-gray-700">
-                                <table className="min-w-full divide-y divide-gray-700">{children}</table>
+                            <div className="overflow-x-auto my-6 rounded-xl border border-gray-800/50 bg-gray-900/20 shadow-sm">
+                                <table className="min-w-full divide-y divide-gray-800/50">{children}</table>
                             </div>
                         );
                     },
@@ -80,7 +80,7 @@ export default function MarkdownRenderer({ content, className = "" }: MarkdownRe
                         );
                     },
                     td({ children }) {
-                        return <td className="px-4 py-2 text-sm text-gray-400 border-t border-gray-700">{children}</td>;
+                        return <td className="px-5 py-3 text-sm text-gray-400 border-t border-gray-800/50">{children}</td>;
                     },
                     ul({ children }) {
                         return <ul className="list-disc list-inside space-y-1 my-3 text-gray-300">{children}</ul>;

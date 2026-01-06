@@ -5,8 +5,10 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 import httpx
 
-from models.database import User, UserSettings, ServiceRegistry, ExternalIdentity
-from services.auth import get_db, resolve_identity, Identity
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from models.database import User, UserSettings, ServiceRegistry, ExternalIdentity, get_async_db
+from services.auth import resolve_identity, Identity
 from utils.password import hash_password, verify_password
 from utils.encryption import encrypt_string, decrypt_string
 from config import settings
@@ -49,14 +51,15 @@ class SettingsSummary(BaseModel):
 # --- Endpoints ---
 
 @router.get("", response_model=SettingsSummary)
-def get_settings(
+async def get_settings(
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Get all user settings, services, and integrations"""
     # 1. AI Config
-    settings = db.query(UserSettings).filter(UserSettings.user_id == identity.user_id).first()
-    ai_config = settings.ai_config if settings else {}
+    result = await db.execute(select(UserSettings).filter(UserSettings.user_id == identity.user_id))
+    settings_obj = result.scalars().first()
+    ai_config = settings_obj.ai_config if settings_obj else {}
     
     # Mask API keys in response
     masked_ai_config = ai_config.copy()
@@ -65,10 +68,12 @@ def get_settings(
             masked_ai_config[key] = "********"
             
     # 2. Services
-    services = db.query(ServiceRegistry).filter(ServiceRegistry.user_id == identity.user_id).all()
+    result = await db.execute(select(ServiceRegistry).filter(ServiceRegistry.user_id == identity.user_id))
+    services = result.scalars().all()
     
     # 3. Integrations
-    integrations = db.query(ExternalIdentity).filter(ExternalIdentity.user_id == identity.user_id).all()
+    result = await db.execute(select(ExternalIdentity).filter(ExternalIdentity.user_id == identity.user_id))
+    integrations = result.scalars().all()
     integration_list = [
         {"issuer": i.issuer, "subject": i.subject, "linked_at": i.linked_at}
         for i in integrations
@@ -81,20 +86,21 @@ def get_settings(
     }
 
 @router.patch("/ai")
-def update_ai_settings(
+async def update_ai_settings(
     update: AIConfigUpdate,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Update AI provider settings with encryption"""
     from sqlalchemy.orm.attributes import flag_modified
     
-    settings = db.query(UserSettings).filter(UserSettings.user_id == identity.user_id).first()
-    if not settings:
-        settings = UserSettings(user_id=identity.user_id, ai_config={})
-        db.add(settings)
+    result = await db.execute(select(UserSettings).filter(UserSettings.user_id == identity.user_id))
+    settings_obj = result.scalars().first()
+    if not settings_obj:
+        settings_obj = UserSettings(user_id=identity.user_id, ai_config={})
+        db.add(settings_obj)
     
-    current_config = dict(settings.ai_config) if settings.ai_config else {}
+    current_config = dict(settings_obj.ai_config) if settings_obj.ai_config else {}
     
     if update.gemini_api_key:
         # Only update if it's not the masked value
@@ -102,24 +108,25 @@ def update_ai_settings(
             encrypted = encrypt_string(update.gemini_api_key)
             current_config["gemini_api_key"] = encrypted
         
-    settings.ai_config = current_config
+    settings_obj.ai_config = current_config
     # Force SQLAlchemy to detect the JSON change
-    flag_modified(settings, "ai_config")
-    db.commit()
+    flag_modified(settings_obj, "ai_config")
+    await db.commit()
     return {"message": "AI settings updated"}
 
 @router.post("/services", response_model=ServiceResponse)
-def register_service(
+async def register_service(
     reg: ServiceRegister,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Register or update a microservice connection"""
     # Check if exists
-    service = db.query(ServiceRegistry).filter(
+    result = await db.execute(select(ServiceRegistry).filter(
         ServiceRegistry.user_id == identity.user_id,
         ServiceRegistry.service_name == reg.service_name
-    ).first()
+    ))
+    service = result.scalars().first()
     
     encrypted_key = encrypt_string(reg.api_key) if reg.api_key else None
     
@@ -136,8 +143,8 @@ def register_service(
         )
         db.add(service)
     
-    db.commit()
-    db.refresh(service)
+    await db.commit()
+    await db.refresh(service)
     return service
 
 @router.post("/test-connection")
@@ -174,13 +181,14 @@ async def test_connection(
 async def check_service_health(
     service_id: int,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Trigger a health check for a service"""
-    service = db.query(ServiceRegistry).filter(
+    result = await db.execute(select(ServiceRegistry).filter(
         ServiceRegistry.id == service_id,
         ServiceRegistry.user_id == identity.user_id
-    ).first()
+    ))
+    service = result.scalars().first()
     
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
@@ -209,17 +217,18 @@ async def check_service_health(
         service.health_status = "unreachable"
         
     service.last_health_check = datetime.utcnow()
-    db.commit()
+    await db.commit()
     return {"status": service.health_status, "last_check": service.last_health_check}
 
 @router.post("/account/password")
-def change_password(
+async def change_password(
     pc: PasswordChange,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Change the current user's password"""
-    user = db.query(User).filter(User.id == identity.user_id).first()
+    result = await db.execute(select(User).filter(User.id == identity.user_id))
+    user = result.scalars().first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
@@ -227,24 +236,26 @@ def change_password(
         raise HTTPException(status_code=400, detail="Invalid current password")
     
     user.password_hash = hash_password(pc.new_password)
-    db.commit()
+    await db.commit()
     return {"message": "Password changed successfully"}
 
 @router.get("/status")
 async def get_system_status(
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Check if all mandatory services (Gemini, LBS, KnowledgeCore) are configured and healthy"""
     # 1. Check Gemini
-    settings_obj = db.query(UserSettings).filter(UserSettings.user_id == identity.user_id).first()
+    result = await db.execute(select(UserSettings).filter(UserSettings.user_id == identity.user_id))
+    settings_obj = result.scalars().first()
     gemini_configured = False
     if settings_obj and settings_obj.ai_config:
         if settings_obj.ai_config.get("gemini_api_key"):
             gemini_configured = True
             
     # 2. Check Services
-    services = db.query(ServiceRegistry).filter(ServiceRegistry.user_id == identity.user_id).all()
+    result = await db.execute(select(ServiceRegistry).filter(ServiceRegistry.user_id == identity.user_id))
+    services = result.scalars().all()
     
     status_map = {
         "gemini": {"configured": gemini_configured},

@@ -33,9 +33,10 @@ export default function SpokeChatPage({
     const [loading, setLoading] = useState(false);
     const [showSidebar, setShowSidebar] = useState(false);
     const [showCommandHelp, setShowCommandHelp] = useState(false);
-    const [selectedModel, setSelectedModel] = useState("gemini-3-pro-preview");
+    const [selectedModel, setSelectedModel] = useState("gemini-3-pro");
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const [displayName, setDisplayName] = useState("");
+    const [elapsedTime, setElapsedTime] = useState(0);
 
     // Auto-scroll to bottom when messages change
     useEffect(() => {
@@ -99,6 +100,11 @@ export default function SpokeChatPage({
         setInput("");
         setLoading(true);
         setStatusText("Thinking...");
+        setElapsedTime(0);
+        const startTime = Date.now();
+        const timerInterval = setInterval(() => {
+            setElapsedTime(Math.floor((Date.now() - startTime) / 1000));
+        }, 1000);
 
         try {
             const formData = new FormData();
@@ -179,8 +185,10 @@ export default function SpokeChatPage({
             console.error("Error:", error);
             setMessages((prev) => [...prev, { role: "assistant", content: "Error: Could not connect to Spoke agent." }]);
         } finally {
+            clearInterval(timerInterval);
             setLoading(false);
             setStatusText("");
+            setElapsedTime(0);
         }
     };
 
@@ -264,7 +272,14 @@ export default function SpokeChatPage({
                                         <div className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
                                         <div className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
                                     </div>
-                                    <p className="text-sm text-gray-400">{statusText || "Thinking..."}</p>
+                                    <p className="text-sm text-gray-400">
+                                        {statusText || "Thinking..."}
+                                        {elapsedTime > 0 && (
+                                            <span className="ml-2 text-gray-500 font-mono text-xs">
+                                                ({elapsedTime}s)
+                                            </span>
+                                        )}
+                                    </p>
                                 </div>
                             </div>
                         )}

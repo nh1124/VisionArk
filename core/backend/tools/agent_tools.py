@@ -3,7 +3,8 @@ Agent Tools - Native Function Calling Implementation
 Replaces slash command system with Gemini native function calling
 """
 from typing import Dict, Any, Optional, List
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from datetime import datetime, date
 import uuid
 
@@ -41,7 +42,7 @@ class ToolResult:
 # LBS Client Helper
 # ==============================================================================
 
-def _get_lbs_client(user_id: str, session: Session) -> LBSClient:
+async def _get_lbs_client(user_id: str, session: AsyncSession) -> LBSClient:
     """Get LBS client with user's registered LBS API key and remote user ID from ServiceRegistry"""
     from models.database import ServiceRegistry
     from utils.encryption import decrypt_string
@@ -50,10 +51,11 @@ def _get_lbs_client(user_id: str, session: Session) -> LBSClient:
     lbs_api_key = None
     lbs_url = None
     
-    service = session.query(ServiceRegistry).filter(
+    result = await session.execute(select(ServiceRegistry).filter(
         ServiceRegistry.user_id == user_id,
         ServiceRegistry.service_name == "lbs"
-    ).first()
+    ))
+    service = result.scalars().first()
     
     if service:
         lbs_url = service.base_url
@@ -67,19 +69,20 @@ def _get_lbs_client(user_id: str, session: Session) -> LBSClient:
     return LBSClient(base_url=lbs_url, api_key=lbs_api_key)
 
 
-def _get_kc_service(user_id: str, session: Session) -> KnowledgeCoreService:
+def _get_kc_service(user_id: str, session: AsyncSession) -> KnowledgeCoreService:
     """Get KnowledgeCore service for the user"""
     return KnowledgeCoreService(session, user_id)
 
 
-def _get_file_service(user_id: str, session: Session) -> 'FileService':
+async def _get_file_service(user_id: str, session: AsyncSession) -> 'FileService':
     """Get FileService for the user with API key configuration"""
     from models.database import UserSettings
     from utils.encryption import decrypt_string
     from services.file_service import FileService
     
     api_key = None
-    settings = session.query(UserSettings).filter(UserSettings.user_id == user_id).first()
+    result = await session.execute(select(UserSettings).filter(UserSettings.user_id == user_id))
+    settings = result.scalars().first()
     if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
         try:
             api_key = decrypt_string(settings.ai_config["gemini_api_key"])
@@ -115,11 +118,11 @@ def _resolve_agent_artifacts_dir(user_id: str, node_type: str, spoke_name: Optio
 # Hub Tools - Available to Hub Agent
 # ==============================================================================
 
-def create_spoke(
+async def create_spoke(
     spoke_name: str,
     custom_prompt: Optional[str] = None,
     *,
-    session: Optional[Session] = None,
+    session: Optional[AsyncSession] = None,
     user_id: Optional[str] = None
 ) -> ToolResult:
     """
@@ -140,16 +143,17 @@ def create_spoke(
     
     try:
         # Create DB Node and Profile
-        node = SpokeAgent.get_or_create_spoke_node(user_id, spoke_name, session)
+        node = await SpokeAgent.get_or_create_spoke_node(user_id, spoke_name, session)
         
         if custom_prompt:
-            profile = session.query(AgentProfile).filter(
+            result = await session.execute(select(AgentProfile).filter(
                 AgentProfile.node_id == node.id,
                 AgentProfile.is_active == True
-            ).first()
+            ))
+            profile = result.scalars().first()
             if profile:
                 profile.system_prompt = custom_prompt
-                session.commit()
+                await session.commit()
         
         return ToolResult(
             success=True,
@@ -157,14 +161,14 @@ def create_spoke(
             data={"spoke_name": spoke_name, "node_id": node.id}
         )
     except Exception as e:
-        session.rollback()
+        await session.rollback()
         return ToolResult(success=False, message=f"Failed to create spoke: {str(e)}")
 
 
-def create_multiple_spokes(
+async def create_multiple_spokes(
     spoke_names: List[str],
     *,
-    session: Optional[Session] = None,
+    session: Optional[AsyncSession] = None,
     user_id: Optional[str] = None
 ) -> ToolResult:
     """
@@ -184,7 +188,7 @@ def create_multiple_spokes(
     errors = []
     
     for name in spoke_names:
-        res = create_spoke(spoke_name=name, session=session, user_id=user_id)
+        res = await create_spoke(spoke_name=name, session=session, user_id=user_id)
         if res.success:
             results.append(name)
         else:
@@ -204,10 +208,10 @@ def create_multiple_spokes(
     )
 
 
-def delete_spoke(
+async def delete_spoke(
     spoke_name: str,
     *,
-    session: Optional[Session] = None,
+    session: Optional[AsyncSession] = None,
     user_id: Optional[str] = None
 ) -> ToolResult:
     """
@@ -225,24 +229,25 @@ def delete_spoke(
         return ToolResult(success=False, message="Error: Missing database session or user context")
     try:
         # Find and archive the node
-        node = session.query(Node).filter(
+        result = await session.execute(select(Node).filter(
             Node.user_id == user_id,
             Node.name == spoke_name,
             Node.node_type == "SPOKE"
-        ).first()
+        ))
+        node = result.scalars().first()
         
         if not node:
             return ToolResult(success=False, message=f"Spoke '{spoke_name}' not found")
         
         node.is_archived = True
-        session.commit()
+        await session.commit()
         
         # Clean up LBS tasks
         try:
-            client = _get_lbs_client(user_id, session)
-            tasks = client.get_tasks(context=spoke_name)
+            client = await _get_lbs_client(user_id, session)
+            tasks = await client.get_tasks(context=spoke_name)
             for t in tasks:
-                client.delete_task(t["task_id"])
+                await client.delete_task(t["task_id"])
         except Exception as lbs_err:
             print(f"[DELETE_SPOKE] Warning: Failed to cleanup LBS tasks: {lbs_err}")
         
@@ -256,7 +261,7 @@ def delete_spoke(
         return ToolResult(success=False, message=f"Failed to delete spoke: {str(e)}")
 
 
-def create_task(
+async def create_task(
     task_name: str,
     workload: float,
     spoke: Optional[str] = None,
@@ -267,7 +272,7 @@ def create_task(
     month_day: Optional[int] = None,
     notes: Optional[str] = None,
     *,
-    session: Optional[Session] = None,
+    session: Optional[AsyncSession] = None,
     user_id: Optional[str] = None,
     context_name: str = "general",
     meta_info: Optional[str] = None
@@ -327,8 +332,8 @@ def create_task(
         elif rule_type.upper() == "MONTHLY_DAY" and month_day:
             task_data["month_day"] = month_day
         
-        client = _get_lbs_client(user_id, session)
-        result = client.create_task(task_data)
+        client = await _get_lbs_client(user_id, session)
+        result = await client.create_task(task_data)
         
         return ToolResult(
             success=True,
@@ -339,10 +344,10 @@ def create_task(
         return ToolResult(success=False, message=f"Failed to create task: {str(e)}")
 
 
-def list_tasks(
+async def list_tasks(
     context: Optional[str] = None,
     *,
-    session: Optional[Session] = None,
+    session: Optional[AsyncSession] = None,
     user_id: Optional[str] = None,
     context_name: str = "general",
     meta_info: Optional[str] = None
@@ -359,9 +364,9 @@ def list_tasks(
     if not session or not user_id:
         return ToolResult(success=False, message="Error: Missing database session or user context")
     try:
-        client = _get_lbs_client(user_id, session)
+        client = await _get_lbs_client(user_id, session)
         target_context = context or context_name
-        tasks = client.get_tasks(context=target_context)
+        tasks = await client.get_tasks(context=target_context)
         
         if not tasks:
             return ToolResult(
@@ -386,7 +391,7 @@ def list_tasks(
         return ToolResult(success=False, message=f"Failed to list tasks: {str(e)}")
 
 
-def update_task_details(
+async def update_task_details(
     task_id: str,
     task_name: Optional[str] = None,
     workload: Optional[float] = None,
@@ -399,7 +404,7 @@ def update_task_details(
     interval_days: Optional[int] = None,
     month_day: Optional[int] = None,
     *,
-    session: Optional[Session] = None,
+    session: Optional[AsyncSession] = None,
     user_id: Optional[str] = None
 ) -> ToolResult:
     """
@@ -475,8 +480,8 @@ def update_task_details(
         if not updates:
             return ToolResult(success=False, message="No updates provided")
             
-        client = _get_lbs_client(user_id, session)
-        result = client.update_task(task_id, updates)
+        client = await _get_lbs_client(user_id, session)
+        result = await client.update_task(task_id, updates)
         
         return ToolResult(
             success=True,
@@ -487,10 +492,10 @@ def update_task_details(
         return ToolResult(success=False, message=f"Failed to update task: {str(e)}")
 
 
-def delete_task_by_id(
+async def delete_task_by_id(
     task_id: str,
     *,
-    session: Optional[Session] = None,
+    session: Optional[AsyncSession] = None,
     user_id: Optional[str] = None
 ) -> ToolResult:
     """
@@ -502,8 +507,8 @@ def delete_task_by_id(
     if not session or not user_id:
         return ToolResult(success=False, message="Error: Missing database session or user context")
     try:
-        client = _get_lbs_client(user_id, session)
-        client.delete_task(task_id)
+        client = await _get_lbs_client(user_id, session)
+        await client.delete_task(task_id)
         
         return ToolResult(
             success=True,
@@ -514,12 +519,12 @@ def delete_task_by_id(
         return ToolResult(success=False, message=f"Failed to delete task: {str(e)}")
 
 
-def complete_lbs_task(
+async def complete_lbs_task(
     task_id: str,
     target_date: str,
     status: str = "done",
     *,
-    session: Optional[Session] = None,
+    session: Optional[AsyncSession] = None,
     user_id: Optional[str] = None,
     meta_info: Optional[str] = None
 ) -> ToolResult:
@@ -535,7 +540,7 @@ def complete_lbs_task(
         return ToolResult(success=False, message="Error: Missing database session or user context")
     try:
         from services.lbs_client import TaskStatus
-        client = _get_lbs_client(user_id, session)
+        client = await _get_lbs_client(user_id, session)
         
         # Validate status
         try:
@@ -544,7 +549,7 @@ def complete_lbs_task(
             return ToolResult(success=False, message=f"Invalid status: {status}. Use 'done', 'skipped', 'todo', or 'in_progress'.")
             
         dt = date.fromisoformat(target_date)
-        result = client.toggle_task_completion(task_id, dt, status_enum)
+        result = await client.toggle_task_completion(task_id, dt, status_enum)
         
         return ToolResult(
             success=True,
@@ -555,11 +560,11 @@ def complete_lbs_task(
         return ToolResult(success=False, message=f"Failed to complete task: {str(e)}")
 
 
-def get_lbs_schedule(
+async def get_lbs_schedule(
     start_date: str,
     end_date: str,
     *,
-    session: Optional[Session] = None,
+    session: Optional[AsyncSession] = None,
     user_id: Optional[str] = None
 ) -> ToolResult:
     """
@@ -575,8 +580,8 @@ def get_lbs_schedule(
         start = date.fromisoformat(start_date)
         end = date.fromisoformat(end_date)
         
-        client = _get_lbs_client(user_id, session)
-        schedule = client.get_schedule(start, end)
+        client = await _get_lbs_client(user_id, session)
+        schedule = await client.get_schedule(start, end)
         
         if not schedule:
             return ToolResult(success=True, message=f"No tasks scheduled between {start_date} and {end_date}")
@@ -601,12 +606,12 @@ def get_lbs_schedule(
         return ToolResult(success=False, message=f"Failed to get schedule: {str(e)}")
 
 
-def get_task_execution_history(
+async def get_task_execution_history(
     task_id: str,
     start_date: str,
     end_date: str,
     *,
-    session: Session,
+    session: AsyncSession,
     user_id: str
 ) -> ToolResult:
     """
@@ -621,8 +626,8 @@ def get_task_execution_history(
         start = date.fromisoformat(start_date)
         end = date.fromisoformat(end_date)
         
-        client = _get_lbs_client(user_id, session)
-        history = client.get_task_history(task_id, start, end)
+        client = await _get_lbs_client(user_id, session)
+        history = await client.get_task_history(task_id, start, end)
         
         if not history:
             return ToolResult(
@@ -664,9 +669,9 @@ def get_task_execution_history(
         return ToolResult(success=False, message=f"Failed to get task history: {str(e)}")
 
 
-def check_inbox(
+async def check_inbox(
     *,
-    session: Session,
+    session: AsyncSession,
     user_id: str
 ) -> ToolResult:
     """
@@ -705,9 +710,9 @@ def check_inbox(
         return ToolResult(success=False, message=f"Failed to check inbox: {str(e)}")
 
 
-def read_all_inbox_messages(
+async def read_all_inbox_messages(
     *,
-    session: Session,
+    session: AsyncSession,
     user_id: str
 ) -> ToolResult:
     """
@@ -745,11 +750,11 @@ def read_all_inbox_messages(
         return ToolResult(success=False, message=f"Failed to read all inbox messages: {str(e)}")
 
 
-def process_inbox_message(
+async def process_inbox_message(
     message_id: int,
     action: str,
     *,
-    session: Session,
+    session: AsyncSession,
     user_id: str
 ) -> ToolResult:
     """
@@ -769,10 +774,11 @@ def process_inbox_message(
     
     try:
         # Get message
-        msg = session.query(InboxQueue).filter(
+        result = await session.execute(select(InboxQueue).filter(
             InboxQueue.id == message_id,
             InboxQueue.user_id == user_id
-        ).first()
+        ))
+        msg = result.scalars().first()
         
         if not msg:
             return ToolResult(success=False, message=f"Message {message_id} not found")
@@ -783,7 +789,7 @@ def process_inbox_message(
         if action == "reject":
             msg.error_log = "Rejected by agent"
         
-        session.commit()
+        await session.commit()
         
         # Return payload so the agent can act on it using other tools
         return ToolResult(
@@ -792,7 +798,7 @@ def process_inbox_message(
             data={"message_id": message_id, "action": action, "payload": msg.payload}
         )
     except Exception as e:
-        session.rollback()
+        await session.rollback()
         return ToolResult(success=False, message=f"Failed to process message: {str(e)}")
 
 
@@ -800,10 +806,10 @@ def process_inbox_message(
 # Markdown Structure & Section Tools (MD Tools)
 # ==============================================================================
 
-def get_md_structure(
+async def get_md_structure(
     file_path: str,
     *,
-    session: Optional[Session] = None,
+    session: Optional[AsyncSession] = None,
     user_id: Optional[str] = None,
     node_type: Optional[str] = None,
     spoke_name: Optional[str] = None
@@ -848,11 +854,11 @@ def get_md_structure(
         return ToolResult(success=False, message=f"Failed to get MD structure: {str(e)}")
 
 
-def read_md_section(
+async def read_md_section(
     file_path: str,
     section_title: str,
     *,
-    session: Optional[Session] = None,
+    session: Optional[AsyncSession] = None,
     user_id: Optional[str] = None,
     node_type: Optional[str] = None,
     spoke_name: Optional[str] = None
@@ -912,13 +918,13 @@ def read_md_section(
         return ToolResult(success=False, message=f"Failed to read MD section: {str(e)}")
 
 
-def update_md_section(
+async def update_md_section(
     file_path: str,
     section_title: str,
     content: str,
     mode: str = "replace",
     *,
-    session: Optional[Session] = None,
+    session: Optional[AsyncSession] = None,
     user_id: Optional[str] = None,
     node_type: Optional[str] = None,
     spoke_name: Optional[str] = None
@@ -1013,11 +1019,11 @@ def update_md_section(
 # Plan Management Tools (Plan Tools)
 # ==============================================================================
 
-def init_plan(
+async def init_plan(
     goal: str,
     strategy: str,
     *,
-    session: Optional[Session] = None,
+    session: Optional[AsyncSession] = None,
     user_id: Optional[str] = None,
     node_type: Optional[str] = None,
     spoke_name: Optional[str] = None
@@ -1041,7 +1047,7 @@ Wait for initialization...
 [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Plan initialized.
 """
     try:
-        res = save_artifact(CURRENT_PLAN_FILE, template, overwrite=False, session=session, user_id=user_id, node_type=node_type, spoke_name=spoke_name)
+        res = await save_artifact(CURRENT_PLAN_FILE, template, overwrite=False, session=session, user_id=user_id, node_type=node_type, spoke_name=spoke_name)
         if not res.success:
             return res
         return ToolResult(success=True, message=f"✅ {CURRENT_PLAN_FILE} initialized.", data={"file": CURRENT_PLAN_FILE})
@@ -1049,9 +1055,9 @@ Wait for initialization...
         return ToolResult(success=False, message=f"Failed to init plan: {str(e)}")
 
 
-def get_current_status(
+async def get_current_status(
     *,
-    session: Optional[Session] = None,
+    session: Optional[AsyncSession] = None,
     user_id: Optional[str] = None,
     node_type: Optional[str] = None,
     spoke_name: Optional[str] = None
@@ -1059,14 +1065,14 @@ def get_current_status(
     """
     Get the '# Current Status' section from PLAN.md.
     """
-    return read_md_section(CURRENT_PLAN_FILE, "Current Status", session=session, user_id=user_id, node_type=node_type, spoke_name=spoke_name)
+    return await read_md_section(CURRENT_PLAN_FILE, "Current Status", session=session, user_id=user_id, node_type=node_type, spoke_name=spoke_name)
 
 
-def update_plan_progress(
+async def update_plan_progress(
     summary: str,
     percent_complete: Optional[int] = None,
     *,
-    session: Optional[Session] = None,
+    session: Optional[AsyncSession] = None,
     user_id: Optional[str] = None,
     node_type: Optional[str] = None,
     spoke_name: Optional[str] = None
@@ -1080,13 +1086,13 @@ def update_plan_progress(
             progress_text += f" ({percent_complete}%)"
             
         # Update Status
-        res_status = update_md_section(CURRENT_PLAN_FILE, "Current Status", progress_text, mode="replace", session=session, user_id=user_id, node_type=node_type, spoke_name=spoke_name)
+        res_status = await update_md_section(CURRENT_PLAN_FILE, "Current Status", progress_text, mode="replace", session=session, user_id=user_id, node_type=node_type, spoke_name=spoke_name)
         if not res_status.success:
             return res_status
             
         # Add Log
         log_entry = f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {summary}"
-        res_log = update_md_section(CURRENT_PLAN_FILE, "Logs", log_entry, mode="append", session=session, user_id=user_id, node_type=node_type, spoke_name=spoke_name)
+        res_log = await update_md_section(CURRENT_PLAN_FILE, "Logs", log_entry, mode="append", session=session, user_id=user_id, node_type=node_type, spoke_name=spoke_name)
         
         return ToolResult(success=True, message=f"✅ Plan progress updated: {summary}")
     except Exception as e:
@@ -1097,11 +1103,11 @@ def update_plan_progress(
 # Spoke Tools - Available to Spoke Agents
 # ==============================================================================
 
-def report_to_hub(
+async def report_to_hub(
     summary: str,
     request: Optional[str] = None,
     *,
-    session: Session,
+    session: AsyncSession,
     user_id: str,
     spoke_name: str
 ) -> ToolResult:
@@ -1135,7 +1141,7 @@ def report_to_hub(
         )
         
         session.add(inbox_msg)
-        session.commit()
+        await session.commit()
         
         return ToolResult(
             success=True,
@@ -1143,13 +1149,13 @@ def report_to_hub(
             data={"inbox_id": inbox_msg.id, "summary": summary}
         )
     except Exception as e:
-        session.rollback()
+        await session.rollback()
         return ToolResult(success=False, message=f"Failed to send report: {str(e)}")
 
 
-def archive_session(
+async def archive_session(
     *,
-    session: Session,
+    session: AsyncSession,
     user_id: str,
     node_id: str,
     context_name: str
@@ -1168,14 +1174,15 @@ def archive_session(
     """
     try:
         # Archive current active session
-        active_session = session.query(ChatSession).filter(
+        result = await session.execute(select(ChatSession).filter(
             ChatSession.node_id == node_id,
             ChatSession.is_archived == False
-        ).order_by(ChatSession.created_at.desc()).first()
+        ).order_by(ChatSession.created_at.desc()))
+        active_session = result.scalars().first()
         
         if active_session:
             active_session.is_archived = True
-            session.commit()
+            await session.commit()
         
         # Create new session
         new_session = ChatSession(
@@ -1185,7 +1192,7 @@ def archive_session(
             is_archived=False
         )
         session.add(new_session)
-        session.commit()
+        await session.commit()
         
         return ToolResult(
             success=True,
@@ -1200,7 +1207,7 @@ def archive_session(
 # File Operation Tools (for Spoke agents) - User-Scoped Paths
 # ==============================================================================
 
-def save_artifact(
+async def save_artifact(
     file_path: str,
     content: str,
     overwrite: bool = False,
@@ -1239,7 +1246,7 @@ def save_artifact(
         return ToolResult(success=False, message=f"Failed to save file: {str(e)}")
 
 
-def update_artifact(
+async def update_artifact(
     file_path: str,
     content: str,
     mode: str = 'w',
@@ -1281,7 +1288,7 @@ def update_artifact(
         return ToolResult(success=False, message=f"Failed to update file: {str(e)}")
 
 
-def delete_artifact(
+async def delete_artifact(
     file_path: str,
     *,
     user_id: Optional[str] = None,
@@ -1314,13 +1321,13 @@ def delete_artifact(
         return ToolResult(success=False, message=f"Failed to delete file: {str(e)}")
 
 
-def read_reference(
+async def read_reference(
     file_path: str,
     *,
     user_id: Optional[str] = None,
     node_type: Optional[str] = None,
     spoke_name: Optional[str] = None,
-    session: Optional[Session] = None,
+    session: Optional[AsyncSession] = None,
     **kwargs
 ) -> ToolResult:
     """
@@ -1344,17 +1351,19 @@ def read_reference(
         db_file = None
         if session:
             node_name = spoke_name if node_type == 'SPOKE' else 'hub'
-            node = session.query(Node).filter(
+            result = await session.execute(select(Node).filter(
                 Node.user_id == user_id,
                 Node.name == node_name,
                 Node.node_type == node_type
-            ).first()
+            ))
+            node = result.scalars().first()
             
             if node:
-                db_file = session.query(UploadedFile).filter(
+                result = await session.execute(select(UploadedFile).filter(
                     UploadedFile.node_id == node.id,
                     UploadedFile.filename == file_path
-                ).first()
+                ))
+                db_file = result.scalars().first()
                 if db_file:
                     storage_path = Path(db_file.storage_path)
 
@@ -1393,12 +1402,8 @@ def read_reference(
         gemini_info = ""
         if db_file and not db_file.gemini_file_name:
             try:
-                file_service = _get_file_service(user_id, session)
-                # Run async upload in sync context
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(file_service.upload_to_gemini(db_file))
-                loop.close()
+                file_service = await _get_file_service(user_id, session)
+                await file_service.upload_to_gemini(db_file)
                 gemini_info = "\n\n(AI System: This file has been uploaded to Gemini File API for full-text visibility in upcoming turns.)"
             except Exception as e:
                 print(f"[read_reference] Gemini sync failed: {e}")
@@ -1418,13 +1423,13 @@ def read_reference(
         return ToolResult(success=False, message=f"Failed to read file: {str(e)}")
 
 
-def list_files(
+async def list_files(
     sub_dir: str = "refs",
     *,
     user_id: str,
     node_type: str,
     spoke_name: Optional[str] = None,
-    session: Session = None,
+    session: AsyncSession = None,
     **kwargs
 ) -> ToolResult:
     """
@@ -1447,13 +1452,15 @@ def list_files(
         
         # 1. Get file metadata from Database
         if session:
-            node = session.query(Node).filter(
+            result = await session.execute(select(Node).filter(
                 Node.user_id == user_id,
                 Node.name == node_name,
                 Node.node_type == node_type
-            ).first()
+            ))
+            node = result.scalars().first()
             if node:
-                db_files = session.query(UploadedFile).filter(UploadedFile.node_id == node.id).all()
+                result = await session.execute(select(UploadedFile).filter(UploadedFile.node_id == node.id))
+                db_files = result.scalars().all()
                 for f in db_files:
                     found_files[f.filename] = {
                         "size": f.size_bytes / 1024 if f.size_bytes else 0,
@@ -1541,14 +1548,15 @@ def list_files(
 # Gemini Research Wrapper
 # ==============================================================================
 
-def google_search(query: str, user_id: str, session: Session) -> ToolResult:
+async def google_search(query: str, user_id: str, session: AsyncSession) -> ToolResult:
     """Wrapper function for Gemini Google Search research capability"""
     from google.genai import Client, types
     from models.database import UserSettings
     from utils.encryption import decrypt_string
     
     api_key = None
-    settings = session.query(UserSettings).filter(UserSettings.user_id == user_id).first()
+    result = await session.execute(select(UserSettings).filter(UserSettings.user_id == user_id))
+    settings = result.scalars().first()
     if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
         try:
             api_key = decrypt_string(settings.ai_config["gemini_api_key"])
@@ -1590,14 +1598,15 @@ def google_search(query: str, user_id: str, session: Session) -> ToolResult:
         return ToolResult(success=False, message=f"Research failed: {str(e)}")
 
 
-def execute_code(prompt: str, user_id: str, session: Session) -> ToolResult:
+async def execute_code(prompt: str, user_id: str, session: AsyncSession) -> ToolResult:
     """Perform complex calculations or simulations via Gemini Code Execution"""
     from google.genai import Client, types
     from models.database import UserSettings
     from utils.encryption import decrypt_string
     
     api_key = None
-    settings = session.query(UserSettings).filter(UserSettings.user_id == user_id).first()
+    result = await session.execute(select(UserSettings).filter(UserSettings.user_id == user_id))
+    settings = result.scalars().first()
     if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
         try:
             api_key = decrypt_string(settings.ai_config["gemini_api_key"])
@@ -1622,14 +1631,15 @@ def execute_code(prompt: str, user_id: str, session: Session) -> ToolResult:
         return ToolResult(success=False, message=f"Code execution failed: {str(e)}")
 
 
-def search_places(query: str, user_id: str, session: Session, lat: float = None, lng: float = None) -> ToolResult:
+async def search_places(query: str, user_id: str, session: AsyncSession, lat: float = None, lng: float = None) -> ToolResult:
     """Search for places, businesses, and directions using Google Maps grounding"""
     from google.genai import Client, types
     from models.database import UserSettings
     from utils.encryption import decrypt_string
     
     api_key = None
-    settings = session.query(UserSettings).filter(UserSettings.user_id == user_id).first()
+    result = await session.execute(select(UserSettings).filter(UserSettings.user_id == user_id))
+    settings = result.scalars().first()
     if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
         try:
             api_key = decrypt_string(settings.ai_config["gemini_api_key"])
@@ -1663,14 +1673,15 @@ def search_places(query: str, user_id: str, session: Session, lat: float = None,
         return ToolResult(success=False, message=f"Maps search failed: {str(e)}")
 
 
-def research_url(urls: List[str], query: str, user_id: str, session: Session) -> ToolResult:
+async def research_url(urls: List[str], query: str, user_id: str, session: AsyncSession) -> ToolResult:
     """Extract information or summarize content from specific URLs using Gemini grounding"""
     from google.genai import Client, types
     from models.database import UserSettings
     from utils.encryption import decrypt_string
     
     api_key = None
-    settings = session.query(UserSettings).filter(UserSettings.user_id == user_id).first()
+    result = await session.execute(select(UserSettings).filter(UserSettings.user_id == user_id))
+    settings = result.scalars().first()
     if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
         try:
             api_key = decrypt_string(settings.ai_config["gemini_api_key"])
@@ -1698,13 +1709,13 @@ def research_url(urls: List[str], query: str, user_id: str, session: Session) ->
         return ToolResult(success=False, message=f"URL research failed: {str(e)}")
 
 
-def generate_image(
+async def generate_image(
     prompt: str,
     filename: str = None,
     aspect_ratio: str = "1:1",
     *,
     user_id: str,
-    session: Session,
+    session: AsyncSession,
     node_type: str = "SPOKE",
     spoke_name: str = None
 ) -> ToolResult:
@@ -1725,7 +1736,8 @@ def generate_image(
     
     # Get API key
     api_key = None
-    settings = session.query(UserSettings).filter(UserSettings.user_id == user_id).first()
+    result = await session.execute(select(UserSettings).filter(UserSettings.user_id == user_id))
+    settings = result.scalars().first()
     if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
         try:
             api_key = decrypt_string(settings.ai_config["gemini_api_key"])
@@ -1807,10 +1819,10 @@ def generate_image(
 # LBS & KC Extended Tools
 # ==============================================================================
 
-def get_load_on_day(
+async def get_load_on_day(
     target_date: str,
     *,
-    session: Session,
+    session: AsyncSession,
     user_id: str
 ) -> ToolResult:
     """
@@ -1821,8 +1833,8 @@ def get_load_on_day(
     """
     try:
         dt = date.fromisoformat(target_date)
-        client = _get_lbs_client(user_id, session)
-        result = client.calculate_load(dt)
+        client = await _get_lbs_client(user_id, session)
+        result = await client.calculate_load(dt)
         
         load = result.get("adjusted_load", 0.0)
         task_count = result.get("task_count", 0)
@@ -1836,11 +1848,11 @@ def get_load_on_day(
         return ToolResult(success=False, message=f"Failed to get load: {str(e)}")
 
 
-def get_load_in_period(
+async def get_load_in_period(
     start_date: str,
     end_date: str,
     *,
-    session: Session,
+    session: AsyncSession,
     user_id: str
 ) -> ToolResult:
     """
@@ -1854,8 +1866,8 @@ def get_load_in_period(
         start = date.fromisoformat(start_date)
         end = date.fromisoformat(end_date)
         
-        client = _get_lbs_client(user_id, session)
-        heatmap = client.get_heatmap(start, end)
+        client = await _get_lbs_client(user_id, session)
+        heatmap = await client.get_heatmap(start, end)
         
         if not heatmap:
             return ToolResult(success=True, message=f"No load data for period {start_date} to {end_date}")
@@ -1877,11 +1889,11 @@ def get_load_in_period(
         return ToolResult(success=False, message=f"Failed to get load period: {str(e)}")
 
 
-def search_knowledge(
+async def search_knowledge(
     query: str,
     limit: int = 5,
     *,
-    session: Session,
+    session: AsyncSession,
     user_id: str,
     context_name: str = "general"
 ) -> ToolResult:
@@ -1895,7 +1907,7 @@ def search_knowledge(
     try:
         service = _get_kc_service(user_id, session)
         # Using get_context for a synthesized answer/context
-        context = service.get_context(query=query, agent_id=context_name)
+        context = await service.get_context(query=query, agent_id=context_name)
         
         if not context or not context.get("summary"):
             return ToolResult(
@@ -1914,11 +1926,11 @@ def search_knowledge(
         return ToolResult(success=False, message=f"Knowledge search failed: {str(e)}")
 
 
-def ingest_knowledge(
+async def ingest_knowledge(
     content: str,
     label: Optional[str] = None,
     *,
-    session: Optional[Session] = None,
+    session: Optional[AsyncSession] = None,
     user_id: Optional[str] = None,
     context_name: str = "general"
 ) -> ToolResult:
@@ -1939,7 +1951,7 @@ def ingest_knowledge(
         if label:
             ingest_text = f"[{label}] {content}"
             
-        ingest_id = service.ingest_message(
+        ingest_id = await service.ingest_message(
             text=ingest_text,
             role="assistant",  # Act as agent recording knowledge
             scope="global",
@@ -1958,11 +1970,11 @@ def ingest_knowledge(
         return ToolResult(success=False, message=f"Failed to ingest knowledge: {str(e)}")
 
 
-def ask_spoke(
+async def ask_spoke(
     spoke_name: str,
     message: str,
     *,
-    session: Session,
+    session: AsyncSession,
     user_id: str,
     node_type: str,
     **kwargs
@@ -2010,7 +2022,7 @@ def ask_spoke(
             )
 
         # 3. Get the receiver agent
-        receiver = SpokeAgent(user_id=user_id, spoke_name=spoke_name, db_session=session)
+        receiver = await SpokeAgent.create(user_id=user_id, spoke_name=spoke_name, db_session=session)
             
         # 4. Prepare metadata for receiver
         caller_label = "Hub" if node_type.lower() == 'hub' else f"Spoke '{kwargs.get('context_name', 'unknown')}'"
@@ -2021,7 +2033,7 @@ def ask_spoke(
         }
             
         # 5. Send message to receiver
-        response_text, _ = receiver.chat(
+        response_text, _ = await receiver.chat(
             message, 
             meta_info=json.dumps(receiver_meta)
         )
@@ -2035,10 +2047,10 @@ def ask_spoke(
         return ToolResult(success=False, message=f"Failed to communicate with {spoke_name}: {str(e)}")
 
 
-def clone_this_spoke(
+async def clone_this_spoke(
     new_name: Optional[str] = None,
     *,
-    session: Session,
+    session: AsyncSession,
     user_id: str,
     spoke_name: str,
     **kwargs
@@ -2052,12 +2064,13 @@ def clone_this_spoke(
     
     try:
         # 1. Verify source exists
-        source_node = session.query(Node).filter(
+        result = await session.execute(select(Node).filter(
             Node.user_id == user_id,
             Node.name == spoke_name,
             Node.node_type == "SPOKE",
             Node.is_archived == False
-        ).first()
+        ))
+        source_node = result.scalars().first()
 
         if not source_node:
             return ToolResult(success=False, message=f"Current spoke '{spoke_name}' node not found")
@@ -2068,7 +2081,7 @@ def clone_this_spoke(
         # Prevent collision
         base_new_name = final_new_name
         counter = 1
-        while session.query(Node).filter(Node.user_id == user_id, Node.name == final_new_name).first():
+        while (await session.execute(select(Node).filter(Node.user_id == user_id, Node.name == final_new_name))).scalars().first():
             final_new_name = f"{base_new_name}_{counter}"
             counter += 1
 
@@ -2085,10 +2098,11 @@ def clone_this_spoke(
         session.add(new_node)
         
         # 4. Copy Agent Profile
-        source_profile = session.query(AgentProfile).filter(
+        result = await session.execute(select(AgentProfile).filter(
             AgentProfile.node_id == source_node.id,
             AgentProfile.is_active == True
-        ).first()
+        ))
+        source_profile = result.scalars().first()
         
         if source_profile:
             new_profile = AgentProfile(
@@ -2102,7 +2116,8 @@ def clone_this_spoke(
             
         # 5. Copy Chat Sessions and Messages
         from models.database import ChatSession, ChatMessage
-        sessions = session.query(ChatSession).filter(ChatSession.node_id == source_node.id).all()
+        result = await session.execute(select(ChatSession).filter(ChatSession.node_id == source_node.id))
+        sessions = result.scalars().all()
         for s in sessions:
             new_session_id = str(uuid.uuid4())
             new_session = ChatSession(
@@ -2115,7 +2130,8 @@ def clone_this_spoke(
             )
             session.add(new_session)
             
-            messages = session.query(ChatMessage).filter(ChatMessage.session_id == s.id).all()
+            result = await session.execute(select(ChatMessage).filter(ChatMessage.session_id == s.id))
+            messages = result.scalars().all()
             for msg in messages:
                 new_msg = ChatMessage(
                     id=str(uuid.uuid4()),
@@ -2130,7 +2146,8 @@ def clone_this_spoke(
                 
         # 6. Copy UploadedFile records
         from models.database import UploadedFile
-        files = session.query(UploadedFile).filter(UploadedFile.node_id == source_node.id).all()
+        result = await session.execute(select(UploadedFile).filter(UploadedFile.node_id == source_node.id))
+        files = result.scalars().all()
         for f in files:
             new_file_id = str(uuid4())
             # Update storage path to new spoke directory
@@ -2169,14 +2186,14 @@ def clone_this_spoke(
                 if (source_dir / sub).exists():
                     shutil.copytree(source_dir / sub, new_dir / sub, dirs_exist_ok=True)
                     
-        session.commit()
+        await session.commit()
         return ToolResult(
             success=True,
             message=f"✅ Spoke '{spoke_name}' cloned successfully as '{final_new_name}'",
             data={"new_spoke_name": final_new_name}
         )
     except Exception as e:
-        session.rollback()
+        await session.rollback()
         return ToolResult(success=False, message=f"Failed to clone spoke: {str(e)}")
 
 

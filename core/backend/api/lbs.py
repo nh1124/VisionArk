@@ -5,30 +5,33 @@ from datetime import date
 from typing import List, Optional, Dict
 
 from services.lbs_client import LBSClient
-from services.auth import resolve_identity, Identity, bearer_scheme, get_db
-from sqlalchemy.orm import Session
+from services.auth import resolve_identity, Identity, bearer_scheme
+from models.database import get_async_db
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/lbs", tags=["LBS"])
 
 
 # Dependency to get LBS client with authenticated identity
-def get_lbs_client(
+async def get_lbs_client(
     identity: Identity = Depends(resolve_identity),
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Get LBS client with user's registered LBS API key and remote user ID from ServiceRegistry"""
     from models.database import ServiceRegistry
     from utils.encryption import decrypt_string
+    from sqlalchemy import select
     
     # Try to get user's registered LBS service config
     lbs_api_key = None
     lbs_url = None
     
-    service = db.query(ServiceRegistry).filter(
+    result = await db.execute(select(ServiceRegistry).filter(
         ServiceRegistry.user_id == identity.user_id,
         ServiceRegistry.service_name == "lbs"
-    ).first()
+    ))
+    service = result.scalars().first()
     
     if service:
         lbs_url = service.base_url
@@ -103,20 +106,20 @@ class ExceptionCreate(BaseModel):
 
 # Proxy Endpoints
 @router.get("/dashboard")
-def get_dashboard_data(
+async def get_dashboard_data(
     start_date: Optional[date] = None,
     client: LBSClient = Depends(get_lbs_client)
 ):
     try:
-        return client.get_dashboard(start_date)
+        return await client.get_dashboard(start_date)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/tasks")
-def create_task(task: TaskCreate, client: LBSClient = Depends(get_lbs_client)):
+async def create_task(task: TaskCreate, client: LBSClient = Depends(get_lbs_client)):
     try:
-        return client.create_task(task.model_dump(mode='json'))
+        return await client.create_task(task.model_dump(mode='json'))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -136,7 +139,7 @@ async def list_tasks(
     logger = logging.getLogger(__name__)
     try:
         logger.info(f"list_tasks called: context={context}, active={active}, target_date={target_date}")
-        result = lbs.get_tasks(context=context, active=active, target_date=target_date)
+        result = await lbs.get_tasks(context=context, active=active, target_date=target_date)
         logger.info(f"list_tasks returning {len(result)} tasks")
         return result
     except Exception as e:
@@ -155,7 +158,7 @@ async def get_task_details(
     If target_date is provided, returns context-specific status for that date.
     """
     try:
-        return lbs.get_task(task_id, target_date=target_date)
+        return await lbs.get_task(task_id, target_date=target_date)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -168,23 +171,23 @@ async def get_task_history(
 ):
     """Fetch execution history for a specific task."""
     try:
-        return lbs.get_task_history(task_id, start_date, end_date)
+        return await lbs.get_task_history(task_id, start_date, end_date)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.put("/tasks/{task_id}")
-def update_task(task_id: str, task: TaskUpdate, client: LBSClient = Depends(get_lbs_client)):
+async def update_task(task_id: str, task: TaskUpdate, client: LBSClient = Depends(get_lbs_client)):
     try:
-        return client.update_task(task_id, task.model_dump(mode='json', exclude_unset=True))
+        return await client.update_task(task_id, task.model_dump(mode='json', exclude_unset=True))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/tasks/{task_id}")
-def delete_task(task_id: str, client: LBSClient = Depends(get_lbs_client)):
+async def delete_task(task_id: str, client: LBSClient = Depends(get_lbs_client)):
     try:
-        return client.delete_task(task_id)
+        return await client.delete_task(task_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -200,7 +203,7 @@ async def upload_tasks_csv(
     
     try:
         content = await file.read()
-        return client.upload_tasks_csv(content, file.filename)
+        return await client.upload_tasks_csv(content, file.filename)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -215,90 +218,90 @@ class TaskBulkActiveUpdate(BaseModel):
 
 
 @router.post("/tasks/bulk-delete")
-def bulk_delete_tasks(bulk_in: TaskBulkDelete, client: LBSClient = Depends(get_lbs_client)):
+async def bulk_delete_tasks(bulk_in: TaskBulkDelete, client: LBSClient = Depends(get_lbs_client)):
     try:
-        return client.bulk_delete_tasks(bulk_in.task_ids)
+        return await client.bulk_delete_tasks(bulk_in.task_ids)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/tasks/bulk-update-active")
-def bulk_update_active(bulk_in: TaskBulkActiveUpdate, client: LBSClient = Depends(get_lbs_client)):
+async def bulk_update_active(bulk_in: TaskBulkActiveUpdate, client: LBSClient = Depends(get_lbs_client)):
     try:
-        return client.bulk_update_active(bulk_in.task_ids, bulk_in.active)
+        return await client.bulk_update_active(bulk_in.task_ids, bulk_in.active)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/exceptions")
-def create_exception(exc: ExceptionCreate, client: LBSClient = Depends(get_lbs_client)):
+async def create_exception(exc: ExceptionCreate, client: LBSClient = Depends(get_lbs_client)):
     try:
-        return client.create_exception(exc.model_dump(mode='json'))
+        return await client.create_exception(exc.model_dump(mode='json'))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/calculate/{target_date}")
-def calculate_load(target_date: date, client: LBSClient = Depends(get_lbs_client)):
+async def calculate_load(target_date: date, client: LBSClient = Depends(get_lbs_client)):
     try:
-        return client.calculate_load(target_date)
+        return await client.calculate_load(target_date)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/heatmap")
-def get_heatmap(
+async def get_heatmap(
     start: date,
     end: date,
     client: LBSClient = Depends(get_lbs_client)
 ):
     try:
-        return client.get_heatmap(start, end)
+        return await client.get_heatmap(start, end)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/trends")
-def get_trends(
+async def get_trends(
     weeks: int = 12,
     start_date: Optional[date] = None,
     client: LBSClient = Depends(get_lbs_client)
 ):
     try:
-        return client.get_trends(weeks, start_date)
+        return await client.get_trends(weeks, start_date)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/context-distribution")
-def get_context_distribution(
+async def get_context_distribution(
     start: date,
     end: date,
     client: LBSClient = Depends(get_lbs_client)
 ):
     try:
-        return client.get_context_distribution(start, end)
+        return await client.get_context_distribution(start, end)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/schedule")
-def get_schedule(
+async def get_schedule(
     start_date: date,
     end_date: date,
     client: LBSClient = Depends(get_lbs_client)
 ):
     try:
-        return client.get_schedule(start_date, end_date)
+        return await client.get_schedule(start_date, end_date)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/expand")
-def expand_tasks(
+async def expand_tasks(
     start_date: date,
     end_date: date,
     client: LBSClient = Depends(get_lbs_client)
 ):
     try:
-        return client.force_expand(start_date, end_date)
+        return await client.force_expand(start_date, end_date)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -309,7 +312,7 @@ class TaskCompletionRequest(BaseModel):
 
 
 @router.post("/tasks/{task_id}/complete")
-def complete_task(
+async def complete_task(
     task_id: str,
     req: TaskCompletionRequest,
     client: LBSClient = Depends(get_lbs_client)
@@ -317,6 +320,6 @@ def complete_task(
     try:
         from services.lbs_client import TaskStatus
         status_val = req.status
-        return client.toggle_task_completion(task_id, req.target_date, status_val)
+        return await client.toggle_task_completion(task_id, req.target_date, status_val)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

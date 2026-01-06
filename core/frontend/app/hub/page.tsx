@@ -27,7 +27,7 @@ export default function HubPage() {
     const [input, setInput] = useState("");
     const [loading, setLoading] = useState(false);
     const [showSidebar, setShowSidebar] = useState(false);
-    const [selectedModel, setSelectedModel] = useState("gemini-3-pro-preview");
+    const [selectedModel, setSelectedModel] = useState("gemini-3-pro");
     const [view, setView] = useState<"chat" | "inbox">("chat");
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -64,6 +64,7 @@ export default function HubPage() {
     }, []);
 
     const [statusText, setStatusText] = useState("");
+    const [elapsedTime, setElapsedTime] = useState(0);
 
     const sendMessage = async (message: string, files: File[]) => {
         if (!message.trim() && files.length === 0) return;
@@ -81,6 +82,11 @@ export default function HubPage() {
         setInput("");
         setLoading(true);
         setStatusText("Thinking...");
+        setElapsedTime(0);
+        const startTime = Date.now();
+        const timerInterval = setInterval(() => {
+            setElapsedTime(Math.floor((Date.now() - startTime) / 1000));
+        }, 1000);
 
         try {
             const formData = new FormData();
@@ -171,8 +177,10 @@ export default function HubPage() {
                 },
             ]);
         } finally {
+            clearInterval(timerInterval);
             setLoading(false);
             setStatusText("");
+            setElapsedTime(0);
         }
     };
 
@@ -226,18 +234,24 @@ export default function HubPage() {
                 {view === "chat" ? (
                     <>
                         {/* Messages - Scrollable area with flex-1 */}
-                        <div className="flex-1 overflow-y-auto px-4 py-8">
-                            <div className="max-w-4xl mx-auto space-y-6">
+                        <div className="flex-1 overflow-y-auto px-6 py-10 scrollbar-hide bg-[radial-gradient(circle_at_50%_50%,rgba(30,30,45,1),rgba(10,10,15,1))]">
+                            <div className="max-w-5xl mx-auto space-y-10">
                                 {messages.length === 0 && (
-                                    <div className="text-center text-gray-500 py-20">
-                                        <div className="w-16 h-16 bg-purple-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6">
-                                            <span className="text-3xl">🧠</span>
+                                    <div className="text-center py-32 animate-in fade-in slide-in-from-bottom-4 duration-1000">
+                                        <div className="w-24 h-24 bg-gradient-to-tr from-purple-500/20 to-blue-500/20 rounded-3xl flex items-center justify-center mx-auto mb-8 border border-purple-500/20 shadow-2xl shadow-purple-500/10">
+                                            <span className="text-5xl drop-shadow-lg">✨</span>
                                         </div>
-                                        <h2 className="text-3xl font-bold text-white mb-2">How can I help you today?</h2>
-                                        <p className="text-gray-400">Ask about your workload, schedule, or strategic goals.</p>
-                                        <p className="text-xs text-gray-600 mt-6 tracking-widest uppercase">
-                                            Tip: Type / for command shortcuts
+                                        <h2 className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white via-white to-gray-500 mb-4 tracking-tighter">VisionArk Hub</h2>
+                                        <p className="text-gray-400 text-lg font-medium max-w-md mx-auto leading-relaxed">
+                                            Your strategic partner for intelligent task management and resource optimization.
                                         </p>
+                                        <div className="mt-12 flex items-center justify-center gap-2">
+                                            <div className="h-px w-8 bg-gray-800"></div>
+                                            <p className="text-[10px] text-gray-600 tracking-[0.3em] uppercase font-bold">
+                                                Press / for command engine
+                                            </p>
+                                            <div className="h-px w-8 bg-gray-800"></div>
+                                        </div>
                                     </div>
                                 )}
 
@@ -254,13 +268,20 @@ export default function HubPage() {
 
                                 {loading && (
                                     <div className="flex justify-start">
-                                        <div className="bg-gray-800/40 border border-gray-700/50 rounded-2xl px-6 py-4 animate-pulse flex items-center gap-3">
-                                            <div className="flex gap-1.5">
-                                                <div className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                                                <div className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                                                <div className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                                        <div className="bg-gray-900/50 backdrop-blur-xl border border-gray-700/30 rounded-2xl px-8 py-5 shadow-2xl flex items-center gap-4">
+                                            <div className="flex gap-2">
+                                                <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce shadow-[0_0_10px_purple]" style={{ animationDelay: '0ms' }}></div>
+                                                <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce shadow-[0_0_10px_purple]" style={{ animationDelay: '150ms' }}></div>
+                                                <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce shadow-[0_0_10px_purple]" style={{ animationDelay: '300ms' }}></div>
                                             </div>
-                                            <p className="text-sm text-gray-400">{statusText || "Thinking..."}</p>
+                                            <p className="text-sm font-bold text-gray-300 tracking-wide uppercase">
+                                                {statusText || "Processing Intelligence..."}
+                                                {elapsedTime > 0 && (
+                                                    <span className="ml-2 text-gray-500 font-mono text-xs normal-case">
+                                                        ({elapsedTime}s)
+                                                    </span>
+                                                )}
+                                            </p>
                                         </div>
                                     </div>
                                 )}
