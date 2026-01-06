@@ -13,8 +13,12 @@ from datetime import datetime
 from uuid import uuid4
 import json
 import time
+import asyncio
 import threading
 import traceback
+from sqlalchemy import select, update
+from sqlalchemy.future import select as async_select
+from sqlalchemy.ext.asyncio import AsyncSession
 from services.knowledge_core_service import KnowledgeCoreService
 from services.context_manager import ContextManager
 
@@ -23,7 +27,7 @@ from services.context_manager import ContextManager
 class BaseAgent(ABC):
     """Abstract base class for all AI agents"""
     
-    def __init__(self, node_id: str, db_session, api_key: Optional[str] = None, user_id: Optional[str] = None):
+    def __init__(self, node_id: str, db_session: AsyncSession, api_key: Optional[str] = None, user_id: Optional[str] = None):
         self.node_id = node_id
         self.db_session = db_session
         self.user_id = user_id  # Store for API key refresh
@@ -35,11 +39,18 @@ class BaseAgent(ABC):
         self._agent_tool_definitions: List = []
         self._agent_tool_functions: dict = {}
         
-        # Initialize active chat session
-        self.current_session_id = self._get_or_create_active_session()
+        self.current_session_id = None
+
+    async def initialize(self):
+        """Asynchronously initialize the agent (DB loading)"""
+        if not self.current_session_id:
+            self.current_session_id = await self._get_or_create_active_session()
         
-        # Load conversation history from DB
-        self._load_history_from_db()
+        if not self.conversation_history:
+            await self._load_history_from_db()
+        
+        if not self.system_prompt:
+            self.system_prompt = await self.load_system_prompt()
     
     def set_agent_tools(self, definitions: List, functions: dict):
         """Store tools at agent level (persists across LLM refreshes)"""
@@ -53,12 +64,8 @@ class BaseAgent(ABC):
             # No need to re-setup tools - they're stored at agent level now
     
     @abstractmethod
-    def load_system_prompt(self) -> str:
-        """
-        Each agent type implements its own prompt loading logic
-        Hub loads from hub_data/system_prompt.md
-        Spoke loads from spokes/{name}/system_prompt.md
-        """
+    async def load_system_prompt(self) -> str:
+        """Each agent type implements its own prompt loading logic"""
         pass
     
     @abstractmethod
@@ -66,14 +73,14 @@ class BaseAgent(ABC):
         """Return the name (slug) of the node"""
         pass
     
-    def chat(self, user_message: str, attached_files: List[AttachedFile] = None, preferred_model: Optional[str] = None, tool_context: dict = None, meta_info: Optional[str] = None) -> str:
+    async def chat(self, user_message: str, attached_files: List[AttachedFile] = None, preferred_model: Optional[str] = None, tool_context: dict = None, meta_info: Optional[str] = None) -> str:
         """
         Generic chat logic - same for all agents
         NOW SENDS ALL MESSAGES
         """
         # Load system prompt if not loaded
         if not self.system_prompt:
-            self.system_prompt = self.load_system_prompt()
+            self.system_prompt = await self.load_system_prompt()
         
         # --- Inject current time ---
         current_time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S (%A)')
@@ -96,7 +103,7 @@ class BaseAgent(ABC):
             try:
                 kc_service = KnowledgeCoreService(self.db_session, self.user_id)
                 t0 = time.time()
-                context = kc_service.get_context(query=user_message, agent_id=self.get_node_name())
+                context = await kc_service.get_context(query=user_message, agent_id=self.get_node_name())
                 print(f"[{self.get_node_name()}/Timing] KC get_context: {time.time()-t0:.2f}s")
                 if context and context.get("summary"):
                     kc_prompt_augmentation = f"\n\n# Context from KnowledgeCore\n{context['summary']}"
@@ -111,7 +118,7 @@ class BaseAgent(ABC):
         effective_system_prompt = self.system_prompt + time_context + kc_prompt_augmentation
         messages = self.llm.format_messages(
             effective_system_prompt,
-            llm_messages  # ✅ ALL messages, not just last 10!
+            llm_messages
         )
         
         # Get response from LLM - pass agent-level tools directly
@@ -123,13 +130,13 @@ class BaseAgent(ABC):
             if meta_info:
                 effective_tool_context['meta_info'] = meta_info
                 
-            response = self.llm.complete(
+            response = await self.llm.complete_async(
                 messages, 
                 preferred_model=preferred_model,
                 tool_context=effective_tool_context,
                 attached_files=attached_files,
-                tool_definitions=self._agent_tool_definitions,  # Pass tools directly
-                tool_functions=self._agent_tool_functions       # Pass functions directly
+                tool_definitions=self._agent_tool_definitions,
+                tool_functions=self._agent_tool_functions
             )
             print(f"[{self.get_node_name()}/Timing] LLM complete: {time.time()-t0:.2f}s")
         except Exception as e:
@@ -145,26 +152,20 @@ class BaseAgent(ABC):
             # Return error response
             return (f"⚠️ I encountered an error processing your message: {str(e)}", [])
         
-        # Create assistant message
         assistant_msg = Message(
             role=MessageRole.ASSISTANT,
             content=response.content or ""
         )
-        
-        # Add to history
         self.conversation_history.append(assistant_msg)
         
-        # Save both messages to DB
-        # IMPORTANT: assistant_msg metadata must include tool_calls for display/history
         try:
-            self._save_to_db(msg)
+            await self._save_to_db(msg)
             
-            # For assistant message, we inject tool_calls into the metadata for DB storage
             files_meta = [f.format_for_display() for f in assistant_msg.attached_files]
             meta_payload = {
                 "attached_files": files_meta,
                 "meta_info": assistant_msg.meta_info,
-                "tool_calls": response.tool_calls or [] # Save tool calls here!
+                "tool_calls": response.tool_calls or []
             }
             
             db_assistant_message = ChatMessage(
@@ -176,48 +177,42 @@ class BaseAgent(ABC):
                 created_at=assistant_msg.timestamp
             )
             self.db_session.add(db_assistant_message)
-            self.db_session.commit()
+            await self.db_session.commit()
         except Exception as e:
             print(f"[{self.get_node_name()}] Failed to save messages to DB: {e}")
         
-        # --- KnowledgeCore Integration (Ingestion) - Run in Background ---
+        # --- KnowledgeCore Integration (Ingestion) - Async Task ---
         if self.user_id:
-            def _background_ingest(user_id, user_msg, assistant_msg, node_name):
-                """Background task for KC ingestion to avoid blocking response"""
+            async def _background_ingest(user_id, user_msg, assistant_msg, node_name):
+                """Background task for KC ingestion"""
                 try:
-                    # Create a new DB engine/session for the background thread
-                    from models.database import get_engine, get_session
-                    bg_session = get_session(get_engine())
-                    try:
+                    from models.database import get_async_engine, get_async_session_maker
+                    engine = get_async_engine()
+                    session_maker = get_async_session_maker(engine)
+                    async with session_maker() as bg_session:
                         kc_service = KnowledgeCoreService(bg_session, user_id)
                         t0 = time.time()
-                        # Run both ingests sequentially in the background thread (since it's already background)
-                        kc_service.ingest_message(text=user_msg, role="user", agent_id=node_name)
-                        kc_service.ingest_message(text=assistant_msg, role="assistant", agent_id=node_name)
+                        await kc_service.ingest_message(text=user_msg, role="user", agent_id=node_name)
+                        await kc_service.ingest_message(text=assistant_msg, role="assistant", agent_id=node_name)
                         print(f"[{node_name}/Background] KC ingest completed: {time.time()-t0:.2f}s")
-                    finally:
-                        bg_session.close()
                 except Exception as e:
                     print(f"[{node_name}/Background] KC ingestion failed: {e}")
             
-            # Start background thread for ingestion
-            thread = threading.Thread(
-                target=_background_ingest,
-                args=(self.user_id, user_message, response.content, self.get_node_name()),
-                daemon=True
-            )
-            thread.start()
-            print(f"[{self.get_node_name()}] KC ingestion started in background")
+            # Start background ingestion
+            asyncio.create_task(_background_ingest(self.user_id, user_message, response.content, self.get_node_name()))
+            print(f"[{self.get_node_name()}] KC ingestion started as background task")
         
-        # Return content and tool_calls separately
         return (response.content, response.tool_calls or [])
     
-    def _get_or_create_active_session(self) -> str:
+    async def _get_or_create_active_session(self) -> str:
         """Get the latest active session or create a new one"""
-        session = self.db_session.query(ChatSession).filter(
-            ChatSession.node_id == self.node_id,
-            ChatSession.is_archived == False
-        ).order_by(ChatSession.created_at.desc()).first()
+        result = await self.db_session.execute(
+            select(ChatSession).filter(
+                ChatSession.node_id == self.node_id,
+                ChatSession.is_archived == False
+            ).order_by(ChatSession.created_at.desc())
+        )
+        session = result.scalars().first()
         
         if not session:
             session_id = str(uuid4())
@@ -228,12 +223,12 @@ class BaseAgent(ABC):
                 is_archived=False
             )
             self.db_session.add(new_session)
-            self.db_session.commit()
+            await self.db_session.commit()
             return session_id
         
         return session.id
 
-    def _save_to_db(self, message: Message):
+    async def _save_to_db(self, message: Message):
         """Save a message to the ChatMessage table"""
         # Convert attached files to meta_payload
         files_meta = [f.to_dict() for f in message.attached_files]
@@ -251,16 +246,19 @@ class BaseAgent(ABC):
             created_at=message.timestamp
         )
         self.db_session.add(db_message)
-        self.db_session.commit()
+        await self.db_session.commit()
     
-    def _load_history_from_db(self):
+    async def _load_history_from_db(self):
         """Load conversation history from the active session in DB"""
         self.conversation_history = []
         
         # Fetch all messages from current session
-        db_messages = self.db_session.query(ChatMessage).filter(
-            ChatMessage.session_id == self.current_session_id
-        ).order_by(ChatMessage.created_at.asc()).all()
+        result = await self.db_session.execute(
+            select(ChatMessage).filter(
+                ChatMessage.session_id == self.current_session_id
+            ).order_by(ChatMessage.created_at.asc())
+        )
+        db_messages = result.scalars().all()
         
         for db_msg in db_messages:
             try:
@@ -295,7 +293,7 @@ class BaseAgent(ABC):
         # Optional: Load summary from parent sessions if context rotation is needed
         # (Phase 3 logic can be expanded here)
     
-    def _load_latest_summary(self, context_type: str, context_name: str) -> str:
+    async def _load_latest_summary(self, context_type: str, context_name: str) -> str:
         """Load the latest archived summary for this context"""
         if not self.user_id:
             return ""
@@ -307,7 +305,7 @@ class BaseAgent(ABC):
                 context_name=context_name,
                 session=self.db_session
             )
-            summary = manager.get_latest_summary()
+            summary = await manager.get_latest_summary_async()
             if summary:
                 return f"\n\n# Summary from Previous Session\n\n{summary}\n"
         except Exception as e:
@@ -315,13 +313,13 @@ class BaseAgent(ABC):
             
         return ""
     
-    def chat_stream(self, user_message: str, attached_files: List[AttachedFile] = None, preferred_model: Optional[str] = None, tool_context: dict = None, meta_info: Optional[str] = None):
+    async def chat_stream(self, user_message: str, attached_files: List[AttachedFile] = None, preferred_model: Optional[str] = None, tool_context: dict = None, meta_info: Optional[str] = None):
         """
         Streaming version of chat logic.
         Yields events: status, content, tool_calls, final_response
         """
         if not self.system_prompt:
-            self.system_prompt = self.load_system_prompt()
+            self.system_prompt = await self.load_system_prompt()
         
         current_time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S (%A)')
         time_context = f"\n\n## Current Context\n- **Current Date & Time**: {current_time_str}\n"
@@ -338,7 +336,7 @@ class BaseAgent(ABC):
         if self.user_id:
             try:
                 kc_service = KnowledgeCoreService(self.db_session, self.user_id)
-                context = kc_service.get_context(query=user_message, agent_id=self.get_node_name())
+                context = await kc_service.get_context(query=user_message, agent_id=self.get_node_name())
                 if context and context.get("summary"):
                     kc_prompt_augmentation = f"\n\n# Context from KnowledgeCore\n{context['summary']}"
             except Exception as e:
@@ -356,8 +354,8 @@ class BaseAgent(ABC):
         final_content = ""
         final_tool_calls = []
 
-        # Stream from LLM
-        for event in self.llm.stream_chat(
+        # Stream from LLM - USE stream_chat_async
+        async for event in self.llm.stream_chat_async(
             messages,
             preferred_model=preferred_model,
             tool_context=effective_tool_context,
@@ -368,14 +366,13 @@ class BaseAgent(ABC):
             if event["type"] == "content":
                 final_content += event["data"]
             elif event["type"] == "final_response":
-                # Don't yield final_response directly yet, or yield it but use data for DB
                 final_tool_calls = event["data"].get("tool_calls", [])
             
             yield event
 
         # Save to DB after stream finishes
         try:
-            self._save_to_db(msg)
+            await self._save_to_db(msg)
             
             assistant_msg = Message(
                 role=MessageRole.ASSISTANT,
@@ -398,28 +395,23 @@ class BaseAgent(ABC):
                 created_at=assistant_msg.timestamp
             )
             self.db_session.add(db_assistant_message)
-            self.db_session.commit()
+            await self.db_session.commit()
             
             # Start background ingestion
             if self.user_id:
-                def _background_ingest(user_id, user_msg, assistant_msg, node_name):
+                async def _background_ingest(user_id, user_msg, assistant_msg, node_name):
                     try:
-                        from models.database import get_engine, get_session
-                        bg_session = get_session(get_engine())
-                        try:
+                        from models.database import get_async_engine, get_async_session_maker
+                        engine = get_async_engine()
+                        session_maker = get_async_session_maker(engine)
+                        async with session_maker() as bg_session:
                             kc_service = KnowledgeCoreService(bg_session, user_id)
-                            kc_service.ingest_message(text=user_msg, role="user", agent_id=node_name)
-                            kc_service.ingest_message(text=assistant_msg, role="assistant", agent_id=node_name)
-                        finally:
-                            bg_session.close()
+                            await kc_service.ingest_message(text=user_msg, role="user", agent_id=node_name)
+                            await kc_service.ingest_message(text=assistant_msg, role="assistant", agent_id=node_name)
                     except Exception as e:
                         print(f"[{node_name}/Background] KC ingestion failed: {e}")
                 
-                threading.Thread(
-                    target=_background_ingest,
-                    args=(self.user_id, user_message, final_content, self.get_node_name()),
-                    daemon=True
-                ).start()
+                asyncio.create_task(_background_ingest(self.user_id, user_message, final_content, self.get_node_name()))
         except Exception as e:
             print(f"[{self.get_node_name()}] Failed to save streamed messages to DB: {e}")
 

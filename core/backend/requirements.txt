@@ -11,6 +11,9 @@ pandas>=2.0.0
 python-multipart>=0.0.6
 httpx>=0.25.0
 psycopg2-binary>=2.9.9  # PostgreSQL driver
+asyncpg>=0.29.0  # Async PostgreSQL driver
+greenlet>=3.0.0  # Required for SQLAlchemy async support
+aiofiles
 cryptography>=42.0.0 # Explicitly required for API key encryption
 
 # Optional: Multi-LLM support

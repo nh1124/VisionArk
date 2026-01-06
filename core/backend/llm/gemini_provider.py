@@ -4,6 +4,8 @@ Supports Gemini 1.5 and 2.0 models with Function Calling using the new google-ge
 """
 from google.genai import Client, types
 from typing import List, Optional, Any, Dict
+import asyncio
+import inspect
 from .base_provider import BaseLLMProvider, Message, CompletionResponse
 
 
@@ -111,6 +113,166 @@ class GeminiProvider(BaseLLMProvider):
         
         return [types.Tool(function_declarations=function_declarations)]
     
+    async def complete_async(
+        self,
+        messages: List[Message],
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        preferred_model: Optional[str] = None,
+        attached_files: List = None,
+        tool_definitions: List = None,
+        tool_functions: dict = None,
+        **kwargs
+    ) -> CompletionResponse:
+        """Asynchronously generate completion using Gemini with optional function calling"""
+        model_name = preferred_model or self.model_name
+        full_prompt = self._build_prompt(messages)
+        content_parts = []
+        
+        if attached_files:
+            for attached_file in attached_files:
+                if hasattr(attached_file, 'gemini_file_uri') and attached_file.gemini_file_uri:
+                    try:
+                        file_part = types.Part.from_uri(
+                            file_uri=attached_file.gemini_file_uri,
+                            mime_type=attached_file.file_type
+                        )
+                        content_parts.append(file_part)
+                    except Exception as e:
+                        print(f"[Gemini] Failed to add file part: {e}")
+        
+        content_parts.append(types.Part.from_text(text=full_prompt))
+        
+        active_tool_functions = tool_functions or getattr(self, '_tool_functions', {})
+        if tool_definitions:
+            tools_for_model = self._convert_dict_tools_to_gemini(tool_definitions)
+        elif hasattr(self, '_tool_definitions') and self._tool_definitions:
+            tools_for_model = self._convert_dict_tools_to_gemini(self._tool_definitions)
+        else:
+            tools_for_model = []
+        
+        generation_config = types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+            tools=tools_for_model if tools_for_model else None,
+        )
+        
+        if tools_for_model and hasattr(tools_for_model[0], 'function_declarations') and tools_for_model[0].function_declarations:
+            generation_config.tool_config = types.ToolConfig(
+                function_calling_config=types.FunctionCallingConfig(mode="AUTO")
+            )
+
+        history = [types.Content(role="user", parts=content_parts)]
+        turn_count = 0
+        max_turns = 30
+        accumulated_tool_results = []
+        
+        while turn_count < max_turns:
+            turn_count += 1
+            try:
+                # USE AWAIT and aio client!
+                response = await self.client.aio.models.generate_content(
+                    model=model_name,
+                    contents=history,
+                    config=generation_config
+                )
+            except Exception as e:
+                print(f"[Gemini] Async Generation error: {e}")
+                if accumulated_tool_results:
+                    return CompletionResponse(
+                        content=f"Error during continuation: {str(e)}",
+                        model=model_name,
+                        usage=None,
+                        tool_calls=accumulated_tool_results
+                    )
+                raise
+            
+            if not response.candidates or not response.candidates[0].content.parts:
+                break
+                
+            model_content = response.candidates[0].content
+            history.append(model_content)
+            
+            function_calls = [p.function_call for p in model_content.parts if p.function_call]
+            
+            if not function_calls:
+                # Final text response
+                final_text = response.text
+                usage = None
+                if response.usage_metadata:
+                    usage = {
+                        "prompt_tokens": response.usage_metadata.prompt_token_count,
+                        "candidates_tokens": response.usage_metadata.candidates_token_count,
+                        "total_tokens": response.usage_metadata.total_token_count
+                    }
+
+                return CompletionResponse(
+                    content=final_text,
+                    model=model_name,
+                    usage=usage,
+                    tool_calls=accumulated_tool_results if accumulated_tool_results else None
+                )
+            
+            # Execute tool calls
+            tool_response_parts = []
+            for fc in function_calls:
+                function_name = fc.name
+                function_args = fc.args
+                print(f"[Gemini] Executing function (async flow): {function_name}")
+                
+                tool_result = None
+                if function_name in active_tool_functions:
+                    try:
+                        import inspect
+                        tool_context = kwargs.get('tool_context') or {}
+                        func = active_tool_functions[function_name]
+                        sig = inspect.signature(func)
+                        accepted_params = set(sig.parameters.keys())
+                        
+                        full_args = {**function_args}
+                        for key in ['session', 'user_id', 'node_id', 'node_type', 'spoke_name', 'context_name', 'meta_info']:
+                            if key in tool_context and key in accepted_params:
+                                full_args[key] = tool_context[key]
+                        
+                        # Check if function is async
+                        if inspect.iscoroutinefunction(func):
+                            result = await func(**full_args)
+                        else:
+                            # Run sync function in thread to avoid blocking loop
+                            result = await asyncio.to_thread(func, **full_args)
+                        
+                        if hasattr(result, 'to_dict'):
+                            tool_result = result.message
+                        else:
+                            tool_result = str(result)
+                    except Exception as e:
+                        import traceback
+                        traceback.print_exc()
+                        tool_result = f"Error executing {function_name}: {str(e)}"
+                
+                if tool_result is None:
+                    tool_result = f"Function {function_name} not found"
+                
+                accumulated_tool_results.append({
+                    "name": function_name,
+                    "result": tool_result,
+                    "success": not (tool_result.startswith("Error") or tool_result.startswith("Failed"))
+                })
+                
+                tool_response_parts.append(types.Part.from_function_response(
+                    name=function_name,
+                    response={'result': tool_result}
+                ))
+            
+            history.append(types.Content(role="tool", parts=tool_response_parts))
+            
+        return CompletionResponse(
+            content="(Reached maximum reasoning turns)" if turn_count >= max_turns else "",
+            model=model_name,
+            usage={"total_turns": turn_count},
+            tool_calls=accumulated_tool_results if accumulated_tool_results else None
+        )
+
     def complete(
         self,
         messages: List[Message],
@@ -414,6 +576,159 @@ class GeminiProvider(BaseLLMProvider):
             usage=None
         )
     
+    async def stream_chat_async(
+        self,
+        messages: List[Message],
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        preferred_model: Optional[str] = None,
+        attached_files: List = None,
+        tool_definitions: List = None,
+        tool_functions: dict = None,
+        **kwargs
+    ):
+        """Asynchronously stream chat events including status updates during function calling."""
+        model_name = preferred_model or self.model_name
+        full_prompt = self._build_prompt(messages)
+        content_parts = []
+        
+        if attached_files:
+            for attached_file in attached_files:
+                if hasattr(attached_file, 'gemini_file_uri') and attached_file.gemini_file_uri:
+                    try:
+                        file_part = types.Part.from_uri(
+                            file_uri=attached_file.gemini_file_uri,
+                            mime_type=attached_file.file_type
+                        )
+                        content_parts.append(file_part)
+                    except Exception as e:
+                        print(f"[Gemini] Failed to add file part: {e}")
+        
+        content_parts.append(types.Part.from_text(text=full_prompt))
+        
+        active_tool_functions = tool_functions or getattr(self, '_tool_functions', {})
+        if tool_definitions:
+            tools_for_model = self._convert_dict_tools_to_gemini(tool_definitions)
+        elif hasattr(self, '_tool_definitions') and self._tool_definitions:
+            tools_for_model = self._convert_dict_tools_to_gemini(self._tool_definitions)
+        else:
+            tools_for_model = []
+        
+        generation_config = types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+            tools=tools_for_model if tools_for_model else None,
+        )
+        
+        if tools_for_model and hasattr(tools_for_model[0], 'function_declarations') and tools_for_model[0].function_declarations:
+            generation_config.tool_config = types.ToolConfig(
+                function_calling_config=types.FunctionCallingConfig(mode="AUTO")
+            )
+
+        history = [types.Content(role="user", parts=content_parts)]
+        turn_count = 0
+        max_turns = 30
+        accumulated_tool_results = []
+        
+        yield {"type": "status", "data": "Thinking..."}
+        
+        while turn_count < max_turns:
+            turn_count += 1
+            yield {"type": "status", "data": f"Thinking (Turn {turn_count})..."}
+            
+            try:
+                # USE AWAIT and aio client!
+                response = await self.client.aio.models.generate_content(
+                    model=model_name,
+                    contents=history,
+                    config=generation_config
+                )
+                
+                if not response.candidates or not response.candidates[0].content.parts:
+                    break
+                    
+                model_content = response.candidates[0].content
+                history.append(model_content)
+                
+                function_calls = [p.function_call for p in model_content.parts if p.function_call]
+                
+                if not function_calls:
+                    final_text = response.text
+                    yield {"type": "content", "data": final_text}
+                    yield {
+                        "type": "final_response",
+                        "data": {
+                            "content": final_text,
+                            "tool_calls": accumulated_tool_results,
+                            "usage": None
+                        }
+                    }
+                    return
+                
+                tool_response_parts = []
+                for fc in function_calls:
+                    function_name = fc.name
+                    function_args = fc.args
+                    
+                    status_msg = f"Executing: {function_name}..."
+                    if function_name == "search_knowledge": status_msg = "Searching facts & memories..."
+                    elif function_name == "google_search": status_msg = "Searching Google..."
+                    elif function_name == "create_task": status_msg = "Adding task to schedule..."
+                    elif function_name == "get_lbs_schedule": status_msg = "Checking workload..."
+                    elif function_name == "ask_spoke": status_msg = f"Messaging Spoke: {function_args.get('spoke_name')}..."
+                    
+                    yield {"type": "status", "data": status_msg}
+                    
+                    tool_result = None
+                    if function_name in active_tool_functions:
+                        try:
+                            tool_context = kwargs.get('tool_context') or {}
+                            func = active_tool_functions[function_name]
+                            sig = inspect.signature(func)
+                            accepted_params = set(sig.parameters.keys())
+                            
+                            full_args = {**function_args}
+                            for key in ['session', 'user_id', 'node_id', 'node_type', 'spoke_name', 'context_name', 'meta_info']:
+                                if key in tool_context and key in accepted_params:
+                                    full_args[key] = tool_context[key]
+                            
+                            if inspect.iscoroutinefunction(func):
+                                result = await func(**full_args)
+                            else:
+                                result = await asyncio.to_thread(func, **full_args)
+                                
+                            if hasattr(result, 'to_dict'):
+                                tool_result = result.message
+                            else:
+                                tool_result = str(result)
+                        except Exception as e:
+                            import traceback
+                            traceback.print_exc()
+                            tool_result = f"Error executing {function_name}: {str(e)}"
+                    
+                    if tool_result is None:
+                        tool_result = f"Function {function_name} not found"
+                    
+                    accumulated_tool_results.append({
+                        "name": function_name,
+                        "result": tool_result,
+                        "success": not (tool_result.startswith("Error") or tool_result.startswith("Failed"))
+                    })
+                    
+                    tool_response_parts.append(types.Part.from_function_response(
+                        name=function_name,
+                        response={'result': tool_result}
+                    ))
+                
+                history.append(types.Content(role="tool", parts=tool_response_parts))
+                yield {"type": "status", "data": "Synthesizing result..."}
+
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                yield {"type": "error", "data": str(e)}
+                return
+
     def stream_complete(
         self,
         messages: List[Message],

@@ -4,12 +4,13 @@ Message fetching, processing, and triage
 """
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from typing import Optional, Dict
 
-from models.database import InboxQueue
+from models.database import InboxQueue, get_async_db
 from services.inbox_handler import InboxHandler
-from services.auth import resolve_identity, Identity, get_db
+from services.auth import resolve_identity, Identity
 
 router = APIRouter(prefix="/api/inbox", tags=["Inbox"])
 
@@ -28,13 +29,13 @@ class ProcessMessage(BaseModel):
 
 # Endpoints
 @router.get("/pending")
-def get_pending_messages(
+async def get_pending_messages(
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Fetch all unprocessed inbox messages for this user"""
     handler = InboxHandler(db, user_id=identity.user_id)
-    messages = handler.get_pending_messages()
+    messages = await handler.get_pending_messages()
     
     return [
         {
@@ -50,17 +51,17 @@ def get_pending_messages(
 
 
 @router.post("/push")
-def push_message(
+async def push_message(
     msg: PushMessage,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Push a <meta-action> message from Spoke to Hub inbox
     Internal endpoint used by Spoke agents
     """
     handler = InboxHandler(db, user_id=identity.user_id)
-    queue_id = handler.push_to_inbox(msg.source_spoke, msg.meta_action_xml)
+    queue_id = await handler.push_to_inbox(msg.source_spoke, msg.meta_action_xml)
     
     if queue_id is None:
         raise HTTPException(status_code=400, detail="Failed to parse meta-action XML")
@@ -69,19 +70,20 @@ def push_message(
 
 
 @router.post("/process")
-def process_message(
+async def process_message(
     msg: ProcessMessage,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Process an inbox message (accept/reject/edit)"""
     from datetime import datetime
     
     # Get the message
-    inbox_msg = db.query(InboxQueue).filter(
+    result = await db.execute(select(InboxQueue).filter(
         InboxQueue.id == msg.message_id,
         InboxQueue.user_id == identity.user_id
-    ).first()
+    ))
+    inbox_msg = result.scalars().first()
     
     if not inbox_msg:
         raise HTTPException(status_code=404, detail="Message not found")
@@ -93,7 +95,7 @@ def process_message(
     if msg.action == "reject":
         inbox_msg.error_log = "Rejected by user"
     
-    db.commit()
+    await db.commit()
     
     # If accepted, automatically notify Hub with full payload
     if msg.action == "accept":
@@ -137,8 +139,8 @@ def process_message(
             )
             
             # Send to Hub and get response
-            hub = get_hub_agent(identity.user_id, db)
-            hub_response = hub.chat(notification) # Use chat to allow tool calls
+            hub = await get_hub_agent(identity.user_id, db)
+            hub_response = await hub.chat(notification) # Use chat to allow tool calls
             
             # Hub's return from chat is (response_text, tool_calls)
             response_text = hub_response[0] if isinstance(hub_response, tuple) else hub_response
@@ -158,17 +160,18 @@ def process_message(
 
 
 @router.post("/accept-all")
-def accept_all_messages(
+async def accept_all_messages(
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Accept all pending inbox messages at once"""
     from datetime import datetime
     
-    pending = db.query(InboxQueue).filter(
+    result = await db.execute(select(InboxQueue).filter(
         InboxQueue.user_id == identity.user_id,
         InboxQueue.is_processed == False
-    ).all()
+    ))
+    pending = result.scalars().all()
     
     if not pending:
         return {"message": "No pending messages to accept", "count": 0}
@@ -185,7 +188,7 @@ def accept_all_messages(
             "payload": msg.payload
         })
     
-    db.commit()
+    await db.commit()
     
     # Automatically notify Hub about all accepted messages
     hub_response = None
@@ -215,8 +218,8 @@ def accept_all_messages(
             )
             
             # Send to Hub and get response
-            hub = get_hub_agent(identity.user_id, db)
-            hub_chat_res = hub.chat(notification)
+            hub = await get_hub_agent(identity.user_id, db)
+            hub_chat_res = await hub.chat(notification)
             hub_response = hub_chat_res[0] if isinstance(hub_chat_res, tuple) else hub_chat_res
             
         except Exception as e:
@@ -231,13 +234,15 @@ def accept_all_messages(
 
 
 @router.get("/count")
-def get_unread_count(
+async def get_unread_count(
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Get count of unread inbox messages for this user"""
-    count = db.query(InboxQueue).filter(
+    from sqlalchemy import func
+    result = await db.execute(select(func.count()).select_from(InboxQueue).filter(
         InboxQueue.user_id == identity.user_id,
         InboxQueue.is_processed == False
-    ).count()
+    ))
+    count = result.scalar()
     return {"unread_count": count}

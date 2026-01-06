@@ -6,7 +6,8 @@ from datetime import datetime
 from typing import Dict, List, Optional
 import xml.etree.ElementTree as ET
 import json
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from models.database import InboxQueue
 from services.lbs_client import LBSClient
@@ -15,7 +16,7 @@ from services.lbs_client import LBSClient
 class InboxHandler:
     """Handle <meta-action> messages from Spokes to Hub (per-user)"""
     
-    def __init__(self, db_session: Session, user_id: str = None):
+    def __init__(self, db_session: AsyncSession, user_id: str = None):
         self.session = db_session
         self.user_id = user_id
     
@@ -72,7 +73,7 @@ class InboxHandler:
             print(f"XML Parse Error: {e}")
             return None
     
-    def push_to_inbox(self, source_spoke: str, meta_action_xml: str) -> Optional[int]:
+    async def push_to_inbox(self, source_spoke: str, meta_action_xml: str) -> Optional[int]:
         """
         Push a <meta-action> message to the inbox queue
         Returns queue ID if successful, None if parsing failed
@@ -93,18 +94,54 @@ class InboxHandler:
         )
         
         self.session.add(inbox_msg)
-        self.session.commit()
+        await self.session.commit()
         
         return inbox_msg.id
     
-    def get_pending_messages(self) -> List[InboxQueue]:
+    async def get_pending_messages(self) -> List[InboxQueue]:
         """Fetch all unprocessed messages from inbox for this user"""
-        query = self.session.query(InboxQueue).filter(
-            InboxQueue.is_processed == False
-        )
+        stmt = select(InboxQueue).filter(InboxQueue.is_processed == False)
         if self.user_id:
-            query = query.filter(InboxQueue.user_id == self.user_id)
-        return query.order_by(InboxQueue.received_at.desc()).all()
+            stmt = stmt.filter(InboxQueue.user_id == self.user_id)
+        
+        result = await self.session.execute(stmt.order_by(InboxQueue.received_at.desc()))
+        return result.scalars().all()
+
+    async def process_message(self, message_id: int, action: str) -> bool:
+        """
+        Process an inbox message (accept/reject)
+        """
+        from datetime import date
+        result = await self.session.execute(select(InboxQueue).filter(
+            InboxQueue.id == message_id,
+            InboxQueue.user_id == self.user_id,
+            InboxQueue.is_processed == False
+        ))
+        msg = result.scalars().first()
+        
+        if not msg:
+            return False
+        
+        if action == "accept":
+            # Apply LBS updates if present
+            lbs_updates = msg.payload.get("lbs_updates", [])
+            if lbs_updates:
+                client = LBSClient(user_id=self.user_id)
+                for update_data in lbs_updates:
+                    try:
+                        if update_data["action"] == "complete":
+                            await client.toggle_task_completion(
+                                update_data["id"], 
+                                update_data.get("due_date", date.today().isoformat()),
+                                status=True
+                            )
+                    except Exception as e:
+                        print(f"Failed to apply LBS update: {e}")
+        
+        msg.is_processed = True
+        msg.processed_at = datetime.utcnow()
+        await self.session.commit()
+        return True
 
 
 def extract_meta_actions_from_chat(chat_response: str) -> List[str]:

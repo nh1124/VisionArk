@@ -56,36 +56,34 @@ class LBSClient:
         
         return headers
 
-    def get_dashboard(self, start_date: Optional[date] = None) -> Dict:
+    async def get_dashboard(self, start_date: Optional[date] = None) -> Dict:
         params = {}
         if start_date:
             params["start_date"] = start_date.isoformat()
         
-        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
-            resp = client.get("dashboard", params=params, headers=self._get_headers())
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=300.0) as client:
+            resp = await client.get("dashboard", params=params, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
-    def create_task(self, task_data: Dict) -> Dict:
-        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
-            resp = client.post("tasks", json=task_data, headers=self._get_headers())
+    async def create_task(self, task_data: Dict) -> Dict:
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=300.0) as client:
+            resp = await client.post("tasks", json=task_data, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
-    def get_task(self, task_id: str, target_date: Optional[Union[date, str]] = None) -> Optional[Dict]:
-        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
-            resp = client.get(f"tasks/{task_id}", headers=self._get_headers())
+    async def get_task(self, task_id: str, target_date: Optional[Union[date, str]] = None) -> Optional[Dict]:
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=300.0) as client:
+            resp = await client.get(f"tasks/{task_id}", headers=self._get_headers())
             resp.raise_for_status()
             task = resp.json()
 
             if target_date:
                 t_date_str = target_date.isoformat() if isinstance(target_date, date) else target_date
-                # Fetch schedule for that day to get status
                 try:
-                    sched_resp = client.get("schedule", params={"start_date": t_date_str, "end_date": t_date_str}, headers=self._get_headers())
+                    sched_resp = await client.get("schedule", params={"start_date": t_date_str, "end_date": t_date_str}, headers=self._get_headers())
                     if sched_resp.is_success:
                         schedule = sched_resp.json()
-                        # Safely iterate with defensive checks
                         if isinstance(schedule, list):
                             for day_data in schedule:
                                 if isinstance(day_data, dict) and day_data.get("date") == t_date_str:
@@ -96,47 +94,44 @@ class LBSClient:
                                                 task["status"] = t.get("status", "todo")
                                                 break
                 except (httpx.HTTPError, KeyError, TypeError) as e:
-                    # If schedule fetch fails, default to "todo"
                     import logging
                     logging.warning(f"Failed to fetch schedule for task {task_id} on {t_date_str}: {e}")
                     task["status"] = "todo"
             return task
 
-    def update_task(self, task_id: str, task_data: Dict) -> Dict:
-        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
-            resp = client.put(f"tasks/{task_id}", json=task_data, headers=self._get_headers())
+    async def update_task(self, task_id: str, task_data: Dict) -> Dict:
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=300.0) as client:
+            resp = await client.put(f"tasks/{task_id}", json=task_data, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
-    def delete_task(self, task_id: str) -> Dict:
-        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
-            resp = client.delete(f"tasks/{task_id}", headers=self._get_headers())
+    async def delete_task(self, task_id: str) -> Dict:
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=300.0) as client:
+            resp = await client.delete(f"tasks/{task_id}", headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
-    def get_tasks(self, context: Optional[str] = None, active: Optional[bool] = None, target_date: Optional[Union[date, str]] = None) -> List[Dict]:
+    async def get_tasks(self, context: Optional[str] = None, active: Optional[bool] = None, target_date: Optional[Union[date, str]] = None) -> List[Dict]:
         params = {}
         if context:
             params["context"] = context
         if active is not None:
             params["active"] = str(active).lower()
             
-        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
-            resp = client.get("tasks", params=params, headers=self._get_headers())
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=300.0) as client:
+            resp = await client.get("tasks", params=params, headers=self._get_headers())
             resp.raise_for_status()
             all_tasks = resp.json()
 
             if target_date:
                 t_date_str = target_date.isoformat() if isinstance(target_date, date) else target_date
-                # Fetch schedule to get tasks scheduled for this specific date
                 sched_params = {"start_date": t_date_str, "end_date": t_date_str}
                 try:
-                    sched_resp = client.get("schedule", params=sched_params, headers=self._get_headers())
+                    sched_resp = await client.get("schedule", params=sched_params, headers=self._get_headers())
                     if sched_resp.is_success:
                         schedule = sched_resp.json()
                         scheduled_task_ids = set()
                         status_map = {}
-                        # Extract task IDs and statuses from schedule
                         if isinstance(schedule, list):
                             for day_data in schedule:
                                 if isinstance(day_data, dict) and day_data.get("date") == t_date_str:
@@ -147,7 +142,6 @@ class LBSClient:
                                                 scheduled_task_ids.add(t["task_id"])
                                                 status_map[t["task_id"]] = t.get("status", "todo")
                         
-                        # Filter to only tasks scheduled for this date
                         filtered_tasks = []
                         for task in all_tasks:
                             if task.get("task_id") in scheduled_task_ids:
@@ -157,117 +151,114 @@ class LBSClient:
                 except (httpx.HTTPError, KeyError, TypeError) as e:
                     import logging
                     logging.warning(f"Failed to fetch schedule for {t_date_str}: {e}")
-                    # If schedule fetch fails, return empty list for date-specific queries
                     return []
             
             return all_tasks
 
-    def calculate_load(self, target_date: date) -> Dict:
+    async def calculate_load(self, target_date: date) -> Dict:
         """Calculate load for a specific date from LBS service."""
-        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
-            resp = client.get(f"calculate/{target_date.isoformat()}", headers=self._get_headers())
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=300.0) as client:
+            resp = await client.get(f"calculate/{target_date.isoformat()}", headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
-    def create_exception(self, exception_data: Dict) -> Dict:
-        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
-            resp = client.post("exceptions", json=exception_data, headers=self._get_headers())
+    async def create_exception(self, exception_data: Dict) -> Dict:
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=300.0) as client:
+            resp = await client.post("exceptions", json=exception_data, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
-    def get_heatmap(self, start: date, end: date) -> List[Dict]:
+    async def get_heatmap(self, start: date, end: date) -> List[Dict]:
         params = {"start": start.isoformat(), "end": end.isoformat()}
-        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
-            resp = client.get("heatmap", params=params, headers=self._get_headers())
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=300.0) as client:
+            resp = await client.get("heatmap", params=params, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
-    def get_trends(self, weeks: int = 12, start_date: Optional[date] = None) -> Dict:
+    async def get_trends(self, weeks: int = 12, start_date: Optional[date] = None) -> Dict:
         params = {"weeks": weeks}
         if start_date:
             params["start_date"] = start_date.isoformat()
-        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
-            resp = client.get("trends", params=params, headers=self._get_headers())
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=300.0) as client:
+            resp = await client.get("trends", params=params, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
-    def get_context_distribution(self, start: date, end: date) -> Dict:
+    async def get_context_distribution(self, start: date, end: date) -> Dict:
         params = {"start": start.isoformat(), "end": end.isoformat()}
-        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
-            resp = client.get("context-distribution", params=params, headers=self._get_headers())
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=300.0) as client:
+            resp = await client.get("context-distribution", params=params, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
-    def bulk_delete_tasks(self, task_ids: List[str]) -> Dict:
-        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
-            resp = client.post("tasks/bulk-delete", json={"task_ids": task_ids}, headers=self._get_headers())
+    async def bulk_delete_tasks(self, task_ids: List[str]) -> Dict:
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=300.0) as client:
+            resp = await client.post("tasks/bulk-delete", json={"task_ids": task_ids}, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
-    def bulk_update_active(self, task_ids: List[str], active: bool) -> Dict:
-        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
-            resp = client.post("tasks/bulk-update-active", json={"task_ids": task_ids, "active": active}, headers=self._get_headers())
+    async def bulk_update_active(self, task_ids: List[str], active: bool) -> Dict:
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=300.0) as client:
+            resp = await client.post("tasks/bulk-update-active", json={"task_ids": task_ids, "active": active}, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
-    def upload_tasks_csv(self, file_content: bytes, filename: str) -> Dict:
+    async def upload_tasks_csv(self, file_content: bytes, filename: str) -> Dict:
         """Upload CSV file for server-side task creation"""
-        with httpx.Client(base_url=self.base_url) as client:
-            # We need to explicitly set timeout for large file uploads
+        async with httpx.AsyncClient(base_url=self.base_url) as client:
             files = {"file": (filename, file_content, "text/csv")}
-            resp = client.post("tasks/upload-csv", files=files, headers=self._get_headers(), timeout=300.0)
+            resp = await client.post("tasks/upload-csv", files=files, headers=self._get_headers(), timeout=300.0)
             resp.raise_for_status()
             return resp.json()
 
-    def get_schedule(self, start_date: Union[date, str], end_date: Union[date, str]) -> List[Dict]:
+    async def get_schedule(self, start_date: Union[date, str], end_date: Union[date, str]) -> List[Dict]:
         """Get daily schedule from LBS service."""
         params = {
             "start_date": start_date.isoformat() if isinstance(start_date, date) else start_date,
             "end_date": end_date.isoformat() if isinstance(end_date, date) else end_date
         }
-        with httpx.Client(base_url=self.base_url) as client:
-            resp = client.get("schedule", params=params, headers=self._get_headers())
+        async with httpx.AsyncClient(base_url=self.base_url) as client:
+            resp = await client.get("schedule", params=params, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
-    def force_expand(self, start_date: date, end_date: date) -> Dict:
+    async def force_expand(self, start_date: date, end_date: date) -> Dict:
         """Force trigger task expansion for a range."""
         params = {
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat()
         }
-        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
-            resp = client.post("expand", params=params, headers=self._get_headers())
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=300.0) as client:
+            resp = await client.post("expand", params=params, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
-    def toggle_task_completion(self, task_id: str, target_date: Union[date, str], status: Union[bool, TaskStatus] = TaskStatus.DONE) -> Dict:
+    async def toggle_task_completion(self, task_id: str, target_date: Union[date, str], status: Union[bool, TaskStatus] = TaskStatus.DONE) -> Dict:
         """
         Record a specific task execution status for a particular date.
         """
         date_str = target_date.isoformat() if isinstance(target_date, date) else target_date
         
-        # Convert boolean to Enum for backward compatibility or ease of use
         if isinstance(status, bool):
             status_val = TaskStatus.DONE if status else TaskStatus.TODO
         else:
             status_val = status
             
-        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
-            resp = client.post(f"tasks/{task_id}/complete", json={
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=300.0) as client:
+            resp = await client.post(f"tasks/{task_id}/complete", json={
                 "target_date": date_str, 
                 "status": status_val.value if isinstance(status_val, TaskStatus) else status_val
             }, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
 
-    def get_task_history(self, task_id: str, start_date: Union[date, str], end_date: Union[date, str]) -> List[Dict]:
+    async def get_task_history(self, task_id: str, start_date: Union[date, str], end_date: Union[date, str]) -> List[Dict]:
         """Fetch execution logs for a specific task."""
         params = {
             "start_date": start_date.isoformat() if isinstance(start_date, date) else start_date,
             "end_date": end_date.isoformat() if isinstance(end_date, date) else end_date
         }
-        with httpx.Client(base_url=self.base_url, timeout=300.0) as client:
-            resp = client.get(f"tasks/{task_id}/history", params=params, headers=self._get_headers())
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=300.0) as client:
+            resp = await client.get(f"tasks/{task_id}/history", params=params, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()

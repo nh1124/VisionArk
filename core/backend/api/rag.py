@@ -4,13 +4,11 @@ Provides RESTful API for RAG operations on Spoke knowledge bases
 """
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 from typing import List, Optional
-from pathlib import Path
-import shutil
-
 from services.rag_service import RAGService
-from services.auth import resolve_identity, Identity, get_db
+from services.auth import resolve_identity, Identity
+from models.database import get_async_db
+from sqlalchemy.ext.asyncio import AsyncSession
 from utils.paths import get_spoke_dir
 
 router = APIRouter(prefix="/api/rag", tags=["RAG"])
@@ -48,14 +46,14 @@ async def search_knowledge_base(
     spoke_name: str,
     req: SearchRequest,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Semantic search in a Spoke's knowledge base
     """
     try:
         rag = RAGService(identity.user_id, spoke_name, db)
-        results = rag.search(req.query, req.n_results, req.filter_file)
+        results = await rag.search(req.query, req.n_results, req.filter_file)
         return results
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
@@ -66,14 +64,14 @@ async def index_refs_directory(
     spoke_name: str,
     req: IndexRequest,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Index all PDFs in the Spoke's refs/ directory
     """
     try:
         rag = RAGService(identity.user_id, spoke_name, db)
-        results = rag.index_directory()
+        results = await rag.index_directory()
         return results
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Indexing failed: {str(e)}")
@@ -85,7 +83,7 @@ async def upload_reference_file(
     file: UploadFile = File(...),
     auto_index: bool = True,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Upload a PDF file to the Spoke's refs/ directory
@@ -95,14 +93,18 @@ async def upload_reference_file(
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
     
     try:
+        import aiofiles
+        import shutil
+        
         # Save file
         refs_dir = get_spoke_dir(identity.user_id, spoke_name) / "refs"
         refs_dir.mkdir(parents=True, exist_ok=True)
         
         file_path = refs_dir / file.filename
         
-        with file_path.open("wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        async with aiofiles.open(file_path, "wb") as out_file:
+            content = await file.read()
+            await out_file.write(content)
         
         response = {
             "filename": file.filename,
@@ -113,7 +115,7 @@ async def upload_reference_file(
         # Auto-index if requested
         if auto_index:
             rag = RAGService(identity.user_id, spoke_name, db)
-            index_result = rag.index_pdf(file_path)
+            index_result = await rag.index_pdf(file_path)
             response["index_result"] = index_result
         
         return response
@@ -125,14 +127,14 @@ async def upload_reference_file(
 async def list_indexed_files(
     spoke_name: str,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     List all indexed files in a Spoke's knowledge base
     """
     try:
         rag = RAGService(identity.user_id, spoke_name, db)
-        files = rag.get_indexed_files()
+        files = await rag.get_indexed_files()
         return {"files": files}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list files: {str(e)}")
@@ -142,14 +144,14 @@ async def list_indexed_files(
 async def get_rag_stats(
     spoke_name: str,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Get RAG statistics for a Spoke
     """
     try:
         rag = RAGService(identity.user_id, spoke_name, db)
-        stats = rag.get_stats()
+        stats = await rag.get_stats()
         return stats
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
@@ -159,14 +161,14 @@ async def get_rag_stats(
 async def rebuild_index(
     spoke_name: str,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Rebuild the entire RAG index from scratch
     """
     try:
         rag = RAGService(identity.user_id, spoke_name, db)
-        results = rag.rebuild_index()
+        results = await rag.rebuild_index()
         return {
             "rebuilt": True,
             **results
@@ -180,7 +182,7 @@ async def delete_reference_file(
     spoke_name: str,
     filename: str,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Delete a reference file and remove from index

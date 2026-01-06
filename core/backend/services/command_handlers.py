@@ -5,8 +5,8 @@ Implementation of slash commands referenced in BLUEPRINT Section 4.1
 from typing import List
 from pathlib import Path
 from datetime import datetime, date
-from sqlalchemy.orm import Session
-import uuid
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, update, delete
 
 from services.command_parser import register_command, CommandResult, _registry
 from services.inbox_handler import InboxHandler
@@ -22,7 +22,7 @@ from agents.hub_agent import HubAgent
 # ============================================================================
 
 @register_command("check_inbox", "Check and read inbox messages", ["hub"])
-def handle_check_inbox(args: List[str], session: Session = None, **kwargs) -> CommandResult:
+async def handle_check_inbox(args: List[str], session: AsyncSession = None, **kwargs) -> CommandResult:
     """
     Fetch inbox messages and prepare them for Hub to read and respond to
     
@@ -35,7 +35,7 @@ def handle_check_inbox(args: List[str], session: Session = None, **kwargs) -> Co
     
     try:
         inbox = InboxHandler(session, user_id=user_id)
-        messages = inbox.get_pending_messages()
+        messages = await inbox.get_pending_messages()
         
         if not messages:
             return CommandResult(
@@ -83,7 +83,7 @@ def handle_check_inbox(args: List[str], session: Session = None, **kwargs) -> Co
 
 
 @register_command("create_spoke", "Create a new Spoke (project)", ["hub"])
-def handle_create_spoke(args: List[str], session: Session = None, user_id: str = None, **kwargs) -> CommandResult:
+async def handle_create_spoke(args: List[str], session: AsyncSession = None, user_id: str = None, **kwargs) -> CommandResult:
     """
     Create a new Spoke workspace and DB Node
     """
@@ -103,17 +103,18 @@ def handle_create_spoke(args: List[str], session: Session = None, user_id: str =
     
     try:
         # 1. Create DB Node and Profile via SpokeAgent helper
-        node = SpokeAgent.get_or_create_spoke_node(user_id, spoke_name, session)
+        node = await SpokeAgent.get_or_create_spoke_node(user_id, spoke_name, session)
         
         if custom_prompt:
             # Update AgentProfile with custom prompt
-            profile = session.query(AgentProfile).filter(
+            result = await session.execute(select(AgentProfile).filter(
                 AgentProfile.node_id == node.id,
                 AgentProfile.is_active == True
-            ).first()
+            ))
+            profile = result.scalars().first()
             if profile:
                 profile.system_prompt = custom_prompt
-                session.commit()
+                await session.commit()
         
         message = f"✅ Created Spoke: {spoke_name}"
         if custom_prompt:
@@ -125,10 +126,10 @@ def handle_create_spoke(args: List[str], session: Session = None, user_id: str =
             data={"spoke_name": spoke_name, "node_id": node.id, "custom_prompt": bool(custom_prompt)}
         )
     except Exception as e:
-        if session: session.rollback()
+        if session: await session.rollback()
         return CommandResult(success=False, message=f"Failed to create Spoke: {str(e)}")
 @register_command("send_message", "Send a message to a Spoke", ["hub"])
-def handle_send_message(args: List[str], session: Session = None, user_id: str = None, **kwargs) -> CommandResult:
+async def handle_send_message(args: List[str], session: AsyncSession = None, user_id: str = None, **kwargs) -> CommandResult:
     """
     Send a message from Hub to a Spoke's DB history
     """
@@ -147,20 +148,22 @@ def handle_send_message(args: List[str], session: Session = None, user_id: str =
     
     try:
         # 1. Find the Spoke Node
-        node = session.query(Node).filter(
+        result = await session.execute(select(Node).filter(
             Node.user_id == user_id,
             Node.name == spoke_name,
             Node.node_type == "SPOKE"
-        ).first()
+        ))
+        node = result.scalars().first()
         
         if not node:
             return CommandResult(success=False, message=f"Spoke '{spoke_name}' does not exist")
         
         # 2. Get active session for that node
-        chat_session = session.query(ChatSession).filter(
+        result = await session.execute(select(ChatSession).filter(
             ChatSession.node_id == node.id,
             ChatSession.is_archived == False
-        ).order_by(ChatSession.created_at.desc()).first()
+        ).order_by(ChatSession.created_at.desc()))
+        chat_session = result.scalars().first()
         
         if not chat_session:
             # Create one if missing
@@ -171,7 +174,7 @@ def handle_send_message(args: List[str], session: Session = None, user_id: str =
                 is_archived=False
             )
             session.add(chat_session)
-            session.commit()
+            await session.commit()
             
         # 3. Add system message from Hub
         db_message = ChatMessage(
@@ -183,7 +186,7 @@ def handle_send_message(args: List[str], session: Session = None, user_id: str =
             content=f"[Hub -> {spoke_name}] {message_content}"
         )
         session.add(db_message)
-        session.commit()
+        await session.commit()
 
         # 4. Fallback to file if needed (optional)
         
@@ -193,12 +196,12 @@ def handle_send_message(args: List[str], session: Session = None, user_id: str =
             data={"spoke_name": spoke_name, "node_id": node.id}
         )
     except Exception as e:
-        if session: session.rollback()
+        if session: await session.rollback()
         return CommandResult(success=False, message=f"Failed to send message: {str(e)}")
 
 
 @register_command("kill", "Delete a spoke completely", ["hub", "spoke"])
-def handle_kill(args: List[str], context_type: str = "hub", context_name: str = "hub", session: Session = None, **kwargs) -> CommandResult:
+async def handle_kill(args: List[str], context_type: str = "hub", context_name: str = "hub", session: AsyncSession = None, **kwargs) -> CommandResult:
     """
     Delete a spoke permanently
     
@@ -223,15 +226,16 @@ def handle_kill(args: List[str], context_type: str = "hub", context_name: str = 
     
     try:
         # 1. Find and archive DB Node
-        node = session.query(Node).filter(
+        result = await session.execute(select(Node).filter(
             Node.user_id == user_id,
             Node.name == spoke_name,
             Node.node_type == "SPOKE"
-        ).first() if session else None
+        )) if session else None
+        node = result.scalars().first() if result else None
         
         if node:
             node.is_archived = True
-            session.commit()
+            await session.commit()
             print(f"[KILL] Archived DB Node for spoke '{spoke_name}'")
         else:
             return CommandResult(success=False, message=f"Spoke '{spoke_name}' not found")
@@ -239,9 +243,9 @@ def handle_kill(args: List[str], context_type: str = "hub", context_name: str = 
         # 2. Delete LBS tasks
         try:
             client = LBSClient(user_id=user_id)
-            tasks = client.get_tasks(context=spoke_name)
+            tasks = await client.get_tasks(context=spoke_name)
             for t in tasks:
-                client.delete_task(t["task_id"])
+                await client.delete_task(t["task_id"])
             print(f"[KILL] Deleted tasks for spoke '{spoke_name}' via LBS microservice")
         except Exception as lbs_err:
             print(f"[KILL] Warning: Failed to cleanup LBS tasks: {lbs_err}")
@@ -255,7 +259,7 @@ def handle_kill(args: List[str], context_type: str = "hub", context_name: str = 
 <request></request>
 </meta-action>"""
             inbox = InboxHandler(session, user_id=user_id)
-            inbox.push_to_inbox(
+            await inbox.push_to_inbox(
                 source_spoke=spoke_name,
                 meta_action_xml=meta_xml
             )
@@ -271,12 +275,12 @@ def handle_kill(args: List[str], context_type: str = "hub", context_name: str = 
             data={"spoke_name": spoke_name, "deleted": True, "redirect_url": "/spokes"}
         )
     except Exception as e:
-        if session: session.rollback()
+        if session: await session.rollback()
         return CommandResult(success=False, message=f"Failed to delete Spoke: {str(e)}")
 
 
 @register_command("clone", "Clone the current spoke or a specified spoke", ["hub", "spoke"])
-def handle_clone(args: List[str], context_type: str = "hub", context_name: str = "hub", session: Session = None, user_id: str = None, **kwargs) -> CommandResult:
+async def handle_clone(args: List[str], context_type: str = "hub", context_name: str = "hub", session: AsyncSession = None, user_id: str = None, **kwargs) -> CommandResult:
     """
     Clone a spoke
     
@@ -303,12 +307,13 @@ def handle_clone(args: List[str], context_type: str = "hub", context_name: str =
         # Actually, let's re-implement the core logic here to avoid circular imports or complex dependencies.
         
         # 1. Verify source exists
-        source_node = session.query(Node).filter(
+        result = await session.execute(select(Node).filter(
             Node.user_id == user_id,
             Node.name == source_name,
             Node.node_type == "SPOKE",
             Node.is_archived == False
-        ).first()
+        ))
+        source_node = result.scalars().first()
 
         if not source_node:
             return CommandResult(success=False, message=f"Source spoke '{source_name}' not found")
@@ -319,19 +324,15 @@ def handle_clone(args: List[str], context_type: str = "hub", context_name: str =
         # Prevent collision
         base_new_name = final_new_name
         counter = 1
-        while session.query(Node).filter(Node.user_id == user_id, Node.name == final_new_name).first():
+        while (await session.execute(select(Node).filter(Node.user_id == user_id, Node.name == final_new_name))).scalars().first():
             final_new_name = f"{base_new_name}_{counter}"
             counter += 1
 
         # 3. Call the cloning logic (we'll just use the same logic we wrote in agents.py but in a more handler-friendly way)
-        # For simplicity in this handler, we can just say we are triggering it.
-        # But for a real command, we should do the work.
-        
-        # To avoid duplicating too much code, let's assume we might want a service.
-        # But for now, I'll just do the minimal DB copy here.
-        
-        import shutil
+        # For simplicity in this handler, we can just use the tool logic if it matches.
+        # But we need to define new_dir for path logic below.
         from utils.paths import get_spoke_dir
+        new_dir = get_spoke_dir(user_id, final_new_name)
         
         new_node_id = str(uuid.uuid4())
         new_node = Node(
@@ -345,14 +346,16 @@ def handle_clone(args: List[str], context_type: str = "hub", context_name: str =
         session.add(new_node)
         
         # Copy Profile
-        source_profile = session.query(AgentProfile).filter(AgentProfile.node_id == source_node.id, AgentProfile.is_active == True).first()
+        result = await session.execute(select(AgentProfile).filter(AgentProfile.node_id == source_node.id, AgentProfile.is_active == True))
+        source_profile = result.scalars().first()
         if source_profile:
             new_profile = AgentProfile(id=str(uuid.uuid4()), node_id=new_node_id, system_prompt=source_profile.system_prompt, is_active=True, version=1)
             session.add(new_profile)
             
         # 5. Copy Chat Sessions and Messages
         from models.database import ChatSession, ChatMessage
-        sessions = session.query(ChatSession).filter(ChatSession.node_id == source_node.id).all()
+        result = await session.execute(select(ChatSession).filter(ChatSession.node_id == source_node.id))
+        sessions = result.scalars().all()
         for s in sessions:
             new_session_id = str(uuid.uuid4())
             new_session = ChatSession(
@@ -365,7 +368,8 @@ def handle_clone(args: List[str], context_type: str = "hub", context_name: str =
             )
             session.add(new_session)
             
-            messages = session.query(ChatMessage).filter(ChatMessage.session_id == s.id).all()
+            result = await session.execute(select(ChatMessage).filter(ChatMessage.session_id == s.id))
+            messages = result.scalars().all()
             for msg in messages:
                 new_msg = ChatMessage(
                     id=str(uuid.uuid4()),
@@ -380,7 +384,8 @@ def handle_clone(args: List[str], context_type: str = "hub", context_name: str =
             
         # 6. Copy UploadedFile records
         from models.database import UploadedFile
-        files = session.query(UploadedFile).filter(UploadedFile.node_id == source_node.id).all()
+        result = await session.execute(select(UploadedFile).filter(UploadedFile.node_id == source_node.id))
+        files = result.scalars().all()
         for f in files:
             new_file_id = str(uuid.uuid4())
             # Update storage path
@@ -416,16 +421,16 @@ def handle_clone(args: List[str], context_type: str = "hub", context_name: str =
                 if (source_dir / sub).exists():
                     shutil.copytree(source_dir / sub, new_dir / sub, dirs_exist_ok=True)
         
-        session.commit()
+        await session.commit()
         return CommandResult(success=True, message=f"✅ Spoke '{source_name}' cloned as '{final_new_name}'", data={"new_spoke_name": final_new_name})
 
     except Exception as e:
-        if session: session.rollback()
+        if session: await session.rollback()
         return CommandResult(success=False, message=f"Cloning failed: {str(e)}")
 
 
 @register_command("archive", "Archive conversation and start fresh", ["hub", "spoke"])
-def handle_archive(args: List[str], context_type: str = "hub", context_name: str = "hub", session: Session = None, user_id: str = None, **kwargs) -> CommandResult:
+async def handle_archive(args: List[str], context_type: str = "hub", context_name: str = "hub", session: AsyncSession = None, user_id: str = None, **kwargs) -> CommandResult:
     """
     Archive and rotate DB session
     """
@@ -445,24 +450,26 @@ def handle_archive(args: List[str], context_type: str = "hub", context_name: str
         
     try:
         # 2. Find Node
-        node = session.query(Node).filter(
+        result = await session.execute(select(Node).filter(
             Node.user_id == user_id,
             Node.name == target_name,
             Node.node_type == node_type
-        ).first()
+        ))
+        node = result.scalars().first()
         
         if not node:
             return CommandResult(success=False, message=f"Node '{target_name}' not found")
         
         # 3. Archive current active session
-        active_session = session.query(ChatSession).filter(
+        result = await session.execute(select(ChatSession).filter(
             ChatSession.node_id == node.id,
             ChatSession.is_archived == False
-        ).order_by(ChatSession.created_at.desc()).first()
+        ).order_by(ChatSession.created_at.desc()))
+        active_session = result.scalars().first()
         
         if active_session:
             active_session.is_archived = True
-            session.commit()
+            await session.commit()
             
         # 4. Create new session
         new_session = ChatSession(
@@ -472,7 +479,7 @@ def handle_archive(args: List[str], context_type: str = "hub", context_name: str
             is_archived=False
         )
         session.add(new_session)
-        session.commit()
+        await session.commit()
         
         return CommandResult(
             success=True,
@@ -480,12 +487,12 @@ def handle_archive(args: List[str], context_type: str = "hub", context_name: str
             data={"node_id": node.id, "new_session_id": new_session.id}
         )
     except Exception as e:
-        if session: session.rollback()
+        if session: await session.rollback()
         return CommandResult(success=False, message=f"Failed to archive: {str(e)}")
 
 
 @register_command("report", "Generate progress report for Hub", ["spoke"])
-def handle_report(args: List[str], spoke_name: str = None, session: Session = None, **kwargs) -> CommandResult:
+async def handle_report(args: List[str], spoke_name: str = None, session: AsyncSession = None, **kwargs) -> CommandResult:
     """
     Generate a progress report
     
@@ -512,7 +519,7 @@ def handle_report(args: List[str], spoke_name: str = None, session: Session = No
 </meta-action>"""
         
         # Push to inbox queue
-        inbox.push_to_inbox(
+        await inbox.push_to_inbox(
             source_spoke=spoke_name,
             meta_action_xml=meta_xml
         )
@@ -527,7 +534,7 @@ def handle_report(args: List[str], spoke_name: str = None, session: Session = No
 
 
 @register_command("check_inbox", "Fetch pending messages from Spokes", ["hub"])
-def handle_check_inbox(args: List[str], session: Session = None, user_id: str = None, **kwargs) -> CommandResult:
+async def handle_check_inbox(args: List[str], session: AsyncSession = None, user_id: str = None, **kwargs) -> CommandResult:
     """
     List pending messages in the Hub's inbox
     """
@@ -536,7 +543,7 @@ def handle_check_inbox(args: List[str], session: Session = None, user_id: str = 
     
     try:
         inbox = InboxHandler(session, user_id=user_id)
-        messages = inbox.get_pending_messages()
+        messages = await inbox.get_pending_messages()
         
         if not messages:
             return CommandResult(success=True, message="Your inbox is empty. No pending updates from Spokes.")
@@ -558,7 +565,7 @@ def handle_check_inbox(args: List[str], session: Session = None, user_id: str = 
 
 
 @register_command("process_inbox", "Process an inbox message", ["hub"])
-def handle_process_inbox(args: List[str], session: Session = None, user_id: str = None, **kwargs) -> CommandResult:
+async def handle_process_inbox(args: List[str], session: AsyncSession = None, user_id: str = None, **kwargs) -> CommandResult:
     """
     Accept or reject a message from the inbox
     
@@ -578,7 +585,7 @@ def handle_process_inbox(args: List[str], session: Session = None, user_id: str 
             return CommandResult(success=False, message="Action must be 'accept' or 'reject'")
         
         inbox = InboxHandler(session, user_id=user_id)
-        success = inbox.process_message(msg_id, action)
+        success = await inbox.process_message(msg_id, action)
         
         if success:
             return CommandResult(success=True, message=f"✅ Message {msg_id} {action}ed successfully.")
@@ -596,7 +603,7 @@ def handle_process_inbox(args: List[str], session: Session = None, user_id: str 
 # ============================================================================
 
 @register_command("create_task", "Create a new LBS task", ["hub", "spoke"])
-def handle_create_task(args: List[str], session: Session = None, context_name: str = None, **kwargs) -> CommandResult:
+async def handle_create_task(args: List[str], session: AsyncSession = None, context_name: str = None, **kwargs) -> CommandResult:
     """
     Create a new task in the LBS system
     
@@ -674,7 +681,7 @@ def handle_create_task(args: List[str], session: Session = None, context_name: s
         
         # Create task via microservice client
         client = LBSClient(user_id=kwargs.get("user_id", "dev_user"))
-        result = client.create_task(task_data)
+        result = await client.create_task(task_data)
         
         return CommandResult(
             success=True,
@@ -690,7 +697,7 @@ def handle_create_task(args: List[str], session: Session = None, context_name: s
     except ValueError as e:
         return CommandResult(success=False, message=f"Invalid value: {str(e)}")
 @register_command("move", "Move to a different chat page (Hub or Spoke)", ["hub", "spoke"])
-def handle_move(args: List[str], session: Session = None, user_id: str = None, **kwargs) -> CommandResult:
+async def handle_move(args: List[str], session: AsyncSession = None, user_id: str = None, **kwargs) -> CommandResult:
     """
     Navigate between Hub and Spokes
     
@@ -710,12 +717,13 @@ def handle_move(args: List[str], session: Session = None, user_id: str = None, *
         )
     
     # Check if Spoke exists
-    node = session.query(Node).filter(
+    result = await session.execute(select(Node).filter(
         Node.user_id == user_id,
         Node.name == target,
         Node.node_type == "SPOKE",
         Node.is_archived == False
-    ).first()
+    ))
+    node = result.scalars().first()
     
     if node:
         return CommandResult(

@@ -4,10 +4,11 @@ Handles log rotation, summarization, and context archiving
 """
 import os
 import shutil
+import asyncio
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Optional, List
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from llm import get_provider
@@ -18,7 +19,7 @@ from utils.paths import get_spoke_dir, get_user_hub_dir
 class ContextManager:
     """Manages conversation context rotation and archiving (per-user)"""
     
-    def __init__(self, user_id: str, context_type: str, context_name: str, session: Optional[Session] = None):
+    def __init__(self, user_id: str, context_type: str, context_name: str, session: Optional[AsyncSession] = None):
         """
         Initialize context manager
         
@@ -85,15 +86,14 @@ class ContextManager:
         
         return messages
     
-    def generate_summary(self, conversation: List[Dict[str, str]]) -> str:
+    async def generate_summary(self, conversation: List[Dict[str, str]]) -> str:
         """
-        Generate AI summary of conversation
+        Generate AI summary of conversation asynchronously
         """
         if not conversation:
             return "No conversation to summarize."
         
         summary_prompt = """You are summarizing a conversation for context preservation. Extract:
-
 1. **Decisions Made**: Key choices and conclusions
 2. **Pending Issues**: Unresolved problems or open questions
 3. **Key Facts**: Important information to preserve
@@ -110,14 +110,14 @@ Conversation to summarize:
         
         try:
             messages = [Message(role="user", content=summary_prompt)]
-            response = self.llm.complete(messages, temperature=0.3)
+            response = await self.llm.complete_async(messages, temperature=0.3)
             return response.content
         except Exception as e:
             return f"Summary generation failed: {str(e)}\n\nConversation had {len(conversation)} messages."
     
-    def archive_context(self, force: bool = False) -> Dict:
+    async def archive_context(self, force: bool = False) -> Dict:
         """
-        Archive current context and rotate logs
+        Archive current context and rotate logs asynchronously
         """
         if not self.chat_log_path.exists():
             return {
@@ -126,7 +126,7 @@ Conversation to summarize:
                 "message": "No chat history to archive"
             }
         
-        conversation = self.get_conversation_history()
+        conversation = await asyncio.to_thread(self.get_conversation_history)
         
         if not conversation and not force:
             return {
@@ -136,17 +136,17 @@ Conversation to summarize:
             }
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        summary = self.generate_summary(conversation)
+        summary = await self.generate_summary(conversation)
         summary_path = self.base_dir / f"archived_summary_{timestamp}.md"
-        summary_path.write_text(summary, encoding='utf-8')
+        await asyncio.to_thread(summary_path.write_text, summary, encoding='utf-8')
         
         archived_log_path = self.logs_archive_dir / f"chat_{timestamp}.log"
-        shutil.move(str(self.chat_log_path), str(archived_log_path))
+        await asyncio.to_thread(shutil.move, str(self.chat_log_path), str(archived_log_path))
         
-        self.chat_log_path.touch()
+        await asyncio.to_thread(self.chat_log_path.touch)
         
         if self.session and self.context_type == "spoke":
-            self._save_archive_record(summary_path, archived_log_path, len(conversation))
+            await self._save_archive_record(summary_path, archived_log_path, len(conversation))
         
         return {
             "archived": True,
@@ -157,18 +157,33 @@ Conversation to summarize:
             "message": f"✅ Archived {len(conversation)} messages. Context refreshed."
         }
     
-    def get_latest_summary(self) -> Optional[str]:
-        """Get the most recent archived summary"""
+    async def get_latest_summary(self) -> Optional[str]:
+        """Get the most recent archived summary asynchronously"""
         summaries = sorted(self.base_dir.glob("archived_summary_*.md"))
         
         if not summaries:
             return None
         
         latest_summary = summaries[-1]
-        return latest_summary.read_text(encoding='utf-8')
+        # Use asyncio.to_thread for file I/O
+        return await asyncio.to_thread(latest_summary.read_text, encoding='utf-8')
     
-    def get_archive_history(self) -> List[Dict]:
-        """Get list of all archived contexts"""
+    async def get_stats(self) -> Dict:
+        """Get context statistics"""
+        history = await asyncio.to_thread(self.get_conversation_history)
+        archives = await self.get_archive_history()
+        
+        return {
+            "context_type": self.context_type,
+            "context_name": self.context_name,
+            "current_messages": len(history),
+            "archived_contexts": len(archives),
+            "should_archive": len(history) > 30,  # Threshold for recommendation
+            "latest_summary_available": len(archives) > 0
+        }
+    
+    async def get_archive_history(self) -> List[Dict]:
+        """Get list of all archived contexts asynchronously"""
         if self.context_type == "spoke" and self.session:
             query = text("""
                 SELECT id, archived_at, summary_path, log_path, token_count
@@ -177,18 +192,18 @@ Conversation to summarize:
                 ORDER BY archived_at DESC
             """)
             
-            result = self.session.execute(query, {
+            result = await self.session.execute(query, {
                 "spoke_name": self.context_name,
                 "user_id": self.user_id
             })
             
             return [
                 {
-                    "id": row[0],
-                    "archived_at": row[1],
-                    "summary_path": row[2],
-                    "log_path": row[3],
-                    "message_count": row[4]
+                    "id": row.id,
+                    "archived_at": row.archived_at,
+                    "summary_path": row.summary_path,
+                    "log_path": row.log_path,
+                    "message_count": row.token_count
                 }
                 for row in result
             ]
@@ -203,8 +218,8 @@ Conversation to summarize:
             for s in summaries
         ]
     
-    def _save_archive_record(self, summary_path: Path, log_path: Path, message_count: int):
-        """Save archive metadata to database"""
+    async def _save_archive_record(self, summary_path: Path, log_path: Path, message_count: int):
+        """Save archive metadata to database asynchronously"""
         if not self.session:
             return
         
@@ -214,7 +229,7 @@ Conversation to summarize:
                 VALUES (:spoke_name, :user_id, :archived_at, :summary_path, :log_path, :token_count)
             """)
             
-            self.session.execute(query, {
+            await self.session.execute(query, {
                 "spoke_name": self.context_name,
                 "user_id": self.user_id,
                 "archived_at": datetime.now(),
@@ -222,6 +237,7 @@ Conversation to summarize:
                 "log_path": str(log_path),
                 "token_count": message_count
             })
-            self.session.commit()
+            await self.session.commit()
         except Exception as e:
             print(f"Failed to save archive record: {e}")
+            await self.session.rollback()

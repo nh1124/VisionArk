@@ -11,14 +11,15 @@ import shutil
 from pathlib import Path
 import uuid
 import asyncio
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, update, delete
 from typing import Optional, List, Dict
 
 from agents.hub_agent import HubAgent
 from agents.spoke_agent import SpokeAgent
 from services.inbox_handler import InboxHandler, extract_meta_actions_from_chat
-from services.auth import resolve_identity, Identity, get_db
-from models.database import Node, AgentProfile
+from services.auth import resolve_identity, Identity
+from models.database import Node, AgentProfile, get_async_db
 from utils.paths import get_spoke_dir, get_user_spokes_dir, validate_name, secure_path_join
 from utils.agent_cache import get_hub_agent_cache, get_spoke_agent_cache
 from uuid import uuid4
@@ -62,38 +63,33 @@ _hub_cache = get_hub_agent_cache()
 _spoke_cache = get_spoke_agent_cache()
 
 
-def get_hub_agent(user_id: str, db: Session) -> HubAgent:
+async def get_hub_agent(user_id: str, db: AsyncSession) -> HubAgent:
     """Get or create per-user Hub agent with TTL/LRU caching"""
     cached = _hub_cache.get(user_id)
     if cached:
-        # Update session and refresh API key in case it changed
         cached.db_session = db
-        # Refresh API key to ensure it's current
-        api_key = HubAgent._get_api_key(user_id, db)
+        api_key = await HubAgent._get_api_key(user_id, db)
         if api_key:
             cached.refresh_llm(api_key)
         return cached
     
-    # Create new hub agent for this user
-    agent = HubAgent(user_id=user_id, db_session=db)
+    agent = await HubAgent.create(user_id=user_id, db_session=db)
     _hub_cache.set(user_id, agent)
     return agent
 
 
-def get_spoke_agent(user_id: str, spoke_name: str, db: Session) -> SpokeAgent:
+async def get_spoke_agent(user_id: str, spoke_name: str, db: AsyncSession) -> SpokeAgent:
     """Get or create per-user Spoke agent with TTL/LRU caching"""
     cache_key = f"{user_id}:{spoke_name}"
     cached = _spoke_cache.get(cache_key)
     if cached:
         cached.db_session = db
-        # Refresh API key to ensure it's current
-        api_key = SpokeAgent._get_api_key(user_id, db)
+        api_key = await SpokeAgent._get_api_key(user_id, db)
         if api_key:
             cached.refresh_llm(api_key)
         return cached
     
-    # Create new spoke agent for this user
-    agent = SpokeAgent(user_id=user_id, spoke_name=spoke_name, db_session=db)
+    agent = await SpokeAgent.create(user_id=user_id, spoke_name=spoke_name, db_session=db)
     _spoke_cache.set(cache_key, agent)
     return agent
 
@@ -105,7 +101,7 @@ async def chat_with_hub(
     files: List[UploadFile] = File(default=[]),
     stream: bool = Form(False),
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     x_preferred_model: Optional[str] = Header(None, alias="X-Preferred-Model")
 ):
     """Chat with the Hub agent (supports file attachments via Gemini File API)"""
@@ -124,7 +120,10 @@ async def chat_with_hub(
     # Process uploaded files - upload to Gemini File API
     if files:
         # Get user's Gemini API key for file upload
-        settings = db.query(UserSettings).filter(UserSettings.user_id == identity.user_id).first()
+        from sqlalchemy import select
+        from models.database import UserSettings
+        result = await db.execute(select(UserSettings).filter(UserSettings.user_id == identity.user_id))
+        settings = result.scalars().first()
         api_key = None
         if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
             api_key = decrypt_string(settings.ai_config["gemini_api_key"])
@@ -162,7 +161,7 @@ async def chat_with_hub(
             # Save to local storage and database via FileService
             if file_service:
                 try:
-                    db_file = file_service.save_file(
+                    db_file = await file_service.save_file(
                         content=content,
                         filename=file.filename,
                         mime_type=mime_type,
@@ -217,7 +216,8 @@ async def chat_with_hub(
     file_service = None
 
     # Get user's Gemini API key
-    settings = db.query(UserSettings).filter(UserSettings.user_id == identity.user_id).first()
+    result = await db.execute(select(UserSettings).filter(UserSettings.user_id == identity.user_id))
+    settings = result.scalars().first()
     api_key = None
     if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
         api_key = decrypt_string(settings.ai_config["gemini_api_key"])
@@ -281,7 +281,7 @@ async def chat_with_hub(
 
     # 4. Get Hub's response
     t0 = time.time()
-    hub = get_hub_agent(identity.user_id, db)
+    hub = await get_hub_agent(identity.user_id, db)
     
     if stream:
         async def event_generator():
@@ -302,27 +302,28 @@ async def chat_with_hub(
                 from datetime import date
                 lbs_api_key = None
                 lbs_url = None
-                service = db.query(ServiceRegistry).filter(
+                result = await db.execute(select(ServiceRegistry).filter(
                     ServiceRegistry.user_id == identity.user_id,
                     ServiceRegistry.service_name == "lbs"
-                ).first()
+                ))
+                service = result.scalars().first()
                 if service:
                     lbs_url = service.base_url
                     if service.api_key_encrypted:
                         try: lbs_api_key = decrypt_string(service.api_key_encrypted)
                         except Exception: pass
                 client = LBSClient(base_url=lbs_url, api_key=lbs_api_key)
-                daily_data = client.calculate_load(date.today())
+                daily_data = await client.calculate_load(date.today())
                 load = daily_data.get("adjusted_load", 0.0)
                 meta_info_str = f"Load: {load:.1f}/10.0 | Capacity: 10.0"
             except Exception: pass
 
-            for event in hub.chat_stream(message, attached_files, preferred_model=x_preferred_model, tool_context=tool_context, meta_info=meta_info_str):
+            async for event in hub.chat_stream(message, attached_files, preferred_model=x_preferred_model, tool_context=tool_context, meta_info=meta_info_str):
                 yield f"data: {json.dumps(event)}\n\n"
         
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-    response_text, tool_calls = hub.chat(message, attached_files, preferred_model=x_preferred_model)
+    response_text, tool_calls = await hub.chat(message, attached_files, preferred_model=x_preferred_model)
     print(f"[Hub/Timing] hub.chat: {time.time()-t0:.2f}s")
     print(f"[Hub/Timing] === Total: {time.time()-_chat_start:.2f}s ===")
     
@@ -337,25 +338,61 @@ async def chat_with_hub(
 
 
 @router.get("/hub/history")
-def get_hub_history(
+async def get_hub_history(
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
-    """Get Hub conversation history"""
+    """Get Hub conversation history with tool_calls from meta_payload"""
+    from models.database import ChatSession, ChatMessage
+    
     try:
-        hub = get_hub_agent(identity.user_id, db)
-        return {
-            "history": [msg.format_for_display() for msg in hub.conversation_history],
-            "message_count": len(hub.conversation_history)
-        }
+        # Get hub node
+        result = await db.execute(select(Node).filter(
+            Node.user_id == identity.user_id,
+            Node.name == "hub",
+            Node.node_type == "HUB"
+        ))
+        hub_node = result.scalars().first()
+        
+        if not hub_node:
+            return {"history": [], "message_count": 0}
+        
+        # Get active session
+        result = await db.execute(select(ChatSession).filter(
+            ChatSession.node_id == hub_node.id,
+            ChatSession.is_archived == False
+        ).order_by(ChatSession.created_at.desc()))
+        active_session = result.scalars().first()
+        
+        if not active_session:
+            return {"history": [], "message_count": 0}
+        
+        # Query messages directly from DB to get meta_payload
+        result = await db.execute(select(ChatMessage).filter(
+            ChatMessage.session_id == active_session.id
+        ).order_by(ChatMessage.created_at.asc()))
+        messages = result.scalars().all()
+        
+        history = []
+        for msg in messages:
+            history.append({
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": msg.created_at.isoformat() if msg.created_at else None,
+                "meta_payload": msg.meta_payload or {}  # includes tool_calls
+            })
+        
+        return {"history": history, "message_count": len(history)}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/hub/artifacts")
-def list_hub_artifacts(
+async def list_hub_artifacts(
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """List all artifacts created by the AI for the Hub"""
     from utils.paths import get_user_hub_dir
@@ -384,10 +421,10 @@ def list_hub_artifacts(
 
 
 @router.get("/hub/artifacts/{file_path:path}")
-def get_hub_artifact(
+async def get_hub_artifact(
     file_path: str,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Get the content of a Hub artifact file"""
     from fastapi.responses import FileResponse
@@ -419,7 +456,7 @@ async def chat_with_spoke(
     files: List[UploadFile] = File(default=[]),
     stream: bool = Form(False),
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     x_preferred_model: Optional[str] = Header(None, alias="X-Preferred-Model")
 ):
     """Chat with a specific Spoke agent (supports file attachments)"""
@@ -429,11 +466,12 @@ async def chat_with_spoke(
         raise HTTPException(status_code=400, detail=error)
     
     # Check if spoke exists in database (RDB is source of truth)
-    node = db.query(Node).filter(
+    result = await db.execute(select(Node).filter(
         Node.user_id == identity.user_id,
         Node.name == spoke_name,
         Node.node_type == "SPOKE"
-    ).first()
+    ))
+    node = result.scalars().first()
     
     if not node:
         raise HTTPException(status_code=404, detail=f"Spoke '{spoke_name}' not found")
@@ -455,7 +493,8 @@ async def chat_with_spoke(
     # Process uploaded files - upload to Gemini File API
     if files:
         # Get user's Gemini API key for file upload
-        settings = db.query(UserSettings).filter(UserSettings.user_id == identity.user_id).first()
+        result = await db.execute(select(UserSettings).filter(UserSettings.user_id == identity.user_id))
+        settings = result.scalars().first()
         api_key = None
         if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
             api_key = decrypt_string(settings.ai_config["gemini_api_key"])
@@ -491,7 +530,7 @@ async def chat_with_spoke(
             # Save to local storage and database via FileService
             if file_service:
                 try:
-                    db_file = file_service.save_file(
+                    db_file = await file_service.save_file(
                         content=content,
                         filename=file.filename,
                         mime_type=mime_type,
@@ -546,7 +585,8 @@ async def chat_with_spoke(
     file_service = None
 
     # Get user's Gemini API key
-    settings = db.query(UserSettings).filter(UserSettings.user_id == identity.user_id).first()
+    result = await db.execute(select(UserSettings).filter(UserSettings.user_id == identity.user_id))
+    settings = result.scalars().first()
     api_key = None
     if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
         api_key = decrypt_string(settings.ai_config["gemini_api_key"])
@@ -603,7 +643,7 @@ async def chat_with_spoke(
     # Only the files user explicitly attached in THIS message are sent
 
     # 4. Get Spoke's response
-    spoke = get_spoke_agent(identity.user_id, spoke_name, db)
+    spoke = await get_spoke_agent(identity.user_id, spoke_name, db)
     
     if stream:
         async def spoke_event_generator():
@@ -616,7 +656,7 @@ async def chat_with_spoke(
                 'context_name': spoke_name
             }
             final_content = ""
-            for event in spoke.chat_stream(user_message, attached_file_objects, preferred_model=x_preferred_model, tool_context=tool_context):
+            async for event in spoke.chat_stream(user_message, attached_file_objects, preferred_model=x_preferred_model, tool_context=tool_context):
                 if event["type"] == "content":
                     final_content += event["data"]
                 elif event["type"] == "final_response":
@@ -629,20 +669,20 @@ async def chat_with_spoke(
                 if meta_actions:
                     inbox = InboxHandler(db, user_id=identity.user_id)
                     for meta_xml in meta_actions:
-                        inbox.push_to_inbox("hub", meta_xml)
+                        await inbox.push_to_inbox("hub", meta_xml)
             except Exception as e:
                 print(f"[Spoke Streaming] Meta-action processing failed: {e}")
         
         return StreamingResponse(spoke_event_generator(), media_type="text/event-stream")
 
-    response_text, tool_calls = spoke.chat(user_message, attached_file_objects, preferred_model=x_preferred_model)
+    response_text, tool_calls = await spoke.chat(user_message, attached_file_objects, preferred_model=x_preferred_model)
     
     # Extract meta-actions
     meta_actions = extract_meta_actions_from_chat(response_text)
     if meta_actions:
         inbox = InboxHandler(db, user_id=identity.user_id)
         for meta_xml in meta_actions:
-            inbox.push_to_inbox("hub", meta_xml)
+            await inbox.push_to_inbox("hub", meta_xml)
     
     return ChatResponse(
         response=response_text,
@@ -655,23 +695,59 @@ async def chat_with_spoke(
 
 
 @router.get("/spoke/{spoke_name}/history")
-def get_spoke_history(
+async def get_spoke_history(
     spoke_name: str,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
-    """Get Spoke conversation history"""
+    """Get Spoke conversation history with tool_calls from meta_payload"""
+    from models.database import ChatSession, ChatMessage
+    
     # Validate spoke name
     valid, error = validate_name(spoke_name, "spoke_name")
     if not valid:
         raise HTTPException(status_code=400, detail=error)
     
     try:
-        spoke = get_spoke_agent(identity.user_id, spoke_name, db)
-        return {
-            "history": [msg.format_for_display() for msg in spoke.conversation_history],
-            "message_count": len(spoke.conversation_history)
-        }
+        # Get spoke node
+        result = await db.execute(select(Node).filter(
+            Node.user_id == identity.user_id,
+            Node.name == spoke_name,
+            Node.node_type == "SPOKE"
+        ))
+        spoke_node = result.scalars().first()
+        
+        if not spoke_node:
+            raise HTTPException(status_code=404, detail=f"Spoke '{spoke_name}' not found")
+        
+        # Get active session
+        result = await db.execute(select(ChatSession).filter(
+            ChatSession.node_id == spoke_node.id,
+            ChatSession.is_archived == False
+        ).order_by(ChatSession.created_at.desc()))
+        active_session = result.scalars().first()
+        
+        if not active_session:
+            return {"history": [], "message_count": 0}
+        
+        # Query messages directly from DB to get meta_payload
+        result = await db.execute(select(ChatMessage).filter(
+            ChatMessage.session_id == active_session.id
+        ).order_by(ChatMessage.created_at.asc()))
+        messages = result.scalars().all()
+        
+        history = []
+        for msg in messages:
+            history.append({
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": msg.created_at.isoformat() if msg.created_at else None,
+                "meta_payload": msg.meta_payload or {}  # includes tool_calls
+            })
+        
+        return {"history": history, "message_count": len(history)}
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         print(f"!!! Error in get_spoke_history for {spoke_name}: {e}")
@@ -680,10 +756,10 @@ def get_spoke_history(
 
 
 @router.post("/spoke/create")
-def create_spoke(
+async def create_spoke(
     spoke: CreateSpoke,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Create a new Spoke (project workspace for this user) using DB and disk"""
     
@@ -694,16 +770,17 @@ def create_spoke(
     
     try:
         # 2. DB Node and Profile creation
-        node = SpokeAgent.get_or_create_spoke_node(identity.user_id, spoke.spoke_name, db)
+        node = await SpokeAgent.get_or_create_spoke_node(identity.user_id, spoke.spoke_name, db)
         
         if spoke.custom_prompt:
-            profile = db.query(AgentProfile).filter(
+            result = await db.execute(select(AgentProfile).filter(
                 AgentProfile.node_id == node.id,
                 AgentProfile.is_active == True
-            ).first()
+            ))
+            profile = result.scalars().first()
             if profile:
                 profile.system_prompt = spoke.custom_prompt or "You are a specialized AI assistant for this project. Help the user manage tasks, analyze data, and generate insights."
-                db.commit()
+                await db.commit()
         
         return {
             "spoke_name": spoke.spoke_name,
@@ -711,23 +788,24 @@ def create_spoke(
             "message": f"Spoke '{spoke.spoke_name}' created successfully"
         }
     except Exception as e:
-        if db: db.rollback()
+        if db: await db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to create spoke: {str(e)}")
 
 
 @router.get("/spoke/list")
-def list_spokes(
+async def list_spokes(
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """List all existing Spokes for this user from DB"""
     
     # Query Nodes table for SPOKES belonging to this user
-    spoke_nodes = db.query(Node).filter(
+    result = await db.execute(select(Node).filter(
         Node.user_id == identity.user_id,
         Node.node_type == "SPOKE",
         Node.is_archived == False
-    ).all()
+    ))
+    spoke_nodes = result.scalars().all()
     
     spokes = []
     for node in spoke_nodes:
@@ -742,17 +820,18 @@ def list_spokes(
 
 
 @router.get("/spoke/{spoke_name}")
-def get_spoke_metadata(
+async def get_spoke_metadata(
     spoke_name: str,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Get metadata for a specific spoke"""
-    node = db.query(Node).filter(
+    result = await db.execute(select(Node).filter(
         Node.user_id == identity.user_id,
         Node.name == spoke_name,
         Node.node_type == "SPOKE"
-    ).first()
+    ))
+    node = result.scalars().first()
     
     if not node:
         raise HTTPException(status_code=404, detail=f"Spoke '{spoke_name}' not found")
@@ -766,10 +845,10 @@ def get_spoke_metadata(
 
 
 @router.delete("/spoke/{spoke_name}")
-def delete_spoke(
+async def delete_spoke(
     spoke_name: str,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Delete a Spoke by marking it as archived in DB (soft delete)"""
     from models.database import ChatSession, ChatMessage, AgentProfile
@@ -781,11 +860,12 @@ def delete_spoke(
         raise HTTPException(status_code=400, detail=error)
     
     # Find the spoke node
-    node = db.query(Node).filter(
+    result = await db.execute(select(Node).filter(
         Node.user_id == identity.user_id,
         Node.name == spoke_name,
         Node.node_type == "SPOKE"
-    ).first()
+    ))
+    node = result.scalars().first()
     
     if not node:
         raise HTTPException(status_code=404, detail=f"Spoke '{spoke_name}' not found")
@@ -793,7 +873,7 @@ def delete_spoke(
     try:
         # Soft delete: mark as archived
         node.is_archived = True
-        db.commit()
+        await db.commit()
         
         # Clear from cache
         cache_key = f"{identity.user_id}:{spoke_name}"
@@ -814,10 +894,10 @@ def delete_spoke(
 
 
 @router.get("/spoke/{spoke_name}/artifacts")
-def list_spoke_artifacts(
+async def list_spoke_artifacts(
     spoke_name: str,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """List all artifacts created by the AI for a spoke"""
     # Validate spoke name
@@ -849,11 +929,11 @@ def list_spoke_artifacts(
 
 
 @router.get("/spoke/{spoke_name}/artifacts/{file_path:path}")
-def get_spoke_artifact(
+async def get_spoke_artifact(
     spoke_name: str,
     file_path: str,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Get the content of an artifact file"""
     from fastapi.responses import FileResponse
@@ -883,27 +963,30 @@ def get_spoke_artifact(
 
 
 @router.get("/spoke/{spoke_name}/prompt")
-def get_system_prompt(
+@router.get("/spoke/{spoke_name}/system-prompt")
+async def get_system_prompt(
     spoke_name: str,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Get system prompt for a spoke from DB AgentProfile"""
     # 1. Find Node
-    node = db.query(Node).filter(
+    result = await db.execute(select(Node).filter(
         Node.user_id == identity.user_id,
         Node.name == spoke_name,
         Node.node_type == "SPOKE"
-    ).first()
+    ))
+    node = result.scalars().first()
     
     if not node:
         raise HTTPException(status_code=404, detail=f"Spoke '{spoke_name}' not found")
     
     # 2. Find Active Profile
-    profile = db.query(AgentProfile).filter(
+    result = await db.execute(select(AgentProfile).filter(
         AgentProfile.node_id == node.id,
         AgentProfile.is_active == True
-    ).order_by(AgentProfile.version.desc()).first()
+    ).order_by(AgentProfile.version.desc()))
+    profile = result.scalars().first()
     
     if profile and profile.system_prompt:
         return {"content": profile.system_prompt}
@@ -916,29 +999,31 @@ def get_system_prompt(
         return {"content": ""}
 
 
-@router.put("/spoke/{spoke_name}/prompt")
-def update_system_prompt(
+@router.post("/spoke/{spoke_name}/system-prompt")
+async def update_system_prompt(
     spoke_name: str,
     update: UpdatePrompt,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Update system prompt in DB AgentProfile"""
     # 1. Find Node
-    node = db.query(Node).filter(
+    result = await db.execute(select(Node).filter(
         Node.user_id == identity.user_id,
         Node.name == spoke_name,
         Node.node_type == "SPOKE"
-    ).first()
+    ))
+    node = result.scalars().first()
     
     if not node:
         raise HTTPException(status_code=404, detail=f"Spoke '{spoke_name}' not found")
     
     # 2. Update/Create Profile
-    profile = db.query(AgentProfile).filter(
+    result = await db.execute(select(AgentProfile).filter(
         AgentProfile.node_id == node.id,
         AgentProfile.is_active == True
-    ).first()
+    ))
+    profile = result.scalars().first()
     
     if profile:
         profile.system_prompt = update.content
@@ -952,7 +1037,7 @@ def update_system_prompt(
         )
         db.add(profile)
     
-    db.commit()
+    await db.commit()
     
     # Clear cache
     cache_key = f"{identity.user_id}:{spoke_name}"
@@ -961,12 +1046,12 @@ def update_system_prompt(
     return {"success": True, "message": "System prompt updated in DB"}
 
 
-@router.patch("/spoke/{spoke_name}/rename")
-def rename_spoke(
+@router.post("/spoke/{spoke_name}/rename")
+async def rename_spoke(
     spoke_name: str,
     update: RenameSpoke,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """Rename a spoke's display name"""
     # 1. Find the spoke node
@@ -994,7 +1079,7 @@ def rename_spoke(
             "new_display_name": update.new_display_name
         }
     except Exception as e:
-        db.rollback()
+        await db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to rename spoke: {str(e)}")
         
 @router.post("/spoke/{spoke_name}/clone")
@@ -1002,18 +1087,19 @@ async def clone_spoke(
     spoke_name: str,
     clone_data: Optional[SpokeClone] = None,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Clone an existing spoke, including chat history, files, and artifacts.
     """
     # 1. Verify source spoke exists
-    source_node = db.query(Node).filter(
+    result = await db.execute(select(Node).filter(
         Node.user_id == identity.user_id,
         Node.name == spoke_name,
         Node.node_type == "SPOKE",
         Node.is_archived == False
-    ).first()
+    ))
+    source_node = result.scalars().first()
     
     if not source_node:
         raise HTTPException(status_code=404, detail=f"Spoke '{spoke_name}' not found")
@@ -1024,7 +1110,10 @@ async def clone_spoke(
     # Prevent collision - add numeric suffix if needed
     base_new_name = new_name
     counter = 1
-    while db.query(Node).filter(Node.user_id == identity.user_id, Node.name == new_name).first():
+    while True:
+        result = await db.execute(select(Node).filter(Node.user_id == identity.user_id, Node.name == new_name))
+        if result.scalars().first() is None:
+            break
         new_name = f"{base_new_name}_{counter}"
         counter += 1
         
@@ -1047,10 +1136,11 @@ async def clone_spoke(
         db.add(new_node)
         
         # 4. Copy Agent Profile
-        source_profile = db.query(AgentProfile).filter(
+        result = await db.execute(select(AgentProfile).filter(
             AgentProfile.node_id == source_node.id,
             AgentProfile.is_active == True
-        ).first()
+        ))
+        source_profile = result.scalars().first()
         
         if source_profile:
             new_profile = AgentProfile(
@@ -1064,7 +1154,8 @@ async def clone_spoke(
             
         # 5. Copy Chat Sessions and Messages
         from models.database import ChatSession, ChatMessage
-        sessions = db.query(ChatSession).filter(ChatSession.node_id == source_node.id).all()
+        result = await db.execute(select(ChatSession).filter(ChatSession.node_id == source_node.id))
+        sessions = result.scalars().all()
         for session in sessions:
             new_session_id = str(uuid.uuid4())
             new_session = ChatSession(
@@ -1077,7 +1168,8 @@ async def clone_spoke(
             )
             db.add(new_session)
             
-            messages = db.query(ChatMessage).filter(ChatMessage.session_id == session.id).all()
+            result = await db.execute(select(ChatMessage).filter(ChatMessage.session_id == session.id))
+            messages = result.scalars().all()
             for msg in messages:
                 new_msg = ChatMessage(
                     id=str(uuid.uuid4()),
@@ -1092,7 +1184,8 @@ async def clone_spoke(
                 
         # 6. Copy Files Database Records
         from models.database import UploadedFile
-        files = db.query(UploadedFile).filter(UploadedFile.node_id == source_node.id).all()
+        result = await db.execute(select(UploadedFile).filter(UploadedFile.node_id == source_node.id))
+        files = result.scalars().all()
         source_spoke_dir = get_spoke_dir(identity.user_id, spoke_name)
         new_spoke_dir = get_spoke_dir(identity.user_id, new_name)
         new_spoke_dir.mkdir(parents=True, exist_ok=True)
@@ -1130,7 +1223,7 @@ async def clone_spoke(
                     dest_sub = new_spoke_dir / sub
                     shutil.copytree(src_sub, dest_sub, dirs_exist_ok=True)
                     
-        db.commit()
+        await db.commit()
         return {"success": True, "message": f"Spoke '{spoke_name}' cloned to '{new_name}'", "new_spoke_name": new_name}
         
     except Exception as e:

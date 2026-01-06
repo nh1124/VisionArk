@@ -8,6 +8,7 @@ from agents.base_agent import BaseAgent
 from utils.paths import get_spoke_dir, get_user_global_prompt, get_global_prompt
 from models.message import AttachedFile, Message, MessageRole
 from models.database import UserSettings, Node, AgentProfile, get_engine, get_session
+from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import uuid4
 
 
@@ -15,13 +16,17 @@ class SpokeAgent(BaseAgent):
     """Spoke agent with Spoke-specific logic and file operation tools (per-user)"""
     
     @classmethod
-    def get_or_create_spoke_node(cls, user_id: str, spoke_name: str, db_session) -> Node:
+    async def get_or_create_spoke_node(cls, user_id: str, spoke_name: str, db_session: AsyncSession) -> Node:
         """Find or create a SPOKE node for a user"""
-        node = db_session.query(Node).filter(
-            Node.user_id == user_id,
-            Node.name == spoke_name,
-            Node.node_type == "SPOKE"
-        ).first()
+        from sqlalchemy import select
+        result = await db_session.execute(
+            select(Node).filter(
+                Node.user_id == user_id,
+                Node.name == spoke_name,
+                Node.node_type == "SPOKE"
+            )
+        )
+        node = result.scalars().first()
         
         if not node:
             node_id = str(uuid4())
@@ -34,61 +39,56 @@ class SpokeAgent(BaseAgent):
                 lbs_access_level="READ_ONLY"
             )
             db_session.add(node)
-            db_session.commit()
+            await db_session.commit()
             
             # Create default profile
             profile = AgentProfile(
                 id=str(uuid4()),
                 node_id=node_id,
-                system_prompt=None, # Will fallback to default
+                system_prompt=None,
                 is_active=True
             )
             db_session.add(profile)
-            db_session.commit()
+            await db_session.commit()
             
         return node
 
     @staticmethod
-    def _get_api_key(user_id: str, db_session=None) -> Optional[str]:
+    async def _get_api_key(user_id: str, db_session: AsyncSession = None) -> Optional[str]:
         """Retrieve and decrypt Gemini API key for the user"""
         if not user_id:
             return None
             
         from utils.encryption import decrypt_string
+        from sqlalchemy import select
         
-        session = db_session or get_session(get_engine())
-        try:
-            settings = session.query(UserSettings).filter(UserSettings.user_id == user_id).first()
-            if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
-                encrypted_key = settings.ai_config["gemini_api_key"]
-                if encrypted_key == "********":
-                    return None
-                return decrypt_string(encrypted_key)
-        except Exception as e:
-            print(f"[SpokeAgent] Failed to retrieve/decrypt API key: {e}")
-        finally:
-            if not db_session:
-                session.close()
+        result = await db_session.execute(
+            select(UserSettings).filter(UserSettings.user_id == user_id)
+        )
+        settings = result.scalars().first()
+        
+        if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
+            encrypted_key = settings.ai_config["gemini_api_key"]
+            if encrypted_key == "********":
+                return None
+            return decrypt_string(encrypted_key)
+            
         return None
 
-    def __init__(self, user_id: str, spoke_name: str, db_session, node_id: Optional[str] = None):
-        self.user_id = user_id
-        self.spoke_name = spoke_name
-        self.db_session = db_session
-        
-        # Ensure we have a node_id
-        if not node_id:
-            node = self.get_or_create_spoke_node(user_id, spoke_name, db_session)
-            node_id = node.id
-            
-        api_key = self._get_api_key(user_id, db_session)
+    def __init__(self, user_id: str, spoke_name: str, db_session: AsyncSession, node_id: str, api_key: Optional[str] = None):
         super().__init__(node_id=node_id, db_session=db_session, api_key=api_key, user_id=user_id)
-        
-        # Backward compatibility for file tools (can be refactored later to use DB files)
+        self.spoke_name = spoke_name
         self.spoke_dir = get_spoke_dir(user_id, spoke_name)
-        
-        # Add file operation tools after base initialization
         self._setup_tools()
+
+    @classmethod
+    async def create(cls, user_id: str, spoke_name: str, db_session: AsyncSession):
+        """Async factory method for SpokeAgent"""
+        node = await cls.get_or_create_spoke_node(user_id, spoke_name, db_session)
+        api_key = await cls._get_api_key(user_id, db_session)
+        agent = cls(user_id=user_id, spoke_name=spoke_name, db_session=db_session, node_id=node.id, api_key=api_key)
+        await agent.initialize()
+        return agent
     
     def _setup_tools(self):
         """Setup spoke tools for native function calling via Gemini.
@@ -210,16 +210,16 @@ When you complete a milestone or need Hub's input, use `report_to_hub`.
 Files in your reference library are automatically available. Use them to provide informed responses.
 """
     
-    def load_system_prompt(self) -> str:
-        """
-        Spoke-specific prompt loading.
-        Checks DB AgentProfile first, then combines with global and default prompts.
-        """
-        # 1. Try DB Profile
-        profile = self.db_session.query(AgentProfile).filter(
-            AgentProfile.node_id == self.node_id,
-            AgentProfile.is_active == True
-        ).order_by(AgentProfile.version.desc()).first()
+    async def load_system_prompt(self) -> str:
+        """Spoke-specific prompt loading with async DB calls"""
+        from sqlalchemy import select
+        result = await self.db_session.execute(
+            select(AgentProfile).filter(
+                AgentProfile.node_id == self.node_id,
+                AgentProfile.is_active == True
+            ).order_by(AgentProfile.version.desc())
+        )
+        profile = result.scalars().first()
         
         spoke_specific = ""
         if profile and profile.system_prompt:
@@ -235,7 +235,7 @@ Files in your reference library are automatically available. Use them to provide
     def get_node_name(self) -> str:
         return self.spoke_name
     
-    def chat(self, 
+    async def chat(self, 
              user_message: str, 
              attached_files: List[AttachedFile] = None, 
              preferred_model: Optional[str] = None,
@@ -252,7 +252,7 @@ Files in your reference library are automatically available. Use them to provide
             'context_name': self.spoke_name
         }
         
-        return super().chat(
+        return await super().chat(
             user_message, 
             attached_files=attached_files, 
             preferred_model=preferred_model,

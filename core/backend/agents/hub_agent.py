@@ -8,6 +8,7 @@ from agents.base_agent import BaseAgent
 from utils.paths import get_user_hub_dir, get_user_global_prompt, get_global_prompt
 from models.message import Message, MessageRole, AttachedFile
 from models.database import UserSettings, Node, AgentProfile, get_engine, get_session
+from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import date, datetime
 from uuid import uuid4
 import time
@@ -17,47 +18,40 @@ class HubAgent(BaseAgent):
     """Hub agent with Hub-specific logic and LBS integration (per-user)"""
     
     @staticmethod
-    def _get_api_key(user_id: str, db_session=None) -> Optional[str]:
+    async def _get_api_key(user_id: str, db_session: AsyncSession = None) -> Optional[str]:
         """Retrieve and decrypt Gemini API key for the user"""
         print(f"[HubAgent._get_api_key] Called with user_id={user_id}")
         if not user_id:
-            print("[HubAgent._get_api_key] No user_id provided, returning None")
             return None
             
-        from models.database import UserSettings, get_engine, get_session
         from utils.encryption import decrypt_string
         
-        # Use provided session or create temporary one
-        session = db_session or get_session(get_engine())
-        try:
-            settings = session.query(UserSettings).filter(UserSettings.user_id == user_id).first()
-            print(f"[HubAgent._get_api_key] Found settings: {settings is not None}")
-            if settings and settings.ai_config:
-                print(f"[HubAgent._get_api_key] ai_config keys: {list(settings.ai_config.keys())}")
-            if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
-                encrypted_key = settings.ai_config["gemini_api_key"]
-                print(f"[HubAgent._get_api_key] Encrypted key length: {len(encrypted_key)}")
-                if encrypted_key == "********":
-                    print("[HubAgent._get_api_key] Key is masked, returning None")
-                    return None
-                decrypted = decrypt_string(encrypted_key)
-                print(f"[HubAgent._get_api_key] Decryption returned key of length: {len(decrypted) if decrypted else 0}")
-                return decrypted if decrypted else None
-        except Exception as e:
-            print(f"[HubAgent] Failed to retrieve/decrypt API key: {e}")
-        finally:
-            if not db_session:
-                session.close()
-        print("[HubAgent._get_api_key] No key found, returning None")
+        # Use select() for async session
+        from sqlalchemy import select
+        result = await db_session.execute(
+            select(UserSettings).filter(UserSettings.user_id == user_id)
+        )
+        settings = result.scalars().first()
+        
+        if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
+            encrypted_key = settings.ai_config["gemini_api_key"]
+            if encrypted_key == "********":
+                return None
+            return decrypt_string(encrypted_key)
+        
         return None
 
     @classmethod
-    def get_or_create_hub_node(cls, user_id: str, db_session) -> Node:
+    async def get_or_create_hub_node(cls, user_id: str, db_session: AsyncSession) -> Node:
         """Find or create the HUB node for a user"""
-        node = db_session.query(Node).filter(
-            Node.user_id == user_id,
-            Node.node_type == "HUB"
-        ).first()
+        from sqlalchemy import select
+        result = await db_session.execute(
+            select(Node).filter(
+                Node.user_id == user_id,
+                Node.node_type == "HUB"
+            )
+        )
+        node = result.scalars().first()
         
         if not node:
             node_id = str(uuid4())
@@ -70,34 +64,32 @@ class HubAgent(BaseAgent):
                 lbs_access_level="WRITE"
             )
             db_session.add(node)
-            db_session.commit()
+            await db_session.commit()
             
             # Create default profile
             profile = AgentProfile(
                 id=str(uuid4()),
                 node_id=node_id,
-                system_prompt=None, # Will fallback to default
+                system_prompt=None,
                 is_active=True
             )
             db_session.add(profile)
-            db_session.commit()
+            await db_session.commit()
             
         return node
 
-    def __init__(self, user_id: str, db_session, node_id: Optional[str] = None):
-        self.user_id = user_id
-        self.db_session = db_session
-        
-        # Ensure we have a node_id
-        if not node_id:
-            node = self.get_or_create_hub_node(user_id, db_session)
-            node_id = node.id
-            
-        api_key = self._get_api_key(user_id, db_session)
+    def __init__(self, user_id: str, db_session: AsyncSession, node_id: str, api_key: Optional[str] = None):
         super().__init__(node_id=node_id, db_session=db_session, api_key=api_key, user_id=user_id)
-        
-        # Set up native function calling tools
         self._setup_tools()
+
+    @classmethod
+    async def create(cls, user_id: str, db_session: AsyncSession):
+        """Async factory method for HubAgent"""
+        node = await cls.get_or_create_hub_node(user_id, db_session)
+        api_key = await cls._get_api_key(user_id, db_session)
+        agent = cls(user_id=user_id, db_session=db_session, node_id=node.id, api_key=api_key)
+        await agent.initialize()
+        return agent
     
     def _setup_tools(self):
         """Configure native function calling tools for Hub agent (stored at agent level)"""
@@ -283,16 +275,16 @@ The LBS system has TWO separate data models. Choosing the wrong tool will cause 
 """
         return hub_default
     
-    def load_system_prompt(self) -> str:
-        """
-        Hub-specific prompt loading with full command and LBS documentation.
-        Checks DB AgentProfile first, then fallbacks.
-        """
-        # 1. Try DB Profile
-        profile = self.db_session.query(AgentProfile).filter(
-            AgentProfile.node_id == self.node_id,
-            AgentProfile.is_active == True
-        ).order_by(AgentProfile.version.desc()).first()
+    async def load_system_prompt(self) -> str:
+        """Hub-specific prompt loading with async DB calls"""
+        from sqlalchemy import select
+        result = await self.db_session.execute(
+            select(AgentProfile).filter(
+                AgentProfile.node_id == self.node_id,
+                AgentProfile.is_active == True
+            ).order_by(AgentProfile.version.desc())
+        )
+        profile = result.scalars().first()
         
         hub_prompt = None
         if profile and profile.system_prompt:
@@ -312,50 +304,45 @@ The LBS system has TWO separate data models. Choosing the wrong tool will cause 
         global_prompt = get_user_global_prompt(self.user_id)
         separator = "\n\n---\n\n# Hub Agent (Role-Specific Instructions)\n\n" if global_prompt else ""
         
-        # 4. Load latest archived summary for context migration
-        previous_context = self._load_latest_summary(context_type="hub", context_name="hub")
+        # 4. Load latest archived summary
+        previous_context = await self._load_latest_summary(context_type="hub", context_name="hub")
         
         return global_prompt + separator + hub_prompt + previous_context
     
     def get_node_name(self) -> str:
         return "hub"
     
-    def chat(self, user_message: str, attached_files: List[AttachedFile] = None, preferred_model: Optional[str] = None) -> str:
-        """
-        Hub-specific chat overrides BaseAgent.chat to inject LBS context
-        """
+    async def chat(self, user_message: str, attached_files: List[AttachedFile] = None, preferred_model: Optional[str] = None) -> str:
+        """Hub-specific chat overrides BaseAgent.chat to inject LBS context"""
         from services.lbs_client import LBSClient
+        from sqlalchemy import select
+        from models.database import ServiceRegistry
+        from utils.encryption import decrypt_string
         
-        # 1. Load system prompt if not loaded
-        if not self.system_prompt:
-            self.system_prompt = self.load_system_prompt()
-        
-        # 2. Build LBS context
         meta_info_str = None
         try:
-            from models.database import ServiceRegistry
-            from utils.encryption import decrypt_string
-            
             # Get user's LBS config
             lbs_api_key = None
             lbs_url = None
             
-            service = self.db_session.query(ServiceRegistry).filter(
-                ServiceRegistry.user_id == self.user_id,
-                ServiceRegistry.service_name == "lbs"
-            ).first()
+            result = await self.db_session.execute(
+                select(ServiceRegistry).filter(
+                    ServiceRegistry.user_id == self.user_id,
+                    ServiceRegistry.service_name == "lbs"
+                )
+            )
+            service = result.scalars().first()
             
             if service:
                 lbs_url = service.base_url
                 if service.api_key_encrypted:
                     try:
                         lbs_api_key = decrypt_string(service.api_key_encrypted)
-                    except Exception:
-                        pass
+                    except Exception: pass
             
             client = LBSClient(base_url=lbs_url, api_key=lbs_api_key)
             t0 = time.time()
-            daily_data = client.calculate_load(date.today())
+            daily_data = await client.calculate_load(date.today())
             print(f"[Hub/Timing] LBS calculate_load: {time.time()-t0:.2f}s")
             load = daily_data.get("adjusted_load", 0.0)
             meta_info_str = f"Load: {load:.1f}/10.0 | Capacity: 10.0"
@@ -371,7 +358,7 @@ The LBS system has TWO separate data models. Choosing the wrong tool will cause 
             'context_name': 'hub'
         }
         
-        return super().chat(
+        return await super().chat(
             user_message,
             attached_files=attached_files,
             preferred_model=preferred_model,

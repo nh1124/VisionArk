@@ -56,7 +56,7 @@ def get_provider(
 def _create_gemini_provider(model_name: Optional[str], api_key: Optional[str]) -> GeminiProvider:
     """Create Gemini provider"""
     if model_name is None:
-        model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-exp")
+        model_name = os.getenv("GEMINI_MODEL", "gemini-3-pro-preview")
     if api_key is None:
         api_key = os.getenv("GEMINI_API_KEY")
     

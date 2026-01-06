@@ -4,12 +4,13 @@ Executes slash commands from frontend
 """
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 from typing import Optional
 
 from services.command_parser import parse_command, execute_command
 from services import command_handlers  # Import to register commands
-from services.auth import resolve_identity, Identity, get_db
+from services.auth import resolve_identity, Identity
+from models.database import get_async_db
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/commands", tags=["Commands"])
 
@@ -27,12 +28,11 @@ class CommandResponse(BaseModel):
     command_name: Optional[str] = None
     data: Optional[dict] = None
 
-
 @router.post("/execute", response_model=CommandResponse)
 async def execute_command_endpoint(
     req: CommandRequest,
     identity: Identity = Depends(resolve_identity),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Execute a slash command

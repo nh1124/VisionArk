@@ -7,6 +7,7 @@ from typing import Optional
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, Date, DateTime, Text, JSON, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from enum import Enum
 
 Base = declarative_base()
@@ -298,3 +299,32 @@ def get_session(engine):
     """Get database session"""
     SessionLocal = sessionmaker(bind=engine)
     return SessionLocal()
+
+
+def get_async_engine(db_url: str = None):
+    """Get async database engine"""
+    if db_url is None:
+        from config import settings
+        db_url = settings.database_url
+    
+    if not db_url:
+        raise ValueError("DATABASE_URL is required.")
+        
+    # Convert postgresql:// to postgresql+asyncpg:// if necessary
+    if db_url.startswith("postgresql://") and "+asyncpg" not in db_url:
+        db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        
+    return create_async_engine(db_url, echo=False)
+
+
+def get_async_session_maker(engine):
+    """Get async session maker"""
+    return async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
+
+
+async def get_async_db():
+    """FastAPI dependency for async database session"""
+    engine = get_async_engine()
+    async_session = get_async_session_maker(engine)
+    async with async_session() as session:
+        yield session
