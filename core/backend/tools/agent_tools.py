@@ -1366,6 +1366,111 @@ def research_url(urls: List[str], query: str, user_id: str, session: Session) ->
         return ToolResult(success=False, message=f"URL research failed: {str(e)}")
 
 
+def generate_image(
+    prompt: str,
+    filename: str = None,
+    aspect_ratio: str = "1:1",
+    *,
+    user_id: str,
+    session: Session,
+    node_type: str = "SPOKE",
+    spoke_name: str = None
+) -> ToolResult:
+    """
+    Generate an image from a text prompt using Gemini's image generation.
+    Saves to the agent's artifacts/images/ directory.
+    Returns path to the generated image.
+    """
+    from google.genai import Client, types
+    from models.database import UserSettings
+    from utils.encryption import decrypt_string
+    import base64
+    
+    # Validate aspect ratio
+    valid_ratios = ["1:1", "16:9", "9:16", "4:3", "3:4"]
+    if aspect_ratio not in valid_ratios:
+        aspect_ratio = "1:1"
+    
+    # Get API key
+    api_key = None
+    settings = session.query(UserSettings).filter(UserSettings.user_id == user_id).first()
+    if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
+        try:
+            api_key = decrypt_string(settings.ai_config["gemini_api_key"])
+        except Exception:
+            pass
+            
+    if not api_key:
+        return ToolResult(success=False, message="Gemini API Key not found for image generation")
+    
+    # Generate filename if not provided
+    if not filename:
+        filename = f"generated_{uuid.uuid4().hex[:8]}"
+    
+    # Ensure filename is safe
+    filename = "".join(c for c in filename if c.isalnum() or c in "_-")[:50]
+    
+    client = Client(api_key=api_key)
+    
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-preview-05-20",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_modalities=['Image', 'Text'],
+            )
+        )
+        
+        # Find the image part in the response
+        image_data = None
+        response_text = None
+        
+        for part in response.candidates[0].content.parts:
+            if hasattr(part, 'inline_data') and part.inline_data is not None:
+                image_data = part.inline_data.data
+            elif hasattr(part, 'text') and part.text:
+                response_text = part.text
+        
+        if not image_data:
+            return ToolResult(
+                success=False, 
+                message=f"No image generated. API response: {response_text or 'No text response'}"
+            )
+        
+        # Resolve artifacts directory for the agent
+        artifacts_dir = _resolve_agent_artifacts_dir(user_id, node_type, spoke_name)
+        images_dir = artifacts_dir / "images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save the image
+        image_path = images_dir / f"{filename}.png"
+        
+        # Decode base64 if needed
+        if isinstance(image_data, str):
+            image_bytes = base64.b64decode(image_data)
+        else:
+            image_bytes = image_data
+            
+        image_path.write_bytes(image_bytes)
+        
+        # Return relative path for agent to use
+        relative_path = f"artifacts/images/{filename}.png"
+        
+        return ToolResult(
+            success=True,
+            message=f"🖼️ Image generated and saved to: {relative_path}",
+            data={
+                "path": relative_path,
+                "absolute_path": str(image_path),
+                "filename": f"{filename}.png",
+                "prompt": prompt[:100]  # Truncate for display
+            }
+        )
+        
+    except Exception as e:
+        return ToolResult(success=False, message=f"Image generation failed: {str(e)}")
+
+
 # ==============================================================================
 # LBS & KC Extended Tools
 # ==============================================================================
@@ -2211,6 +2316,29 @@ HUB_TOOL_DEFINITIONS = [
         }
     },
     {
+        "name": "generate_image",
+        "description": "Generate an image from a text description using AI. The image will be saved to your artifacts/images/ folder.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "Detailed description of the image to generate. Be specific about style, colors, composition, etc."
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Optional filename (without extension) for the image. If not provided, a random name will be generated."
+                },
+                "aspect_ratio": {
+                    "type": "string",
+                    "enum": ["1:1", "16:9", "9:16", "4:3", "3:4"],
+                    "description": "Aspect ratio for the image. Default is 1:1 (square)."
+                }
+            },
+            "required": ["prompt"]
+        }
+    },
+    {
         "name": "complete_lbs_task",
         "description": "Record an execution status for a specific task on a specific date (e.g. mark it as done).",
         "parameters": {
@@ -2663,6 +2791,7 @@ TOOL_FUNCTIONS = {
     "execute_code": execute_code,
     "search_places": search_places,
     "research_url": research_url,
+    "generate_image": generate_image,
     # File operation tools
     "save_artifact": save_artifact,
     "update_artifact": update_artifact,
