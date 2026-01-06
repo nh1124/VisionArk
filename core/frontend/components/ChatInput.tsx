@@ -37,7 +37,7 @@ export default function ChatInput({
     placeholder,
     disabled = false,
     allowFileAttach = true,
-    selectedModel = "gemini-2.5-flash-lite",
+    selectedModel = "gemini-3-pro-preview",
     onModelChange,
     showModelSelector = false,
     onClone

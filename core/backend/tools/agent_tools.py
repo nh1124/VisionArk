@@ -1528,7 +1528,7 @@ def google_search(query: str, user_id: str, session: Session) -> ToolResult:
     try:
         # Use latest model for research
         response = client.models.generate_content(
-            model="gemini-2.5-flash-lite",
+            model="gemini-3-pro-preview",
             contents=query,
             config=types.GenerateContentConfig(
                 tools=[types.Tool(google_search=types.GoogleSearch())],
