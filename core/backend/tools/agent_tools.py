@@ -1573,7 +1573,7 @@ async def google_search(query: str, user_id: str, session: AsyncSession) -> Tool
     try:
         # Use latest model for research
         response = client.models.generate_content(
-            model="gemini-3-pro",
+            model="gemini-3-pro-preview",
             contents=query,
             config=types.GenerateContentConfig(
                 tools=[types.Tool(google_search=types.GoogleSearch())],
@@ -1621,7 +1621,7 @@ async def execute_code(prompt: str, user_id: str, session: AsyncSession) -> Tool
     
     try:
         response = client.models.generate_content(
-            model="gemini-2.0-flash-exp",
+            model="gemini-3-pro-preview",
             contents=prompt,
             config=types.GenerateContentConfig(
                 tools=[types.Tool(code_execution=types.ToolCodeExecution())],
@@ -1662,7 +1662,7 @@ async def search_places(query: str, user_id: str, session: AsyncSession, lat: fl
         
     try:
         response = client.models.generate_content(
-            model="gemini-2.0-flash-exp",
+            model="gemini-2.5-flash-lite",
             contents=query,
             config=types.GenerateContentConfig(
                 tools=[types.Tool(google_maps=types.GoogleMaps())],
@@ -1699,7 +1699,7 @@ async def research_url(urls: List[str], query: str, user_id: str, session: Async
     
     try:
         response = client.models.generate_content(
-            model="gemini-2.0-flash-exp",
+            model="gemini-2.5-flash-lite",
             contents=full_prompt,
             config=types.GenerateContentConfig(
                 tools=[types.Tool(url_context=types.UrlContext())],
@@ -1759,7 +1759,7 @@ async def generate_image(
     
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash-preview-05-20",
+            model="gemini-3-pro-image-preview",
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_modalities=['Image', 'Text'],
