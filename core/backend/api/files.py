@@ -11,7 +11,7 @@ import mimetypes
 from uuid import uuid4
 
 from utils.paths import get_spoke_dir, get_user_spokes_dir
-from services.auth import resolve_identity, Identity
+from services.auth import resolve_identity, Identity, resolve_identity_for_download
 from models.database import UploadedFile, Node, get_async_db
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -459,4 +459,92 @@ async def delete_file_by_id(
         return {"message": "File deleted successfully"}
     else:
         raise HTTPException(status_code=500, detail="Failed to delete file")
+
+
+@files_router.get("/download/{file_id}")
+async def download_file_by_id(
+    file_id: str,
+    identity: Identity = Depends(resolve_identity_for_download),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Download an uploaded file by its ID (References)"""
+    # Verify ownership
+    result = await db.execute(select(UploadedFile).filter(
+        UploadedFile.id == file_id
+    ))
+    file_record = result.scalars().first()
+    
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    # Check ownership via node
+    result = await db.execute(select(Node).filter(Node.id == file_record.node_id))
+    node = result.scalars().first()
+    if not node or node.user_id != identity.user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    file_path = Path(file_record.storage_path)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Physical file missing")
+    
+    return FileResponse(
+        file_path,
+        media_type=file_record.mime_type,
+        filename=file_record.filename
+    )
+
+
+@files_router.get("/{node_type}/{node_name}/{directory}/{file_path:path}")
+async def get_node_file(
+    node_type: str,
+    node_name: str,
+    directory: str,
+    file_path: str,
+    identity: Identity = Depends(resolve_identity_for_download),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """
+    Serve a file from Hub or Spoke directory (refs, artifacts, or files).
+    """
+    if node_type.lower() not in ["hub", "spoke"]:
+        raise HTTPException(status_code=400, detail="node_type must be 'hub' or 'spoke'")
+    
+    if directory not in ["refs", "artifacts", "files"]:
+        raise HTTPException(status_code=400, detail="Directory must be 'refs', 'artifacts', or 'files'")
+    
+    user_id = identity.user_id
+    
+    try:
+        if node_type.lower() == "hub":
+            from utils.paths import get_user_hub_dir
+            base_dir = get_user_hub_dir(user_id)
+        else:
+            from utils.paths import get_spoke_dir
+            base_dir = get_spoke_dir(user_id, node_name)
+        
+        from utils.paths import secure_path_join
+        full_path = secure_path_join(base_dir / directory, file_path)
+        
+        if not full_path.exists() or not full_path.is_file():
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        # Determine filename for download
+        filename = full_path.name
+        
+        # Detect MIME type
+        mime_type, _ = mimetypes.guess_type(str(full_path))
+        
+        return FileResponse(
+            full_path, 
+            media_type=mime_type, 
+            filename=filename
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        # Traversal or validation error
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        print(f"[FileServing] Error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 

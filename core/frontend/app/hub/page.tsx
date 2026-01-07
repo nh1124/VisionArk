@@ -7,6 +7,7 @@ import CommandAutocomplete from "../components/CommandAutocomplete";
 import FilesSidebar from "@/components/FilesSidebar";
 import InboxView from "@/components/InboxView";
 import { apiFetch } from "@/lib/api";
+import { Files } from "lucide-react";
 
 interface MessageAttachment {
     name: string;
@@ -224,9 +225,12 @@ export default function HubPage() {
                     <div className="flex items-center gap-4">
                         <button
                             onClick={() => setShowSidebar(!showSidebar)}
-                            className="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors text-sm"
+                            className={`p-2.5 rounded-xl transition-all ${showSidebar
+                                ? "bg-purple-500/20 text-purple-400 border border-purple-500/30"
+                                : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white border border-transparent"}`}
+                            title={showSidebar ? "Hide Files" : "Show Files"}
                         >
-                            {showSidebar ? "Hide" : "Show"} Files
+                            <Files size={20} />
                         </button>
                     </div>
                 </div>
@@ -267,6 +271,8 @@ export default function HubPage() {
                                             attached_files={msg.attached_files}
                                             type={msg.type}
                                             tool_calls={msg.tool_calls}
+                                            nodeType="hub"
+                                            nodeName="hub"
                                         />
                                     );
                                 })}

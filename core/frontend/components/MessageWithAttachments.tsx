@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, memo } from "react";
+import { getFileToken } from "@/lib/api";
 import MarkdownRenderer from "./MarkdownRenderer";
 
 interface MessageAttachment {
@@ -22,6 +23,8 @@ interface MessageWithAttachmentsProps {
     attached_files?: MessageAttachment[];
     type?: "llm" | "system";
     tool_calls?: ToolCall[];  // Received from API
+    nodeType?: string;
+    nodeName?: string;
 }
 
 function MessageWithAttachmentsBase({
@@ -29,9 +32,28 @@ function MessageWithAttachmentsBase({
     content,
     attached_files = [],
     type = "llm",
-    tool_calls = []  // Use API-provided tool_calls
+    tool_calls = [], // Use API-provided tool_calls
+    nodeType = "hub",
+    nodeName = "hub"
 }: MessageWithAttachmentsProps) {
     const [toolsExpanded, setToolsExpanded] = useState(true);
+
+    const downloadFile = async (url: string, filename: string) => {
+        try {
+            const token = await getFileToken();
+            const downloadUrl = `${url}${url.includes('?') ? '&' : '?'}token=${token}`;
+
+            // Create a temporary link and click it to trigger download
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        } catch (error) {
+            console.error("Download failed:", error);
+        }
+    };
 
     const formatFileSize = (bytes: number): string => {
         if (bytes < 1024) return bytes + " B";
@@ -71,7 +93,7 @@ function MessageWithAttachmentsBase({
                 <div className="prose prose-invert max-w-none">
                     {role === "assistant" ? (
                         content ? (
-                            <MarkdownRenderer content={content} />
+                            <MarkdownRenderer content={content} nodeType={nodeType} nodeName={nodeName} />
                         ) : tool_calls.length === 0 ? (
                             <span className="text-gray-400 italic">(No response)</span>
                         ) : null
@@ -101,17 +123,26 @@ function MessageWithAttachmentsBase({
                                         {formatFileSize(file.size)}
                                     </div>
                                 </div>
-                                {file.url && (
-                                    <a
-                                        href={file.url}
-                                        download={file.name}
-                                        className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                                {file.url ? (
+                                    <button
+                                        onClick={() => downloadFile(file.url!, file.name)}
+                                        className="p-2 hover:bg-white/10 rounded-lg transition-colors text-blue-400"
                                         title="Download file"
                                     >
                                         <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="Vertical 4v12m0 0l-4-4m4 4l4-4M4 16h16" />
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v12m0 0l-4-4m4 4l4-4M4 16h16" />
                                         </svg>
-                                    </a>
+                                    </button>
+                                ) : (
+                                    <button
+                                        onClick={() => downloadFile(`/api/files/${nodeType}/${nodeName}/refs/${file.name}`, file.name)}
+                                        className="p-2 hover:bg-white/10 rounded-lg transition-colors text-gray-400 group-hover:text-blue-400"
+                                        title="Download from storage"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v12m0 0l-4-4m4 4l4-4M4 16h16" />
+                                        </svg>
+                                    </button>
                                 )}
                             </div>
                         ))}

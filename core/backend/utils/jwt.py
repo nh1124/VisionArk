@@ -8,7 +8,12 @@ from jose import jwt, JWTError
 from config import settings
 
 
-def create_access_token(user_id: str, username: str, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(
+    user_id: str, 
+    username: str, 
+    expires_delta: Optional[timedelta] = None,
+    token_type: str = "access"
+) -> str:
     """
     Create a JWT access token.
     
@@ -30,18 +35,19 @@ def create_access_token(user_id: str, username: str, expires_delta: Optional[tim
         "username": username,
         "exp": expire,
         "iat": datetime.utcnow(),
-        "type": "access"
+        "type": token_type
     }
     
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
-def decode_access_token(token: str) -> Optional[dict]:
+def decode_token(token: str, required_type: Optional[str] = "access") -> Optional[dict]:
     """
-    Decode and validate a JWT access token.
+    Decode and validate a JWT token.
     
     Args:
         token: JWT token string
+        required_type: If provided, ensures the token has this 'type'
         
     Returns:
         Token payload dict if valid, None if invalid/expired
@@ -53,10 +59,17 @@ def decode_access_token(token: str) -> Optional[dict]:
             algorithms=[settings.jwt_algorithm]
         )
         
-        # Verify token type
-        if payload.get("type") != "access":
+        # Verify token type if required
+        if required_type and payload.get("type") != required_type:
             return None
             
         return payload
     except JWTError:
         return None
+
+
+def decode_access_token(token: str) -> Optional[dict]:
+    """
+    Legacy wrapper for decoding standard access tokens.
+    """
+    return decode_token(token, required_type="access")

@@ -5,19 +5,81 @@ import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { atomDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Copy, Check } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { getFileToken } from "@/lib/api";
 
 interface MarkdownRendererProps {
     content: string;
     className?: string;
+    nodeType?: string;
+    nodeName?: string;
 }
 
-export default function MarkdownRenderer({ content, className = "" }: MarkdownRendererProps) {
+export default function MarkdownRenderer({
+    content,
+    className = "",
+    nodeType = "hub",
+    nodeName = "hub"
+}: MarkdownRendererProps) {
+    // State for short-lived file token
+    const [fileToken, setFileToken] = useState<string | null>(null);
+
+    useEffect(() => {
+        getFileToken().then(setFileToken).catch(err => {
+            console.error("[MarkdownRenderer] Failed to get file token:", err);
+        });
+    }, []);
+
+    const tokenQuery = fileToken ? `?token=${fileToken}` : "";
+
+    // Pre-process content to catch bare artifact/ref paths and turn them into images
+    // Matches patterns like artifacts/image.png or /artifacts/image.png
+    const processedContent = content.replace(
+        /(?<![!\]\(\[])\b((?:\/?(?:artifacts|refs|files))\/[^\s\)]+\.(?:png|jpe?g|gif|webp|svg|bmp|tiff))\b/gi,
+        (match) => `![${match}](${match})`
+    );
+
     return (
         <div className={`markdown-content prose prose-invert max-w-none ${className}`}>
             <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
+                    img({ node, src, alt, ...props }: any) {
+                        // Transform local paths to API proxy URLs
+                        let processedSrc = src;
+                        if (src && !src.startsWith("http")) {
+                            // Check if it's an artifact or reference
+                            const isArtifact = src.startsWith("artifacts/") || src.includes("/artifacts/");
+                            const isReference = src.startsWith("refs/") || src.includes("/refs/");
+                            const isFile = src.startsWith("files/") || src.includes("/files/");
+
+                            if (isArtifact || isReference || isFile) {
+                                let cleanPath = src.startsWith("/") ? src.substring(1) : src;
+                                processedSrc = `/api/files/${nodeType}/${nodeName}/${cleanPath}${tokenQuery}`;
+                            } else if (!src.includes("/")) {
+                                // Default simple filename to artifacts directory
+                                processedSrc = `/api/files/${nodeType}/${nodeName}/artifacts/${src}${tokenQuery}`;
+                            }
+                        } else if (src && src.startsWith("http") && src.includes("/api/files/")) {
+                            // Already processed but might need token
+                            if (!src.includes("token=")) {
+                                processedSrc = `${src}${src.includes("?") ? "&" : "?"}token=${fileToken || ""}`;
+                            }
+                        }
+
+                        return (
+                            <div className="my-6">
+                                <img
+                                    src={processedSrc}
+                                    alt={alt || "Image"}
+                                    className="max-w-full h-auto rounded-xl shadow-lg border border-gray-800/50 hover:shadow-2xl transition-all duration-300"
+                                    loading="lazy"
+                                    {...props}
+                                />
+                                {alt && <p className="text-center text-xs text-gray-500 mt-2 italic">{alt}</p>}
+                            </div>
+                        );
+                    },
                     code({ node, inline, className, children, ...props }: any) {
                         const match = /language-(\w+)/.exec(className || "");
                         const [isCopied, setIsCopied] = useState(false);
@@ -89,6 +151,28 @@ export default function MarkdownRenderer({ content, className = "" }: MarkdownRe
                         return <ol className="list-decimal list-inside space-y-1 my-3 text-gray-300">{children}</ol>;
                     },
                     a({ href, children }) {
+                        // YouTube Link Detection
+                        const youtubeRegex = /^(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
+                        const match = href?.match(youtubeRegex);
+
+                        if (match) {
+                            const videoId = match[1];
+                            return (
+                                <div className="my-6 aspect-video rounded-xl overflow-hidden shadow-2xl border border-gray-800/50">
+                                    <iframe
+                                        width="100%"
+                                        height="100%"
+                                        src={`https://www.youtube.com/embed/${videoId}`}
+                                        title="YouTube video player"
+                                        frameBorder="0"
+                                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                        allowFullScreen
+                                        className="w-full h-full"
+                                    />
+                                </div>
+                            );
+                        }
+
                         return (
                             <a
                                 href={href}
@@ -112,7 +196,7 @@ export default function MarkdownRenderer({ content, className = "" }: MarkdownRe
                     }
                 }}
             >
-                {content}
+                {processedContent}
             </ReactMarkdown>
         </div>
     );

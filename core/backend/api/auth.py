@@ -14,7 +14,8 @@ from models.database import User, ServiceRegistry, UserSettings
 from config import settings
 from services.auth import get_db, resolve_identity, Identity
 from utils.password import hash_password, verify_password, MIN_PASSWORD_LENGTH
-from utils.jwt import create_access_token, decode_access_token
+from utils.jwt import create_access_token, decode_access_token, decode_token
+from datetime import timedelta
 from utils.paths import get_user_hub_dir, get_user_spokes_dir, get_user_global_assets_dir, get_default_assets_dir
 from utils.encryption import encrypt_string
 import os
@@ -63,6 +64,11 @@ class AuthResponse(BaseModel):
     token_type: str = "bearer"
     user_id: str
     username: str
+
+
+class FileTokenResponse(BaseModel):
+    file_token: str
+    expires_in: int = 300  # 5 minutes
 
 
 class UserProfile(BaseModel):
@@ -328,3 +334,18 @@ async def get_current_user(
         email=user.email,
         is_active=user.is_active
     )
+
+
+@router.get("/file-token", response_model=FileTokenResponse)
+async def get_file_token(identity: Identity = Depends(resolve_identity)):
+    """
+    Generate a short-lived token for file downloads/previews.
+    Valid for 5 minutes and limited to 'file_download' scope.
+    """
+    token = create_access_token(
+        user_id=identity.user_id,
+        username=identity.username,
+        expires_delta=timedelta(minutes=5),
+        token_type="file_download"
+    )
+    return FileTokenResponse(file_token=token)

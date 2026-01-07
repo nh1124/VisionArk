@@ -27,8 +27,19 @@ export async function GET(
             headers,
         });
 
-        const data = await response.json();
-        return NextResponse.json(data, { status: response.status });
+        // Use the raw response body for file streams/images
+        const contentType = response.headers.get('Content-Type');
+        const contentDisposition = response.headers.get('Content-Disposition');
+
+        // Create a new response with the body and appropriate headers
+        const responseHeaders = new Headers();
+        if (contentType) responseHeaders.set('Content-Type', contentType);
+        if (contentDisposition) responseHeaders.set('Content-Disposition', contentDisposition);
+
+        return new NextResponse(response.body, {
+            status: response.status,
+            headers: responseHeaders,
+        });
     } catch (error) {
         console.error('[API Route] GET error:', error);
         return NextResponse.json({ detail: 'Proxy error' }, { status: 500 });

@@ -56,3 +56,30 @@ export async function apiJson<T>(
 
     return response.json();
 }
+
+/**
+ * Short-lived File Token Cache
+ * Tokens are valid for 5 minutes, we cache for slightly less to be safe
+ */
+let cachedFileToken: { token: string; expiresAt: number } | null = null;
+
+export async function getFileToken(): Promise<string> {
+    const now = Date.now();
+
+    // Check if we have a valid cached token (with 30s buffer)
+    if (cachedFileToken && cachedFileToken.expiresAt > now + 30000) {
+        return cachedFileToken.token;
+    }
+
+    try {
+        const data = await apiJson<{ file_token: string; expires_in: number }>("/api/auth/file-token");
+        cachedFileToken = {
+            token: data.file_token,
+            expiresAt: now + (data.expires_in * 1000)
+        };
+        return data.file_token;
+    } catch (error) {
+        console.error("Failed to fetch file token:", error);
+        throw error;
+    }
+}

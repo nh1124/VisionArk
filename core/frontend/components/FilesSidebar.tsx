@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, getFileToken } from "@/lib/api";
+import { Download, FileText, Image, ExternalLink, X, Folder, File, RefreshCw, Trash2, Loader2, Eye } from "lucide-react";
+import MarkdownRenderer from "./MarkdownRenderer";
 
 interface FileInfo {
     id: string;
@@ -93,14 +95,75 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
     const [uploadProgress, setUploadProgress] = useState(0);
     const [error, setError] = useState<string | null>(null);
     const [dragActive, setDragActive] = useState(false);
-    const [selectedArtifact, setSelectedArtifact] = useState<{ name: string, content: string } | null>(null);
+    const [selectedArtifact, setSelectedArtifact] = useState<{
+        name: string,
+        content?: string,
+        path: string,
+        type: 'text' | 'image' | 'binary',
+        mimeType?: string
+    } | null>(null);
     const [collapsedDirs, setCollapsedDirs] = useState<Record<string, boolean>>({});
 
     const toggleDir = (path: string) => {
         setCollapsedDirs(prev => ({ ...prev, [path]: !prev[path] }));
     };
 
+    const downloadFile = async (url: string, filename: string) => {
+        try {
+            const token = await getFileToken();
+            const downloadUrl = `${url}${url.includes('?') ? '&' : '?'}token=${token}`;
+
+            // Create a temporary link and click it to trigger download
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        } catch (error) {
+            console.error("Download failed:", error);
+            setError("Failed to generate download link");
+        }
+    };
+
+    const openArtifact = async (path: string) => {
+        try {
+            const token = await getFileToken();
+            window.open(`/api/files/${nodeType}/${nodeName}/artifacts/${path}?token=${token}`, '_blank');
+        } catch (error) {
+            console.error("Failed to open artifact:", error);
+        }
+    };
+
     const artifactTree = useMemo(() => buildFileTree(artifacts), [artifacts]);
+
+    // Internal component for authenticated image preview
+    const ImagePreview = ({ url, name }: { url: string; name: string }) => {
+        const [imgToken, setImgToken] = useState<string | null>(null);
+
+        useEffect(() => {
+            getFileToken().then(setImgToken).catch(() => { });
+        }, []);
+
+        if (!imgToken) {
+            return (
+                <div className="flex items-center justify-center p-20 text-gray-500 italic">
+                    <Loader2 size={24} className="animate-spin mr-2" />
+                    Loading preview...
+                </div>
+            );
+        }
+
+        return (
+            <div className="flex items-center justify-center p-8 min-h-[400px]">
+                <img
+                    src={`${url}?token=${imgToken}`}
+                    alt={name}
+                    className="max-w-full h-auto rounded-lg shadow-2xl border border-gray-800"
+                />
+            </div>
+        );
+    };
 
     // Recursive component to render tree nodes
     const TreeItem = ({ node }: { node: TreeNode }) => {
@@ -111,13 +174,13 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
                 <div className="ml-2">
                     <div
                         onClick={() => toggleDir(node.path)}
-                        className="flex items-center gap-2 p-1 hover:bg-gray-800 rounded cursor-pointer text-sm text-gray-300"
+                        className="flex items-center gap-2 p-1.5 hover:bg-gray-800 rounded cursor-pointer text-sm text-gray-300 group"
                     >
-                        <span>{isCollapsed ? "📁" : "📂"}</span>
-                        <span className="truncate">{node.name}</span>
+                        {isCollapsed ? <Folder size={14} className="text-gray-500" /> : <Folder size={14} className="text-yellow-500/70" />}
+                        <span className="truncate flex-1">{node.name}</span>
                     </div>
                     {!isCollapsed && (
-                        <div className="ml-2 border-l border-gray-700">
+                        <div className="ml-2 border-l border-gray-700/50">
                             {node.children.map((child) => (
                                 <TreeItem key={child.path} node={child} />
                             ))}
@@ -129,18 +192,30 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
 
         return (
             <div
+                className="flex items-center justify-between ml-4 p-1.5 hover:bg-gray-800 rounded cursor-pointer text-sm group"
                 onClick={() => viewArtifact(node.path, node.name)}
-                className="flex items-center justify-between ml-4 p-1 hover:bg-gray-800 rounded cursor-pointer text-sm group"
             >
                 <div className="flex items-center gap-2 min-w-0">
-                    <span className={nodeType === "hub" ? "text-purple-400" : "text-cyan-400"}>📄</span>
+                    <File size={14} className={nodeType === "hub" ? "text-purple-400" : "text-cyan-400"} />
                     <span className="truncate text-gray-200" title={node.path}>{node.name}</span>
                 </div>
-                {node.size !== undefined && (
-                    <span className="text-gray-500 text-[10px] ml-2 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                        {formatSize(node.size)}
-                    </span>
-                )}
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {node.size !== undefined && (
+                        <span className="text-gray-500 text-[10px] mr-1 whitespace-nowrap">
+                            {formatSize(node.size)}
+                        </span>
+                    )}
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            openArtifact(node.path);
+                        }}
+                        className="p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-white transition-colors"
+                        title="Download"
+                    >
+                        <Download size={12} />
+                    </button>
+                </div>
             </div>
         );
     };
@@ -207,15 +282,37 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
     // View artifact content
     const viewArtifact = async (path: string, name: string) => {
         try {
+            const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(name);
             const url = nodeType === "hub"
                 ? `/api/agents/hub/artifacts/${path}`
                 : `/api/agents/${nodeType}/${nodeName}/artifacts/${path}`;
+
+            if (isImage) {
+                setSelectedArtifact({ name, path, type: 'image' });
+                return;
+            }
+
             const response = await apiFetch(url);
-            const data = await response.json();
-            setSelectedArtifact({ name, content: data.content || "Unable to read file" });
+            const contentType = response.headers.get('Content-Type') || '';
+
+            if (contentType.includes('application/json')) {
+                const data = await response.json();
+                setSelectedArtifact({
+                    name,
+                    path,
+                    content: data.content || "Unable to read file",
+                    type: 'text'
+                });
+            } else if (contentType.includes('text/')) {
+                const content = await response.text();
+                setSelectedArtifact({ name, path, content, type: 'text' });
+            } else {
+                // For other types, just show download option
+                setSelectedArtifact({ name, path, type: 'binary', mimeType: contentType });
+            }
         } catch (error) {
             console.error("Failed to view artifact:", error);
-            setSelectedArtifact({ name, content: "Error loading file" });
+            setSelectedArtifact({ name, path, content: "Error loading file", type: 'text' });
         }
     };
 
@@ -352,9 +449,10 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
                         <button
                             onClick={syncFiles}
                             disabled={syncing}
-                            className={`text-xs px-2 py-1 ${nodeType === "hub" ? "bg-purple-600 hover:bg-purple-500" : "bg-cyan-600 hover:bg-cyan-500"} rounded disabled:opacity-50`}
+                            className={`flex items-center gap-1 text-xs px-2 py-1 ${nodeType === "hub" ? "bg-purple-600 hover:bg-purple-500" : "bg-cyan-600 hover:bg-cyan-500"} rounded disabled:opacity-50 transition-colors`}
                         >
-                            {syncing ? "⏳" : "🔄 Sync"}
+                            {syncing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                            <span>Sync</span>
                         </button>
                     </div>
 
@@ -402,16 +500,29 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
                     <div className="flex-1 overflow-y-auto">
                         <div className="space-y-2">
                             {files.map((file) => (
-                                <div key={file.id} className="flex items-center justify-between bg-gray-800 p-2 rounded text-sm group">
+                                <div key={file.id} className="flex items-center justify-between bg-gray-800/50 border border-gray-700/50 p-2.5 rounded-lg text-sm group hover:bg-gray-800 transition-colors">
                                     <div className="flex items-center gap-2 flex-1 min-w-0">
-                                        <span className={file.has_gemini_ref ? "text-green-400" : "text-gray-400"}>
-                                            {file.has_gemini_ref ? "✅" : "⏳"}
-                                        </span>
-                                        <span className="truncate text-gray-200" title={file.filename}>{file.filename}</span>
+                                        <div className={`w-2 h-2 rounded-full ${file.has_gemini_ref ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]" : "bg-gray-600 items-pulse"}`} title={file.has_gemini_ref ? "Synced to AI" : "Syncing..."} />
+                                        <span className="truncate text-gray-200 font-medium" title={file.filename}>{file.filename}</span>
                                     </div>
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-gray-500 text-xs">{formatSize(file.size_bytes)}</span>
-                                        <button onClick={() => deleteFile(file.id, file.filename)} className="text-red-400 hover:text-red-300 opacity-0 group-hover:opacity-100 transition-opacity">×</button>
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="text-gray-500 text-[10px] mr-1">{formatSize(file.size_bytes)}</span>
+                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button
+                                                onClick={() => downloadFile(`/api/files/download/${file.id}`, file.filename)}
+                                                className="p-1.5 hover:bg-gray-700 rounded text-gray-400 hover:text-cyan-400 transition-colors"
+                                                title="Download"
+                                            >
+                                                <Download size={14} />
+                                            </button>
+                                            <button
+                                                onClick={() => deleteFile(file.id, file.filename)}
+                                                className="p-1.5 hover:bg-gray-700 rounded text-gray-400 hover:text-red-400 transition-colors"
+                                                title="Delete"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             ))}
@@ -450,14 +561,60 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
 
             {/* Artifact Viewer Modal */}
             {selectedArtifact && (
-                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50" onClick={() => setSelectedArtifact(null)}>
-                    <div className="bg-gray-900 border border-gray-700 rounded-lg max-w-2xl max-h-[80vh] w-full m-4 flex flex-col" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-between p-4 border-b border-gray-700">
-                            <h3 className="font-semibold text-cyan-400">{selectedArtifact.name}</h3>
-                            <button onClick={() => setSelectedArtifact(null)} className="text-gray-400 hover:text-gray-200">✕</button>
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setSelectedArtifact(null)}>
+                    <div className="bg-gray-900 border border-gray-700 rounded-2xl max-w-4xl max-h-[90vh] w-full shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200" onClick={(e) => e.stopPropagation()}>
+                        {/* Modal Header */}
+                        <div className="flex items-center justify-between p-4 border-b border-gray-800 bg-gray-900/50">
+                            <div className="flex items-center gap-3">
+                                {selectedArtifact.type === 'image' ? <Image size={18} className="text-cyan-400" /> : <FileText size={18} className="text-cyan-400" />}
+                                <h3 className="font-bold text-gray-100 truncate max-w-md">{selectedArtifact.name}</h3>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => downloadFile(`/api/files/${nodeType}/${nodeName}/artifacts/${selectedArtifact.path}`, selectedArtifact.name)}
+                                    className="flex items-center gap-2 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm font-medium transition-colors"
+                                >
+                                    <Download size={16} />
+                                    Download
+                                </button>
+                                <button
+                                    onClick={() => setSelectedArtifact(null)}
+                                    className="p-1.5 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-white transition-colors"
+                                >
+                                    <X size={20} />
+                                </button>
+                            </div>
                         </div>
-                        <div className="flex-1 overflow-auto p-4">
-                            <pre className="text-sm text-gray-200 whitespace-pre-wrap font-mono">{selectedArtifact.content}</pre>
+
+                        {/* Modal Content */}
+                        <div className="flex-1 overflow-auto p-0 bg-gray-950/20">
+                            {selectedArtifact.type === 'image' ? (
+                                <ImagePreview
+                                    url={`/api/files/${nodeType}/${nodeName}/artifacts/${selectedArtifact.path}`}
+                                    name={selectedArtifact.name}
+                                />
+                            ) : selectedArtifact.type === 'text' ? (
+                                <div className="p-6">
+                                    {selectedArtifact.name.endsWith('.md') ? (
+                                        <MarkdownRenderer content={selectedArtifact.content || ''} />
+                                    ) : (
+                                        <pre className="text-sm text-gray-300 font-mono whitespace-pre-wrap leading-relaxed">
+                                            {selectedArtifact.content}
+                                        </pre>
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="flex flex-col items-center justify-center p-20 gap-4">
+                                    <FileText size={64} className="text-gray-700" />
+                                    <p className="text-gray-400 italic">This file type ({selectedArtifact.mimeType || 'binary'}) cannot be previewed.</p>
+                                    <button
+                                        onClick={() => downloadFile(`/api/files/${nodeType}/${nodeName}/artifacts/${selectedArtifact.path}`, selectedArtifact.name)}
+                                        className="text-cyan-400 hover:text-cyan-300 underline underline-offset-4"
+                                    >
+                                        Download to view
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -465,4 +622,3 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
         </div>
     );
 }
-

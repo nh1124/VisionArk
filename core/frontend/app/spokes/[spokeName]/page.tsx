@@ -8,6 +8,7 @@ import MessageWithAttachments from "@/components/MessageWithAttachments";
 import FilesSidebar from "@/components/FilesSidebar";
 import CommandAutocomplete from "../../components/CommandAutocomplete";
 import { apiFetch } from "@/lib/api";
+import { Settings, Files } from "lucide-react";
 
 interface MessageAttachment {
     name: string;
@@ -232,12 +233,19 @@ export default function SpokeChatPage({
                     </div>
                     <div className="flex gap-2">
                         <Link href={`/spokes/${spokeName}/settings`}
-                            className="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors">
-                            ⚙️ Settings
+                            className="p-2.5 bg-gray-800 hover:bg-gray-700 rounded-xl transition-all text-gray-400 hover:text-white"
+                            title="Settings"
+                        >
+                            <Settings size={20} />
                         </Link>
-                        <button onClick={() => setShowSidebar(!showSidebar)}
-                            className="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors">
-                            {showSidebar ? "Hide" : "Show"} Files
+                        <button
+                            onClick={() => setShowSidebar(!showSidebar)}
+                            className={`p-2.5 rounded-xl transition-all ${showSidebar
+                                ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30"
+                                : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white border border-transparent"}`}
+                            title={showSidebar ? "Hide Files" : "Show Files"}
+                        >
+                            <Files size={20} />
                         </button>
                     </div>
                 </div>
@@ -264,7 +272,7 @@ export default function SpokeChatPage({
                             // Skip rendering the last empty assistant message while loading
                             const isLastEmptyAssistant = loading && idx === messages.length - 1 && msg.role === "assistant" && !msg.content && (!msg.tool_calls || msg.tool_calls.length === 0);
                             if (isLastEmptyAssistant) return null;
-                            return <MessageWithAttachments key={idx} role={msg.role} content={msg.content} attached_files={msg.attached_files} tool_calls={msg.tool_calls} />;
+                            return <MessageWithAttachments key={idx} role={msg.role} content={msg.content} attached_files={msg.attached_files} tool_calls={msg.tool_calls} nodeType="spoke" nodeName={spokeName} />;
                         })}
 
                         {loading && (

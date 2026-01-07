@@ -7,12 +7,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import Header, HTTPException, Depends
+from fastapi import Header, HTTPException, Depends, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 from models.database import get_engine, get_session, User, APIKey
-from utils.jwt import decode_access_token
+from utils.jwt import decode_access_token, decode_token
 from utils.security import hash_api_key
 from config import settings
 
@@ -161,6 +161,63 @@ def resolve_identity(
         status_code=401,
         detail="Authentication required. Provide Authorization: Bearer <token>"
     )
+
+
+def resolve_identity_for_download(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    token: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+) -> Identity:
+    """
+    Dedicated identity resolver for file downloads.
+    Accepts:
+    1. Standard Authorization: Bearer <JWT> (full access token OK here)
+    2. ?token=<JWT> query parameter (ONLY if token type is 'file_download')
+    
+    This ensures that sharing/logging a URL with a token only exposes a 
+    short-lived, limited-scope token, NOT the master access token.
+    """
+    # 1. Try standard header-based auth first (safe, not logged in query string)
+    if credentials and credentials.credentials:
+        # Standard resolve_identity logic for headers
+        payload = decode_access_token(credentials.credentials)
+        if payload:
+            user = db.query(User).filter(User.id == payload.get("sub"), User.is_active == True).first()
+            if user:
+                return Identity(user_id=user.id, username=user.username, scopes=["*"], auth_method="jwt")
+    
+    # 2. Try query parameter (STRICT check for file_download scope)
+    if token:
+        payload = decode_token(token, required_type="file_download")
+        if payload:
+            user_id = payload.get("sub")
+            username = payload.get("username")
+            user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+            if user:
+                logger.debug(f"File-token auth successful: user={username}")
+                return Identity(
+                    user_id=user_id,
+                    username=username,
+                    scopes=["file_download"],
+                    auth_method="file_token"
+                )
+        
+        # If a token was provided but failed validation or was wrong type
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid, expired, or incorrect type of token for download"
+        )
+
+    # 3. Dev fallback (if ATMOS_ENV=dev)
+    if settings.atmos_env == "dev":
+        return Identity(
+            user_id=settings.atmos_default_user_id,
+            username="dev_user",
+            scopes=["*"],
+            auth_method="dev_fallback"
+        )
+
+    raise HTTPException(status_code=401, detail="Authentication required for download")
 
 
 def require_scope(required_scope: str):

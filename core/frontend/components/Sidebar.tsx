@@ -89,7 +89,9 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                                         }`}
                                     title={isCollapsed ? item.name : ""}
                                 >
-                                    <span className={`text-xl transition-transform group-hover:scale-110 ${isActive ? "scale-110" : ""}`}>{item.icon}</span>
+                                    <div className={`w-8 h-8 flex items-center justify-center flex-shrink-0 transition-transform group-hover:scale-110 ${isActive ? "scale-110" : ""}`}>
+                                        <span className="text-xl">{item.icon}</span>
+                                    </div>
                                     {!isCollapsed && <span className="font-medium">{item.name}</span>}
                                     {isCollapsed && isActive && (
                                         <div className="absolute left-0 w-1 h-6 bg-blue-500 rounded-r-full" />
@@ -108,7 +110,9 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                             className={`flex items-center rounded-xl transition-all hover:bg-gray-800/50 text-gray-400 group ${isCollapsed ? "justify-center px-0 py-2.5" : "gap-3 px-4 py-2 w-full"}`}
                             title={isCollapsed ? "Spokes" : ""}
                         >
-                            <span className="text-xl text-cyan-400 group-hover:drop-shadow-[0_0_8px_rgba(34,211,238,0.5)] transition-all">{"_>"}</span>
+                            <div className="w-8 h-8 flex items-center justify-center flex-shrink-0">
+                                <span className="text-xl text-cyan-400 group-hover:drop-shadow-[0_0_8px_rgba(34,211,238,0.5)] transition-all">{"_>"}</span>
+                            </div>
                             {!isCollapsed && (
                                 <>
                                     <span className="flex-1 text-left font-medium">Spokes</span>

@@ -79,7 +79,9 @@ export default function TrendLineChart({
                             labelStyle={{ color: "#f3f4f6", marginBottom: "4px" }}
                         />
                         <Legend
-                            wrapperStyle={{ fontSize: "12px", paddingTop: "20px" }}
+                            verticalAlign="top"
+                            align="right"
+                            wrapperStyle={{ fontSize: "12px", paddingBottom: "20px" }}
                             iconType="circle"
                         />
 
