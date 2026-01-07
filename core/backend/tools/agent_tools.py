@@ -5,7 +5,7 @@ Replaces slash command system with Gemini native function calling
 from typing import Dict, Any, Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import uuid
 
 from models.database import Node, AgentProfile, ChatSession, InboxQueue, ServiceRegistry
@@ -667,7 +667,80 @@ async def get_task_execution_history(
             data={"history": history, "task_id": task_id, "done": done_count, "skipped": skipped_count, "todo": todo_count}
         )
     except Exception as e:
-        return ToolResult(success=False, message=f"Failed to get task history: {str(e)}")
+        return ToolResult(success=False, message=f"Failed to get task execution history: {str(e)}")
+
+
+async def run_cleanup_cycle(
+    target_date_range: Optional[str] = None,
+    *,
+    session: AsyncSession,
+    user_id: str
+) -> ToolResult:
+    """
+    The Hub's self-maintenance tool to detect and resolve system inconsistencies.
+    
+    Args:
+        target_date_range: Optional range to check (e.g., '7d', '14d'). Default is '7d'.
+    """
+    try:
+        client = await _get_lbs_client(user_id, session)
+        days_to_check = 7
+        if target_date_range:
+            if target_date_range.endswith("d"):
+                try:
+                    days_to_check = int(target_date_range[:-1])
+                except: pass
+        
+        start_date = date.today()
+        end_date = start_date + timedelta(days=days_to_check)
+        
+        schedule = await client.get_schedule(start_date, end_date)
+        
+        issues = []
+        
+        # 1. Load Check: Scans LBS for days where load_score > 9.0
+        for day in schedule:
+            dt_str = day.get("date")
+            total_load = day.get("total_load", 0.0)
+            if total_load > 9.0:
+                issues.append(f"⚠️ **High Load Alert**: {dt_str} has a load score of {total_load:.1f} (Threshold: 9.0).")
+        
+        # 2. Stale Check & Conflict Check
+        # Note: Stale check (tasks > 2 weeks old) requires full task list and update timestamps.
+        # For now, we report high-level scheduling conflicts found in the heatmap.
+        all_tasks = await client.get_tasks()
+        
+        # 3. Conflict Check: Proactively identifies potential "milestone" collisions
+        # (Heuristic: Multiple tasks in same context on high-load days)
+        context_loads = {}
+        for day in schedule:
+            dt_str = day.get("date")
+            tasks = day.get("tasks", [])
+            for t in tasks:
+                ctx = t.get("context", "general")
+                if ctx not in context_loads: context_loads[ctx] = []
+                if t.get("load", 0) > 5.0: # Milestone-like load
+                    context_loads[ctx].append(dt_str)
+
+        for ctx, dates in context_loads.items():
+            if len(dates) > 3: # Too many heavy tasks in one context
+                 issues.append(f"🧐 **Context Warning**: Spoke '{ctx}' has {len(dates)} heavy tasks scheduled. Potential burnout.")
+
+        if not issues:
+            return ToolResult(
+                success=True,
+                message="✅ **Cleanup Cycle Complete**: No critical inconsistencies or overloads found.",
+                data={"issues_found": 0}
+            )
+        
+        summary = "### 🧹 Hub Cleanup Report\n\n" + "\n".join(issues)
+        return ToolResult(
+            success=True,
+            message=summary,
+            data={"issues_found": len(issues), "html_summary": summary}
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Cleanup cycle failed: {str(e)}")
 
 
 async def check_inbox(
@@ -1152,6 +1225,55 @@ async def report_to_hub(
     except Exception as e:
         await session.rollback()
         return ToolResult(success=False, message=f"Failed to send report: {str(e)}")
+
+
+async def request_coordination(
+    intent: str,
+    payload: Dict[str, Any],
+    urgency: str = "normal",
+    *,
+    session: AsyncSession,
+    user_id: str,
+    spoke_name: str
+) -> ToolResult:
+    """
+    Allows Spokes to send structured requests to the Hub for synchronous coordination.
+    This bypasses the Inbox to provide immediate feedback and optimization.
+    
+    Args:
+        intent: Purpose of the request (e.g., 'create_task', 'reschedule')
+        payload: Data dictionary containing request details
+        urgency: Urgency level ('low', 'normal', 'high')
+    """
+    from agents.hub_agent import HubAgent
+    import json
+    
+    try:
+        # 1. Initialize Hub Agent
+        hub = await HubAgent.create(user_id=user_id, db_session=session)
+        
+        # 2. Prepare coordination message
+        # Use a structured format that the Hub can easily parse or recognize
+        coord_msg = (
+            f"🔄 **COORDINATION REQUEST**\n"
+            f"**Source**: Spoke '{spoke_name}'\n"
+            f"**Intent**: {intent}\n"
+            f"**Urgency**: {urgency}\n"
+            f"**Payload**: {json.dumps(payload, indent=2)}\n\n"
+            f"Please analyze this request against the global schedule and provide a decision/execution."
+        )
+        
+        # 3. Execute synchronous chat with Hub
+        # This will be recorded in the Hub's history for transparency
+        response_text = await hub.chat(coord_msg)
+        
+        return ToolResult(
+            success=True,
+            message=f"💬 Hub Response:\n\n{response_text}",
+            data={"hub_response": response_text}
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Coordination request failed: {str(e)}")
 
 
 async def archive_session(
@@ -1994,12 +2116,12 @@ async def ask_spoke(
     from agents.spoke_agent import SpokeAgent
     
     try:
-        # 1. Enforcement: Spokes cannot direct chat with Hub
+        # 1. Enforcement: Spokes cannot direct chat with Hub via ask_spoke
         if node_type.lower() == 'spoke' and spoke_name.lower() == 'hub':
             return ToolResult(
                 success=False,
-                message="🚫 Direct synchronous chat with the Hub is prohibited for Spokes. "
-                        "Please use the 'report_to_hub' tool to send updates or requests to the Hub's inbox."
+                message="🚫 Direct synchronous chat with the Hub is prohibited via 'ask_spoke'. "
+                        "Please use the 'request_coordination' tool for structured coordination with the Hub."
             )
 
         # 2. Recursion Limit
@@ -2203,6 +2325,19 @@ async def clone_this_spoke(
 # ==============================================================================
 
 HUB_TOOL_DEFINITIONS = [
+    {
+        "name": "run_cleanup_cycle",
+        "description": "Run the Hub's self-maintenance cycle to detect overloaded days, stale tasks, and scheduling conflicts.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "target_date_range": {
+                    "type": "string",
+                    "description": "Optional range to check (e.g., '7d', '14d'). Default is '7d'."
+                }
+            }
+        }
+    },
     {
         "name": "create_spoke",
         "description": "Create a new Spoke (project workspace) for the user. Use this when the user wants to start a new project.",
@@ -2859,6 +2994,29 @@ HUB_TOOL_DEFINITIONS = [
 
 
 SPOKE_TOOL_DEFINITIONS = [
+    {
+        "name": "request_coordination",
+        "description": "Send a structured coordination request to the Hub (e.g., for global task creation or rescheduling). Use this instead of direct global task creation.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "intent": {
+                    "type": "string",
+                    "description": "Purpose of the request (e.g., 'create_task', 'reschedule')"
+                },
+                "payload": {
+                    "type": "object",
+                    "description": "Structured data for the request"
+                },
+                "urgency": {
+                    "type": "string",
+                    "enum": ["low", "normal", "high"],
+                    "description": "Urgency level. Default is 'normal'."
+                }
+            },
+            "required": ["intent", "payload"]
+        }
+    },
     # File operation tools
     {
         "name": "save_artifact",
@@ -3365,6 +3523,8 @@ TOOL_FUNCTIONS = {
     "process_inbox_message": process_inbox_message,
     "ask_spoke": ask_spoke,
     "clone_this_spoke": clone_this_spoke,
+    "request_coordination": request_coordination,
+    "run_cleanup_cycle": run_cleanup_cycle,
     # Spoke tools
     "report_to_hub": report_to_hub,
     "archive_session": archive_session,

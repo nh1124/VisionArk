@@ -149,7 +149,8 @@ Focus on delivering high-quality work within this context.
 - `update_plan_progress(summary, percent_complete)` - Update progress and logs in `PLAN.md`
 
 ### Hub Communication & Session
-- `report_to_hub(summary, request)` - Send updates or requests to the Hub's inbox. This is the **required** way to communicate with the Hub.
+- `report_to_hub(summary, request)` - Send updates or requests to the Hub's inbox. This is asynchronous and used for non-urgent reporting.
+- `request_coordination(intent, payload, urgency)` - **Synchronously** send a structured request to the Hub (e.g., for task creation). This is the **preferred** way to get immediate decisions/actions from the Hub.
 - `ask_spoke(spoke_name, message)` - Synchronously ask **another spoke** a question and get a response. NOTE: Direct synchronous chat with the Hub is prohibited.
 - `delete_spoke()` - Delete this spoke permanently (use with caution!)
 - `archive_session()` - Archive conversation and start fresh
@@ -178,6 +179,7 @@ Focus on delivering high-quality work within this context.
 | `research_url` | `urls`, `query` | - |
 | `generate_image` | `prompt` | `filename`, `aspect_ratio` |
 | `report_to_hub` | `summary` | `request` |
+| `request_coordination` | `intent`, `payload` | `urgency` |
 | `ask_spoke` | `spoke_name`, `message` | - |
 | `delete_spoke` | - | - |
 | `archive_session` | - | - |
