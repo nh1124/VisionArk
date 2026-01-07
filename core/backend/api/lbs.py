@@ -252,10 +252,11 @@ async def calculate_load(target_date: date, client: LBSClient = Depends(get_lbs_
 async def get_heatmap(
     start: date,
     end: date,
+    include_completed: bool = True,
     client: LBSClient = Depends(get_lbs_client)
 ):
     try:
-        return await client.get_heatmap(start, end)
+        return await client.get_heatmap(start, end, include_completed)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

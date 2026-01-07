@@ -48,22 +48,6 @@ export default function Home() {
             </div>
           </Link>
 
-          {/* Inbox Card */}
-          <Link href="/inbox">
-            <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 hover:border-green-500 transition-colors cursor-pointer">
-              <div className="flex items-center mb-3">
-                <div className="w-12 h-12 bg-green-500/20 rounded-lg flex items-center justify-center mr-4">
-                  <svg className="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
-                  </svg>
-                </div>
-                <h2 className="text-xl font-semibold">Inbox</h2>
-              </div>
-              <p className="text-gray-400">
-                Review and process messages from Spoke agents
-              </p>
-            </div>
-          </Link>
 
           {/* Spokes Card */}
           <Link href="/spokes">

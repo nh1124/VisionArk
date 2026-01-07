@@ -43,12 +43,6 @@ export default function Navbar({ isSidebarCollapsed }: NavbarProps) {
                         Hub
                     </Link>
                     <Link
-                        href="/inbox"
-                        className={`hover:text-white transition-colors ${pathname === "/inbox" ? "text-green-400" : ""}`}
-                    >
-                        Inbox
-                    </Link>
-                    <Link
                         href="/spokes"
                         className={`hover:text-white transition-colors ${pathname.startsWith("/spokes") ? "text-cyan-400" : ""}`}
                     >

@@ -49,7 +49,7 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
         { name: "Home", path: "/", icon: "🏠" },
         { name: "Dashboard", path: "/dashboard", icon: "📊" },
         { name: "Tasks", path: "/tasks", icon: "✅" },
-        { name: "Hub", path: "/hub", icon: "🧠" },
+        { name: "Hub", path: "/hub", icon: "⌘" },
     ];
 
     return (
@@ -105,10 +105,10 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                             onClick={() => {
                                 setSpokesExpanded(!spokesExpanded);
                             }}
-                            className={`flex items-center rounded-xl transition-all hover:bg-gray-800/50 text-gray-400 group ${isCollapsed ? "justify-center p-2.5" : "gap-3 px-4 py-2 w-full"}`}
+                            className={`flex items-center rounded-xl transition-all hover:bg-gray-800/50 text-gray-400 group ${isCollapsed ? "justify-center px-0 py-2.5" : "gap-3 px-4 py-2 w-full"}`}
                             title={isCollapsed ? "Spokes" : ""}
                         >
-                            <span className="text-xl text-cyan-400 group-hover:drop-shadow-[0_0_8px_rgba(34,211,238,0.5)] transition-all">💎</span>
+                            <span className="text-xl text-cyan-400 group-hover:drop-shadow-[0_0_8px_rgba(34,211,238,0.5)] transition-all">{"_>"}</span>
                             {!isCollapsed && (
                                 <>
                                     <span className="flex-1 text-left font-medium">Spokes</span>

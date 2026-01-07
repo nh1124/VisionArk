@@ -168,8 +168,12 @@ class LBSClient:
             resp.raise_for_status()
             return resp.json()
 
-    async def get_heatmap(self, start: date, end: date) -> List[Dict]:
-        params = {"start": start.isoformat(), "end": end.isoformat()}
+    async def get_heatmap(self, start: date, end: date, include_completed: bool = True) -> List[Dict]:
+        params = {
+            "start": start.isoformat(), 
+            "end": end.isoformat(),
+            "include_completed": str(include_completed).lower()
+        }
         async with httpx.AsyncClient(base_url=self.base_url, timeout=300.0) as client:
             resp = await client.get("heatmap", params=params, headers=self._get_headers())
             resp.raise_for_status()
