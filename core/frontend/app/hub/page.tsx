@@ -189,48 +189,43 @@ export default function HubPage() {
         <div className="flex h-full">
             {/* Main Chat Area */}
             <div className="flex-1 flex flex-col h-full overflow-hidden">
-                {/* Header */}
-                <div className="bg-gray-900 border-b border-gray-800 p-6 flex items-center justify-between flex-shrink-0">
-                    <div className="flex items-center gap-8">
-                        <div>
-                            <h1 className="text-2xl font-bold text-purple-400">Hub Agent (PM)</h1>
-                            <p className="text-gray-400 text-sm mt-1">
-                                Strategic guidance and LBS management
-                            </p>
-                        </div>
+                {/* Header - Minimal Gemini-style */}
+                <div className="bg-gray-900/50 border-b border-gray-800/50 px-4 py-2.5 flex items-center justify-between flex-shrink-0">
+                    <div className="flex items-center gap-4">
+                        <h1 className="text-lg font-semibold text-purple-400">Hub Agent</h1>
 
                         {/* View Toggle */}
-                        <div className="flex bg-gray-800 rounded-lg p-1">
+                        <div className="flex bg-gray-800/50 rounded-lg p-0.5">
                             <button
                                 onClick={() => setView("chat")}
-                                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${view === "chat"
-                                    ? "bg-purple-600 text-white shadow-lg"
+                                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${view === "chat"
+                                    ? "bg-purple-600 text-white"
                                     : "text-gray-400 hover:text-gray-200"
                                     }`}
                             >
-                                💬 Chat
+                                Chat
                             </button>
                             <button
                                 onClick={() => setView("inbox")}
-                                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${view === "inbox"
-                                    ? "bg-purple-600 text-white shadow-lg"
+                                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${view === "inbox"
+                                    ? "bg-purple-600 text-white"
                                     : "text-gray-400 hover:text-gray-200"
                                     }`}
                             >
-                                📥 Inbox
+                                Inbox
                             </button>
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
                         <button
                             onClick={() => setShowSidebar(!showSidebar)}
-                            className={`p-2.5 rounded-xl transition-all ${showSidebar
-                                ? "bg-purple-500/20 text-purple-400 border border-purple-500/30"
-                                : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white border border-transparent"}`}
+                            className={`p-2 rounded-lg transition-all ${showSidebar
+                                ? "bg-purple-500/20 text-purple-400"
+                                : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
                             title={showSidebar ? "Hide Files" : "Show Files"}
                         >
-                            <Files size={20} />
+                            <Files size={18} />
                         </button>
                     </div>
                 </div>

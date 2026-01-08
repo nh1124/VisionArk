@@ -13,8 +13,10 @@ export default function Navbar({ isSidebarCollapsed }: NavbarProps) {
     const { username, logout } = useAuth();
     const pathname = usePathname();
 
-    // Don't show navbar on auth pages
+    // Don't show navbar on auth pages or chat pages (Hub/Spoke)
     if (pathname.startsWith("/auth")) return null;
+    if (pathname === "/hub") return null;
+    if (pathname.match(/^\/spokes\/[^\/]+$/)) return null;
 
     return (
         <nav className="bg-gray-950 border-b border-gray-800 px-6 py-3 flex items-center justify-between flex-shrink-0">

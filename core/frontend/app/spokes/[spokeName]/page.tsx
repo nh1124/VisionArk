@@ -223,29 +223,26 @@ export default function SpokeChatPage({
     return (
         <div className="flex h-full">
             <div className="flex-1 flex flex-col h-full overflow-hidden">
-                {/* Header */}
-                <div className="bg-gray-900 border-b border-gray-800 p-6 flex items-center justify-between flex-shrink-0">
-                    <div className="min-w-0 pr-4">
-                        <h1 className="text-2xl font-bold text-cyan-400 truncate" title={`${displayName} Spoke`}>
-                            {displayName} Spoke
-                        </h1>
-                        <p className="text-gray-400 text-sm mt-1 truncate">Deep work and specialized execution</p>
-                    </div>
+                {/* Header - Minimal Gemini-style */}
+                <div className="bg-gray-900/50 border-b border-gray-800/50 px-4 py-2.5 flex items-center justify-between flex-shrink-0">
+                    <h1 className="text-lg font-semibold text-cyan-400 truncate" title={displayName}>
+                        {displayName}
+                    </h1>
                     <div className="flex gap-2">
                         <Link href={`/spokes/${spokeName}/settings`}
-                            className="p-2.5 bg-gray-800 hover:bg-gray-700 rounded-xl transition-all text-gray-400 hover:text-white"
+                            className="p-2 text-gray-400 hover:bg-gray-800 hover:text-white rounded-lg transition-all"
                             title="Settings"
                         >
-                            <Settings size={20} />
+                            <Settings size={18} />
                         </Link>
                         <button
                             onClick={() => setShowSidebar(!showSidebar)}
-                            className={`p-2.5 rounded-xl transition-all ${showSidebar
-                                ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30"
-                                : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white border border-transparent"}`}
+                            className={`p-2 rounded-lg transition-all ${showSidebar
+                                ? "bg-cyan-500/20 text-cyan-400"
+                                : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
                             title={showSidebar ? "Hide Files" : "Show Files"}
                         >
-                            <Files size={20} />
+                            <Files size={18} />
                         </button>
                     </div>
                 </div>
