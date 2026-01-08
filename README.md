@@ -1,108 +1,198 @@
 # VisionArk
 
-A sophisticated Hub-Spoke architecture task management system with LBS (Load Balancing System) and AI-powered orchestration. VisionArk provides a centralized management layer for complex task environments, utilizing AI to optimize workflows and cognitive load.
+> **⚠️ Experimental Personal OS**  
+> This project is an experimental personal operating system.  
+> Not production-ready. UX is optimized for the author.  
+> Architecture may change without notice.
+
+An AI-powered personal task management system built on a Hub-Spoke architecture. VisionArk combines LBS (Load Balancing System) workload management with multi-agent AI orchestration powered by Google Gemini.
+
+---
+
+## ✨ Core Features
+
+### 🤖 AI Agent System
+- **Hub Agent**: Central coordinator for strategic planning, cross-project oversight, and global task management
+- **Spoke Agents**: Project-specific AI assistants with isolated contexts, custom prompts, and dedicated workspaces
+- **Agent-to-Agent Communication**: Spokes can collaborate via `ask_spoke` tool with recursion depth limiting
+- **Artifacts System**: Agents create and manage artifacts (documents, notes, plans) in their workspace
+
+### 🧠 Agent Capabilities (Native Tools)
+| Category | Tools |
+|----------|-------|
+| **Research** | `google_search`, `research_url`, `search_places` |
+| **LBS/Tasks** | `create_task`, `list_tasks`, `complete_lbs_task`, `get_load_on_day` |
+| **Knowledge** | `search_knowledge`, `ingest_knowledge` |
+| **Files** | `save_artifact`, `read_artifact`, `list_files`, `upload_file_to_ai` |
+| **Creation** | `generate_image`, `execute_code` |
+| **Coordination** | `ask_spoke`, `request_coordination`, `check_inbox` |
+
+### 📊 LBS (Load Balancing System)
+- Cognitive load calculation with non-linear scaling
+- Daily/weekly workload forecasting and heatmaps
+- Task scheduling with multiple recurrence patterns (daily, weekly, monthly, interval)
+- Per-task execution tracking and history
+
+### 📁 Knowledge Core
+- Semantic search and retrieval across agent memory
+- Automatic ingestion of conversation context
+- Per-agent scoped knowledge with global fallback
+
+---
 
 ## 🏗️ Architecture
 
-- **Hub**: Central PM agent managing LBS, resources, and cross-project coordination.
-- **Spokes**: Project-specific execution agents (Research, Development, Life Admin, etc.).
-- **LBS Engine**: Advanced cognitive load calculation, task expansion, and capacity management.
-- **Inbox System**: Asynchronous message buffer for Spoke→Hub strategic communication.
-- **User-Scoped Storage**: Multi-user support with isolated data directories and security.
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                       Frontend (Next.js)                        │
+│  Dashboard │ Hub Chat │ Spoke Chat │ Tasks │ Settings           │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+┌──────────────────────────┴──────────────────────────────────────┐
+│                       Backend (FastAPI)                         │
+│  ┌────────┐  ┌────────────┐  ┌─────────────┐  ┌──────────────┐  │
+│  │  Auth  │  │   Agents   │  │     LBS     │  │  Knowledge   │  │
+│  │        │  │ Hub/Spokes │  │   Proxy     │  │    Core      │  │
+│  └────────┘  └────────────┘  └─────────────┘  └──────────────┘  │
+│                    │                 │                          │
+│              ┌─────┴─────┐    ┌──────┴──────┐                   │
+│              │  Gemini   │    │  External   │                   │
+│              │   API     │    │ LBS Service │                   │
+│              └───────────┘    └─────────────┘                   │
+└─────────────────────────────────────────────────────────────────┘
+
+Data Structure:
+data/users/{user_id}/
+├── hub_data/          # Hub agent's database, inbox, artifacts
+├── spokes/{name}/     # Per-spoke files, artifacts, refs
+└── global_assets/
+```
+
+---
 
 ## 🚀 Quick Start
 
-### Docker (Recommended)
+### Prerequisites
+- Python 3.11+
+- Node.js 18+
+- Google Gemini API Key (AI Studio or Vertex AI)
+- (Optional) External LBS microservice
 
-1. **Configure Environment**:
-   ```bash
-   cp .env.example .env
-   # Edit .env and add your GEMINI_API_KEY
-   ```
-
-2. **Initialize and Start Services**:
-   ```bash
-   # On Windows
-   .\start_service.bat
-   
-   # Or using Docker Compose directly
-   docker-compose -f infra/docker-compose.yml up
-   ```
-
-3. **Access the Application**:
-   - Frontend UI: [http://localhost:3000](http://localhost:3000)
-   - Backend API: [http://localhost:8000](http://localhost:8000)
-   - API Docs: [http://localhost:8000/docs](http://localhost:8000/docs)
-
-## 🔐 Authentication & Identity
-
-VisionArk uses JWT-based session authentication. Users can register and sign in through the frontend UI.
-
-- **Developer Mode**: In `dev` mode, the system can fall back to a default user if no token is provided.
-- **Production Mode**: Set `ATMOS_ENV=prod` and `ATMOS_REQUIRE_API_KEY=true` in `.env`.
-- **API Access**: Use the `X-API-KEY` header for external service integrations.
-
-## 📡 Core API Modules
-
-### LBS (Load Balancing System)
-- `GET /api/lbs/dashboard`: Daily and weekly workload metrics.
-- `GET /api/lbs/tasks`: Comprehensive task management.
-- `POST /api/lbs/calculate`: On-demand load calculation.
-
-### Agents (AI Orchestration)
-- `POST /api/agents/hub/chat`: Strategic coordination with the Hub agent.
-- `POST /api/agents/spoke/{name}/chat`: Direct project execution with Spoke agents.
-- `POST /api/agents/spoke/create`: Dynamic Spoke provisioning.
-
-### Inbox (Push Protocol)
-- `GET /api/inbox/pending`: Retrieve unprocessed meta-actions from Spokes.
-- `POST /api/inbox/process`: Hub-directed triage and action acceptance.
-
-## 🗄️ System Internals
-
-### LBS Formula
-VisionArk calculates cognitive load using a non-linear model:
-```
-Adjusted Load = Base + ALPHA × N^BETA + SWITCH_COST × max(U-1, 0)
-```
-- **Base**: Sum of individual task weights.
-- **N**: Total task count.
-- **U**: Number of unique contexts (Spokes).
-
-### Directory Structure
-```
-VisionArk/
-├── core/
-│   ├── backend/           # FastAPI application & AI logic
-│   └── frontend/          # Next.js web interface
-├── data/
-│   └── users/             # User-scoped data (isolated)
-│       └── {user_id}/
-│           ├── hub_data/  # User's databases & inbox
-│           ├── spokes/    # User's project workspaces
-│           └── global_assets/
-├── infra/                 # Docker & deployment configs
-└── start_service.bat      # Main entry point
-```
-
-## 🛠️ Technology Stack
-
-- **Frontend**: Next.js, React, Tailwind CSS
-- **Backend**: FastAPI, SQLAlchemy, Pydantic
-- **AI**: Google Gemini (Vertex AI / AI Studio)
-- **Database**: PostgreSQL (Production), SQLite (Dev/Local)
-- **Containerization**: Docker & Docker Compose
-
-## 🧪 Development
-
-### Local Environment Setup
+### 1. Configure Environment
 ```bash
+cp .env.example .env
+# Edit .env and set:
+#   GEMINI_API_KEY=your_api_key
+#   ATMOS_ENV=dev
+```
+
+### 2. Start Services
+
+**Windows (Recommended)**:
+```bash
+.\start_service.bat
+```
+
+**Or manually**:
+```bash
+# Backend
 cd core/backend
 pip install -r requirements.txt
 python main.py
+
+# Frontend (new terminal)
+cd core/frontend
+npm install
+npm run dev
 ```
 
-Check **BLUEPRINT.md** in the `docs` directory for the full architectural specification.
+### 3. Access
+- **UI**: http://localhost:3000
+- **API Docs**: http://localhost:8000/docs
 
 ---
-**Built with precision for Advanced Agentic Coding.**
+
+## 📡 API Overview
+
+### Authentication
+JWT-based session auth. Register and sign in via the frontend UI.
+- Dev mode: Falls back to default user if no token provided
+- Prod mode: Set `ATMOS_ENV=prod` and `ATMOS_REQUIRE_API_KEY=true`
+
+### Key Endpoints
+
+| Module | Endpoint | Description |
+|--------|----------|-------------|
+| **Agents** | `POST /api/agents/hub/chat` | Chat with Hub agent |
+| | `POST /api/agents/spoke/{name}/chat` | Chat with a Spoke |
+| | `POST /api/agents/spoke/create` | Create new Spoke |
+| | `GET /api/agents/spoke` | List all Spokes |
+| **LBS** | `GET /api/lbs/dashboard` | Workload overview |
+| | `GET /api/lbs/tasks` | List tasks |
+| | `POST /api/lbs/tasks` | Create task |
+| | `POST /api/lbs/tasks/{id}/complete` | Mark task done |
+| **Inbox** | `GET /api/inbox/pending` | Spoke→Hub messages |
+| **Files** | `POST /api/files/upload` | Upload file |
+| | `GET /api/agents/{node}/artifacts` | List agent artifacts |
+
+---
+
+## 🛠️ Technology Stack
+
+| Layer | Technology |
+|-------|------------|
+| Frontend | Next.js 15, React 19, Tailwind CSS |
+| Backend | FastAPI, SQLAlchemy (async), Pydantic |
+| AI | Google Gemini (genai SDK), Native Function Calling |
+| Database | SQLite (dev), PostgreSQL (prod) |
+| Deployment | Docker & Docker Compose |
+
+---
+
+## 📁 Project Structure
+
+```
+VisionArk/
+├── core/
+│   ├── backend/           # FastAPI + AI agents
+│   │   ├── agents/        # Hub, Spoke, Base agent classes
+│   │   ├── api/           # REST endpoints
+│   │   ├── services/      # LBS client, Knowledge Core, etc.
+│   │   ├── tools/         # Agent tool implementations
+│   │   └── llm/           # Gemini provider
+│   └── frontend/          # Next.js application
+│       ├── app/           # Pages (dashboard, hub, spokes, tasks)
+│       └── components/    # UI components
+├── data/                  # User data (gitignored)
+├── docs/                  # Design docs, blueprints
+├── infra/                 # Docker configs
+└── start_service.bat      # Main entry point
+```
+
+---
+
+## 📖 Documentation
+
+- `docs/BLUEPRINT.md` - Full architectural specification
+- `docs/Vision Ark System Design.md` - Detailed system design
+- `docs/lbs_system_design.md` - LBS formula and logic
+- `docs/quickstart.md` - Quick start guide
+
+---
+
+## ⚠️ Disclaimer
+
+This is an experimental personal project:
+- **Not production-ready** - May contain bugs and incomplete features
+- **UX optimized for author** - Design choices reflect personal workflow
+- **Architecture may change** - Breaking changes possible without deprecation
+
+---
+
+## 📄 License
+
+This project is licensed under the [Apache License 2.0](LICENSE).
+
+---
+
+**Version**: 0.2.0 (Phase 2)
