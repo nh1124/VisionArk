@@ -637,6 +637,9 @@ class GeminiProvider(BaseLLMProvider):
             yield {"type": "status", "data": f"Thinking (Turn {turn_count})..."}
             
             try:
+                # Debug: Log the history length and model
+                print(f"[Gemini] stream_chat_async: model={model_name}, history_len={len(history)}, tools_count={len(tools_for_model) if tools_for_model else 0}")
+                
                 # USE AWAIT and aio client!
                 response = await self.client.aio.models.generate_content(
                     model=model_name,

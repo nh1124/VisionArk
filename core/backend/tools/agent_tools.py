@@ -753,10 +753,13 @@ async def check_inbox(
     Does NOT return payloads, only summaries. Use read_all_inbox_messages to see all data.
     """
     try:
-        messages = session.query(InboxQueue).filter(
-            InboxQueue.user_id == user_id,
-            InboxQueue.is_processed == False
-        ).order_by(InboxQueue.received_at.desc()).all()
+        result = await session.execute(
+            select(InboxQueue).filter(
+                InboxQueue.user_id == user_id,
+                InboxQueue.is_processed == False
+            ).order_by(InboxQueue.received_at.desc())
+        )
+        messages = result.scalars().all()
         
         if not messages:
             return ToolResult(
@@ -793,10 +796,13 @@ async def read_all_inbox_messages(
     Read the full content and payload of all pending inbox messages.
     """
     try:
-        messages = session.query(InboxQueue).filter(
-            InboxQueue.user_id == user_id,
-            InboxQueue.is_processed == False
-        ).order_by(InboxQueue.received_at.desc()).all()
+        result = await session.execute(
+            select(InboxQueue).filter(
+                InboxQueue.user_id == user_id,
+                InboxQueue.is_processed == False
+            ).order_by(InboxQueue.received_at.desc())
+        )
+        messages = result.scalars().all()
         
         if not messages:
             return ToolResult(
@@ -1472,6 +1478,14 @@ async def read_reference(
         # 1. Resolve storage path
         storage_path = None
         db_file = None
+        
+        # Strip known prefixes for DB lookup (DB stores just the filename)
+        filename_for_db = file_path
+        for prefix in ["refs/", "files/", "artifacts/"]:
+            if file_path.startswith(prefix):
+                filename_for_db = file_path[len(prefix):]
+                break
+        
         if session:
             node_name = spoke_name if node_type == 'SPOKE' else 'hub'
             result = await session.execute(select(Node).filter(
@@ -1482,9 +1496,10 @@ async def read_reference(
             node = result.scalars().first()
             
             if node:
+                # Try both the original path and the stripped filename
                 result = await session.execute(select(UploadedFile).filter(
                     UploadedFile.node_id == node.id,
-                    UploadedFile.filename == file_path
+                    UploadedFile.filename.in_([file_path, filename_for_db])
                 ))
                 db_file = result.scalars().first()
                 if db_file:
@@ -1493,24 +1508,26 @@ async def read_reference(
         potential_paths = []
         if storage_path:
             potential_paths.append(storage_path)
-            
+        
         # 2. Add potential sub-directory paths safely
-        # If the user-provided path already starts with a valid subdirectory, try it directly
-        for sub in ["refs", "files", "artifacts"]:
-            if file_path.startswith(f"{sub}/"):
-                try:
-                    p = secure_path_join(agent_base_dir, file_path)
-                    potential_paths.append(p)
-                except ValueError:
-                    pass
-            
-            # Also try as a relative path within each subdirectory
+        # Check if the path already has a known prefix
+        has_known_prefix = any(file_path.startswith(f"{sub}/") for sub in ["refs", "files", "artifacts"])
+        
+        if has_known_prefix:
+            # Path already has prefix like "refs/filename.pdf", just join directly
             try:
-                p = secure_path_join(agent_base_dir / sub, file_path)
+                p = secure_path_join(agent_base_dir, file_path)
                 potential_paths.append(p)
             except ValueError:
-                # Path traversal attempt or invalid path
-                continue
+                pass
+        else:
+            # No prefix, try each subdirectory
+            for sub in ["refs", "files", "artifacts"]:
+                try:
+                    p = secure_path_join(agent_base_dir / sub, file_path)
+                    potential_paths.append(p)
+                except ValueError:
+                    continue
         
         full_path = None
         for p in potential_paths:

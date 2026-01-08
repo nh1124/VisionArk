@@ -120,8 +120,6 @@ async def chat_with_hub(
     # Process uploaded files - upload to Gemini File API
     if files:
         # Get user's Gemini API key for file upload
-        from sqlalchemy import select
-        from models.database import UserSettings
         result = await db.execute(select(UserSettings).filter(UserSettings.user_id == identity.user_id))
         settings = result.scalars().first()
         api_key = None

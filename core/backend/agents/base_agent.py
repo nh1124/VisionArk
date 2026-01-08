@@ -305,7 +305,7 @@ class BaseAgent(ABC):
                 context_name=context_name,
                 session=self.db_session
             )
-            summary = await manager.get_latest_summary_async()
+            summary = await manager.get_latest_summary()
             if summary:
                 return f"\n\n# Summary from Previous Session\n\n{summary}\n"
         except Exception as e:
