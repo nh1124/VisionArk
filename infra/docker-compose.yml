@@ -41,8 +41,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-
-      - "${BACKEND_PORT:-8000}:8000"
+      - "${VA_HOST_PORT:-8000}:${BACKEND_PORT:-8000}"
     depends_on:
       db:
         condition: service_healthy
@@ -66,7 +65,7 @@ services:
     environment:
       - NEXT_PUBLIC_API_URL=http://backend:8000
     ports:
-      - "${FRONTEND_PORT:-3000}:3000"
+      - "${VA_HOST_FRONTEND_PORT:-3000}:${FRONTEND_PORT:-3000}"
     volumes:
       - ../core/frontend:/app
       - /app/node_modules
