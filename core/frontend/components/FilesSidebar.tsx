@@ -379,21 +379,48 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
         }
     };
 
+    // Handle multiple file uploads sequentially
+    const handleMultipleUpload = async (files: File[]) => {
+        if (files.length === 0) return;
+
+        setUploading(true);
+        setError(null);
+
+        const totalFiles = files.length;
+        let uploadedCount = 0;
+
+        for (const file of files) {
+            setUploadProgress(Math.round((uploadedCount / totalFiles) * 100));
+            try {
+                await handleUpload(file);
+                uploadedCount++;
+            } catch (error) {
+                console.error(`Failed to upload ${file.name}:`, error);
+            }
+        }
+
+        setUploadProgress(100);
+        setTimeout(() => setUploadProgress(0), 1000);
+        setUploading(false);
+    };
+
     // Handle file drop
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault();
         setDragActive(false);
         const droppedFiles = Array.from(e.dataTransfer.files);
         if (droppedFiles.length > 0) {
-            handleUpload(droppedFiles[0]);
+            handleMultipleUpload(droppedFiles);
         }
     };
 
     // Handle file input change
     const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
-            handleUpload(e.target.files[0]);
+            handleMultipleUpload(Array.from(e.target.files));
         }
+        // Reset input so the same files can be selected again
+        e.target.value = '';
     };
 
     // Delete file
@@ -469,6 +496,7 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
                             className="hidden"
                             onChange={handleFileInput}
                             disabled={uploading}
+                            multiple
                         />
                         <label htmlFor={`file-upload-${nodeType}-${nodeName}`} className="cursor-pointer">
                             <div className="text-gray-400 text-sm">

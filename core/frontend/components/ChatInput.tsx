@@ -106,6 +106,37 @@ export default function ChatInput({
         }
     };
 
+    // Handle paste event for clipboard images
+    const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+        const items = e.clipboardData?.items;
+        if (!items) return;
+
+        const imageFiles: File[] = [];
+
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+
+            // Check if the item is an image
+            if (item.type.startsWith('image/')) {
+                const file = item.getAsFile();
+                if (file) {
+                    // Create a new file with a meaningful name
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                    const extension = item.type.split('/')[1] || 'png';
+                    const namedFile = new File([file], `pasted-image-${timestamp}.${extension}`, {
+                        type: file.type
+                    });
+                    imageFiles.push(namedFile);
+                }
+            }
+        }
+
+        if (imageFiles.length > 0) {
+            setAttachedFiles((prev) => [...prev, ...imageFiles]);
+            // Don't prevent default if no images - allow normal text paste
+        }
+    };
+
     const formatFileSize = (bytes: number): string => {
         if (bytes < 1024) return bytes + " B";
         if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
@@ -171,6 +202,7 @@ export default function ChatInput({
                         value={value}
                         onChange={handleTextChange}
                         onKeyDown={handleKeyDown}
+                        onPaste={handlePaste}
                         placeholder={isDragging ? "Drop files here..." : placeholder}
                         className={`w-full bg-transparent border-none focus:outline-none resize-none py-4 px-6 text-gray-100 placeholder-gray-600 transition-all duration-500 ease-in-out ${isExpanded ? "flex-1 text-lg mb-4" : ""}`}
                         disabled={disabled}
