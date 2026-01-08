@@ -125,7 +125,7 @@ export default function SettingsPage() {
             // Use default LBS URL
             const lbsServiceData = {
                 service_name: "lbs",
-                base_url: "http://host.docker.internal:8100/api/lbs",
+                base_url: "http://host.docker.internal:8001/api/lbs",
                 api_key: newService.api_key
             };
             await apiJson("/api/settings/services", {
@@ -197,7 +197,7 @@ export default function SettingsPage() {
 
     const testConnection = async () => {
         const url = newService.service_name === "lbs" && !newService.base_url
-            ? "http://host.docker.internal:8100/api/lbs"
+            ? "http://host.docker.internal:8001/api/lbs"
             : newService.base_url;
 
         if (!url || !newService.api_key) {
@@ -232,7 +232,7 @@ export default function SettingsPage() {
             const res = await apiJson<any>("/api/settings/test-connection", {
                 method: "POST",
                 body: JSON.stringify({
-                    base_url: "http://host.docker.internal:8100/api/lbs",
+                    base_url: "http://host.docker.internal:8001/api/lbs",
                     api_key: newService.api_key
                 })
             });

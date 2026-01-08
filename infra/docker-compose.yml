@@ -35,8 +35,6 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
       - ATMOS_SERVICE_KEY=${ATMOS_SERVICE_KEY}
-      - LBS_API_KEY=${LBS_API_KEY}
-      - LBS_SERVICE_URL=${LBS_SERVICE_URL}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
     extra_hosts:
       - "host.docker.internal:host-gateway"

@@ -105,7 +105,7 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
             raise HTTPException(status_code=400, detail="Email already registered")
     
     # Validate LBS key before creating account
-    lbs_url = (settings.lbs_service_url or "http://localhost:8100/api/lbs")
+    lbs_url = (settings.lbs_service_url or "http://localhost:8001/api/lbs")
     if "localhost" in lbs_url and os.path.exists("/.dockerenv"):
         lbs_url = lbs_url.replace("localhost", "host.docker.internal")
     
@@ -225,7 +225,7 @@ async def test_lbs_connection(test: ConnectionTest):
     """
     Public endpoint to test LBS connection before/during registration.
     """
-    lbs_url = test.base_url or settings.lbs_service_url or "http://localhost:8100/api/lbs"
+    lbs_url = test.base_url or settings.lbs_service_url or "http://localhost:8001/api/lbs"
     if "localhost" in lbs_url and os.path.exists("/.dockerenv"):
         lbs_url = lbs_url.replace("localhost", "host.docker.internal")
     
