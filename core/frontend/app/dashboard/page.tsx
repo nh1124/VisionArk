@@ -3,7 +3,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { apiFetch } from "@/lib/api";
 import HeatMapCalendar from "@/components/HeatMapCalendar";
-import TrendLineChart from "@/components/TrendLineChart";
 import HubSuggestionBanner from "@/components/HubSuggestionBanner";
 
 interface DashboardData {
@@ -30,11 +29,9 @@ interface DashboardData {
 
 export default function DashboardPage() {
     const [data, setData] = useState<DashboardData | null>(null);
-    const [trendData, setTrendData] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [currentMonth, setCurrentMonth] = useState(new Date());
     const [refreshKey, setRefreshKey] = useState(0);
-    const [includeCompleted, setIncludeCompleted] = useState(true);
     const [selectedDate, setSelectedDate] = useState<string | null>(null);
     const [dayDetails, setDayDetails] = useState<any>(null);
 
@@ -45,10 +42,6 @@ export default function DashboardPage() {
                 const dashRes = await apiFetch("/api/lbs/dashboard");
                 const dashData = await dashRes.json();
                 setData(dashData);
-
-                const trendRes = await apiFetch("/api/lbs/trends?weeks=12");
-                const trendDataJson = await trendRes.json();
-                setTrendData(trendDataJson.trends || []);
             } catch (error) {
                 console.error("Error loading dashboard data:", error);
             } finally {
@@ -62,7 +55,7 @@ export default function DashboardPage() {
         if (selectedDate) {
             fetchDayDetails(selectedDate);
         }
-    }, [selectedDate, includeCompleted]);
+    }, [selectedDate]);
 
     const fetchDayDetails = async (dateStr: string) => {
         try {
@@ -70,7 +63,7 @@ export default function DashboardPage() {
             const detailJson = await res.json();
 
             // Fetch tasks for that day to show in list
-            const taskRes = await apiFetch(`/api/lbs/tasks?target_date=${dateStr}`);
+            const taskRes = await apiFetch(`/api/lbs/tasks?target_date=${dateStr}&include_completed=true`);
             const taskJson = await taskRes.json();
 
             setDayDetails({
@@ -91,14 +84,17 @@ export default function DashboardPage() {
         return Math.min(100, (data.today.adjusted_load / data.today.cap) * 100);
     }, [data]);
 
-    const getStatusTheme = (level: string) => {
-        switch (level) {
-            case "SAFE": return { color: "text-emerald-400", bg: "bg-emerald-500", border: "border-emerald-500/30", label: "Safe" };
-            case "WARNING": return { color: "text-amber-400", bg: "bg-amber-500", border: "border-amber-500/30", label: "Warning" };
-            case "DANGER": return { color: "text-orange-400", bg: "bg-orange-500", border: "border-orange-500/30", label: "High" };
-            case "CRITICAL": return { color: "text-red-400", bg: "bg-red-500", border: "border-red-500/30", label: "Critical" };
-            default: return { color: "text-gray-400", bg: "bg-gray-500", border: "border-gray-500/30", label: "Unknown" };
-        }
+    const getLoadStatus = (pct: number) => {
+        if (pct <= 60) return { label: "Focus", color: "text-emerald-400", bg: "bg-emerald-500", border: "border-emerald-500/30" };
+        if (pct <= 90) return { label: "Flow", color: "text-blue-400", bg: "bg-blue-500", border: "border-blue-500/30" };
+        if (pct <= 110) return { label: "Peak", color: "text-orange-400", bg: "bg-orange-500", border: "border-orange-500/30" };
+        return { label: "Overload", color: "text-red-400", bg: "bg-red-500", border: "border-red-500/30" };
+    };
+
+    const getRecoveryStatus = (score: number) => {
+        if (score <= 30) return { label: "Low", color: "text-red-400" };
+        if (score <= 70) return { label: "Recovering", color: "text-orange-400" };
+        return { label: "Ready", color: "text-emerald-400" };
     };
 
     if (loading) return (
@@ -115,7 +111,9 @@ export default function DashboardPage() {
         </div>
     );
 
-    const theme = getStatusTheme(data.today?.level || "UNKNOWN");
+    const loadPercentageActual = data.today ? (data.today.adjusted_load / data.today.cap) * 100 : 0;
+    const loadStatus = getLoadStatus(loadPercentageActual);
+    const recoveryStatus = getRecoveryStatus(data.weekly?.recovery_rate || 0);
 
     return (
         <div className="min-h-screen bg-gray-950 text-white p-6 lg:p-8">
@@ -124,7 +122,7 @@ export default function DashboardPage() {
                 <div className="flex justify-between items-center mb-8">
                     <div>
                         <h1 className="text-3xl font-bold text-white tracking-tight">Dashboard</h1>
-                        <p className="text-gray-500 text-sm mt-1">Load balance overview</p>
+                        <p className="text-gray-500 text-sm mt-1">Human State OS / Personal Load Balance</p>
                     </div>
                     <button
                         onClick={() => setRefreshKey(k => k + 1)}
@@ -140,41 +138,40 @@ export default function DashboardPage() {
                 {/* Primary Metrics */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
                     {/* Load Capacity - Main Card */}
-                    <div className={`md:col-span-2 bg-gray-900/40 border-2 ${theme.border} rounded-2xl p-8 relative overflow-hidden backdrop-blur-sm shadow-xl`}>
+                    <div className={`md:col-span-2 bg-gray-900/40 border-2 ${loadStatus.border} rounded-2xl p-8 relative overflow-hidden backdrop-blur-sm shadow-xl`}>
                         <div className="relative z-10">
                             <div className="flex items-center justify-between mb-6">
-                                <span className="text-sm font-bold text-gray-400 uppercase tracking-widest">Current Capacity</span>
-                                <span className={`text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-widest ${theme.bg}/20 ${theme.color}`}>
-                                    {theme.label}
+                                <span className="text-sm font-bold text-gray-400 uppercase tracking-widest">Current State</span>
+                                <span className={`text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-widest ${loadStatus.bg}/20 ${loadStatus.color}`}>
+                                    LBS Core
                                 </span>
                             </div>
-                            <div className="flex items-baseline gap-2 mb-6">
-                                <span className="text-6xl font-semibold tabular-nums tracking-tight">{loadPercentage.toFixed(0)}</span>
-                                <span className="text-xl font-medium text-gray-500">%</span>
+                            <div className="flex items-baseline gap-4 mb-6">
+                                <span className={`text-6xl font-bold tracking-tight ${loadStatus.color}`}>{loadStatus.label}</span>
+                                <span className="text-xs font-medium text-gray-500 tabular-nums">({loadPercentageActual.toFixed(0)}%)</span>
                             </div>
                             <div className="h-3 bg-gray-800/50 rounded-full overflow-hidden mb-4">
                                 <div
-                                    className={`h-full rounded-full transition-all duration-1000 ease-out ${theme.bg}`}
-                                    style={{ width: `${loadPercentage}%` }}
+                                    className={`h-full rounded-full transition-all duration-1000 ease-out ${loadStatus.bg}`}
+                                    style={{ width: `${Math.min(100, loadPercentageActual)}%` }}
                                 />
                             </div>
-                            <div className="flex justify-between text-xs font-bold text-gray-500 uppercase tracking-wider">
-                                <span>{data.today?.adjusted_load.toFixed(1)} load</span>
-                                <span>Cap: {data.today?.cap}</span>
+                            <div className="flex justify-between text-[10px] font-bold text-gray-600 uppercase tracking-wider">
+                                <span>{data.today?.adjusted_load.toFixed(1)} / {data.today?.cap} load units</span>
                             </div>
                         </div>
                         {/* Decorative background glow */}
-                        <div className={`absolute -right-20 -bottom-20 w-64 h-64 rounded-full blur-[100px] opacity-10 ${theme.bg}`} />
+                        <div className={`absolute -right-20 -bottom-20 w-64 h-64 rounded-full blur-[100px] opacity-10 ${loadStatus.bg}`} />
                     </div>
 
                     {/* Weekly Recovery */}
                     <div className="bg-gray-900/40 border-2 border-gray-800 rounded-2xl p-8 backdrop-blur-sm shadow-xl">
-                        <span className="text-sm font-bold text-gray-400 uppercase tracking-widest">Weekly Recovery</span>
-                        <div className="mt-6 flex items-baseline gap-2">
-                            <span className="text-4xl font-semibold tabular-nums tracking-tight">{data.weekly?.recovery_rate.toFixed(1)}</span>
-                            <span className="text-lg font-medium text-gray-500">%</span>
+                        <span className="text-sm font-bold text-gray-400 uppercase tracking-widest">Recovery Level</span>
+                        <div className="mt-6 flex items-baseline gap-3">
+                            <span className={`text-4xl font-bold tracking-tight ${recoveryStatus.color}`}>{recoveryStatus.label}</span>
+                            <span className="text-xs font-medium text-gray-600 tabular-nums">{data.weekly?.recovery_rate.toFixed(0)}%</span>
                         </div>
-                        <p className="text-xs font-bold text-gray-600 mt-2 uppercase">Efficiency rate</p>
+                        <p className="text-xs font-bold text-gray-600 mt-2 uppercase">Efficiency Context</p>
                         <div className="mt-8 flex gap-1.5">
                             {[1, 2, 3, 4, 5, 6, 7].map(i => (
                                 <div
@@ -200,24 +197,6 @@ export default function DashboardPage() {
                     </div>
                 </div>
 
-                <div className="bg-gray-900/40 border-2 border-gray-800 rounded-2xl p-6 mb-8 backdrop-blur-sm shadow-xl">
-                    <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
-                        <h2 className="text-lg font-medium tracking-tight text-gray-200">Performance Trends</h2>
-                        <div className="flex gap-4 text-[10px] font-medium uppercase tracking-wider">
-                            <div className="flex items-center gap-2">
-                                <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-                                <span className="text-gray-500">Load</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <div className="w-2 h-2 rounded-full bg-red-500/50"></div>
-                                <span className="text-gray-500">Cap</span>
-                            </div>
-                        </div>
-                    </div>
-                    <div className="h-[360px]">
-                        <TrendLineChart data={trendData} cap={data.today?.cap || 8.0} height={360} />
-                    </div>
-                </div>
 
                 {/* LBS Calendar */}
                 <div className="bg-gray-900/40 border-2 border-gray-800 rounded-2xl p-6 backdrop-blur-sm shadow-xl relative">
@@ -228,14 +207,6 @@ export default function DashboardPage() {
                         </div>
 
                         <div className="flex items-center gap-4">
-                            {/* Toggle Switch */}
-                            <button
-                                onClick={() => setIncludeCompleted(!includeCompleted)}
-                                className={`px-4 py-2 rounded-xl border-2 transition-all text-[10px] font-bold tracking-widest uppercase ${includeCompleted ? 'bg-blue-600/20 border-blue-500/50 text-blue-400' : 'bg-gray-800/30 border-gray-700 text-gray-500'}`}
-                            >
-                                {includeCompleted ? 'Showing Completed' : 'Hiding Completed'}
-                            </button>
-
                             {/* Month Selector */}
                             <div className="flex items-center gap-1 bg-gray-900 border border-gray-800 rounded-xl p-1 shadow-inner">
                                 <button
@@ -260,7 +231,7 @@ export default function DashboardPage() {
                     <HeatMapCalendar
                         month={currentMonth}
                         refreshKey={refreshKey}
-                        includeCompleted={includeCompleted}
+                        includeCompleted={true}
                         onDayClick={(date) => setSelectedDate(date)}
                     />
                 </div>

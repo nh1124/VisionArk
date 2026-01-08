@@ -152,12 +152,7 @@ export default function HeatMapCalendar({
                                     </div>
 
                                     <div className="flex flex-col items-center justify-center -mt-2">
-                                        <span className={`text-lg font-medium tracking-tight tabular-nums ${level === 'CRITICAL' ? 'text-red-400' : level === 'DANGER' ? 'text-orange-400' : level === 'WARNING' ? 'text-amber-400' : 'text-emerald-400'}`}>
-                                            {cell.data ? (cell.data.load ?? cell.data.adjusted_load ?? 0).toFixed(1) : '0.0'}
-                                        </span>
-                                        <span className="text-[9px] font-medium text-gray-600 uppercase mt-0.5">
-                                            {cell.data ? (cell.data.taskCount ?? cell.data.task_count ?? 0) : 0} tasks
-                                        </span>
+                                        {/* Numerical load and task counts removed to reduce cognitive load */}
                                     </div>
 
                                     {/* Glass reflection effect */}
