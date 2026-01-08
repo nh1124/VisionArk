@@ -305,7 +305,7 @@ class GeminiProvider(BaseLLMProvider):
                             mime_type=attached_file.file_type
                         )
                         content_parts.append(file_part)
-                        print(f"[Gemini] Added file part: {attached_file.filename}")
+                        print(f"[Gemini] Added file part: {attached_file.filename} ({attached_file.file_type})")
                     except Exception as e:
                         print(f"[Gemini] Failed to add file part for {attached_file.filename}: {e}")
         

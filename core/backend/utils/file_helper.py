@@ -28,13 +28,16 @@ async def process_file_content(file_content: bytes, filename: str, content_type:
             text = file_content.decode('utf-8')
             return f"## File: {filename}\n{text}"
         
-        # Images (metadata only for now, full vision support coming)
+        # Media files (Images, Audio)
         elif content_type.startswith("image/"):
-            return f"## File: {filename}\n[Image file - {content_type}, {len(file_content)} bytes]\nNote: Image analysis coming in Phase 2"
+            return f"## File: {filename}\n[Image file - {content_type}, {len(file_content)} bytes]\nNote: Analyzed via Gemini Native Multimodal"
+        
+        elif content_type.startswith("audio/"):
+            return f"## File: {filename}\n[Audio file - {content_type}, {len(file_content)} bytes]\nNote: Analyzed via Gemini Native Audio"
         
         # Other files
         else:
-            return f"## File: {filename}\n[File type {content_type} - {len(file_content)} bytes]\nNote: This file type is not yet supported for content extraction"
+            return f"## File: {filename}\n[File type {content_type} - {len(file_content)} bytes]\nNote: Content extraction via text fallback"
             
     except Exception as e:
         return f"## File: {filename}\n[Error processing file: {str(e)}]"

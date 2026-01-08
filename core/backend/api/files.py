@@ -27,7 +27,8 @@ GEMINI_SUPPORTED_TYPES = [
     "application/pdf",
     "image/png", "image/jpeg", "image/gif", "image/webp",
     "video/mp4", "video/webm",
-    "audio/mp3", "audio/wav", "audio/ogg"
+    "audio/mp3", "audio/wav", "audio/ogg", "audio/mpeg", "audio/aac", 
+    "audio/x-m4a", "audio/mp4", "audio/x-aac", "audio/vnd.dlna.adts"
 ]
 
 

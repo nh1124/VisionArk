@@ -33,20 +33,21 @@ async def process_uploaded_file(file_content: bytes, filename: str, content_type
         except Exception as e:
             result["error"] = f"Failed to process PDF: {str(e)}"
     
-    # Process images
-    elif content_type.startswith("image/"):
+    # Process media files (images, audio)
+    elif content_type.startswith("image/") or content_type.startswith("audio/"):
         try:
-            # Encode for Gemini API
-            b64_image = base64.b64encode(file_content).decode('utf-8')
+            # Encode for Gemini API (Legacy inline_data fallback)
+            b64_data = base64.b64encode(file_content).decode('utf-8')
             result["gemini_part"] = {
                 "inline_data": {
                     "mime_type": content_type,
-                    "data": b64_image
+                    "data": b64_data
                 }
             }
-            result["summary"] = f"Image ({content_type})"
+            media_type = "Image" if content_type.startswith("image/") else "Audio"
+            result["summary"] = f"{media_type} ({content_type})"
         except Exception as e:
-            result["error"] = f"Failed to process image: {str(e)}"
+            result["error"] = f"Failed to process {content_type}: {str(e)}"
     
     # Process text files
     elif content_type.startswith("text/") or filename.endswith((".txt", ".md", ".json", ".csv")):
