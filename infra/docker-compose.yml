@@ -38,7 +38,10 @@ services:
       - LBS_API_KEY=${LBS_API_KEY}
       - LBS_SERVICE_URL=${LBS_SERVICE_URL}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
+
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
       db:

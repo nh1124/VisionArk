@@ -18,8 +18,6 @@ async def lifespan(app: FastAPI):
     """Initialize database on startup"""
     print("🚀 Initializing AI TaskManagement OS...")
     print(f"   Environment: {settings.atmos_env}")
-    print(f"   API Key Required: {settings.atmos_require_api_key}")
-    print(f"   Legacy Key Enabled: {settings.atmos_enable_legacy_env_key}")
     print(f"   Bind: {settings.host}:{settings.backend_port}")
     
     if settings.atmos_env == "prod" and settings.atmos_api_key_pepper == "dev_pepper_change_in_prod":

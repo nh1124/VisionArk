@@ -23,7 +23,7 @@ class LBSClient:
         # 1. Determine default URL from settings or env
         env_url = os.getenv("LBS_SERVICE_URL")
         # Use provided base_url, then env_url (if not empty), then settings default, then fallback
-        hardcoded_fallback = "http://localhost:8100/api/lbs"
+        hardcoded_fallback = "http://localhost:8001/api/lbs"
         final_url = base_url or env_url or settings.lbs_service_url or hardcoded_fallback
         
         # In Docker, localhost refers to the container. Use host.docker.internal for the host LBS.
