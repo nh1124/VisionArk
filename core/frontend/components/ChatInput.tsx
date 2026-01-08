@@ -160,7 +160,7 @@ export default function ChatInput({
                 className={`relative rounded-3xl border transition-all duration-500 ease-in-out flex flex-col shadow-2xl ${isDragging
                     ? "border-purple-500 bg-purple-500/10"
                     : "border-gray-700 bg-gray-900/80 backdrop-blur-sm"
-                    } ${isExpanded ? "flex-1 min-h-[400px]" : "h-auto"}`}
+                    } ${isExpanded ? "flex-1 min-h-[300px]" : ""}`}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
@@ -175,8 +175,8 @@ export default function ChatInput({
                         className={`w-full bg-transparent border-none focus:outline-none resize-none py-4 px-6 text-gray-100 placeholder-gray-600 transition-all duration-500 ease-in-out ${isExpanded ? "flex-1 text-lg mb-4" : ""}`}
                         disabled={disabled}
                         style={{
-                            minHeight: isExpanded ? "300px" : "48px",
-                            maxHeight: isExpanded ? "none" : "200px",
+                            minHeight: isExpanded ? "200px" : "48px",
+                            maxHeight: isExpanded ? "none" : "120px",
                             overflowY: "auto"
                         }}
                     />

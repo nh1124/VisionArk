@@ -148,9 +148,9 @@ export default function DashboardPage() {
                                     {theme.label}
                                 </span>
                             </div>
-                            <div className="flex items-baseline gap-2 mb-6 font-display">
-                                <span className="text-7xl font-bold tabular-nums tracking-tight">{loadPercentage.toFixed(0)}</span>
-                                <span className="text-2xl font-semibold text-gray-500 mb-1">%</span>
+                            <div className="flex items-baseline gap-2 mb-6">
+                                <span className="text-6xl font-semibold tabular-nums tracking-tight">{loadPercentage.toFixed(0)}</span>
+                                <span className="text-xl font-medium text-gray-500">%</span>
                             </div>
                             <div className="h-3 bg-gray-800/50 rounded-full overflow-hidden mb-4">
                                 <div
@@ -170,9 +170,9 @@ export default function DashboardPage() {
                     {/* Weekly Recovery */}
                     <div className="bg-gray-900/40 border-2 border-gray-800 rounded-2xl p-8 backdrop-blur-sm shadow-xl">
                         <span className="text-sm font-bold text-gray-400 uppercase tracking-widest">Weekly Recovery</span>
-                        <div className="mt-6 flex items-baseline gap-2 font-display">
-                            <span className="text-5xl font-bold tabular-nums tracking-tight">{data.weekly?.recovery_rate.toFixed(1)}</span>
-                            <span className="text-xl font-semibold text-gray-500 mb-1">%</span>
+                        <div className="mt-6 flex items-baseline gap-2">
+                            <span className="text-4xl font-semibold tabular-nums tracking-tight">{data.weekly?.recovery_rate.toFixed(1)}</span>
+                            <span className="text-lg font-medium text-gray-500">%</span>
                         </div>
                         <p className="text-xs font-bold text-gray-600 mt-2 uppercase">Efficiency rate</p>
                         <div className="mt-8 flex gap-1.5">
@@ -189,8 +189,8 @@ export default function DashboardPage() {
                     {/* Daily Stats */}
                     <div className="bg-gray-900/40 border-2 border-gray-800 rounded-2xl p-8 backdrop-blur-sm shadow-xl">
                         <span className="text-sm font-bold text-gray-400 uppercase tracking-widest">Today's Tasks</span>
-                        <div className="mt-6 flex items-baseline gap-2 font-display">
-                            <span className="text-5xl font-bold tabular-nums tracking-tight">{data.today?.task_count}</span>
+                        <div className="mt-6 flex items-baseline gap-2">
+                            <span className="text-4xl font-semibold tabular-nums tracking-tight">{data.today?.task_count}</span>
                         </div>
                         <p className="text-xs font-bold text-gray-600 mt-2 uppercase">Active tasks</p>
                         <div className="mt-8 flex items-center justify-between py-3 px-4 bg-gray-800/30 rounded-xl border border-gray-800/50">
@@ -200,18 +200,17 @@ export default function DashboardPage() {
                     </div>
                 </div>
 
-                {/* Performance Trends */}
-                <div className="bg-gray-900/40 border-2 border-gray-800 rounded-2xl p-8 mb-8 backdrop-blur-sm shadow-xl">
-                    <div className="flex justify-between items-center mb-8">
-                        <h2 className="text-xl font-bold tracking-tight">Performance Trends</h2>
-                        <div className="flex gap-6 text-[10px] font-bold uppercase tracking-[0.2em]">
+                <div className="bg-gray-900/40 border-2 border-gray-800 rounded-2xl p-6 mb-8 backdrop-blur-sm shadow-xl">
+                    <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
+                        <h2 className="text-lg font-medium tracking-tight text-gray-200">Performance Trends</h2>
+                        <div className="flex gap-4 text-[10px] font-medium uppercase tracking-wider">
                             <div className="flex items-center gap-2">
-                                <div className="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.4)]"></div>
-                                <span className="text-gray-400">Load</span>
+                                <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                                <span className="text-gray-500">Load</span>
                             </div>
                             <div className="flex items-center gap-2">
-                                <div className="w-2.5 h-2.5 rounded-full bg-red-500/50"></div>
-                                <span className="text-gray-400">Cap</span>
+                                <div className="w-2 h-2 rounded-full bg-red-500/50"></div>
+                                <span className="text-gray-500">Cap</span>
                             </div>
                         </div>
                     </div>
@@ -220,12 +219,12 @@ export default function DashboardPage() {
                     </div>
                 </div>
 
-                {/* LBS Calendar Overhaul */}
-                <div className="bg-gray-900/40 border-2 border-gray-800 rounded-2xl p-8 backdrop-blur-sm shadow-xl relative">
-                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6 mb-10">
-                        <div className="font-display">
-                            <h2 className="text-2xl font-bold tracking-tight uppercase">LBS Calendar</h2>
-                            <p className="text-sm font-semibold text-gray-500 mt-1 uppercase tracking-widest">Monthly schedule and predictive load mapping.</p>
+                {/* LBS Calendar */}
+                <div className="bg-gray-900/40 border-2 border-gray-800 rounded-2xl p-6 backdrop-blur-sm shadow-xl relative">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+                        <div>
+                            <h2 className="text-lg font-medium tracking-tight text-gray-200">LBS Calendar</h2>
+                            <p className="text-xs font-medium text-gray-500 mt-1">Monthly schedule and predictive load mapping.</p>
                         </div>
 
                         <div className="flex items-center gap-4">

@@ -83,11 +83,11 @@ function MessageWithAttachmentsBase({
 
             <div
                 className={`max-w-[85%] ${role === "user"
-                    ? "bg-gradient-to-br from-purple-600 to-purple-800 text-white rounded-2xl rounded-tr-sm shadow-lg shadow-purple-900/20"
+                    ? "bg-gradient-to-br from-purple-600 to-purple-800 text-white rounded-2xl rounded-tr-sm shadow-lg shadow-purple-900/20 p-5"
                     : type === "system"
-                        ? "bg-gray-900/80 backdrop-blur-md border border-blue-500/30 text-blue-100 rounded-2xl rounded-tl-sm shadow-xl"
-                        : "bg-gray-800/80 backdrop-blur-md border border-gray-700/50 text-gray-100 rounded-2xl rounded-tl-sm shadow-xl"
-                    } p-5 transition-all hover:shadow-2xl hover:border-gray-600/50`}
+                        ? "bg-gray-900/80 backdrop-blur-md border border-blue-500/30 text-blue-100 rounded-2xl rounded-tl-sm shadow-xl p-5"
+                        : "text-gray-100"
+                    } transition-all`}
             >
                 {/* Message Content - AI Response */}
                 <div className="prose prose-invert max-w-none">
