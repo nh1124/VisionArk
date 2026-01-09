@@ -165,10 +165,10 @@ class GeminiProvider(BaseLLMProvider):
 
         history = [types.Content(role="user", parts=content_parts)]
         turn_count = 0
-        max_turns = 30
+        max_turns = settings.max_tool_turns
         accumulated_tool_results = []
         
-        while turn_count < max_turns:
+        while max_turns is None or turn_count < max_turns:
             turn_count += 1
             try:
                 # USE AWAIT and aio client!
@@ -366,7 +366,7 @@ class GeminiProvider(BaseLLMProvider):
         max_turns = settings.max_tool_turns
         accumulated_tool_results = []  # List of {name, result, success} dicts
         
-        while turn_count < max_turns:
+        while max_turns is None or turn_count < max_turns:
             turn_count += 1
             
             # Generate response
@@ -675,14 +675,13 @@ class GeminiProvider(BaseLLMProvider):
                 function_calling_config=types.FunctionCallingConfig(mode="AUTO")
             )
 
-        history = [types.Content(role="user", parts=content_parts)]
         turn_count = 0
-        max_turns = 30
+        max_turns = settings.max_tool_turns
         accumulated_tool_results = []
         
         yield {"type": "status", "data": "Thinking..."}
         
-        while turn_count < max_turns:
+        while max_turns is None or turn_count < max_turns:
             turn_count += 1
             yield {"type": "status", "data": f"Thinking (Turn {turn_count})..."}
             
@@ -879,7 +878,7 @@ class GeminiProvider(BaseLLMProvider):
         
         yield {"type": "status", "data": "Thinking..."}
         
-        while turn_count < max_turns:
+        while max_turns is None or turn_count < max_turns:
             turn_count += 1
             yield {"type": "status", "data": f"Thinking (Turn {turn_count})..."}
             

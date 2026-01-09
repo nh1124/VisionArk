@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     database_url: str = ""  # postgresql://user:pass@host:5432/dbname
     
     # LLM Settings
-    max_tool_turns: int = 30
+    max_tool_turns: Optional[int] = 30
     
     # Model configuration
     model_config = SettingsConfigDict(
