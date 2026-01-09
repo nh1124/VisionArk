@@ -1582,7 +1582,6 @@ async def read_reference(
             return ToolResult(success=False, message=f"File not found: {file_path}")
         
         # 2. PRIORITIZE Gemini upload - this gives AI better file reading capabilities
-        gemini_info = ""
         gemini_indexed = False
         
         # If we have a DB file, always try to ensure it's uploaded to Gemini
@@ -1595,33 +1594,32 @@ async def read_reference(
                     file_service = await _get_file_service(user_id, session)
                     await file_service.upload_to_gemini(db_file)
                     gemini_indexed = True
-                    gemini_info = "\n\n(AI System: This file has been uploaded to Gemini File API. Full content is now available for AI analysis.)"
-                    # Refresh db_file to get the gemini_file_name
                     await session.refresh(db_file)
                 except Exception as e:
                     print(f"[read_reference] Gemini upload failed: {e}")
 
-        # 3. Read content - but for binary files, leverage Gemini if indexed
-        is_binary = False
+        # 3. If Gemini-indexed, skip text reading - Gemini can read the file directly
+        if gemini_indexed:
+            return ToolResult(
+                success=True,
+                message=f"📄 **{file_path}** is indexed in Gemini.\n\n✅ The AI can directly see and analyze this file's contents (including PDFs, images, etc.) through the Gemini File API.\n\n💡 Simply ask questions about the file - no need to extract text manually.",
+                data={"file_path": file_path, "gemini_indexed": True, "gemini_file_name": db_file.gemini_file_name if db_file else None}
+            )
+        
+        # 4. Fallback: Read as text (for files not in Gemini)
         try:
             content = full_path.read_text(encoding='utf-8')
+            return ToolResult(
+                success=True,
+                message=f"📄 Content of {file_path}:\n\n{content}",
+                data={"file_path": file_path, "content": content, "gemini_indexed": False}
+            )
         except UnicodeDecodeError:
-            is_binary = True
-            if gemini_indexed:
-                # Binary file but Gemini has it - provide helpful message
-                content = f"[Binary file: {file_path}]\n\n✅ **This file is indexed in Gemini.** The AI can directly analyze its contents (PDF pages, images, etc.) through the Gemini File API. Simply ask questions about the file - there's no need to extract text manually."
-            else:
-                content = f"[Binary file: {file_path}]\n\n⚠️ This binary file could not be read as text and is NOT yet indexed in Gemini. Try syncing files to Gemini first."
-        
-        # For text files that are Gemini-indexed, add a note
-        if not is_binary and gemini_indexed and not gemini_info:
-            gemini_info = "\n\n(Note: This file is also indexed in Gemini for enhanced multimodal analysis.)"
-        
-        return ToolResult(
-            success=True,
-            message=f"📄 Content of {file_path}:\n\n{content}{gemini_info}",
-            data={"file_path": file_path, "content": content, "is_binary": is_binary, "gemini_indexed": gemini_indexed}
-        )
+            return ToolResult(
+                success=True,
+                message=f"⚠️ **{file_path}** is a binary file that could not be uploaded to Gemini.\n\nTry syncing files to Gemini first, or upload the file again.",
+                data={"file_path": file_path, "is_binary": True, "gemini_indexed": False}
+            )
     except Exception as e:
         return ToolResult(success=False, message=f"Failed to read file: {str(e)}")
 
