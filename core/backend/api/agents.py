@@ -58,6 +58,10 @@ class SpokeClone(BaseModel):
     new_name: Optional[str] = None
 
 
+class BranchChat(BaseModel):
+    message_index: int  # Index in the history to branch from
+
+
 # Per-user agent cache instances (TTL/LRU managed)
 _hub_cache = get_hub_agent_cache()
 _spoke_cache = get_spoke_agent_cache()
@@ -381,6 +385,119 @@ async def get_hub_history(
             })
         
         return {"history": history, "message_count": len(history)}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@router.post("/hub/branch")
+async def branch_hub_chat(
+    branch_data: BranchChat,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Branch Hub conversation into a new Spoke with copied history up to the specified index"""
+    from models.database import ChatSession, ChatMessage
+    
+    try:
+        # 1. Get hub node
+        result = await db.execute(select(Node).filter(
+            Node.user_id == identity.user_id,
+            Node.name == "hub",
+            Node.node_type == "HUB"
+        ))
+        hub_node = result.scalars().first()
+        if not hub_node:
+            raise HTTPException(status_code=404, detail="Hub node not found")
+        
+        # 2. Get active session
+        result = await db.execute(select(ChatSession).filter(
+            ChatSession.node_id == hub_node.id,
+            ChatSession.is_archived == False
+        ).order_by(ChatSession.created_at.desc()))
+        active_session = result.scalars().first()
+        if not active_session:
+            raise HTTPException(status_code=404, detail="No active session to branch from")
+        
+        # 3. Get messages up to index
+        result = await db.execute(select(ChatMessage).filter(
+            ChatMessage.session_id == active_session.id
+        ).order_by(ChatMessage.created_at.asc()))
+        messages = result.scalars().all()
+        
+        if branch_data.message_index < 0 or branch_data.message_index >= len(messages):
+            raise HTTPException(status_code=400, detail="Invalid message index")
+            
+        copied_messages = messages[:branch_data.message_index + 1]
+        
+        # 4. Generate timestamped name for new spoke
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        new_spoke_name = f"Hub_branch_{timestamp}"
+        
+        # 5. Create new Spoke node
+        new_node_id = str(uuid.uuid4())
+        new_node = Node(
+            id=new_node_id,
+            user_id=identity.user_id,
+            name=new_spoke_name,
+            display_name=f"Hub Branch ({timestamp})",
+            node_type="SPOKE",
+            lbs_access_level=hub_node.lbs_access_level
+        )
+        db.add(new_node)
+        
+        # 6. Create agent profile for the new spoke
+        result = await db.execute(select(AgentProfile).filter(
+            AgentProfile.node_id == hub_node.id,
+            AgentProfile.is_active == True
+        ))
+        hub_profile = result.scalars().first()
+        
+        new_profile = AgentProfile(
+            id=str(uuid.uuid4()),
+            node_id=new_node_id,
+            system_prompt=hub_profile.system_prompt if hub_profile else "You are a specialized AI assistant. This is a branch from Hub conversation.",
+            is_active=True,
+            version=1
+        )
+        db.add(new_profile)
+        
+        # 7. Create new session for the spoke
+        new_session = ChatSession(
+            id=str(uuid.uuid4()),
+            node_id=new_node_id,
+            title=f"Branched from Hub (step {branch_data.message_index + 1})",
+            is_archived=False
+        )
+        db.add(new_session)
+        
+        # 8. Copy messages to the new session
+        for msg in copied_messages:
+            new_msg = ChatMessage(
+                id=str(uuid.uuid4()),
+                session_id=new_session.id,
+                role=msg.role,
+                content=msg.content,
+                meta_payload=msg.meta_payload,
+                is_excluded=msg.is_excluded,
+                created_at=datetime.utcnow()
+            )
+            db.add(new_msg)
+        
+        # 9. Create spoke directory
+        spoke_dir = get_spoke_dir(identity.user_id, new_spoke_name)
+        spoke_dir.mkdir(parents=True, exist_ok=True)
+        (spoke_dir / "files").mkdir(exist_ok=True)
+        (spoke_dir / "artifacts").mkdir(exist_ok=True)
+        (spoke_dir / "refs").mkdir(exist_ok=True)
+        
+        await db.commit()
+        return {"success": True, "new_spoke_name": new_spoke_name, "new_node_id": new_node_id}
+        
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -749,6 +866,119 @@ async def get_spoke_history(
     except Exception as e:
         import traceback
         print(f"!!! Error in get_spoke_history for {spoke_name}: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/spoke/{spoke_name}/branch")
+async def branch_spoke_chat(
+    spoke_name: str,
+    branch_data: BranchChat,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Branch Spoke conversation into a new Spoke with copied history up to the specified index"""
+    from models.database import ChatSession, ChatMessage
+    
+    try:
+        # 1. Get source spoke node
+        result = await db.execute(select(Node).filter(
+            Node.user_id == identity.user_id,
+            Node.name == spoke_name,
+            Node.node_type == "SPOKE"
+        ))
+        source_node = result.scalars().first()
+        if not source_node:
+            raise HTTPException(status_code=404, detail=f"Spoke '{spoke_name}' not found")
+        
+        # 2. Get active session
+        result = await db.execute(select(ChatSession).filter(
+            ChatSession.node_id == source_node.id,
+            ChatSession.is_archived == False
+        ).order_by(ChatSession.created_at.desc()))
+        active_session = result.scalars().first()
+        if not active_session:
+            raise HTTPException(status_code=404, detail="No active session to branch from")
+        
+        # 3. Get messages up to index
+        result = await db.execute(select(ChatMessage).filter(
+            ChatMessage.session_id == active_session.id
+        ).order_by(ChatMessage.created_at.asc()))
+        messages = result.scalars().all()
+        
+        if branch_data.message_index < 0 or branch_data.message_index >= len(messages):
+            raise HTTPException(status_code=400, detail="Invalid message index")
+            
+        copied_messages = messages[:branch_data.message_index + 1]
+        
+        # 4. Generate timestamped name for new spoke
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        new_spoke_name = f"{spoke_name}_branch_{timestamp}"
+        
+        # 5. Create new Spoke node
+        new_node_id = str(uuid.uuid4())
+        new_node = Node(
+            id=new_node_id,
+            user_id=identity.user_id,
+            name=new_spoke_name,
+            display_name=f"{source_node.display_name or spoke_name} Branch ({timestamp})",
+            node_type="SPOKE",
+            lbs_access_level=source_node.lbs_access_level
+        )
+        db.add(new_node)
+        
+        # 6. Copy agent profile
+        result = await db.execute(select(AgentProfile).filter(
+            AgentProfile.node_id == source_node.id,
+            AgentProfile.is_active == True
+        ))
+        source_profile = result.scalars().first()
+        
+        new_profile = AgentProfile(
+            id=str(uuid.uuid4()),
+            node_id=new_node_id,
+            system_prompt=source_profile.system_prompt if source_profile else "You are a specialized AI assistant for this project.",
+            is_active=True,
+            version=1
+        )
+        db.add(new_profile)
+        
+        # 7. Create new session
+        new_session = ChatSession(
+            id=str(uuid.uuid4()),
+            node_id=new_node_id,
+            title=f"Branched from {spoke_name} (step {branch_data.message_index + 1})",
+            is_archived=False
+        )
+        db.add(new_session)
+        
+        # 8. Copy messages
+        for msg in copied_messages:
+            new_msg = ChatMessage(
+                id=str(uuid.uuid4()),
+                session_id=new_session.id,
+                role=msg.role,
+                content=msg.content,
+                meta_payload=msg.meta_payload,
+                is_excluded=msg.is_excluded,
+                created_at=datetime.utcnow()
+            )
+            db.add(new_msg)
+        
+        # 9. Create spoke directory
+        spoke_dir = get_spoke_dir(identity.user_id, new_spoke_name)
+        spoke_dir.mkdir(parents=True, exist_ok=True)
+        (spoke_dir / "files").mkdir(exist_ok=True)
+        (spoke_dir / "artifacts").mkdir(exist_ok=True)
+        (spoke_dir / "refs").mkdir(exist_ok=True)
+        
+        await db.commit()
+        return {"success": True, "new_spoke_name": new_spoke_name, "new_node_id": new_node_id}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 

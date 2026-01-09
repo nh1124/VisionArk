@@ -27,30 +27,37 @@ const CodeBlock = ({ children, className, inline, ...props }: CodeBlockProps) =>
     const match = /language-(\w+)/.exec(className || "");
     const [isCopied, setIsCopied] = useState(false);
 
+    const codeText = String(children).replace(/\n$/, "");
+    const lineCount = codeText.split("\n").length;
+    // Only show copy button for multi-line code or longer content (not short file names)
+    const showCopyButton = lineCount > 1 || codeText.length > 80;
+
     const handleCopy = () => {
-        const text = String(children).replace(/\n$/, "");
-        navigator.clipboard.writeText(text);
+        navigator.clipboard.writeText(codeText);
         setIsCopied(true);
         setTimeout(() => setIsCopied(false), 2000);
     };
 
+    // Highlighted code with language
     if (!inline && match) {
         return (
-            <div className="relative group my-4">
-                <div className="absolute right-2 top-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2">
-                    {isCopied && (
-                        <span className="text-[10px] bg-gray-950 text-gray-300 px-1.5 py-0.5 rounded border border-gray-800 shadow-xl whitespace-nowrap transition-all duration-200 opacity-100">
-                            Copied!
-                        </span>
-                    )}
-                    <button
-                        onClick={handleCopy}
-                        className="p-1.5 rounded-md bg-gray-700/50 hover:bg-gray-600/50 text-gray-300 transition-colors border border-gray-600/50 backdrop-blur-sm"
-                        title="Copy code"
-                    >
-                        {isCopied ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
-                    </button>
-                </div>
+            <div className={`relative ${showCopyButton ? "group" : ""} my-4`}>
+                {showCopyButton && (
+                    <div className="absolute right-2 top-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2">
+                        {isCopied && (
+                            <span className="text-[10px] bg-gray-950 text-gray-300 px-1.5 py-0.5 rounded border border-gray-800 shadow-xl whitespace-nowrap transition-all duration-200 opacity-100">
+                                Copied!
+                            </span>
+                        )}
+                        <button
+                            onClick={handleCopy}
+                            className="p-1.5 rounded-md bg-gray-700/50 hover:bg-gray-600/50 text-gray-300 transition-colors border border-gray-600/50 backdrop-blur-sm"
+                            title="Copy code"
+                        >
+                            {isCopied ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
+                        </button>
+                    </div>
+                )}
                 <div className="text-xs text-gray-500 absolute left-4 top-2 font-mono uppercase tracking-wider">
                     {match[1]}
                 </div>
@@ -61,13 +68,23 @@ const CodeBlock = ({ children, className, inline, ...props }: CodeBlockProps) =>
                     className="rounded-xl !bg-gray-950/80 !mt-0 !pt-10 !pb-4 !px-4 border border-gray-800/50 shadow-inner"
                     {...props}
                 >
-                    {String(children).replace(/\n$/, "")}
+                    {codeText}
                 </SyntaxHighlighter>
             </div>
         );
     }
 
+    // Non-highlighted block code
     if (!inline) {
+        // Short single-line code (like file names) - render as simple inline-style block
+        if (!showCopyButton) {
+            return (
+                <pre className="inline-block px-3 py-1.5 my-1 rounded-lg bg-gray-900/60 border border-gray-800/40 font-mono text-sm text-gray-300" {...props}>
+                    <code>{children}</code>
+                </pre>
+            );
+        }
+
         return (
             <div className="relative group my-4">
                 <div className="absolute right-2 top-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2">
@@ -91,6 +108,7 @@ const CodeBlock = ({ children, className, inline, ...props }: CodeBlockProps) =>
         );
     }
 
+    // Inline code
     return (
         <code className="bg-gray-800 px-1.5 py-0.5 rounded text-pink-400 font-mono text-sm" {...props}>
             {children}

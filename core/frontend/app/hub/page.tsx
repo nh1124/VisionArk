@@ -185,6 +185,56 @@ export default function HubPage() {
         }
     };
 
+    const handleRegenerate = useCallback(async (index: number) => {
+        if (loading) return;
+
+        // Find the last user message before this one
+        let userMsgIndex = -1;
+        for (let i = index - 1; i >= 0; i--) {
+            if (messages[i].role === "user") {
+                userMsgIndex = i;
+                break;
+            }
+        }
+
+        if (userMsgIndex === -1) return;
+
+        const userMsg = messages[userMsgIndex];
+
+        // Truncate messages to just before the AI response and re-send
+        setMessages(prev => prev.slice(0, userMsgIndex + 1));
+
+        // Re-send the user message
+        sendMessage(userMsg.content, []);
+    }, [messages, loading]);
+
+    const handleBranch = useCallback(async (index: number) => {
+        if (loading) return;
+
+        try {
+            setLoading(true);
+            const response = await apiFetch("/api/agents/hub/branch", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ message_index: index })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                console.log("Branched to new spoke:", data.new_spoke_name);
+
+                // Navigate to the new spoke
+                window.location.href = `/spokes/${data.new_spoke_name}`;
+            } else {
+                throw new Error("Failed to branch chat");
+            }
+        } catch (error) {
+            console.error("Branching error:", error);
+        } finally {
+            setLoading(false);
+        }
+    }, [loading]);
+
     return (
         <div className="flex h-full">
             {/* Main Chat Area */}
@@ -268,6 +318,8 @@ export default function HubPage() {
                                             tool_calls={msg.tool_calls}
                                             nodeType="hub"
                                             nodeName="hub"
+                                            onRegenerate={msg.role === "assistant" ? () => handleRegenerate(idx) : undefined}
+                                            onBranch={msg.role === "assistant" ? () => handleBranch(idx) : undefined}
                                         />
                                     );
                                 })}

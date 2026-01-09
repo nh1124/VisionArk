@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { use } from "react";
 import Link from "next/link";
 import ChatInput from "@/components/ChatInput";
@@ -220,6 +220,56 @@ export default function SpokeChatPage({
         }
     };
 
+    const handleRegenerate = useCallback(async (index: number) => {
+        if (loading) return;
+
+        // Find the last user message before this one
+        let userMsgIndex = -1;
+        for (let i = index - 1; i >= 0; i--) {
+            if (messages[i].role === "user") {
+                userMsgIndex = i;
+                break;
+            }
+        }
+
+        if (userMsgIndex === -1) return;
+
+        const userMsg = messages[userMsgIndex];
+
+        // Truncate messages to just before the AI response and re-send
+        setMessages(prev => prev.slice(0, userMsgIndex + 1));
+
+        // Re-send the user message
+        sendMessage(userMsg.content, []);
+    }, [messages, loading]);
+
+    const handleBranch = useCallback(async (index: number) => {
+        if (loading) return;
+
+        try {
+            setLoading(true);
+            const response = await apiFetch(`/api/agents/spoke/${spokeName}/branch`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ message_index: index })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                console.log("Branched to new spoke:", data.new_spoke_name);
+
+                // Navigate to the new spoke
+                window.location.href = `/spokes/${data.new_spoke_name}`;
+            } else {
+                throw new Error("Failed to branch chat");
+            }
+        } catch (error) {
+            console.error("Branching error:", error);
+        } finally {
+            setLoading(false);
+        }
+    }, [loading, spokeName]);
+
     return (
         <div className="flex h-full">
             <div className="flex-1 flex flex-col h-full overflow-hidden">
@@ -269,7 +319,19 @@ export default function SpokeChatPage({
                             // Skip rendering the last empty assistant message while loading
                             const isLastEmptyAssistant = loading && idx === messages.length - 1 && msg.role === "assistant" && !msg.content && (!msg.tool_calls || msg.tool_calls.length === 0);
                             if (isLastEmptyAssistant) return null;
-                            return <MessageWithAttachments key={idx} role={msg.role} content={msg.content} attached_files={msg.attached_files} tool_calls={msg.tool_calls} nodeType="spoke" nodeName={spokeName} />;
+                            return (
+                                <MessageWithAttachments
+                                    key={idx}
+                                    role={msg.role}
+                                    content={msg.content}
+                                    attached_files={msg.attached_files}
+                                    tool_calls={msg.tool_calls}
+                                    nodeType="spoke"
+                                    nodeName={spokeName}
+                                    onRegenerate={msg.role === "assistant" ? () => handleRegenerate(idx) : undefined}
+                                    onBranch={msg.role === "assistant" ? () => handleBranch(idx) : undefined}
+                                />
+                            );
                         })}
 
                         {loading && (
