@@ -1480,13 +1480,16 @@ async def read_reference(
         storage_path = None
         db_file = None
         
-        # Strip known prefixes for DB lookup (DB stores just the filename)
+        # Strip known prefixes for DB lookup and local search
         filename_for_db = file_path
+        stripped_path = file_path
         for prefix in ["refs/", "files/", "artifacts/"]:
             if file_path.startswith(prefix):
-                filename_for_db = file_path[len(prefix):]
+                stripped_path = file_path[len(prefix):]
+                filename_for_db = stripped_path
                 break
         
+        potential_paths = []
         if session:
             node_name = spoke_name if node_type == 'SPOKE' else 'hub'
             result = await session.execute(select(Node).filter(
@@ -1497,19 +1500,23 @@ async def read_reference(
             node = result.scalars().first()
             
             if node:
-                # Try both the original path and the stripped filename
+                # Try multiple variations in DB: original path, stripped path, and basename
+                filenames_to_check = list(set([file_path, stripped_path, Path(file_path).name]))
                 result = await session.execute(select(UploadedFile).filter(
                     UploadedFile.node_id == node.id,
-                    UploadedFile.filename.in_([file_path, filename_for_db])
+                    UploadedFile.filename.in_(filenames_to_check)
                 ))
-                db_file = result.scalars().first()
-                if db_file:
-                    storage_path = Path(db_file.storage_path)
+                db_files = result.scalars().all()
+                if db_files:
+                    # Pick the best match (favor exact match if multiple, but check existence)
+                    for f in db_files:
+                        p = Path(f.storage_path)
+                        if p.exists():
+                            db_file = f
+                            storage_path = p
+                            potential_paths.append(p)
+                            break
 
-        potential_paths = []
-        if storage_path:
-            potential_paths.append(storage_path)
-        
         # 2. Add potential sub-directory paths safely
         # Check if the path already has a known prefix
         has_known_prefix = any(file_path.startswith(f"{sub}/") for sub in ["refs", "files", "artifacts"])
@@ -1519,6 +1526,10 @@ async def read_reference(
             try:
                 p = secure_path_join(agent_base_dir, file_path)
                 potential_paths.append(p)
+                # Also try without the prefix just in case they added a redundant one
+                p_stripped = secure_path_join(agent_base_dir, stripped_path)
+                if p_stripped not in potential_paths:
+                    potential_paths.append(p_stripped)
             except ValueError:
                 pass
         else:
@@ -1636,7 +1647,8 @@ async def list_files(
         if not found_files:
             return ToolResult(success=True, message=f"📁 {sub_dir}/ is empty", data={"files": []})
 
-        # Build tree structure
+        # Build tree structure - we want the tree to reflect the FULL path if needed
+        # but for consistency with the prompt, we keep sub_dir as the root of this tree
         tree = {}
         for path_str in sorted(found_files.keys()):
             parts = path_str.split('/')
@@ -1646,7 +1658,6 @@ async def list_files(
                     curr[part] = {}
                 curr = curr[part]
 
-        # Re-implementing with full path tracking
         def render_hierarchy(curr_tree, curr_rel_path=""):
             lines = []
             keys = sorted(curr_tree.keys())
@@ -1660,7 +1671,11 @@ async def list_files(
                     # It's a file
                     meta = found_files[sub_path]
                     status = "✅" if meta['uploaded'] else "⚠️"
-                    lines.append(f"{char}{name} ({meta['size']:.1f} KB) {status}")
+                    
+                    # IMPORTANT: Prepend sub_dir to the name if it's not already there
+                    # so the agent knows the EXACT path to pass to read_reference
+                    full_tool_path = f"{sub_dir}/{sub_path}"
+                    lines.append(f"{char}{name} -> {full_tool_path} ({meta['size']:.1f} KB) {status}")
                 else:
                     # It's a directory
                     lines.append(f"{char}{name}/")
@@ -1673,10 +1688,11 @@ async def list_files(
 
         tree_lines = render_hierarchy(tree)
         header = f"📁 Hierarchical view of {context_label} ({sub_dir}):\n(Legend: ✅ AI Indexed, ⚠️ Local only)\n"
+        footer = "\n\n💡 Use the full path shown after '->' with read_reference() to ensure file access."
         
         return ToolResult(
             success=True,
-            message=header + "\n".join(tree_lines),
+            message=header + "\n".join(tree_lines) + footer,
             data={"files": found_files, "tree": tree}
         )
     except Exception as e:

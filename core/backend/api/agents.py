@@ -297,7 +297,6 @@ async def chat_with_hub(
     # (attached_files already contains the newly uploaded files from above)
 
     # 4. Get Hub's response
-    t0 = time.time()
     hub = await get_hub_agent(identity.user_id, db)
     
     if stream:
@@ -340,9 +339,16 @@ async def chat_with_hub(
         
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-    response_text, tool_calls = await hub.chat(message, attached_files, preferred_model=x_preferred_model)
-    print(f"[Hub/Timing] hub.chat: {time.time()-t0:.2f}s")
-    print(f"[Hub/Timing] === Total: {time.time()-_chat_start:.2f}s ===")
+    # Non-streaming chat call
+    tool_context = {
+        'session': db,
+        'user_id': identity.user_id,
+        'node_id': hub.node_id,
+        'node_type': 'HUB',
+        'context_name': 'hub'
+    }
+    
+    response_text, tool_calls = await hub.chat(message, attached_files, preferred_model=x_preferred_model, tool_context=tool_context)
     
     return ChatResponse(
         response=response_text,
@@ -871,7 +877,15 @@ async def chat_with_spoke(
         
         return StreamingResponse(spoke_event_generator(), media_type="text/event-stream")
 
-    response_text, tool_calls = await spoke.chat(user_message, attached_file_objects, preferred_model=x_preferred_model)
+    tool_context = {
+        'session': db,
+        'user_id': identity.user_id,
+        'node_id': spoke.node_id,
+        'node_type': 'SPOKE',
+        'spoke_name': spoke_name,
+        'context_name': spoke_name
+    }
+    response_text, tool_calls = await spoke.chat(user_message, attached_file_objects, preferred_model=x_preferred_model, tool_context=tool_context)
     
     # Extract meta-actions
     meta_actions = extract_meta_actions_from_chat(response_text)
