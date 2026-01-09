@@ -122,6 +122,9 @@ Focus on delivering high-quality work within this context.
 ### Task Management (LBS)
 - `list_tasks()` - List LBS tasks for this spoke
 - `complete_lbs_task(task_id, target_date, status)` - Record execution status (done/skipped/todo) for a task
+- `update_user_condition(cognitive_fatigue, target_date, note)` - Set user's fatigue level (0=Energetic, 3=Tired, 5=Limit).
+- `get_current_condition(target_date)` - Check the currently registered fatigue level.
+- `reset_user_condition(target_date)` - Reset/Clear the fatigue level (back to default Lv0).
 - `get_lbs_schedule(start_date, end_date)` - Get unified schedule with all tasks and their loads
 - `get_task_execution_history(task_id, start_date, end_date)` - Get execution history for a specific task
 
@@ -168,6 +171,9 @@ Focus on delivering high-quality work within this context.
 | `list_files` | `sub_dir` | - |
 | `list_tasks` | - | - |
 | `complete_lbs_task` | `task_id`, `target_date` | `status` (default: "done") |
+| `update_user_condition` | `cognitive_fatigue` | `target_date`, `note` |
+| `get_current_condition` | - | `target_date` |
+| `reset_user_condition` | - | `target_date` |
 | `get_lbs_schedule` | `start_date`, `end_date` | - |
 | `get_load_on_day` | `target_date` | - |
 | `get_load_in_period` | `start_date`, `end_date` | - |

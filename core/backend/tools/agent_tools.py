@@ -11,6 +11,7 @@ import uuid
 from models.database import Node, AgentProfile, ChatSession, InboxQueue, ServiceRegistry
 from services.lbs_client import LBSClient
 from services.knowledge_core_service import KnowledgeCoreService
+from tools.lbs_tools import update_user_condition, get_current_condition, reset_user_condition
 import asyncio
 from pathlib import Path
 from utils.paths import secure_path_join
@@ -2549,6 +2550,39 @@ HUB_TOOL_DEFINITIONS = [
         }
     },
     {
+        "name": "update_user_condition",
+        "description": "Set the user's fatigue level. Use when user says 'I'm tired' or voice analysis detects fatigue.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "cognitive_fatigue": {"type": "integer", "description": "0=Energetic, 3=Tired, 5=Limit"},
+                "target_date": {"type": "string", "description": "YYYY-MM-DD"},
+                "note": {"type": "string"}
+            },
+            "required": ["cognitive_fatigue"]
+        }
+    },
+    {
+        "name": "get_current_condition",
+        "description": "Check the currently registered fatigue level. Use before advising on tasks.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "target_date": {"type": "string", "description": "YYYY-MM-DD"}
+            }
+        }
+    },
+    {
+        "name": "reset_user_condition",
+        "description": "Reset/Clear the fatigue level (back to healthy). Use when user recovered or wants to correct a mistake.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "target_date": {"type": "string", "description": "YYYY-MM-DD"}
+            }
+        }
+    },
+    {
         "name": "check_inbox",
         "description": "Check for new messages in the Hub's inbox. Returns a list of message summaries and IDs.",
         "parameters": {
@@ -3564,6 +3598,9 @@ TOOL_FUNCTIONS = {
     "complete_lbs_task": complete_lbs_task,
     "get_lbs_schedule": get_lbs_schedule,
     "get_task_execution_history": get_task_execution_history,
+    "update_user_condition": update_user_condition,
+    "get_current_condition": get_current_condition,
+    "reset_user_condition": reset_user_condition,
     
     # MD Tools
     "get_md_structure": get_md_structure,

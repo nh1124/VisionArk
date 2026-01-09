@@ -353,7 +353,7 @@ graph TD
 | サービス名称 | Layer | 責務 |
 | ----- | ----- | ----- |
 | **Core System (Hub)** | UI / Orchestration | ユーザー認証、エージェント管理、UI（Chat/Dashboard/Inbox）、サービス間認証（\*\*署名付き認証\*\*）を担当。LBS/KC ServiceへのAPIゲートウェイとして機能し、\*\*LBS/KCへの書き込み権限を持つ唯一のクライアント\*\*となる。 |
-| **LBS Microservice** | SSOT / Core Logic | **負荷計算、タスク正本（マスターデータ）、スケジューリングロジック**を担当。Hubからの承認済みActionのみを受け付け、DBへの書き込み権限を持つ（\*\*独立サービス\*\*）。 |
+| **LBS Microservice** | SSOT / Core Logic | **負荷計算、タスク正本（マスターデータ）、スケジューリングロジック、およびユーザー状態（疲労度等）管理**を担当。Hubからの承認済みActionのみを受け付け、DBへの書き込み権限を持つ（\*\*独立サービス\*\*）。 |
 | **Knowledge Core (KC)** | SSOT / Core Logic | ユーザー文脈（Facts/States/Episodes）の長期記憶と管理を担当。ユーザーとHub/Spokeのやり取りから必要な情報を記憶し，Hub/Spokeに最適な追加情報を提供する（Phase 3で統合）。 |
 | **Spoke Agents** | Execution | 各プロジェクト固有の判断・分解・生成を担当。LBS/KCへのデータ変更提案を **Inbox** に送信する。 |
 

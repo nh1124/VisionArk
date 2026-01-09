@@ -58,6 +58,7 @@ erDiagram
     USERS ||--o{ SYSTEM_CONFIG : configures
     TASKS ||--o{ TASK_EXCEPTIONS : has
     TASKS ||--o{ LBS_DAILY_CACHE : expands_to
+    USERS ||--o{ DAILY_CONDITIONS : reports
     
     USERS {
         uuid user_id PK
@@ -98,6 +99,15 @@ erDiagram
         float calculated_load
         string status
         boolean is_overflow
+    }
+
+    DAILY_CONDITIONS {
+        uuid user_id PK
+        date target_date PK
+        int cognitive_fatigue
+        int physical_fatigue
+        string note
+        datetime updated_at
     }
 ```
 ### 4.2 Tasks Table (Full Schema)
@@ -209,6 +219,9 @@ $$
 | DELETE | `/api/lbs/tasks/{id}` | Delete task |
 | GET | `/api/lbs/heatmap` | Calendar heatmap |
 | GET | `/api/lbs/trends` | Weekly trends |
+| GET | `/api/lbs/condition/{date}` | Get user's condition for a date |
+| POST | `/api/lbs/condition` | Update user's condition |
+| DELETE | `/api/lbs/condition/{date}` | Reset user's condition |
 ---
 ## 7. Project Structure
 ```

@@ -232,6 +232,7 @@ erDiagram
 	}
 TASKS ||--o{ TASK_EXCEPTIONS : has
 	TASKS ||--o{ LBS_DAILY_CACHE : expands_to
+	USERS ||--o{ DAILY_CONDITIONS : reports
 TASKS {
 		string task_id PK "T-UUID (システムの主キー)"
 		string task_name "タスク名称"
@@ -293,6 +294,14 @@ INBOX_QUEUE {
 		datetime received_at
 		datetime processed_at
 		string error_log "処理失敗時のエラーメッセージ"
+	}
+	DAILY_CONDITIONS {
+		string user_id PK
+		date target_date PK
+		int cognitive_fatigue "0-5 (0: Energetic, 3: Tired, 5: Limit)"
+		int physical_fatigue "0-5"
+		string note "備考"
+		datetime updated_at
 	}
 Table Definitions & Logic Details
 1. tasks (Master Rules Table)

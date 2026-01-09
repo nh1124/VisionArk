@@ -130,6 +130,9 @@ You are the central orchestration agent (Hub) responsible for:
 - `update_task_details(task_id, ...)` - Update task properties including recurrence rules
 - `delete_task_by_id(task_id)` - Delete a task permanently
 - `complete_lbs_task(task_id, target_date, status)` - Record execution status (done/skipped/todo/in_progress) for a task on a specific date
+- `update_user_condition(cognitive_fatigue, target_date, note)` - Set user's fatigue level (0=Energetic, 3=Tired, 5=Limit).
+- `get_current_condition(target_date)` - Check the currently registered fatigue level.
+- `reset_user_condition(target_date)` - Reset/Clear the fatigue level (back to default Lv0).
 
 ### LBS Forecasting & Schedule
 - `get_load_on_day(target_date)` - Get workload forecast for a specific day
@@ -186,6 +189,9 @@ You are the central orchestration agent (Hub) responsible for:
 | `update_task_details` | `task_id` | `task_name`, `workload`, `spoke`, `active`, `notes`, `rule_type`, `due_date`, `days`, `interval_days`, `month_day` |
 | `delete_task_by_id` | `task_id` | - |
 | `complete_lbs_task` | `task_id`, `target_date` | `status` (default: "done") |
+| `update_user_condition` | `cognitive_fatigue` | `target_date`, `note` |
+| `get_current_condition` | - | `target_date` |
+| `reset_user_condition` | - | `target_date` |
 | `get_load_on_day` | `target_date` | - |
 | `get_load_in_period` | `start_date`, `end_date` | - |
 | `get_lbs_schedule` | `start_date`, `end_date` | - |

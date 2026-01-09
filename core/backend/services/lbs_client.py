@@ -266,3 +266,32 @@ class LBSClient:
             resp = await client.get(f"tasks/{task_id}/history", params=params, headers=self._get_headers())
             resp.raise_for_status()
             return resp.json()
+
+    async def update_condition(self, target_date: Union[date, str], cognitive_fatigue: int, note: Optional[str] = None) -> Dict:
+        """Update user's daily condition (fatigue levels) in LBS."""
+        date_str = target_date.isoformat() if isinstance(target_date, date) else target_date
+        payload = {
+            "date": date_str,
+            "cognitive_fatigue": cognitive_fatigue,
+            "note": note
+        }
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=300.0) as client:
+            resp = await client.post("conditions", json=payload, headers=self._get_headers())
+            resp.raise_for_status()
+            return resp.json()
+
+    async def get_condition(self, target_date: Union[date, str]) -> Dict:
+        """Get user's daily condition for a specific date from LBS."""
+        date_str = target_date.isoformat() if isinstance(target_date, date) else target_date
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=300.0) as client:
+            resp = await client.get(f"conditions/{date_str}", headers=self._get_headers())
+            resp.raise_for_status()
+            return resp.json()
+
+    async def delete_condition(self, target_date: Union[date, str]) -> Dict:
+        """Delete (reset) condition for a specific date in LBS."""
+        date_str = target_date.isoformat() if isinstance(target_date, date) else target_date
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=300.0) as client:
+            resp = await client.delete(f"conditions/{date_str}", headers=self._get_headers())
+            resp.raise_for_status()
+            return resp.json()
