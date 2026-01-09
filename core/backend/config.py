@@ -1,6 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
 from functools import lru_cache
-from typing import Optional
+from typing import Optional, Any
 import os
 
 class Settings(BaseSettings):
@@ -29,6 +30,21 @@ class Settings(BaseSettings):
     
     # LLM Settings
     max_tool_turns: Optional[int] = 30
+    
+    @field_validator("max_tool_turns", mode="before")
+    @classmethod
+    def parse_optional_int(cls, v: Any) -> Optional[int]:
+        """Coerce string 'None' or 'null' to None, else cast to int if needed"""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            if v.lower() in ("none", "null", ""):
+                return None
+            try:
+                return int(v)
+            except ValueError:
+                return None
+        return v
     
     # Model configuration
     model_config = SettingsConfigDict(
