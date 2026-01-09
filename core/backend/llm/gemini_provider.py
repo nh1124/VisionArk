@@ -197,7 +197,7 @@ class GeminiProvider(BaseLLMProvider):
             
             if not function_calls:
                 # Final text response
-                final_text = response.text
+                final_text = self._extract_response_content(response)
                 usage = None
                 if response.usage_metadata:
                     usage = {
@@ -386,7 +386,7 @@ class GeminiProvider(BaseLLMProvider):
             
             if not function_calls:
                 # Final text response
-                final_text = response.text
+                final_text = self._extract_response_content(response)
                 
                 # 3. Process Grounding Metadata (Search Citations)
                 # Extract token usage
@@ -505,6 +505,31 @@ class GeminiProvider(BaseLLMProvider):
         )
         return result.embeddings[0].values
     
+    def _extract_response_content(self, response) -> str:
+        """
+        Safely extracts text and other parts (like executable code) from response candidates.
+        Silences the warning about non-text parts by manually iterating through them.
+        """
+        if not response.candidates or not response.candidates[0].content.parts:
+            return ""
+        
+        parts = response.candidates[0].content.parts
+        full_text = []
+        
+        for part in parts:
+            if part.text:
+                full_text.append(part.text)
+            elif part.executable_code:
+                code = part.executable_code.code
+                language = part.executable_code.language or "python"
+                full_text.append(f"\n```{language}\n{code}\n```\n")
+            elif part.code_execution_result:
+                outcome = part.code_execution_result.outcome
+                output = part.code_execution_result.output
+                full_text.append(f"\n> **Code Execution {outcome}**\n> ```\n> {output}\n> ```\n")
+                
+        return "".join(full_text).strip()
+    
     def upload_file(self, file_path: str, mime_type: str = None, display_name: str = None) -> Dict:
         """
         Upload a file to Gemini File API for multimodal processing.
@@ -571,7 +596,7 @@ class GeminiProvider(BaseLLMProvider):
         )
         
         return CompletionResponse(
-            content=response.text,
+            content=self._extract_response_content(response),
             model=model_name,
             usage=None
         )
@@ -656,7 +681,7 @@ class GeminiProvider(BaseLLMProvider):
                 function_calls = [p.function_call for p in model_content.parts if p.function_call]
                 
                 if not function_calls:
-                    final_text = response.text
+                    final_text = self._extract_response_content(response)
                     yield {"type": "content", "data": final_text}
                     yield {
                         "type": "final_response",
@@ -841,7 +866,7 @@ class GeminiProvider(BaseLLMProvider):
                 
                 if not function_calls:
                     # Final response reached
-                    final_text = response.text
+                    final_text = self._extract_response_content(response)
                     yield {"type": "content", "data": final_text}
                     
                     yield {
