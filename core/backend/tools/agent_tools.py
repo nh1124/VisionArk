@@ -41,8 +41,31 @@ class ToolResult:
 
 
 # ==============================================================================
-# LBS Client Helper
+# Helper Functions
 # ==============================================================================
+
+def _resolve_portable_path(stored_path: str) -> Path:
+    """
+    Resolves a stored absolute path to a local physical path.
+    Handles Linux absolute paths (/app/data/...) in a Windows environment.
+    """
+    from utils.paths import DATA_DIR
+    import os
+    p = Path(stored_path)
+    if p.exists():
+        return p
+    
+    # If not exists, check if it's a Linux absolute path containing 'data'
+    # e.g., /app/data/users/UUID/files/file.ext
+    path_str = str(p).replace('\\', '/')
+    if '/data/' in path_str:
+        # Extract everything after '/data/'
+        relative_part = path_str.split('/data/', 1)[1]
+        portable_path = DATA_DIR / relative_part.replace('/', os.sep)
+        return portable_path
+        
+    return p
+
 
 async def _get_lbs_client(user_id: str, session: AsyncSession) -> LBSClient:
     """Get LBS client with user's registered LBS API key and remote user ID from ServiceRegistry"""
@@ -69,6 +92,14 @@ async def _get_lbs_client(user_id: str, session: AsyncSession) -> LBSClient:
                 pass  # Fall back to env var logic in LBSClient if decryption fails
     
     return LBSClient(base_url=lbs_url, api_key=lbs_api_key)
+
+
+async def _get_file_service(user_id: str, session: AsyncSession) -> "FileService":
+    """Get FileService for the user"""
+    from services.file_service import FileService
+    from agents.hub_agent import HubAgent
+    api_key = await HubAgent._get_api_key(user_id, session)
+    return FileService(session, user_id, api_key=api_key)
 
 
 def _get_kc_service(user_id: str, session: AsyncSession) -> KnowledgeCoreService:
@@ -1510,7 +1541,7 @@ async def read_reference(
                 if db_files:
                     # Pick the best match (favor exact match if multiple, but check existence)
                     for f in db_files:
-                        p = Path(f.storage_path)
+                        p = _resolve_portable_path(f.storage_path)
                         if p.exists():
                             db_file = f
                             storage_path = p
@@ -1614,9 +1645,15 @@ async def list_files(
                 result = await session.execute(select(UploadedFile).filter(UploadedFile.node_id == node.id))
                 db_files = result.scalars().all()
                 for f in db_files:
+                    # Check existence using portable resolution
+                    real_path = _resolve_portable_path(f.storage_path)
+                    exists = real_path.exists()
+                    
                     found_files[f.filename] = {
                         "size": f.size_bytes / 1024 if f.size_bytes else 0,
-                        "uploaded": bool(f.gemini_file_name)
+                        "uploaded": bool(f.gemini_file_name),
+                        "exists": exists,
+                        "db_id": f.id
                     }
         
         # 2. Reconcile with Disk
@@ -1628,8 +1665,11 @@ async def list_files(
                     if name not in found_files:
                         found_files[name] = {
                             "size": item.stat().st_size / 1024,
-                            "uploaded": False
+                            "uploaded": False,
+                            "exists": True
                         }
+                    else:
+                        found_files[name]["exists"] = True
         
         # 3. Handle 'refs'/'files' unified view
         if sub_dir == 'refs' and (agent_base_dir / "files").exists():
@@ -1639,16 +1679,18 @@ async def list_files(
                     if name not in found_files:
                         found_files[name] = {
                             "size": item.stat().st_size / 1024,
-                            "uploaded": False
+                            "uploaded": False,
+                            "exists": True
                         }
+                    else:
+                        found_files[name]["exists"] = True
 
         # 4. Format Output as Tree
         context_label = f"spokes/{spoke_name}" if node_type == 'SPOKE' else "hub_data"
         if not found_files:
             return ToolResult(success=True, message=f"📁 {sub_dir}/ is empty", data={"files": []})
 
-        # Build tree structure - we want the tree to reflect the FULL path if needed
-        # but for consistency with the prompt, we keep sub_dir as the root of this tree
+        # Build tree structure
         tree = {}
         for path_str in sorted(found_files.keys()):
             parts = path_str.split('/')
@@ -1670,10 +1712,17 @@ async def list_files(
                 if sub_path in found_files:
                     # It's a file
                     meta = found_files[sub_path]
-                    status = "✅" if meta['uploaded'] else "⚠️"
                     
-                    # IMPORTANT: Prepend sub_dir to the name if it's not already there
-                    # so the agent knows the EXACT path to pass to read_reference
+                    # Determine status emoji
+                    if not meta.get('exists', False):
+                        status = "🗑️ (MISSING FROM DISK)"
+                    elif meta['uploaded']:
+                        status = "✅ (AI Indexed)"
+                    else:
+                        status = "⚠️ (Local only)"
+                    
+                    # For user-uploaded files (which are often in 'files/' subfolders but shown as flat in refs)
+                    # we want to ensure the path is usable.
                     full_tool_path = f"{sub_dir}/{sub_path}"
                     lines.append(f"{char}{name} -> {full_tool_path} ({meta['size']:.1f} KB) {status}")
                 else:
@@ -1687,7 +1736,7 @@ async def list_files(
             return lines
 
         tree_lines = render_hierarchy(tree)
-        header = f"📁 Hierarchical view of {context_label} ({sub_dir}):\n(Legend: ✅ AI Indexed, ⚠️ Local only)\n"
+        header = f"📁 Hierarchical view of {context_label} ({sub_dir}):\n(Legend: ✅ AI Indexed, ⚠️ Local only, 🗑️ Missing)\n"
         footer = "\n\n💡 Use the full path shown after '->' with read_reference() to ensure file access."
         
         return ToolResult(
