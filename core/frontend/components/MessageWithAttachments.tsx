@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, memo } from "react";
+import { Copy, Check } from "lucide-react";
 import { getFileToken } from "@/lib/api";
 import MarkdownRenderer from "./MarkdownRenderer";
 
@@ -37,6 +38,14 @@ function MessageWithAttachmentsBase({
     nodeName = "hub"
 }: MessageWithAttachmentsProps) {
     const [toolsExpanded, setToolsExpanded] = useState(true);
+    const [isCopied, setIsCopied] = useState(false);
+
+    const handleCopy = () => {
+        if (!content) return;
+        navigator.clipboard.writeText(content);
+        setIsCopied(true);
+        setTimeout(() => setIsCopied(false), 2000);
+    };
 
     const downloadFile = async (url: string, filename: string) => {
         try {
@@ -82,13 +91,32 @@ function MessageWithAttachmentsBase({
             )}
 
             <div
-                className={`max-w-[85%] ${role === "user"
+                className={`max-w-[85%] relative group ${role === "user"
                     ? "bg-gradient-to-br from-purple-600 to-purple-800 text-white rounded-2xl rounded-tr-sm shadow-lg shadow-purple-900/20 p-5"
                     : type === "system"
                         ? "bg-gray-900/80 backdrop-blur-md border border-blue-500/30 text-blue-100 rounded-2xl rounded-tl-sm shadow-xl p-5"
-                        : "text-gray-100"
+                        : "text-gray-100 p-2"
                     } transition-all`}
             >
+                {/* Copy Button Overlay */}
+                <div className={`absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2 ${isCopied ? "opacity-100" : ""}`}>
+                    {isCopied && (
+                        <span className="text-[10px] bg-gray-950 text-gray-300 px-1.5 py-0.5 rounded border border-gray-800 shadow-xl whitespace-nowrap transition-all duration-200 opacity-100">
+                            Copied!
+                        </span>
+                    )}
+                    <button
+                        onClick={handleCopy}
+                        className={`p-1.5 rounded-lg backdrop-blur-md border transition-all duration-200 ${role === "user"
+                            ? "bg-white/10 border-white/20 hover:bg-white/20 text-white"
+                            : "bg-gray-800/50 border-gray-700/50 hover:bg-gray-700/50 text-gray-400 hover:text-white"
+                            }`}
+                        title="Copy message"
+                    >
+                        {isCopied ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
+                    </button>
+                </div>
+
                 {/* Message Content - AI Response */}
                 <div className="prose prose-invert max-w-none">
                     {role === "assistant" ? (
