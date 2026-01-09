@@ -16,9 +16,10 @@ interface MarkdownRendererProps {
 }
 
 interface CodeBlockProps {
-    children: any;
+    children?: any;
     className?: string;
     inline?: boolean;
+    node?: any;
     [key: string]: any;
 }
 
