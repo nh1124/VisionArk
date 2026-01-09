@@ -8,7 +8,7 @@ import MessageWithAttachments from "@/components/MessageWithAttachments";
 import FilesSidebar from "@/components/FilesSidebar";
 import CommandAutocomplete from "../../components/CommandAutocomplete";
 import { apiFetch } from "@/lib/api";
-import { Settings, Files } from "lucide-react";
+import { Settings, Files, RotateCcw } from "lucide-react";
 
 interface MessageAttachment {
     name: string;
@@ -264,13 +264,82 @@ export default function SpokeChatPage({
         }
     }, [loading, spokeName]);
 
+    const handleEdit = useCallback(async (index: number) => {
+        if (loading) return;
+        const msg = messages[index];
+        if (msg.role !== "user") return;
+
+        try {
+            setLoading(true);
+            const response = await apiFetch(`/api/agents/spoke/${spokeName}/messages/truncate`, {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ message_index: index })
+            });
+
+            if (response.ok) {
+                // Populate input with the message content
+                setCommandInputValue(msg.content);
+                // Truncate local state
+                setMessages(prev => prev.slice(0, index));
+            } else {
+                throw new Error("Failed to truncate for edit");
+            }
+        } catch (error) {
+            console.error("Edit error:", error);
+        } finally {
+            setLoading(false);
+        }
+    }, [messages, loading, spokeName]);
+
+    const handleDelete = useCallback(async (index: number) => {
+        if (loading) return;
+        try {
+            setLoading(true);
+            const response = await apiFetch(`/api/agents/spoke/${spokeName}/messages/truncate`, {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ message_index: index })
+            });
+
+            if (response.ok) {
+                setMessages(prev => prev.slice(0, index));
+            } else {
+                throw new Error("Failed to delete messages");
+            }
+        } catch (error) {
+            console.error("Delete error:", error);
+        } finally {
+            setLoading(false);
+        }
+    }, [loading, spokeName]);
+
+    const handleUndo = useCallback(async () => {
+        if (loading || messages.length === 0) return;
+
+        // Find last user message index
+        let lastUserIndex = -1;
+        for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i].role === "user") {
+                lastUserIndex = i;
+                break;
+            }
+        }
+
+        if (lastUserIndex !== -1) {
+            handleDelete(lastUserIndex);
+        }
+    }, [messages, loading, handleDelete]);
+
     // Create stable callback refs for message actions - prevents re-renders of MessageWithAttachments
     const messageCallbacks = useMemo(() => {
         return messages.map((msg, idx) => ({
             onRegenerate: msg.role === "assistant" ? () => handleRegenerate(idx) : undefined,
             onBranch: msg.role === "assistant" ? () => handleBranch(idx) : undefined,
+            onEdit: msg.role === "user" ? () => handleEdit(idx) : undefined,
+            onDelete: () => handleDelete(idx),
         }));
-    }, [messages.length, handleRegenerate, handleBranch]);
+    }, [messages.length, handleRegenerate, handleBranch, handleEdit, handleDelete]);
 
     return (
         <div className="flex h-full">
@@ -332,6 +401,8 @@ export default function SpokeChatPage({
                                     nodeName={spokeName}
                                     onRegenerate={messageCallbacks[idx]?.onRegenerate}
                                     onBranch={messageCallbacks[idx]?.onBranch}
+                                    onEdit={messageCallbacks[idx]?.onEdit}
+                                    onDelete={messageCallbacks[idx]?.onDelete}
                                 />
                             );
                         })}
@@ -371,7 +442,23 @@ export default function SpokeChatPage({
                 {/* Input - Fixed at bottom */}
                 <div className="pb-8 px-4">
                     <div className="max-w-4xl mx-auto flex flex-col min-h-0">
+                        <div className="flex justify-between items-center mb-2 px-4">
+                            <div className="text-[10px] text-gray-500 font-mono uppercase tracking-widest">
+                                Ready for input
+                            </div>
+                            {messages.length > 0 && (
+                                <button
+                                    onClick={handleUndo}
+                                    disabled={loading}
+                                    className="flex items-center gap-1.5 text-[10px] font-bold text-gray-500 hover:text-cyan-400 uppercase tracking-wider transition-colors disabled:opacity-50"
+                                >
+                                    <RotateCcw size={12} />
+                                    Undo Last
+                                </button>
+                            )}
+                        </div>
                         <ChatInput
+                            value={commandInputValue}
                             onCommandModeChange={(isCommand, value) => {
                                 setShowCommandHelp(isCommand);
                                 setCommandInputValue(value);

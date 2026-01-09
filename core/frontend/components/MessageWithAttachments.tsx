@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, memo } from "react";
-import { Copy, Check, ThumbsUp, ThumbsDown, RotateCcw, Share2, MoreHorizontal, MessageSquarePlus, Volume2 } from "lucide-react";
+import { Copy, Check, ThumbsUp, ThumbsDown, RotateCcw, Share2, MoreHorizontal, MessageSquarePlus, Volume2, Pencil, Trash2 } from "lucide-react";
 import { getFileToken } from "@/lib/api";
 import MarkdownRenderer from "./MarkdownRenderer";
 
@@ -28,6 +28,8 @@ interface MessageWithAttachmentsProps {
     nodeName?: string;
     onRegenerate?: () => void;
     onBranch?: () => void;
+    onEdit?: () => void;
+    onDelete?: () => void;
 }
 
 function MessageWithAttachmentsBase({
@@ -39,7 +41,9 @@ function MessageWithAttachmentsBase({
     nodeType = "hub",
     nodeName = "hub",
     onRegenerate,
-    onBranch
+    onBranch,
+    onEdit,
+    onDelete
 }: MessageWithAttachmentsProps) {
     const [toolsExpanded, setToolsExpanded] = useState(true);
     const [isCopied, setIsCopied] = useState(false);
@@ -211,7 +215,38 @@ function MessageWithAttachmentsBase({
                     )}
                 </div>
 
-                {/* Assistant Action Bar (Toolbar) */}
+                {/* User Action Bar */}
+                {role === "user" && (
+                    <div className="flex items-center gap-1 mt-1.5 mr-1 opacity-0 group-hover:opacity-100 transition-opacity justify-end">
+                        {onEdit && (
+                            <button
+                                onClick={onEdit}
+                                className="p-1.5 rounded-lg hover:bg-white/5 text-gray-500 hover:text-gray-300 transition-all"
+                                title="Edit message"
+                            >
+                                <Pencil size={14} />
+                            </button>
+                        )}
+                        {onDelete && (
+                            <button
+                                onClick={onDelete}
+                                className="p-1.5 rounded-lg hover:bg-white/5 text-gray-500 hover:text-red-400/80 transition-all"
+                                title="Delete message"
+                            >
+                                <Trash2 size={14} />
+                            </button>
+                        )}
+                        <button
+                            onClick={handleCopy}
+                            className="p-1.5 rounded-lg hover:bg-white/5 text-gray-500 hover:text-gray-300 transition-all"
+                            title="Copy"
+                        >
+                            {isCopied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
+                        </button>
+                    </div>
+                )}
+
+                {/* Assistant Action Bar - Adding Delete here too */}
                 {role === "assistant" && (
                     <div className="flex items-center gap-1 mt-1.5 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
@@ -226,6 +261,15 @@ function MessageWithAttachmentsBase({
                                 </span>
                             )}
                         </button>
+                        {onDelete && (
+                            <button
+                                onClick={onDelete}
+                                className="p-1.5 rounded-lg hover:bg-white/5 text-gray-500 hover:text-red-400/80 transition-all"
+                                title="Delete response"
+                            >
+                                <Trash2 size={16} />
+                            </button>
+                        )}
                         <button className="p-1.5 rounded-lg hover:bg-white/5 text-gray-500 hover:text-gray-300 transition-all" title="Good response">
                             <ThumbsUp size={16} />
                         </button>
@@ -277,12 +321,14 @@ function MessageWithAttachmentsBase({
                 )}
             </div>
 
-            {role === "user" && (
-                <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-cyan-600 to-cyan-400 flex items-center justify-center text-white font-black flex-shrink-0 shadow-lg shadow-cyan-900/20 text-xs tracking-tighter">
-                    YOU
-                </div>
-            )}
-        </div>
+            {
+                role === "user" && (
+                    <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-cyan-600 to-cyan-400 flex items-center justify-center text-white font-black flex-shrink-0 shadow-lg shadow-cyan-900/20 text-xs tracking-tighter">
+                        YOU
+                    </div>
+                )
+            }
+        </div >
     );
 }
 

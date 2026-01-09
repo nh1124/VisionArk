@@ -32,6 +32,9 @@ router = APIRouter(prefix="/api/agents", tags=["Agents"])
 class ChatMessage(BaseModel):
     message: str
 
+class TruncateRequest(BaseModel):
+    message_index: int
+
 
 class ChatResponse(BaseModel):
     response: str
@@ -385,6 +388,60 @@ async def get_hub_history(
             })
         
         return {"history": history, "message_count": len(history)}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/hub/messages/truncate")
+async def delete_hub_messages_truncate(
+    request: TruncateRequest,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Delete messages from a certain index onwards in the active Hub session"""
+    from models.database import ChatSession, ChatMessage
+    
+    try:
+        # Get hub node
+        result = await db.execute(select(Node).filter(
+            Node.user_id == identity.user_id,
+            Node.name == "hub",
+            Node.node_type == "HUB"
+        ))
+        hub_node = result.scalars().first()
+        if not hub_node:
+            raise HTTPException(status_code=404, detail="Hub node not found")
+            
+        # Get active session
+        result = await db.execute(select(ChatSession).filter(
+            ChatSession.node_id == hub_node.id,
+            ChatSession.is_archived == False
+        ).order_by(ChatSession.created_at.desc()))
+        active_session = result.scalars().first()
+        if not active_session:
+            raise HTTPException(status_code=404, detail="Active hub session not found")
+            
+        # Get all messages sorted by creation time
+        result = await db.execute(select(ChatMessage).filter(
+            ChatMessage.session_id == active_session.id
+        ).order_by(ChatMessage.created_at.asc()))
+        messages = result.scalars().all()
+        
+        if request.message_index < 0 or request.message_index >= len(messages):
+            raise HTTPException(status_code=400, detail="Invalid message index")
+            
+        # Identify target messages to delete (from index onwards)
+        target_messages = messages[request.message_index:]
+        for msg in target_messages:
+            await db.delete(msg)
+            
+        await db.commit()
+        return {"status": "success", "deleted_count": len(target_messages)}
+        
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -866,6 +923,66 @@ async def get_spoke_history(
     except Exception as e:
         import traceback
         print(f"!!! Error in get_spoke_history for {spoke_name}: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/spoke/{spoke_name}/messages/truncate")
+async def delete_spoke_messages_truncate(
+    spoke_name: str,
+    request: TruncateRequest,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Delete messages from a certain index onwards in the active Spoke session"""
+    from models.database import ChatSession, ChatMessage
+    
+    # Validate spoke name
+    valid, error = validate_name(spoke_name, "spoke_name")
+    if not valid:
+        raise HTTPException(status_code=400, detail=error)
+        
+    try:
+        # Get spoke node
+        result = await db.execute(select(Node).filter(
+            Node.user_id == identity.user_id,
+            Node.name == spoke_name,
+            Node.node_type == "SPOKE"
+        ))
+        spoke_node = result.scalars().first()
+        if not spoke_node:
+            raise HTTPException(status_code=404, detail=f"Spoke '{spoke_name}' not found")
+            
+        # Get active session
+        result = await db.execute(select(ChatSession).filter(
+            ChatSession.node_id == spoke_node.id,
+            ChatSession.is_archived == False
+        ).order_by(ChatSession.created_at.desc()))
+        active_session = result.scalars().first()
+        if not active_session:
+            raise HTTPException(status_code=404, detail=f"Active spoke session not found")
+            
+        # Get all messages sorted by creation time
+        result = await db.execute(select(ChatMessage).filter(
+            ChatMessage.session_id == active_session.id
+        ).order_by(ChatMessage.created_at.asc()))
+        messages = result.scalars().all()
+        
+        if request.message_index < 0 or request.message_index >= len(messages):
+            raise HTTPException(status_code=400, detail="Invalid message index")
+            
+        # Identify target messages to delete (from index onwards)
+        target_messages = messages[request.message_index:]
+        for msg in target_messages:
+            await db.delete(msg)
+            
+        await db.commit()
+        return {"status": "success", "deleted_count": len(target_messages)}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 

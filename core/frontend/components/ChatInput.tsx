@@ -3,6 +3,7 @@
 import { useState, useRef, DragEvent, useEffect, memo } from "react";
 
 interface ChatInputProps {
+    value?: string;
     initialValue?: string;
     onCommandModeChange?: (isCommandMode: boolean, value: string) => void;  // Only fires when command mode changes
     onSend: (message: string, files: File[]) => void;
@@ -31,6 +32,7 @@ const getModelDisplayName = (model: string) => {
 };
 
 function ChatInputComponent({
+    value,
     initialValue = "",
     onCommandModeChange,
     onSend,
@@ -53,6 +55,15 @@ function ChatInputComponent({
     const modelMenuRef = useRef<HTMLDivElement>(null);
     const toolsMenuRef = useRef<HTMLDivElement>(null);
     const [showToolsMenu, setShowToolsMenu] = useState(false);
+
+    // Update internal value when external value prop changes
+    useEffect(() => {
+        if (value !== undefined) {
+            setInternalValue(value);
+            // Also trigger resize
+            setTimeout(adjustTextareaHeight, 0);
+        }
+    }, [value]);
 
     // Auto-resize logic
     const adjustTextareaHeight = () => {
