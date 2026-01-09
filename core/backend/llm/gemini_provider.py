@@ -265,17 +265,19 @@ class GeminiProvider(BaseLLMProvider):
                     response={'result': tool_result}
                 ))
 
-                # IMPORTANT: If tool result has a Gemini File URI, inject it as a multimodal part
-                # This allows the LLM to "see" the PDF/Image that was just read or uploaded
                 if hasattr(result, 'data') and isinstance(result.data, dict):
                     file_uri = result.data.get('gemini_file_uri')
                     if file_uri:
-                        mime_type = result.data.get('mime_type') or "application/octet-stream"
-                        print(f"[Gemini] Injecting tool-discovered file in stream: {file_uri} ({mime_type})")
-                        tool_response_parts.append(types.Part.from_uri(
-                            file_uri=file_uri,
-                            mime_type=mime_type
-                        ))
+                        mime_type = result.data.get('mime_type')
+                        # Gemini DOES NOT support application/octet-stream for multimodal parts
+                        if mime_type and mime_type != "application/octet-stream":
+                            print(f"[Gemini] Injecting tool-discovered file (async): {file_uri} ({mime_type})")
+                            tool_response_parts.append(types.Part.from_uri(
+                                file_uri=file_uri,
+                                mime_type=mime_type
+                            ))
+                        else:
+                            print(f"[Gemini] Skipping unsupported tool file type: {mime_type} for {file_uri}")
             
             history.append(types.Content(role="tool", parts=tool_response_parts))
             
@@ -491,17 +493,18 @@ class GeminiProvider(BaseLLMProvider):
                     response={'result': tool_result}
                 ))
                 
-                # IMPORTANT: If tool result has a Gemini File URI, inject it as a multimodal part
-                # This allows the LLM to "see" the PDF/Image that was just read or uploaded
                 if hasattr(result, 'data') and isinstance(result.data, dict):
                     file_uri = result.data.get('gemini_file_uri')
                     if file_uri:
-                        mime_type = result.data.get('mime_type') or "application/octet-stream"
-                        print(f"[Gemini] Injecting tool-discovered file: {file_uri} ({mime_type})")
-                        tool_response_parts.append(types.Part.from_uri(
-                            file_uri=file_uri,
-                            mime_type=mime_type
-                        ))
+                        mime_type = result.data.get('mime_type')
+                        if mime_type and mime_type != "application/octet-stream":
+                            print(f"[Gemini] Injecting tool-discovered file: {file_uri} ({mime_type})")
+                            tool_response_parts.append(types.Part.from_uri(
+                                file_uri=file_uri,
+                                mime_type=mime_type
+                            ))
+                        else:
+                            print(f"[Gemini] Skipping unsupported tool file type: {mime_type} for {file_uri}")
             
             # Add tool responses to history (role is 'tool' in new SDK)
             history.append(types.Content(
@@ -773,17 +776,18 @@ class GeminiProvider(BaseLLMProvider):
                         response={'result': tool_result}
                     ))
 
-                    # IMPORTANT: If tool result has a Gemini File URI, inject it as a multimodal part
-                    # This allows the LLM to "see" the PDF/Image that was just read or uploaded
                     if hasattr(result, 'data') and isinstance(result.data, dict):
                         file_uri = result.data.get('gemini_file_uri')
                         if file_uri:
-                            mime_type = result.data.get('mime_type') or "application/octet-stream"
-                            print(f"[Gemini] Injecting tool-discovered file in stream: {file_uri} ({mime_type})")
-                            tool_response_parts.append(types.Part.from_uri(
-                                file_uri=file_uri,
-                                mime_type=mime_type
-                            ))
+                            mime_type = result.data.get('mime_type')
+                            if mime_type and mime_type != "application/octet-stream":
+                                print(f"[Gemini] Injecting tool-discovered file (stream async): {file_uri} ({mime_type})")
+                                tool_response_parts.append(types.Part.from_uri(
+                                    file_uri=file_uri,
+                                    mime_type=mime_type
+                                ))
+                            else:
+                                print(f"[Gemini] Skipping unsupported tool file type: {mime_type} for {file_uri}")
                 
                 
                 history.append(types.Content(role="tool", parts=tool_response_parts))
@@ -971,17 +975,18 @@ class GeminiProvider(BaseLLMProvider):
                         response={'result': tool_result}
                     ))
                     
-                    # IMPORTANT: If tool result has a Gemini File URI, inject it as a multimodal part
-                    # This allows the LLM to "see" the PDF/Image that was just read or uploaded
                     if hasattr(result, 'data') and isinstance(result.data, dict):
                         file_uri = result.data.get('gemini_file_uri')
                         if file_uri:
-                            mime_type = result.data.get('mime_type') or "application/octet-stream"
-                            print(f"[Gemini] Injecting tool-discovered file in stream: {file_uri} ({mime_type})")
-                            tool_response_parts.append(types.Part.from_uri(
-                                file_uri=file_uri,
-                                mime_type=mime_type
-                            ))
+                            mime_type = result.data.get('mime_type')
+                            if mime_type and mime_type != "application/octet-stream":
+                                print(f"[Gemini] Injecting tool-discovered file in stream: {file_uri} ({mime_type})")
+                                tool_response_parts.append(types.Part.from_uri(
+                                    file_uri=file_uri,
+                                    mime_type=mime_type
+                                ))
+                            else:
+                                print(f"[Gemini] Skipping unsupported tool file type: {mime_type} for {file_uri}")
                 
                 # Add tool responses to history for next turn
                 history.append(types.Content(role="tool", parts=tool_response_parts))

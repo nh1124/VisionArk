@@ -1653,7 +1653,7 @@ async def read_reference(
                     "file_path": file_path, 
                     "gemini_indexed": True, 
                     "gemini_file_uri": db_file.gemini_file_uri if db_file else None,
-                    "mime_type": db_file.mime_type if db_file else "application/octet-stream"
+                    "mime_type": db_file.mime_type if db_file and db_file.mime_type != "application/octet-stream" else None
                 }
             )
         
