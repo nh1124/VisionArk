@@ -675,6 +675,7 @@ class GeminiProvider(BaseLLMProvider):
                 function_calling_config=types.FunctionCallingConfig(mode="AUTO")
             )
 
+        history = [types.Content(role="user", parts=content_parts)]
         turn_count = 0
         max_turns = settings.max_tool_turns
         accumulated_tool_results = []
