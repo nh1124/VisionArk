@@ -235,6 +235,14 @@ export default function HubPage() {
         }
     }, [loading]);
 
+    // Create stable callback refs for message actions - prevents re-renders of MessageWithAttachments
+    const messageCallbacks = useMemo(() => {
+        return messages.map((msg, idx) => ({
+            onRegenerate: msg.role === "assistant" ? () => handleRegenerate(idx) : undefined,
+            onBranch: msg.role === "assistant" ? () => handleBranch(idx) : undefined,
+        }));
+    }, [messages.length, handleRegenerate, handleBranch]);
+
     return (
         <div className="flex h-full">
             {/* Main Chat Area */}
@@ -308,6 +316,7 @@ export default function HubPage() {
                                     // Skip rendering the last empty assistant message while loading
                                     const isLastEmptyAssistant = loading && idx === messages.length - 1 && msg.role === "assistant" && !msg.content && (!msg.tool_calls || msg.tool_calls.length === 0);
                                     if (isLastEmptyAssistant) return null;
+                                    const callbacks = messageCallbacks[idx];
                                     return (
                                         <MessageWithAttachments
                                             key={idx}
@@ -318,8 +327,8 @@ export default function HubPage() {
                                             tool_calls={msg.tool_calls}
                                             nodeType="hub"
                                             nodeName="hub"
-                                            onRegenerate={msg.role === "assistant" ? () => handleRegenerate(idx) : undefined}
-                                            onBranch={msg.role === "assistant" ? () => handleBranch(idx) : undefined}
+                                            onRegenerate={callbacks?.onRegenerate}
+                                            onBranch={callbacks?.onBranch}
                                         />
                                     );
                                 })}

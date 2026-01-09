@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { use } from "react";
 import Link from "next/link";
 import ChatInput from "@/components/ChatInput";
@@ -270,6 +270,14 @@ export default function SpokeChatPage({
         }
     }, [loading, spokeName]);
 
+    // Create stable callback refs for message actions - prevents re-renders of MessageWithAttachments
+    const messageCallbacks = useMemo(() => {
+        return messages.map((msg, idx) => ({
+            onRegenerate: msg.role === "assistant" ? () => handleRegenerate(idx) : undefined,
+            onBranch: msg.role === "assistant" ? () => handleBranch(idx) : undefined,
+        }));
+    }, [messages.length, handleRegenerate, handleBranch]);
+
     return (
         <div className="flex h-full">
             <div className="flex-1 flex flex-col h-full overflow-hidden">
@@ -328,8 +336,8 @@ export default function SpokeChatPage({
                                     tool_calls={msg.tool_calls}
                                     nodeType="spoke"
                                     nodeName={spokeName}
-                                    onRegenerate={msg.role === "assistant" ? () => handleRegenerate(idx) : undefined}
-                                    onBranch={msg.role === "assistant" ? () => handleBranch(idx) : undefined}
+                                    onRegenerate={messageCallbacks[idx]?.onRegenerate}
+                                    onBranch={messageCallbacks[idx]?.onBranch}
                                 />
                             );
                         })}
