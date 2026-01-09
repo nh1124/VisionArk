@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { use } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import ChatInput from "@/components/ChatInput";
 import MessageWithAttachments from "@/components/MessageWithAttachments";
 import FilesSidebar from "@/components/FilesSidebar";
@@ -35,6 +36,7 @@ export default function SpokeChatPage({
     const [showSidebar, setShowSidebar] = useState(false);
     const [showCommandHelp, setShowCommandHelp] = useState(false);
     const [selectedModel, setSelectedModel] = useState("gemini-3-pro-preview");
+    const router = useRouter();
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const [displayName, setDisplayName] = useState("");
     const [elapsedTime, setElapsedTime] = useState(0);
@@ -159,6 +161,7 @@ export default function SpokeChatPage({
                                 });
                             } else if (event.type === "final_response") {
                                 toolCalls = event.data.tool_calls || [];
+                                // Update the last message with final data
                                 setMessages((prev) => {
                                     const next = [...prev];
                                     if (next.length > 0) {
@@ -171,6 +174,16 @@ export default function SpokeChatPage({
                                     }
                                     return next;
                                 });
+
+                                // Handle command-based redirection
+                                if (event.data.executed_commands) {
+                                    for (const cmd of event.data.executed_commands) {
+                                        if (cmd.success && cmd.data?.redirect_url) {
+                                            router.push(cmd.data.redirect_url);
+                                            break;
+                                        }
+                                    }
+                                }
                             }
                         } catch (e) {
                             console.error("Failed to parse event:", e, "Line:", line);

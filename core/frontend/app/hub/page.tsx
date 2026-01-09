@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import ChatInput from "@/components/ChatInput";
 import MessageWithAttachments from "@/components/MessageWithAttachments";
 import CommandAutocomplete, { CommandAutocompleteHandle } from "../components/CommandAutocomplete";
@@ -31,6 +32,7 @@ export default function HubPage() {
     const [showSidebar, setShowSidebar] = useState(false);
     const [selectedModel, setSelectedModel] = useState("gemini-3-pro-preview");
     const [view, setView] = useState<"chat" | "inbox">("chat");
+    const router = useRouter();
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const commandRef = useRef<CommandAutocompleteHandle>(null);
 
@@ -160,6 +162,16 @@ export default function HubPage() {
                                     }
                                     return next;
                                 });
+
+                                // Handle command-based redirection
+                                if (event.data.executed_commands) {
+                                    for (const cmd of event.data.executed_commands) {
+                                        if (cmd.success && cmd.data?.redirect_url) {
+                                            router.push(cmd.data.redirect_url);
+                                            break;
+                                        }
+                                    }
+                                }
                             }
                         } catch (e) {
                             console.error("Failed to parse event:", e, "Line:", line);

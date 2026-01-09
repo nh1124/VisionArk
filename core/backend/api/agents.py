@@ -248,9 +248,16 @@ async def chat_with_hub(
                 executed_commands.append({
                     "command": message.strip(),
                     "success": cmd_result.success,
-                    "message": cmd_result.message
+                    "message": cmd_result.message,
+                    "data": cmd_result.data
                 })
                 
+                if stream:
+                    async def hub_cmd_generator():
+                        yield f"data: {json.dumps({'type': 'content', 'data': cmd_result.message})}\n\n"
+                        yield f"data: {json.dumps({'type': 'final_response', 'data': {'content': cmd_result.message, 'executed_commands': executed_commands}})}\n\n"
+                    return StreamingResponse(hub_cmd_generator(), media_type="text/event-stream")
+
                 return ChatResponse(
                     response=cmd_result.message,
                     meta_actions=[],
@@ -258,6 +265,11 @@ async def chat_with_hub(
                     attached_files=file_metadata
                 )
             except Exception as e:
+                if stream:
+                    async def hub_err_generator():
+                        yield f"data: {json.dumps({'type': 'content', 'data': f'❌ Command failed: {str(e)}'})}\n\n"
+                        yield f"data: {json.dumps({'type': 'final_response', 'data': {'content': f'❌ Command failed: {str(e)}', 'executed_commands': executed_commands}})}\n\n"
+                    return StreamingResponse(hub_err_generator(), media_type="text/event-stream")
                 return ChatResponse(
                     response=f"❌ Command failed: {str(e)}",
                     meta_actions=[],
@@ -785,9 +797,16 @@ async def chat_with_spoke(
                 executed_commands.append({
                     "command": message.strip(),
                     "success": cmd_result.success,
-                    "message": cmd_result.message
+                    "message": cmd_result.message,
+                    "data": cmd_result.data
                 })
                 
+                if stream:
+                    async def spoke_cmd_generator():
+                        yield f"data: {json.dumps({'type': 'content', 'data': cmd_result.message})}\n\n"
+                        yield f"data: {json.dumps({'type': 'final_response', 'data': {'content': cmd_result.message, 'executed_commands': executed_commands}})}\n\n"
+                    return StreamingResponse(spoke_cmd_generator(), media_type="text/event-stream")
+
                 return ChatResponse(
                     response=cmd_result.message,
                     meta_actions=[],
@@ -795,6 +814,11 @@ async def chat_with_spoke(
                     attached_files=file_metadata
                 )
             except Exception as e:
+                if stream:
+                    async def spoke_err_generator():
+                        yield f"data: {json.dumps({'type': 'content', 'data': f'❌ Command failed: {str(e)}'})}\n\n"
+                        yield f"data: {json.dumps({'type': 'final_response', 'data': {'content': f'❌ Command failed: {str(e)}', 'executed_commands': executed_commands}})}\n\n"
+                    return StreamingResponse(spoke_err_generator(), media_type="text/event-stream")
                 return ChatResponse(
                     response=f"❌ Command failed: {str(e)}",
                     meta_actions=[],

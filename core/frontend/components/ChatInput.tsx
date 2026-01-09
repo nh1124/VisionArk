@@ -84,8 +84,9 @@ function ChatInputComponent({
 
         setInternalValue(newValue);
 
-        // Only notify parent when command mode changes (reduces re-renders drastically)
-        if (prevIsCommand !== newIsCommand) {
+        // Always notify parent if it's a command (for autocomplete filtering) 
+        // OR if the command mode just changed (to open/close dropdown)
+        if (newIsCommand || prevIsCommand !== newIsCommand) {
             onCommandModeChange?.(newIsCommand, newValue);
         }
 

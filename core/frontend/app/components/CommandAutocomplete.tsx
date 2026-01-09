@@ -45,8 +45,8 @@ const CommandAutocomplete = forwardRef<CommandAutocompleteHandle, CommandAutocom
     const inputRef = useRef<HTMLInputElement>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
 
-    // Debounce input value to reduce filtering frequency (150ms delay)
-    const debouncedValue = useDebounce(value, 150);
+    // Debounce input value to reduce filtering frequency (50ms delay)
+    const debouncedValue = useDebounce(value, 50);
 
     // ... (hubCommands and spokeCommands remain same)
     const hubCommands: Command[] = [
