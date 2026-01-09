@@ -1649,7 +1649,12 @@ async def read_reference(
             return ToolResult(
                 success=True,
                 message=f"📄 **{file_path}** is indexed in Gemini.\n\n✅ The AI can directly see and analyze this file's contents (including PDFs, images, etc.) through the Gemini File API.\n\n💡 Simply ask questions about the file - no need to extract text manually.",
-                data={"file_path": file_path, "gemini_indexed": True, "gemini_file_name": gemini_file_name}
+                data={
+                    "file_path": file_path, 
+                    "gemini_indexed": True, 
+                    "gemini_file_uri": db_file.gemini_file_uri if db_file else None,
+                    "mime_type": db_file.mime_type if db_file else "application/octet-stream"
+                }
             )
         
         # 4. Fallback: Read as text (for files not in Gemini)
