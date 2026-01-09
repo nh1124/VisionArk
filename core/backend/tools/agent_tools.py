@@ -3046,6 +3046,39 @@ HUB_TOOL_DEFINITIONS = [
 
 SPOKE_TOOL_DEFINITIONS = [
     {
+        "name": "update_user_condition",
+        "description": "Set the user's fatigue level. Use when user says 'I'm tired' or voice analysis detects fatigue.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "cognitive_fatigue": {"type": "integer", "description": "0=Energetic, 3=Tired, 5=Limit"},
+                "target_date": {"type": "string", "description": "YYYY-MM-DD"},
+                "note": {"type": "string"}
+            },
+            "required": ["cognitive_fatigue"]
+        }
+    },
+    {
+        "name": "get_current_condition",
+        "description": "Check the currently registered fatigue level. Use before advising on tasks.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "target_date": {"type": "string", "description": "YYYY-MM-DD"}
+            }
+        }
+    },
+    {
+        "name": "reset_user_condition",
+        "description": "Reset/Clear the fatigue level (back to healthy). Use when user recovered or wants to correct a mistake.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "target_date": {"type": "string", "description": "YYYY-MM-DD"}
+            }
+        }
+    },
+    {
         "name": "request_coordination",
         "description": "Send a structured coordination request to the Hub (e.g., for global task creation or rescheduling). Use this instead of direct global task creation.",
         "parameters": {
