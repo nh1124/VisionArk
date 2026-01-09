@@ -137,7 +137,7 @@ export default function MarkdownRenderer({
     // Matches patterns like artifacts/image.png or /artifacts/image.png
     const processedContent = content.replace(
         /(?<![!\]\(\[])\b((?:\/?(?:artifacts|refs|files))\/[^\s\)]+\.(?:png|jpe?g|gif|webp|svg|bmp|tiff))\b/gi,
-        (match) => `![${match}](${match})`
+        (match) => `![](${match})`
     );
 
     return (
@@ -168,6 +168,9 @@ export default function MarkdownRenderer({
                             }
                         }
 
+                        const isPathAlt = alt && (alt.includes("/") || alt.includes("\\") || alt.endsWith(".png") || alt.endsWith(".jpg") || alt.endsWith(".jpeg") || alt.endsWith(".gif"));
+                        const shouldShowCaption = alt && !isPathAlt;
+
                         return (
                             <div className="my-6">
                                 <img
@@ -177,7 +180,7 @@ export default function MarkdownRenderer({
                                     loading="lazy"
                                     {...props}
                                 />
-                                {alt && <p className="text-center text-xs text-gray-500 mt-2 italic">{alt}</p>}
+                                {shouldShowCaption && <p className="text-center text-xs text-gray-500 mt-2 italic">{alt}</p>}
                             </div>
                         );
                     },
