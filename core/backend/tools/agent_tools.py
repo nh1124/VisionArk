@@ -1583,11 +1583,13 @@ async def read_reference(
         
         # 2. PRIORITIZE Gemini upload - this gives AI better file reading capabilities
         gemini_indexed = False
+        gemini_file_name = None
         
-        # If we have a DB file, always try to ensure it's uploaded to Gemini
+        # If we have a DB file, check if already indexed
         if db_file:
             if db_file.gemini_file_name:
                 gemini_indexed = True
+                gemini_file_name = db_file.gemini_file_name
             else:
                 # Try to upload to Gemini now
                 try:
@@ -1595,15 +1597,59 @@ async def read_reference(
                     await file_service.upload_to_gemini(db_file)
                     gemini_indexed = True
                     await session.refresh(db_file)
+                    gemini_file_name = db_file.gemini_file_name
                 except Exception as e:
                     print(f"[read_reference] Gemini upload failed: {e}")
+        else:
+            # No DB file - create one and upload to Gemini
+            if session and full_path.exists():
+                try:
+                    import mimetypes
+                    from uuid import uuid4
+                    from models.database import UploadedFile, Node
+                    
+                    # Find the node
+                    node_name = spoke_name if node_type == 'SPOKE' else 'hub'
+                    result = await session.execute(select(Node).filter(
+                        Node.user_id == user_id,
+                        Node.name == node_name,
+                        Node.node_type == node_type
+                    ))
+                    node = result.scalars().first()
+                    
+                    if node:
+                        mime_type, _ = mimetypes.guess_type(str(full_path))
+                        mime_type = mime_type or "application/octet-stream"
+                        
+                        # Create DB record
+                        new_file = UploadedFile(
+                            id=str(uuid4()),
+                            node_id=node.id,
+                            filename=full_path.name,
+                            storage_path=str(full_path),
+                            mime_type=mime_type,
+                            size_bytes=full_path.stat().st_size
+                        )
+                        session.add(new_file)
+                        await session.commit()
+                        
+                        # Now upload to Gemini
+                        file_service = await _get_file_service(user_id, session)
+                        await file_service.upload_to_gemini(new_file)
+                        await session.refresh(new_file)
+                        gemini_indexed = True
+                        gemini_file_name = new_file.gemini_file_name
+                        db_file = new_file
+                        print(f"[read_reference] Created DB record and uploaded to Gemini: {full_path.name}")
+                except Exception as e:
+                    print(f"[read_reference] Failed to create DB record and upload: {e}")
 
         # 3. If Gemini-indexed, skip text reading - Gemini can read the file directly
         if gemini_indexed:
             return ToolResult(
                 success=True,
                 message=f"📄 **{file_path}** is indexed in Gemini.\n\n✅ The AI can directly see and analyze this file's contents (including PDFs, images, etc.) through the Gemini File API.\n\n💡 Simply ask questions about the file - no need to extract text manually.",
-                data={"file_path": file_path, "gemini_indexed": True, "gemini_file_name": db_file.gemini_file_name if db_file else None}
+                data={"file_path": file_path, "gemini_indexed": True, "gemini_file_name": gemini_file_name}
             )
         
         # 4. Fallback: Read as text (for files not in Gemini)
