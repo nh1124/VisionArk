@@ -14,9 +14,28 @@ from models.database import UploadedFile, Node
 from config import get_settings
 from utils.paths import get_user_hub_dir, get_spoke_dir
 
-
 # File size limit: 100MB (Gemini supports up to 2GB)
 MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024
+
+
+def _resolve_portable_path(stored_path: str) -> Path:
+    """
+    Resolves a stored absolute path to a local physical path.
+    Handles Linux absolute paths (/app/data/...) in a Windows environment.
+    """
+    from utils.paths import DATA_DIR
+    p = Path(stored_path)
+    if p.exists():
+        return p
+    
+    # If not exists, check if it's a Linux absolute path containing 'data'
+    path_str = str(p).replace('\\', '/')
+    if '/data/' in path_str:
+        relative_part = path_str.split('/data/', 1)[1]
+        portable_path = DATA_DIR / relative_part.replace('/', os.sep)
+        return portable_path
+        
+    return p
 
 
 class FileService:
@@ -173,7 +192,7 @@ class FileService:
             raise ValueError("Gemini API key not configured")
         
         # Check if file exists locally
-        file_path = Path(file_record.storage_path)
+        file_path = _resolve_portable_path(file_record.storage_path)
         if not file_path.exists():
             raise FileNotFoundError(f"Local file not found: {file_path}")
         
@@ -277,7 +296,8 @@ class FileService:
             if not status["gemini_available"]:
                 try:
                     # Check if local file actually exists before trying to upload
-                    if not os.path.exists(file_record.storage_path):
+                    resolved_path = _resolve_portable_path(file_record.storage_path)
+                    if not resolved_path.exists():
                         print(f"[FileService] Warning: Local file missing, skipping sync: {file_record.filename}")
                         status["error"] = "Local file missing"
                         continue
