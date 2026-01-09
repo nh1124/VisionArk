@@ -263,6 +263,18 @@ class GeminiProvider(BaseLLMProvider):
                     name=function_name,
                     response={'result': tool_result}
                 ))
+
+                # IMPORTANT: If tool result has a Gemini File URI, inject it as a multimodal part
+                # This allows the LLM to "see" the PDF/Image that was just read or uploaded
+                if hasattr(result, 'data') and isinstance(result.data, dict):
+                    file_uri = result.data.get('gemini_file_uri')
+                    if file_uri:
+                        mime_type = result.data.get('mime_type') or "application/octet-stream"
+                        print(f"[Gemini] Injecting tool-discovered file in stream: {file_uri} ({mime_type})")
+                        tool_response_parts.append(types.Part.from_uri(
+                            file_uri=file_uri,
+                            mime_type=mime_type
+                        ))
             
             history.append(types.Content(role="tool", parts=tool_response_parts))
             
@@ -759,6 +771,19 @@ class GeminiProvider(BaseLLMProvider):
                         name=function_name,
                         response={'result': tool_result}
                     ))
+
+                    # IMPORTANT: If tool result has a Gemini File URI, inject it as a multimodal part
+                    # This allows the LLM to "see" the PDF/Image that was just read or uploaded
+                    if hasattr(result, 'data') and isinstance(result.data, dict):
+                        file_uri = result.data.get('gemini_file_uri')
+                        if file_uri:
+                            mime_type = result.data.get('mime_type') or "application/octet-stream"
+                            print(f"[Gemini] Injecting tool-discovered file in stream: {file_uri} ({mime_type})")
+                            tool_response_parts.append(types.Part.from_uri(
+                                file_uri=file_uri,
+                                mime_type=mime_type
+                            ))
+                
                 
                 history.append(types.Content(role="tool", parts=tool_response_parts))
                 yield {"type": "status", "data": "Synthesizing result..."}
