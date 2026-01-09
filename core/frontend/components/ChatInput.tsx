@@ -76,7 +76,8 @@ function ChatInputComponent({
             onCommandModeChange?.(newIsCommand, newValue);
         }
 
-        setTimeout(adjustTextareaHeight, 0);
+        // Use requestAnimationFrame for smoother resize (better than setTimeout)
+        requestAnimationFrame(adjustTextareaHeight);
     };
 
     const handleFileSelect = (files: FileList | null) => {
@@ -217,7 +218,7 @@ function ChatInputComponent({
                         onKeyDown={handleKeyDown}
                         onPaste={handlePaste}
                         placeholder={isDragging ? "Drop files here..." : placeholder}
-                        className={`w-full bg-transparent border-none focus:outline-none resize-none py-4 px-6 text-gray-100 placeholder-gray-600 transition-all duration-500 ease-in-out ${isExpanded ? "flex-1 text-lg mb-4" : ""}`}
+                        className={`w-full bg-transparent border-none focus:outline-none resize-none py-4 px-6 text-gray-100 placeholder-gray-600 ${isExpanded ? "flex-1 text-lg mb-4" : ""}`}
                         disabled={disabled}
                         style={{
                             minHeight: isExpanded ? "200px" : "48px",
