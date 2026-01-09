@@ -1595,12 +1595,16 @@ async def read_reference(
         try:
             content = full_path.read_text(encoding='utf-8')
         except UnicodeDecodeError:
-            content = f"[Binary file: {file_path}]"
+            # Binary file - check if it's indexed in Gemini
+            if db_file and db_file.gemini_file_name:
+                content = f"[Binary file: {file_path}]\n\n✅ This file has been uploaded to Gemini and is available for AI analysis.\nYou can directly ask questions about its contents - the AI can see and analyze it through the Gemini File API."
+            else:
+                content = f"[Binary file: {file_path}]\n\n⚠️ This file has NOT been indexed yet. Run 'sync-gemini' to upload it for AI analysis."
         
         return ToolResult(
             success=True,
             message=f"📄 Content of {file_path}:\n\n{content}{gemini_info}",
-            data={"file_path": file_path, "content": content}
+            data={"file_path": file_path, "content": content, "is_binary": "Binary file" in content, "gemini_indexed": bool(db_file and db_file.gemini_file_name)}
         )
     except Exception as e:
         return ToolResult(success=False, message=f"Failed to read file: {str(e)}")
