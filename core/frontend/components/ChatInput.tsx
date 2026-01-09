@@ -66,10 +66,16 @@ function ChatInputComponent({
 
     const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         const newValue = e.target.value;
+        const prevIsCommand = internalValue.trim().startsWith('/');
+        const newIsCommand = newValue.trim().startsWith('/');
+
         setInternalValue(newValue);
-        // Only notify parent if they need to track value (e.g., for command detection)
-        // This is debounced/batched by React, so it's less impactful than controlled input
-        onValueChange?.(newValue);
+
+        // Only notify parent when command detection state changes (reduces re-renders)
+        if (prevIsCommand !== newIsCommand) {
+            onValueChange?.(newValue);
+        }
+
         setTimeout(adjustTextareaHeight, 0);
     };
 
