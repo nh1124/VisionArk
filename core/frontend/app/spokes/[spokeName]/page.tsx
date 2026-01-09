@@ -30,7 +30,7 @@ export default function SpokeChatPage({
 }) {
     const { spokeName } = use(params);
     const [messages, setMessages] = useState<Message[]>([]);
-    const [input, setInput] = useState("");
+    const [commandInputValue, setCommandInputValue] = useState("");
     const [loading, setLoading] = useState(false);
     const [showSidebar, setShowSidebar] = useState(false);
     const [showCommandHelp, setShowCommandHelp] = useState(false);
@@ -43,11 +43,6 @@ export default function SpokeChatPage({
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages]);
-
-    // Show command help when typing /
-    useEffect(() => {
-        setShowCommandHelp(input.trim().startsWith('/'));
-    }, [input]);
 
     // Load metadata and history on mount
     useEffect(() => {
@@ -98,7 +93,6 @@ export default function SpokeChatPage({
             }))
         };
         setMessages((prev) => [...prev, userMessage]);
-        setInput("");
         setLoading(true);
         setStatusText("Thinking...");
         setElapsedTime(0);
@@ -368,8 +362,8 @@ export default function SpokeChatPage({
                 {/* Command Help Overlay */}
                 {showCommandHelp && (
                     <div className="border-t border-gray-800 bg-gray-900/95 p-4 flex-shrink-0">
-                        <CommandAutocomplete value={input} onChange={setInput}
-                            onSubmit={() => sendMessage(input, [])}
+                        <CommandAutocomplete value={commandInputValue} onChange={setCommandInputValue}
+                            onSubmit={() => sendMessage(commandInputValue, [])}
                             placeholder="" context="spoke" disabled={loading} />
                     </div>
                 )}
@@ -378,7 +372,10 @@ export default function SpokeChatPage({
                 <div className="pb-8 px-4">
                     <div className="max-w-4xl mx-auto flex flex-col min-h-0">
                         <ChatInput
-                            onValueChange={setInput}
+                            onCommandModeChange={(isCommand, value) => {
+                                setShowCommandHelp(isCommand);
+                                setCommandInputValue(value);
+                            }}
                             onSend={sendMessage}
                             placeholder="Work on tasks, upload files, or type / for commands..."
                             disabled={loading}

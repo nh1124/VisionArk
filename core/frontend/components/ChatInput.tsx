@@ -4,7 +4,7 @@ import { useState, useRef, DragEvent, useEffect, memo } from "react";
 
 interface ChatInputProps {
     initialValue?: string;
-    onValueChange?: (value: string) => void;  // Optional callback for external sync (e.g., command detection)
+    onCommandModeChange?: (isCommandMode: boolean, value: string) => void;  // Only fires when command mode changes
     onSend: (message: string, files: File[]) => void;
     placeholder: string;
     disabled?: boolean;
@@ -32,7 +32,7 @@ const getModelDisplayName = (model: string) => {
 
 function ChatInputComponent({
     initialValue = "",
-    onValueChange,
+    onCommandModeChange,
     onSend,
     placeholder,
     disabled = false,
@@ -71,9 +71,9 @@ function ChatInputComponent({
 
         setInternalValue(newValue);
 
-        // Only notify parent when command detection state changes (reduces re-renders)
+        // Only notify parent when command mode changes (reduces re-renders drastically)
         if (prevIsCommand !== newIsCommand) {
-            onValueChange?.(newValue);
+            onCommandModeChange?.(newIsCommand, newValue);
         }
 
         setTimeout(adjustTextareaHeight, 0);

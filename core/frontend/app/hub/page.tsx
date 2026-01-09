@@ -25,15 +25,13 @@ interface Message {
 
 export default function HubPage() {
     const [messages, setMessages] = useState<Message[]>([]);
-    const [input, setInput] = useState("");
+    const [showCommandHelp, setShowCommandHelp] = useState(false);
+    const [commandInputValue, setCommandInputValue] = useState("");
     const [loading, setLoading] = useState(false);
     const [showSidebar, setShowSidebar] = useState(false);
     const [selectedModel, setSelectedModel] = useState("gemini-3-pro-preview");
     const [view, setView] = useState<"chat" | "inbox">("chat");
     const messagesEndRef = useRef<HTMLDivElement>(null);
-
-    // Derive showCommandHelp from input (no separate state needed)
-    const showCommandHelp = useMemo(() => view === "chat" && input.trim().startsWith('/'), [input, view]);
 
     // Auto-scroll to bottom when messages change
     useEffect(() => {
@@ -80,7 +78,6 @@ export default function HubPage() {
             }))
         };
         setMessages((prev) => [...prev, userMessage]);
-        setInput("");
         setLoading(true);
         setStatusText("Thinking...");
         setElapsedTime(0);
@@ -360,9 +357,9 @@ export default function HubPage() {
                         {showCommandHelp && (
                             <div className="border-t border-gray-800 bg-gray-900/95 p-4 flex-shrink-0">
                                 <CommandAutocomplete
-                                    value={input}
-                                    onChange={setInput}
-                                    onSubmit={() => sendMessage(input, [])}
+                                    value={commandInputValue}
+                                    onChange={setCommandInputValue}
+                                    onSubmit={() => sendMessage(commandInputValue, [])}
                                     placeholder=""
                                     context="hub"
                                     disabled={loading}
@@ -374,7 +371,10 @@ export default function HubPage() {
                         <div className="pb-8 px-4">
                             <div className="max-w-4xl mx-auto flex flex-col min-h-0">
                                 <ChatInput
-                                    onValueChange={setInput}
+                                    onCommandModeChange={(isCommand, value) => {
+                                        setShowCommandHelp(view === "chat" && isCommand);
+                                        setCommandInputValue(value);
+                                    }}
                                     onSend={sendMessage}
                                     placeholder="Ask Hub about workload, schedule, or resources..."
                                     disabled={loading}
