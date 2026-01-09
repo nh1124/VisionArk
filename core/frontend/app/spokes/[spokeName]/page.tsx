@@ -6,7 +6,7 @@ import Link from "next/link";
 import ChatInput from "@/components/ChatInput";
 import MessageWithAttachments from "@/components/MessageWithAttachments";
 import FilesSidebar from "@/components/FilesSidebar";
-import CommandAutocomplete from "../../components/CommandAutocomplete";
+import CommandAutocomplete, { CommandAutocompleteHandle } from "../../components/CommandAutocomplete";
 import { apiFetch } from "@/lib/api";
 import { Settings, Files, RotateCcw } from "lucide-react";
 
@@ -38,6 +38,7 @@ export default function SpokeChatPage({
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const [displayName, setDisplayName] = useState("");
     const [elapsedTime, setElapsedTime] = useState(0);
+    const commandRef = useRef<CommandAutocompleteHandle>(null);
 
     // Auto-scroll to bottom when messages change
     useEffect(() => {
@@ -80,12 +81,13 @@ export default function SpokeChatPage({
 
     const [statusText, setStatusText] = useState("");
 
-    const sendMessage = async (message: string, files: File[]) => {
-        if (!message.trim() && files.length === 0) return;
+    const sendMessage = async (content: string, files: File[]) => {
+        if (!content.trim() && files.length === 0) return;
+        setShowCommandHelp(false);
 
         const userMessage: Message = {
             role: "user",
-            content: message,
+            content: content,
             attached_files: files.map(f => ({
                 name: f.name,
                 size: f.size,
@@ -103,7 +105,7 @@ export default function SpokeChatPage({
 
         try {
             const formData = new FormData();
-            formData.append("message", message);
+            formData.append("message", content);
             files.forEach((file) => formData.append("files", file));
             formData.append("stream", "true");
 
@@ -432,10 +434,19 @@ export default function SpokeChatPage({
 
                 {/* Command Help Overlay */}
                 {showCommandHelp && (
-                    <div className="border-t border-gray-800 bg-gray-900/95 p-4 flex-shrink-0">
-                        <CommandAutocomplete value={commandInputValue} onChange={setCommandInputValue}
-                            onSubmit={() => sendMessage(commandInputValue, [])}
-                            placeholder="" context="spoke" disabled={loading} />
+                    <div className="px-4">
+                        <div className="max-w-4xl mx-auto">
+                            <CommandAutocomplete
+                                ref={commandRef}
+                                value={commandInputValue}
+                                onChange={setCommandInputValue}
+                                onSubmit={() => sendMessage(commandInputValue, [])}
+                                placeholder=""
+                                context="spoke"
+                                disabled={loading}
+                                showInput={false}
+                            />
+                        </div>
                     </div>
                 )}
 
@@ -462,6 +473,11 @@ export default function SpokeChatPage({
                             onCommandModeChange={(isCommand, value) => {
                                 setShowCommandHelp(isCommand);
                                 setCommandInputValue(value);
+                            }}
+                            onKeyDown={(e) => {
+                                if (showCommandHelp && commandRef.current) {
+                                    commandRef.current.handleKeyDown(e);
+                                }
                             }}
                             onSend={sendMessage}
                             placeholder="Work on tasks, upload files, or type / for commands..."

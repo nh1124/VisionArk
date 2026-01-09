@@ -7,6 +7,7 @@ interface ChatInputProps {
     initialValue?: string;
     onCommandModeChange?: (isCommandMode: boolean, value: string) => void;  // Only fires when command mode changes
     onSend: (message: string, files: File[]) => void;
+    onKeyDown?: (e: React.KeyboardEvent) => void;
     placeholder: string;
     disabled?: boolean;
     allowFileAttach?: boolean;
@@ -42,7 +43,8 @@ function ChatInputComponent({
     selectedModel = "gemini-3-pro-preview",
     onModelChange,
     showModelSelector = false,
-    onClone
+    onClone,
+    onKeyDown
 }: ChatInputProps) {
     // Internal state for the input value - prevents parent re-renders on each keystroke
     const [internalValue, setInternalValue] = useState(initialValue);
@@ -125,6 +127,11 @@ function ChatInputComponent({
     };
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (onKeyDown) {
+            onKeyDown(e);
+            if (e.defaultPrevented) return;
+        }
+
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             handleSend();
