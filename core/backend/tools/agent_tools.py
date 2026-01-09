@@ -1581,30 +1581,46 @@ async def read_reference(
         if not full_path:
             return ToolResult(success=False, message=f"File not found: {file_path}")
         
-        # 2. Sync with Gemini if it's a known DB file and not yet uploaded
+        # 2. PRIORITIZE Gemini upload - this gives AI better file reading capabilities
         gemini_info = ""
-        if db_file and not db_file.gemini_file_name:
-            try:
-                file_service = await _get_file_service(user_id, session)
-                await file_service.upload_to_gemini(db_file)
-                gemini_info = "\n\n(AI System: This file has been uploaded to Gemini File API for full-text visibility in upcoming turns.)"
-            except Exception as e:
-                print(f"[read_reference] Gemini sync failed: {e}")
+        gemini_indexed = False
+        
+        # If we have a DB file, always try to ensure it's uploaded to Gemini
+        if db_file:
+            if db_file.gemini_file_name:
+                gemini_indexed = True
+            else:
+                # Try to upload to Gemini now
+                try:
+                    file_service = await _get_file_service(user_id, session)
+                    await file_service.upload_to_gemini(db_file)
+                    gemini_indexed = True
+                    gemini_info = "\n\n(AI System: This file has been uploaded to Gemini File API. Full content is now available for AI analysis.)"
+                    # Refresh db_file to get the gemini_file_name
+                    await session.refresh(db_file)
+                except Exception as e:
+                    print(f"[read_reference] Gemini upload failed: {e}")
 
-        # 3. Read content
+        # 3. Read content - but for binary files, leverage Gemini if indexed
+        is_binary = False
         try:
             content = full_path.read_text(encoding='utf-8')
         except UnicodeDecodeError:
-            # Binary file - check if it's indexed in Gemini
-            if db_file and db_file.gemini_file_name:
-                content = f"[Binary file: {file_path}]\n\n✅ This file has been uploaded to Gemini and is available for AI analysis.\nYou can directly ask questions about its contents - the AI can see and analyze it through the Gemini File API."
+            is_binary = True
+            if gemini_indexed:
+                # Binary file but Gemini has it - provide helpful message
+                content = f"[Binary file: {file_path}]\n\n✅ **This file is indexed in Gemini.** The AI can directly analyze its contents (PDF pages, images, etc.) through the Gemini File API. Simply ask questions about the file - there's no need to extract text manually."
             else:
-                content = f"[Binary file: {file_path}]\n\n⚠️ This file has NOT been indexed yet. Run 'sync-gemini' to upload it for AI analysis."
+                content = f"[Binary file: {file_path}]\n\n⚠️ This binary file could not be read as text and is NOT yet indexed in Gemini. Try syncing files to Gemini first."
+        
+        # For text files that are Gemini-indexed, add a note
+        if not is_binary and gemini_indexed and not gemini_info:
+            gemini_info = "\n\n(Note: This file is also indexed in Gemini for enhanced multimodal analysis.)"
         
         return ToolResult(
             success=True,
             message=f"📄 Content of {file_path}:\n\n{content}{gemini_info}",
-            data={"file_path": file_path, "content": content, "is_binary": "Binary file" in content, "gemini_indexed": bool(db_file and db_file.gemini_file_name)}
+            data={"file_path": file_path, "content": content, "is_binary": is_binary, "gemini_indexed": gemini_indexed}
         )
     except Exception as e:
         return ToolResult(success=False, message=f"Failed to read file: {str(e)}")
