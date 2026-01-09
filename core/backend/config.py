@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # Database Settings (PostgreSQL required)
     database_url: str = ""  # postgresql://user:pass@host:5432/dbname
     
+    # LLM Settings
+    max_tool_turns: int = 30
+    
     # Model configuration
     model_config = SettingsConfigDict(
         env_file=os.path.join(os.path.dirname(__file__), "../../.env"),

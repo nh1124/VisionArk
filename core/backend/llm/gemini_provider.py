@@ -7,6 +7,7 @@ from typing import List, Optional, Any, Dict
 import asyncio
 import inspect
 from .base_provider import BaseLLMProvider, Message, CompletionResponse
+from config import settings
 
 
 class GeminiProvider(BaseLLMProvider):
@@ -362,7 +363,7 @@ class GeminiProvider(BaseLLMProvider):
         ]
         
         turn_count = 0
-        max_turns = 30
+        max_turns = settings.max_tool_turns
         accumulated_tool_results = []  # List of {name, result, success} dicts
         
         while turn_count < max_turns:
@@ -873,7 +874,7 @@ class GeminiProvider(BaseLLMProvider):
 
         history = [types.Content(role="user", parts=content_parts)]
         turn_count = 0
-        max_turns = 30
+        max_turns = settings.max_tool_turns
         accumulated_tool_results = []
         
         yield {"type": "status", "data": "Thinking..."}
