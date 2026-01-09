@@ -374,8 +374,7 @@ export default function HubPage() {
                         <div className="pb-8 px-4">
                             <div className="max-w-4xl mx-auto flex flex-col min-h-0">
                                 <ChatInput
-                                    value={input}
-                                    onChange={setInput}
+                                    onValueChange={setInput}
                                     onSend={sendMessage}
                                     placeholder="Ask Hub about workload, schedule, or resources..."
                                     disabled={loading}

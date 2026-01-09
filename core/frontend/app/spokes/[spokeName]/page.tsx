@@ -378,8 +378,7 @@ export default function SpokeChatPage({
                 <div className="pb-8 px-4">
                     <div className="max-w-4xl mx-auto flex flex-col min-h-0">
                         <ChatInput
-                            value={input}
-                            onChange={setInput}
+                            onValueChange={setInput}
                             onSend={sendMessage}
                             placeholder="Work on tasks, upload files, or type / for commands..."
                             disabled={loading}

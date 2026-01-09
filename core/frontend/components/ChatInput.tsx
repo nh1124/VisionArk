@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useRef, DragEvent } from "react";
+import { useState, useRef, DragEvent, useEffect, memo } from "react";
 
 interface ChatInputProps {
-    value: string;
-    onChange: (value: string) => void;
+    initialValue?: string;
+    onValueChange?: (value: string) => void;  // Optional callback for external sync (e.g., command detection)
     onSend: (message: string, files: File[]) => void;
     placeholder: string;
     disabled?: boolean;
@@ -30,9 +30,9 @@ const getModelDisplayName = (model: string) => {
     return model;
 };
 
-export default function ChatInput({
-    value,
-    onChange,
+function ChatInputComponent({
+    initialValue = "",
+    onValueChange,
     onSend,
     placeholder,
     disabled = false,
@@ -42,6 +42,8 @@ export default function ChatInput({
     showModelSelector = false,
     onClone
 }: ChatInputProps) {
+    // Internal state for the input value - prevents parent re-renders on each keystroke
+    const [internalValue, setInternalValue] = useState(initialValue);
     const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
     const [isDragging, setIsDragging] = useState(false);
     const [showModelMenu, setShowModelMenu] = useState(false);
@@ -63,7 +65,11 @@ export default function ChatInput({
     };
 
     const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-        onChange(e.target.value);
+        const newValue = e.target.value;
+        setInternalValue(newValue);
+        // Only notify parent if they need to track value (e.g., for command detection)
+        // This is debounced/batched by React, so it's less impactful than controlled input
+        onValueChange?.(newValue);
         setTimeout(adjustTextareaHeight, 0);
     };
 
@@ -94,8 +100,9 @@ export default function ChatInput({
     };
 
     const handleSend = () => {
-        if (!value.trim() && attachedFiles.length === 0) return;
-        onSend(value, attachedFiles);
+        if (!internalValue.trim() && attachedFiles.length === 0) return;
+        onSend(internalValue, attachedFiles);
+        setInternalValue("");  // Clear internal state after send
         setAttachedFiles([]);
     };
 
@@ -199,7 +206,7 @@ export default function ChatInput({
                 <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden">
                     <textarea
                         ref={textareaRef}
-                        value={value}
+                        value={internalValue}
                         onChange={handleTextChange}
                         onKeyDown={handleKeyDown}
                         onPaste={handlePaste}
@@ -349,7 +356,7 @@ export default function ChatInput({
                         {/* Send Button */}
                         <button
                             onClick={handleSend}
-                            disabled={disabled || (!value.trim() && attachedFiles.length === 0)}
+                            disabled={disabled || (!internalValue.trim() && attachedFiles.length === 0)}
                             className="p-2.5 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-800 disabled:text-gray-600 rounded-full shadow-lg transition-all ml-1"
                             title="Send message"
                         >
@@ -372,3 +379,7 @@ export default function ChatInput({
         </div>
     );
 }
+
+// Memoize the component to prevent unnecessary re-renders from parent
+const ChatInput = memo(ChatInputComponent);
+export default ChatInput;
