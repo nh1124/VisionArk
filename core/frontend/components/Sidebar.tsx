@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, useEffect, useRef } from "react";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, getFileToken } from "@/lib/api";
 
 interface SidebarProps {
     isCollapsed: boolean;
@@ -53,6 +53,26 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
             }
         } catch (error) {
             console.error("Failed to load spokes:", error);
+        }
+    };
+
+    const handleExportChat = async (spokeName: string) => {
+        try {
+            const token = await getFileToken();
+            const exportUrl = `/api/export/chat/${spokeName}?token=${token}`;
+
+            // Create a temporary link to trigger download
+            const link = document.createElement('a');
+            link.href = exportUrl;
+            link.setAttribute('download', `${spokeName}_chat.md`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            setMenuOpen(null);
+        } catch (error) {
+            console.error("Export failed:", error);
+            alert("Failed to export chat history.");
         }
     };
 
@@ -184,6 +204,12 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                                                     >
                                                         Settings
                                                     </Link>
+                                                    <button
+                                                        onClick={() => handleExportChat(spoke.name)}
+                                                        className="w-full flex items-center px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
+                                                    >
+                                                        Export Chat
+                                                    </button>
                                                 </div>
                                             )}
                                         </div>

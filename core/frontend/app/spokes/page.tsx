@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
-import { apiFetch } from "@/lib/api";
-import { Search, MoreVertical, Edit2, Trash2, X, Check, ExternalLink, Copy } from "lucide-react";
+import { apiFetch, getFileToken } from "@/lib/api";
+import { Search, MoreVertical, Edit2, Trash2, X, Check, ExternalLink, Copy, FileDown } from "lucide-react";
 
 interface Spoke {
     name: string;
@@ -184,6 +184,25 @@ export default function SpokesPage() {
             alert("Error renaming project");
         } finally {
             setSavingRename(false);
+        }
+    };
+
+    const handleExportChat = async (name: string) => {
+        try {
+            const token = await getFileToken();
+            const exportUrl = `/api/export/chat/${name}?token=${token}`;
+
+            const link = document.createElement('a');
+            link.href = exportUrl;
+            link.setAttribute('download', `${name}_chat.md`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            setActiveMenu(null);
+        } catch (error) {
+            console.error("Export failed:", error);
+            alert("Failed to export chat history.");
         }
     };
 
@@ -396,6 +415,12 @@ export default function SpokesPage() {
                                                 >
                                                     <ExternalLink size={14} /> Open Workspace
                                                 </Link>
+                                                <button
+                                                    onClick={() => handleExportChat(spoke.name)}
+                                                    className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-cyan-500/10 hover:text-cyan-400 transition-colors"
+                                                >
+                                                    <FileDown size={14} /> Export Chat
+                                                </button>
                                                 <div className="my-1 border-t border-gray-800"></div>
                                                 <button
                                                     onClick={() => deleteSpoke(spoke.name)}
