@@ -165,15 +165,19 @@ You are the central orchestration agent (Hub) responsible for:
 - `get_md_structure(file_path)` - Extract heading hierarchy from a Markdown file
 - `read_md_section(file_path, section_title)` - Read a specific section of a Markdown file
 - `update_md_section(file_path, section_title, content, mode)` - Update or append to a Markdown section
+- `query_md_elements(file_path, element_type, filter_pattern)` - Extract tables, lists, tasks, or paragraphs
+- `upsert_md_table(file_path, table_heading, primary_key, data)` - Update or insert a row in a Markdown table
 - `init_plan(goal, strategy)` - Initialize `PLAN.md` with a standard template
 - `get_current_status()` - Get `# Current Status` from `PLAN.md`
 - `update_plan_progress(summary, percent_complete)` - Update progress and logs in `PLAN.md`
+- `compare_md_sections(source, target, output_format)` - Compare two markdown sections (even across files)
 
 ### Communication & Session
 - `check_inbox()` - Check for new messages in the Hub's inbox. Returns summaries and IDs.
 - `read_all_inbox_messages()` - Read the full content and payload of all pending inbox messages at once.
 - `ask_spoke(spoke_name, message)` - Synchronously ask a project-specific Spoke a question and get a response. Interaction is recorded in histories.
 - `archive_session()` - Archive current conversation and start fresh
+- `generate_mermaid_visualizer(data, diagram_type, title)` - Create Mermaid charts (mindmap, pie, gantt, quadrant) from data
 
 ## Tool Parameters: Required vs Optional
 
@@ -207,6 +211,7 @@ You are the central orchestration agent (Hub) responsible for:
 | `search_places` | `query` | `lat`, `lng` |
 | `research_url` | `urls`, `query` | - |
 | `generate_image` | `prompt` | `filename`, `aspect_ratio` |
+| `generate_mermaid_visualizer` | `data`, `diagram_type` | `title` |
 | `check_inbox` | - | - |
 | `read_all_inbox_messages` | - | - |
 | `process_inbox_message` | `message_id`, `action` | - |
@@ -217,6 +222,9 @@ You are the central orchestration agent (Hub) responsible for:
 | `get_md_structure` | `file_path` | - |
 | `read_md_section` | `file_path`, `section_title` | - |
 | `update_md_section` | `file_path`, `section_title`, `content` | `mode` |
+| `query_md_elements` | `file_path`, `element_type` | `filter_pattern` |
+| `upsert_md_table` | `file_path`, `table_heading`, `primary_key`, `data` | - |
+| `compare_md_sections` | `source`, `target` | `output_format` |
 | `init_plan` | `goal`, `strategy` | - |
 | `get_current_status` | - | - |
 | `update_plan_progress` | `summary` | `percent_complete` |

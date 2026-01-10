@@ -1482,6 +1482,398 @@ async def delete_artifact(
         return ToolResult(success=False, message=f"Failed to delete file: {str(e)}")
 
 
+
+async def query_md_elements(
+    file_path: str,
+    element_type: str,
+    filter_pattern: Optional[str] = None,
+    *,
+    user_id: str,
+    node_type: str,
+    spoke_name: Optional[str] = None,
+    **kwargs
+) -> ToolResult:
+    """
+    Extract specific elements (table, list, checkbox, paragraph) from a Markdown file.
+    Args:
+        file_path: Relative path within artifacts/
+        element_type: 'table', 'list', 'checkbox', or 'paragraph'
+        filter_pattern: Optional regex or keyword to filter elements
+    """
+    try:
+        artifacts_dir = _resolve_agent_artifacts_dir(user_id, node_type, spoke_name)
+        full_path = secure_path_join(artifacts_dir, file_path)
+        
+        if not full_path.exists():
+            return ToolResult(success=False, message=f"File not found: {file_path}")
+            
+        content = full_path.read_text(encoding='utf-8')
+        elements = []
+        
+        if element_type == 'table':
+            # Basic Markdown table regex
+            table_pattern = re.compile(r'(\|.*\|(?:\r?\n\|.*\|)*)', re.MULTILINE)
+            elements = table_pattern.findall(content)
+        elif element_type == 'list':
+            # Match bulleted or numbered lists
+            list_pattern = re.compile(r'((?:^[ \t]*[-*+] .*(?:\r?\n[ \t]*[-*+] .*)*)|(?:^[ \t]*\d+\. .*(?:\r?\n[ \t]*\d+\. .*)*))', re.MULTILINE)
+            elements = list_pattern.findall(content)
+        elif element_type == 'checkbox':
+            # Match task list items [ ] or [x]
+            checkbox_pattern = re.compile(r'(^[ \t]*[-*+] \[[ xX]\].*)', re.MULTILINE)
+            elements = checkbox_pattern.findall(content)
+        elif element_type == 'paragraph':
+            # Split by double newline to get paragraphs
+            paragraphs = re.split(r'\r?\n\s*\r?\n', content)
+            elements = [p.strip() for p in paragraphs if p.strip()]
+        else:
+            return ToolResult(success=False, message=f"Unsupported element_type: {element_type}")
+
+        if filter_pattern:
+            try:
+                prog = re.compile(filter_pattern, re.IGNORECASE)
+                elements = [e for e in elements if prog.search(e)]
+            except re.error as e:
+                return ToolResult(success=False, message=f"Invalid filter_pattern regex: {str(e)}")
+
+        if not elements:
+            return ToolResult(success=True, message=f"No {element_type} elements found matching the filter.", data={"elements": []})
+
+        result_text = "\n\n---\n\n".join(elements)
+        return ToolResult(
+            success=True,
+            message=f"✅ Extracted {len(elements)} {element_type}(s) from {file_path}:\n\n{result_text}",
+            data={"elements": elements}
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to query elements: {str(e)}")
+
+
+async def upsert_md_table(
+    file_path: str,
+    table_heading: str,
+    primary_key: str,
+    data: Dict[str, Any],
+    *,
+    user_id: str,
+    node_type: str,
+    spoke_name: Optional[str] = None,
+    **kwargs
+) -> ToolResult:
+    """
+    Update or insert a row in a Markdown table under a specific heading.
+    Args:
+        file_path: Path to the .md file in artifacts/
+        table_heading: Heading title where the table is located
+        primary_key: Column name to use as ID (e.g., 'ID' or 'Name')
+        data: Dict of {column_name: value} to upsert
+    """
+    try:
+        artifacts_dir = _resolve_agent_artifacts_dir(user_id, node_type, spoke_name)
+        full_path = secure_path_join(artifacts_dir, file_path)
+        
+        content = ""
+        if full_path.exists():
+            content = full_path.read_text(encoding='utf-8')
+        
+        lines = content.splitlines()
+        
+        # 1. Find the section
+        section_start = -1
+        heading_pattern = re.compile(r'^(#+)\s+' + re.escape(table_heading) + r'\s*$', re.IGNORECASE)
+        heading_level = 0
+        
+        for i, line in enumerate(lines):
+            match = heading_pattern.match(line)
+            if match:
+                section_start = i
+                heading_level = len(match.group(1))
+                break
+        
+        if section_start == -1:
+            # Section not found, create it at the end
+            if content and not content.endswith('\n'):
+                content += '\n\n'
+            new_section = f"# {table_heading}\n\n"
+            
+            # Create headers
+            headers = [primary_key] + [k for k in data.keys() if k != primary_key]
+            header_row = "| " + " | ".join(headers) + " |"
+            sep_row = "| " + " | ".join(["---"] * len(headers)) + " |"
+            data_row = "| " + " | ".join([str(data.get(h, "")) for h in headers]) + " |"
+            
+            new_section += header_row + "\n" + sep_row + "\n" + data_row + "\n"
+            
+            with open(full_path, 'a', encoding='utf-8') as f:
+                f.write(new_section)
+                
+            return ToolResult(success=True, message=f"✅ Created new section and table in {file_path}")
+
+        # 2. Find the table in this section
+        table_start = -1
+        table_end = -1
+        for i in range(section_start + 1, len(lines)):
+            # Check if we hit another heading of same or higher level
+            h_match = re.match(r'^(#+)', lines[i])
+            if h_match and len(h_match.group(1)) <= heading_level:
+                break
+                
+            if lines[i].strip().startswith('|'):
+                if table_start == -1:
+                    table_start = i
+                table_end = i
+        
+        if table_start == -1:
+            # Table not found in section, create it
+            headers = [primary_key] + [k for k in data.keys() if k != primary_key]
+            header_row = "| " + " | ".join(headers) + " |"
+            sep_row = "| " + " | ".join(["---"] * len(headers)) + " |"
+            data_row = "| " + " | ".join([str(data.get(h, "")) for h in headers]) + " |"
+            
+            lines.insert(section_start + 1, "")
+            lines.insert(section_start + 2, header_row)
+            lines.insert(section_start + 3, sep_row)
+            lines.insert(section_start + 4, data_row)
+            
+            full_path.write_text("\n".join(lines), encoding='utf-8')
+            return ToolResult(success=True, message=f"✅ Created new table in section '{table_heading}'")
+
+        # 3. Parse table
+        table_lines = lines[table_start:table_end+1]
+        header_line = table_lines[0]
+        # separator_line = table_lines[1] # Usually ---
+        
+        headers = [h.strip() for h in header_line.split('|') if h.strip()]
+        
+        if primary_key not in headers:
+            return ToolResult(success=False, message=f"Primary key '{primary_key}' not found in table headers: {headers}")
+            
+        pk_index = headers.index(primary_key)
+        
+        # Check for new columns
+        new_cols = [k for k in data.keys() if k not in headers]
+        if new_cols:
+            headers.extend(new_cols)
+            # Update header line
+            lines[table_start] = "| " + " | ".join(headers) + " |"
+            # Update separator line
+            lines[table_start + 1] = "| " + " | ".join(["---"] * len(headers)) + " |"
+            # Update all existing rows with empty cells for new columns
+            for r in range(table_start + 2, table_end + 1):
+                row_parts = [p.strip() for p in lines[r].split('|')]
+                # remove empty leading/trailing
+                if not row_parts[0]: row_parts.pop(0)
+                if row_parts and not row_parts[-1]: row_parts.pop()
+                
+                while len(row_parts) < len(headers):
+                    row_parts.append("")
+                lines[r] = "| " + " | ".join(row_parts) + " |"
+
+        # 4. Find and update or append row
+        row_found = False
+        target_pk_val = str(data.get(primary_key, ""))
+        
+        for r in range(table_start + 2, table_end + 1):
+            row_parts = [p.strip() for p in lines[r].split('|')]
+            if row_parts and not row_parts[0]: row_parts.pop(0)
+            if row_parts and not row_parts[-1]: row_parts.pop()
+            
+            if pk_index < len(row_parts) and row_parts[pk_index] == target_pk_val:
+                # Update row
+                new_row_parts = list(row_parts)
+                while len(new_row_parts) < len(headers):
+                    new_row_parts.append("")
+                    
+                for k, v in data.items():
+                    idx = headers.index(k)
+                    new_row_parts[idx] = str(v)
+                
+                lines[r] = "| " + " | ".join(new_row_parts) + " |"
+                row_found = True
+                break
+                
+        if not row_found:
+            # Append row
+            new_row_parts = [""] * len(headers)
+            for k, v in data.items():
+                idx = headers.index(k)
+                new_row_parts[idx] = str(v)
+            lines.insert(table_end + 1, "| " + " | ".join(new_row_parts) + " |")
+            
+        full_path.write_text("\n".join(lines), encoding='utf-8')
+        return ToolResult(
+            success=True, 
+            message=f"✅ {'Updated' if row_found else 'Inserted'} row in table under '{table_heading}'"
+        )
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to upsert table: {str(e)}")
+
+
+
+async def generate_mermaid_visualizer(
+    data: Any,
+    diagram_type: str,
+    title: str = "Diagram",
+    *,
+    user_id: str,
+    node_type: str,
+    spoke_name: Optional[str] = None,
+    **kwargs
+) -> ToolResult:
+    """
+    Convert data to Mermaid syntax and save as an artifact.
+    Args:
+        data: List or Dict to visualize
+        diagram_type: 'mindmap', 'pie', 'gantt', 'quadrant'
+        title: Title of the diagram
+    """
+    try:
+        mermaid_code = ""
+        
+        if diagram_type == 'mindmap':
+            mermaid_code = f"mindmap\n  root(({title}))\n"
+            if isinstance(data, list):
+                for item in data:
+                    mermaid_code += f"    {str(item)}\n"
+            elif isinstance(data, dict):
+                for k, v in data.items():
+                    mermaid_code += f"    {str(k)}\n"
+                    if isinstance(v, list):
+                        for sub in v: mermaid_code += f"      {str(sub)}\n"
+                    else:
+                        mermaid_code += f"      {str(v)}\n"
+                        
+        elif diagram_type == 'pie':
+            mermaid_code = f"pie title {title}\n"
+            if isinstance(data, dict):
+                for k, v in data.items():
+                    mermaid_code += f"    \"{k}\" : {v}\n"
+                    
+        elif diagram_type == 'gantt':
+            mermaid_code = f"gantt\n    title {title}\n    dateFormat  YYYY-MM-DD\n"
+            # Expecting list of dicts: [{name, start, end}]
+            if isinstance(data, list):
+                for task in data:
+                    name = task.get('name', 'Task')
+                    start = task.get('start', '2024-01-01')
+                    end = task.get('end', '2024-01-02')
+                    mermaid_code += f"    {name} : {start}, {end}\n"
+                    
+        elif diagram_type == 'quadrant':
+            mermaid_code = f"quadrantChart\n    title {title}\n    x-axis Low Priority --> High Priority\n    y-axis Low Complexity --> High Complexity\n"
+            # Expecting list of dicts: [{name, x, y}] x,y are 0.0-1.0
+            if isinstance(data, list):
+                for point in data:
+                    name = point.get('name', 'Point')
+                    x = point.get('x', 0.5)
+                    y = point.get('y', 0.5)
+                    mermaid_code += f"    {name}: [{x}, {y}]\n"
+        else:
+            return ToolResult(success=False, message=f"Unsupported diagram_type: {diagram_type}")
+
+        full_md = f"## {title}\n\n```mermaid\n{mermaid_code}```\n"
+        filename = f"visuals/{title.lower().replace(' ', '_')}.md"
+        
+        # Save as artifact
+        save_res = await save_artifact(
+            file_path=filename,
+            content=full_md,
+            overwrite=True,
+            user_id=user_id,
+            node_type=node_type,
+            spoke_name=spoke_name
+        )
+        
+        if save_res.success:
+            return ToolResult(
+                success=True,
+                message=f"✅ Generated {diagram_type} and saved to {filename}",
+                data={"mermaid_code": mermaid_code, "file_path": filename}
+            )
+        else:
+            return save_res
+            
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to generate visualization: {str(e)}")
+
+
+async def compare_md_sections(
+    source: Dict[str, str],
+    target: Dict[str, str],
+    output_format: str = "summary",
+    *,
+    user_id: str,
+    node_type: str,
+    spoke_name: Optional[str] = None,
+    **kwargs
+) -> ToolResult:
+    """
+    Compare two sections from the same or different files.
+    Args:
+        source: {'file_path': str, 'section_title': str}
+        target: {'file_path': str, 'section_title': str}
+        output_format: 'summary', 'table', 'diff_block'
+    """
+    try:
+        def get_section_content(file_path: str, section_title: str) -> str:
+            # Re-use read_md_section logic (simplified)
+            artifacts_dir = _resolve_agent_artifacts_dir(user_id, node_type, spoke_name)
+            full_path = secure_path_join(artifacts_dir, file_path)
+            if not full_path.exists(): return f"[File {file_path} not found]"
+            
+            content = full_path.read_text(encoding='utf-8')
+            lines = content.splitlines()
+            
+            # Find heading
+            start = -1
+            heading_level = 0
+            pattern = re.compile(r'^(#+)\s+' + re.escape(section_title) + r'\s*$', re.IGNORECASE)
+            for i, line in enumerate(lines):
+                match = pattern.match(line)
+                if match:
+                    start = i
+                    heading_level = len(match.group(1))
+                    break
+            
+            if start == -1: return f"[Section {section_title} not found]"
+            
+            result = []
+            for i in range(start + 1, len(lines)):
+                h_match = re.match(r'^(#+)', lines[i])
+                if h_match and len(h_match.group(1)) <= heading_level: break
+                result.append(lines[i])
+            return "\n".join(result).strip()
+
+        source_text = get_section_content(source.get('file_path', ''), source.get('section_title', ''))
+        target_text = get_section_content(target.get('file_path', ''), target.get('section_title', ''))
+        
+        import difflib
+        diff = list(difflib.ndiff(source_text.splitlines(), target_text.splitlines()))
+        
+        if output_format == "diff_block":
+            diff_text = "\n".join(diff)
+            return ToolResult(success=True, message=f"```diff\n{diff_text}\n```", data={"diff": diff})
+        elif output_format == "table":
+            # Simplified table
+            rows = ["| Source | Target | Change |", "| --- | --- | --- |"]
+            for line in diff:
+                if line.startswith("- "): rows.append(f"| {line[2:]} | | Removed |")
+                elif line.startswith("+ "): rows.append(f"| | {line[2:]} | Added |")
+            return ToolResult(success=True, message="\n".join(rows), data={"diff": diff})
+        else:
+            # Summary
+            added = len([l for l in diff if l.startswith("+ ")])
+            removed = len([l for l in diff if l.startswith("- ")])
+            return ToolResult(
+                success=True, 
+                message=f"📊 Comparison of '{source.get('section_title')}' vs '{target.get('section_title')}':\n- Added: {added} lines\n- Removed: {removed} lines",
+                data={"added_count": added, "removed_count": removed, "diff": diff}
+            )
+            
+    except Exception as e:
+        return ToolResult(success=False, message=f"Failed to compare sections: {str(e)}")
+
+
 async def read_reference(
     file_path: str,
     *,
@@ -2477,6 +2869,101 @@ async def clone_this_spoke(
 # ==============================================================================
 
 HUB_TOOL_DEFINITIONS = [
+    {
+        "name": "query_md_elements",
+        "description": "Extract specific elements (table, list, checkbox, paragraph) from a Markdown file.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Relative path within artifacts/"
+                },
+                "element_type": {
+                    "type": "string",
+                    "enum": ["table", "list", "checkbox", "paragraph"],
+                    "description": "Type of element to extract"
+                },
+                "filter_pattern": {
+                    "type": "string",
+                    "description": "Optional regex or keyword to filter elements"
+                }
+            },
+            "required": ["file_path", "element_type"]
+        }
+    },
+    {
+        "name": "upsert_md_table",
+        "description": "Update or insert a row in a Markdown table under a specific heading.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Path to the .md file in artifacts/"
+                },
+                "table_heading": {
+                    "type": "string",
+                    "description": "Heading title where the table is located"
+                },
+                "primary_key": {
+                    "type": "string",
+                    "description": "Column name to use as ID (e.g., 'ID' or 'Name')"
+                },
+                "data": {
+                    "type": "object",
+                    "description": "Dict of {column_name: value} to upsert"
+                }
+            },
+            "required": ["file_path", "table_heading", "primary_key", "data"]
+        }
+    },
+    {
+        "name": "compare_md_sections",
+        "description": "Compare two sections from the same or different files and extract differences.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "source": {
+                    "type": "object",
+                    "description": "Source: {'file_path': str, 'section_title': str}"
+                },
+                "target": {
+                    "type": "object",
+                    "description": "Target: {'file_path': str, 'section_title': str}"
+                },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["summary", "table", "diff_block"],
+                    "description": "Format of the comparison output"
+                }
+            },
+            "required": ["source", "target"]
+        }
+    },
+    {
+        "name": "generate_mermaid_visualizer",
+        "description": "Convert data to Mermaid syntax and save as an artifact.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "object",
+                    "description": "List or Dict to visualize"
+                },
+                "diagram_type": {
+                    "type": "string",
+                    "enum": ["mindmap", "pie", "gantt", "quadrant"],
+                    "description": "Type of diagram"
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Title of the diagram"
+                }
+            },
+            "required": ["data", "diagram_type"]
+        }
+    },
     {
         "name": "run_cleanup_cycle",
         "description": "Run the Hub's self-maintenance cycle to detect overloaded days, stale tasks, and scheduling conflicts.",
@@ -3680,6 +4167,101 @@ SPOKE_TOOL_DEFINITIONS = [
         }
     },
     {
+        "name": "query_md_elements",
+        "description": "Extract specific elements (table, list, checkbox, paragraph) from a Markdown file.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Relative path within artifacts/"
+                },
+                "element_type": {
+                    "type": "string",
+                    "enum": ["table", "list", "checkbox", "paragraph"],
+                    "description": "Type of element to extract"
+                },
+                "filter_pattern": {
+                    "type": "string",
+                    "description": "Optional regex or keyword to filter elements"
+                }
+            },
+            "required": ["file_path", "element_type"]
+        }
+    },
+    {
+        "name": "upsert_md_table",
+        "description": "Update or insert a row in a Markdown table under a specific heading.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Path to the .md file in artifacts/"
+                },
+                "table_heading": {
+                    "type": "string",
+                    "description": "Heading title where the table is located"
+                },
+                "primary_key": {
+                    "type": "string",
+                    "description": "Column name to use as ID (e.g., 'ID' or 'Name')"
+                },
+                "data": {
+                    "type": "object",
+                    "description": "Dict of {column_name: value} to upsert"
+                }
+            },
+            "required": ["file_path", "table_heading", "primary_key", "data"]
+        }
+    },
+    {
+        "name": "generate_mermaid_visualizer",
+        "description": "Convert data to Mermaid syntax and save as an artifact.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "object",
+                    "description": "List or Dict to visualize"
+                },
+                "diagram_type": {
+                    "type": "string",
+                    "enum": ["mindmap", "pie", "gantt", "quadrant"],
+                    "description": "Type of diagram"
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Title of the diagram"
+                }
+            },
+            "required": ["data", "diagram_type"]
+        }
+    },
+    {
+        "name": "compare_md_sections",
+        "description": "Compare two sections from the same or different files and extract differences.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "source": {
+                    "type": "object",
+                    "description": "Source: {'file_path': str, 'section_title': str}"
+                },
+                "target": {
+                    "type": "object",
+                    "description": "Target: {'file_path': str, 'section_title': str}"
+                },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["summary", "table", "diff_block"],
+                    "description": "Format of the comparison output"
+                }
+            },
+            "required": ["source", "target"]
+        }
+    },
+    {
         "name": "init_plan",
         "description": "Initialize a PLAN.md file with a standard template (Goal, Strategy, etc).",
         "parameters": {
@@ -3751,6 +4333,7 @@ TOOL_FUNCTIONS = {
     "search_places": search_places,
     "research_url": research_url,
     "generate_image": generate_image,
+    "generate_mermaid_visualizer": generate_mermaid_visualizer,
     # File operation tools
     "save_artifact": save_artifact,
     "update_artifact": update_artifact,
@@ -3768,6 +4351,9 @@ TOOL_FUNCTIONS = {
     "update_user_condition": update_user_condition,
     "get_current_condition": get_current_condition,
     "reset_user_condition": reset_user_condition,
+    "query_md_elements": query_md_elements,
+    "upsert_md_table": upsert_md_table,
+    "compare_md_sections": compare_md_sections,
     
     # MD Tools
     "get_md_structure": get_md_structure,

@@ -147,9 +147,12 @@ Focus on delivering high-quality work within this context.
 - `get_md_structure(file_path)` - Extract heading hierarchy from a Markdown file
 - `read_md_section(file_path, section_title)` - Read a specific section of a Markdown file
 - `update_md_section(file_path, section_title, content, mode)` - Update or append to a Markdown section
+- `query_md_elements(file_path, element_type, filter_pattern)` - Extract tables, lists, tasks, or paragraphs
+- `upsert_md_table(file_path, table_heading, primary_key, data)` - Update or insert a row in a Markdown table
 - `init_plan(goal, strategy)` - Initialize `PLAN.md` with a standard template
 - `get_current_status()` - Get `# Current Status` from `PLAN.md`
 - `update_plan_progress(summary, percent_complete)` - Update progress and logs in `PLAN.md`
+- `compare_md_sections(source, target, output_format)` - Compare two markdown sections (even across files)
 
 ### Hub Communication & Session
 - `report_to_hub(summary, request)` - Send updates or requests to the Hub's inbox. This is asynchronous and used for non-urgent reporting.
@@ -157,6 +160,7 @@ Focus on delivering high-quality work within this context.
 - `ask_spoke(spoke_name, message)` - Synchronously ask **another spoke** a question and get a response. NOTE: Direct synchronous chat with the Hub is prohibited.
 - `delete_spoke()` - Delete this spoke permanently (use with caution!)
 - `archive_session()` - Archive conversation and start fresh
+- `generate_mermaid_visualizer(data, diagram_type, title)` - Create Mermaid charts (mindmap, pie, gantt, quadrant) from data
 
 ## Tool Parameters: Required vs Optional
 
@@ -184,6 +188,7 @@ Focus on delivering high-quality work within this context.
 | `search_places` | `query` | `lat`, `lng` |
 | `research_url` | `urls`, `query` | - |
 | `generate_image` | `prompt` | `filename`, `aspect_ratio` |
+| `generate_mermaid_visualizer` | `data`, `diagram_type` | `title` |
 | `report_to_hub` | `summary` | `request` |
 | `request_coordination` | `intent`, `payload` | `urgency` |
 | `ask_spoke` | `spoke_name`, `message` | - |
@@ -193,6 +198,9 @@ Focus on delivering high-quality work within this context.
 | `get_md_structure` | `file_path` | - |
 | `read_md_section` | `file_path`, `section_title` | - |
 | `update_md_section` | `file_path`, `section_title`, `content` | `mode` |
+| `query_md_elements` | `file_path`, `element_type` | `filter_pattern` |
+| `upsert_md_table` | `file_path`, `table_heading`, `primary_key`, `data` | - |
+| `compare_md_sections` | `source`, `target` | `output_format` |
 | `init_plan` | `goal`, `strategy` | - |
 | `get_current_status` | - | - |
 | `update_plan_progress` | `summary` | `percent_complete` |
