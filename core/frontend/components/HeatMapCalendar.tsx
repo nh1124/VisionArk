@@ -43,8 +43,9 @@ export default function HeatMapCalendar({
         try {
             // Note: The backend needs to handle include_completed if we want exact filtering there.
             // For now we pass it as a param.
+            const statusParams = includeCompleted ? "status=todo&status=done" : "status=todo";
             const response = await apiFetch(
-                `/api/lbs/heatmap?start=${startDate}&end=${endDate}&include_completed=${includeCompleted}`
+                `/api/lbs/heatmap?start=${startDate}&end=${endDate}&${statusParams}`
             );
             const data = await response.json();
             const days = Array.isArray(data) ? data : (data.days || []);

@@ -63,7 +63,7 @@ export default function DashboardPage() {
             const detailJson = await res.json();
 
             // Fetch tasks for that day to show in list
-            const taskRes = await apiFetch(`/api/lbs/tasks?target_date=${dateStr}&include_completed=true`);
+            const taskRes = await apiFetch(`/api/lbs/tasks?target_date=${dateStr}`);
             const taskJson = await taskRes.json();
 
             setDayDetails({

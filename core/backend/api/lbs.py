@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from datetime import date
 from typing import List, Optional, Dict
 
-from services.lbs_client import LBSClient
+from services.lbs_client import LBSClient, TaskStatus
 from services.auth import resolve_identity, Identity, bearer_scheme
 from models.database import get_async_db
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -242,9 +242,13 @@ async def create_exception(exc: ExceptionCreate, client: LBSClient = Depends(get
 
 
 @router.get("/calculate/{target_date}")
-async def calculate_load(target_date: date, client: LBSClient = Depends(get_lbs_client)):
+async def calculate_load(
+    target_date: date,
+    status: Optional[List[str]] = Query(None),
+    client: LBSClient = Depends(get_lbs_client)
+):
     try:
-        return await client.calculate_load(target_date)
+        return await client.calculate_load(target_date, statuses=status)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -253,10 +257,16 @@ async def get_heatmap(
     start: date,
     end: date,
     include_completed: bool = True,
+    status: Optional[List[str]] = Query(None),
     client: LBSClient = Depends(get_lbs_client)
 ):
     try:
-        return await client.get_heatmap(start, end, statuses=[TaskStatus.DONE, TaskStatus.TODO] if include_completed else [TaskStatus.TODO])
+        if status:
+            return await client.get_heatmap(start, end, statuses=status)
+        
+        # Backward compatibility for include_completed
+        statuses = [TaskStatus.DONE, TaskStatus.TODO] if include_completed else [TaskStatus.TODO]
+        return await client.get_heatmap(start, end, statuses=statuses)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -264,10 +274,11 @@ async def get_heatmap(
 async def get_trends(
     weeks: int = 12,
     start_date: Optional[date] = None,
+    status: Optional[List[str]] = Query(None),
     client: LBSClient = Depends(get_lbs_client)
 ):
     try:
-        return await client.get_trends(weeks, start_date)
+        return await client.get_trends(weeks, start_date, statuses=status)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -275,10 +286,11 @@ async def get_trends(
 async def get_context_distribution(
     start: date,
     end: date,
+    status: Optional[List[str]] = Query(None),
     client: LBSClient = Depends(get_lbs_client)
 ):
     try:
-        return await client.get_context_distribution(start, end)
+        return await client.get_context_distribution(start, end, statuses=status)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -319,8 +331,6 @@ async def complete_task(
     client: LBSClient = Depends(get_lbs_client)
 ):
     try:
-        from services.lbs_client import TaskStatus
-        status_val = req.status
-        return await client.toggle_task_completion(task_id, req.target_date, status_val)
+        return await client.toggle_task_completion(task_id, req.target_date, req.status)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

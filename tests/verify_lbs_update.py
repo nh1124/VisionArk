@@ -29,7 +29,7 @@ class TestLBSClientUpdate(unittest.IsolatedAsyncioTestCase):
             api_key="test-api-key"
         )
 
-    @patch('httpx.AsyncClient.request')
+    @patch('httpx.AsyncClient.request', new_callable=AsyncMock)
     async def test_list_tasks_renaming(self, mock_request):
         """Verify that list_tasks calls the correct endpoint."""
         mock_resp = MagicMock()
@@ -51,7 +51,7 @@ class TestLBSClientUpdate(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(headers["X-API-KEY"], "test-api-key")
         self.assertNotIn("X-SERVICE-KEY", headers)
 
-    @patch('httpx.AsyncClient.request')
+    @patch('httpx.AsyncClient.request', new_callable=AsyncMock)
     async def test_toggle_task_completion(self, mock_request):
         """Verify toggle_task_completion calls the correct endpoint."""
         mock_resp = MagicMock()
@@ -67,7 +67,7 @@ class TestLBSClientUpdate(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[1], "tasks/T1/complete")
         self.assertEqual(kwargs['json']['status'], "done")
 
-    @patch('httpx.AsyncClient.request')
+    @patch('httpx.AsyncClient.request', new_callable=AsyncMock)
     async def test_get_heatmap_statuses(self, mock_request):
         """Verify get_heatmap passes statuses correctly."""
         mock_resp = MagicMock()
@@ -82,9 +82,7 @@ class TestLBSClientUpdate(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs['params']['status'], ["done"])
 
 async def main():
-    suite = unittest.TestLoader().loadTestsFromTestCase(TestLBSClientUpdate)
-    runner = unittest.TextTestRunner()
-    runner.run(suite)
+    unittest.main()
 
 if __name__ == "__main__":
     asyncio.run(main())
