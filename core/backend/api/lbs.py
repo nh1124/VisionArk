@@ -139,7 +139,7 @@ async def list_tasks(
     logger = logging.getLogger(__name__)
     try:
         logger.info(f"list_tasks called: context={context}, active={active}, target_date={target_date}")
-        result = await lbs.get_tasks(context=context, active=active, target_date=target_date)
+        result = await lbs.list_tasks(context=context, active=active, target_date=target_date)
         logger.info(f"list_tasks returning {len(result)} tasks")
         return result
     except Exception as e:
@@ -256,7 +256,7 @@ async def get_heatmap(
     client: LBSClient = Depends(get_lbs_client)
 ):
     try:
-        return await client.get_heatmap(start, end, include_completed)
+        return await client.get_heatmap(start, end, statuses=[TaskStatus.DONE, TaskStatus.TODO] if include_completed else [TaskStatus.TODO])
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

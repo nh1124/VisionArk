@@ -266,7 +266,7 @@ async def delete_spoke(
         # Clean up LBS tasks
         try:
             client = await _get_lbs_client(user_id, session)
-            tasks = await client.get_tasks(context=spoke_name)
+            tasks = await client.list_tasks(context=spoke_name)
             for t in tasks:
                 await client.delete_task(t["task_id"])
         except Exception as lbs_err:
@@ -387,7 +387,7 @@ async def list_tasks(
     try:
         client = await _get_lbs_client(user_id, session)
         target_context = context or context_name
-        tasks = await client.get_tasks(context=target_context)
+        tasks = await client.list_tasks(context=target_context)
         
         if not tasks:
             return ToolResult(
@@ -728,7 +728,7 @@ async def run_cleanup_cycle(
         # 2. Stale Check & Conflict Check
         # Note: Stale check (tasks > 2 weeks old) requires full task list and update timestamps.
         # For now, we report high-level scheduling conflicts found in the heatmap.
-        all_tasks = await client.get_tasks()
+        all_tasks = await client.list_tasks()
         
         # 3. Conflict Check: Proactively identifies potential "milestone" collisions
         # (Heuristic: Multiple tasks in same context on high-load days)
@@ -4029,7 +4029,7 @@ SPOKE_TOOL_DEFINITIONS = [
                 },
                 "status": {
                     "type": "string",
-                    "enum": ["done", "skipped", "todo", "in_progress"],
+                    "enum": ["done", "skipped", "todo"],
                     "description": "The status to record. Default is 'done'."
                 }
             },
