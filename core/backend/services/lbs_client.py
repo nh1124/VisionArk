@@ -9,7 +9,6 @@ class TaskStatus(str, enum.Enum):
     TODO = "todo"
     DONE = "done"
     SKIPPED = "skipped"
-    IN_PROGRESS = "in_progress"
 
 class LBSClient:
     """
