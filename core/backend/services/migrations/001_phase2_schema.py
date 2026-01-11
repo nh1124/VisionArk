@@ -18,38 +18,6 @@ class Migration001(Migration):
             """))
         except Exception:
             pass  # Column might already exist
-        
-        # Add RAG tracking columns
-        try:
-            session.execute(text("""
-                CREATE TABLE IF NOT EXISTS rag_metadata (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    spoke_name TEXT NOT NULL,
-                    file_name TEXT NOT NULL,
-                    file_path TEXT NOT NULL,
-                    file_hash TEXT,
-                    indexed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    chunk_count INTEGER DEFAULT 0,
-                    UNIQUE(spoke_name, file_path)
-                )
-            """))
-        except Exception:
-            pass
-        
-        # Add context rotation tracking
-        try:
-            session.execute(text("""
-                CREATE TABLE IF NOT EXISTS archived_contexts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    spoke_name TEXT NOT NULL,
-                    archived_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    summary_path TEXT,
-                    log_path TEXT,
-                    token_count INTEGER
-                )
-            """))
-        except Exception:
-            pass
     
     def down(self, session):
         """Revert migration"""
