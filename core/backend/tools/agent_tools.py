@@ -94,33 +94,21 @@ async def _get_lbs_client(user_id: str, session: AsyncSession) -> LBSClient:
     return LBSClient(base_url=lbs_url, api_key=lbs_api_key)
 
 
-async def _get_file_service(user_id: str, session: AsyncSession) -> "FileService":
-    """Get FileService for the user"""
-    from services.file_service import FileService
-    from agents.hub_agent import HubAgent
-    api_key = await HubAgent._get_api_key(user_id, session)
-    return FileService(session, user_id, api_key=api_key)
-
-
 def _get_kc_service(user_id: str, session: AsyncSession) -> KnowledgeCoreService:
     """Get KnowledgeCore service for the user"""
     return KnowledgeCoreService(session, user_id)
 
 
 async def _get_file_service(user_id: str, session: AsyncSession) -> 'FileService':
-    """Get FileService for the user with API key configuration"""
+    """Get FileService for the user with standardized Gemini API key"""
     from models.database import UserSettings
-    from utils.encryption import decrypt_string
     from services.file_service import FileService
     
     api_key = None
     result = await session.execute(select(UserSettings).filter(UserSettings.user_id == user_id))
     settings = result.scalars().first()
-    if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
-        try:
-            api_key = decrypt_string(settings.ai_config["gemini_api_key"])
-        except Exception:
-            pass
+    if settings:
+        api_key = settings.gemini_api_key
             
     return FileService(session, user_id, api_key=api_key)
 
@@ -2219,16 +2207,12 @@ async def google_search(query: str, user_id: str, session: AsyncSession) -> Tool
     """Wrapper function for Gemini Google Search research capability"""
     from google.genai import Client, types
     from models.database import UserSettings
-    from utils.encryption import decrypt_string
     
     api_key = None
     result = await session.execute(select(UserSettings).filter(UserSettings.user_id == user_id))
     settings = result.scalars().first()
-    if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
-        try:
-            api_key = decrypt_string(settings.ai_config["gemini_api_key"])
-        except Exception:
-            pass
+    if settings:
+        api_key = settings.gemini_api_key
             
     if not api_key:
         return ToolResult(success=False, message="Gemini API Key not found for research")
@@ -2269,16 +2253,12 @@ async def execute_code(prompt: str, user_id: str, session: AsyncSession) -> Tool
     """Perform complex calculations or simulations via Gemini Code Execution"""
     from google.genai import Client, types
     from models.database import UserSettings
-    from utils.encryption import decrypt_string
     
     api_key = None
     result = await session.execute(select(UserSettings).filter(UserSettings.user_id == user_id))
     settings = result.scalars().first()
-    if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
-        try:
-            api_key = decrypt_string(settings.ai_config["gemini_api_key"])
-        except Exception:
-            pass
+    if settings:
+        api_key = settings.gemini_api_key
             
     if not api_key:
         return ToolResult(success=False, message="Gemini API Key not found for code execution")
@@ -2302,16 +2282,12 @@ async def search_places(query: str, user_id: str, session: AsyncSession, lat: fl
     """Search for places, businesses, and directions using Google Maps grounding"""
     from google.genai import Client, types
     from models.database import UserSettings
-    from utils.encryption import decrypt_string
     
     api_key = None
     result = await session.execute(select(UserSettings).filter(UserSettings.user_id == user_id))
     settings = result.scalars().first()
-    if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
-        try:
-            api_key = decrypt_string(settings.ai_config["gemini_api_key"])
-        except Exception:
-            pass
+    if settings:
+        api_key = settings.gemini_api_key
             
     if not api_key:
         return ToolResult(success=False, message="Gemini API Key not found for maps")
@@ -2344,16 +2320,12 @@ async def research_url(urls: List[str], query: str, user_id: str, session: Async
     """Extract information or summarize content from specific URLs using Gemini grounding"""
     from google.genai import Client, types
     from models.database import UserSettings
-    from utils.encryption import decrypt_string
     
     api_key = None
     result = await session.execute(select(UserSettings).filter(UserSettings.user_id == user_id))
     settings = result.scalars().first()
-    if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
-        try:
-            api_key = decrypt_string(settings.ai_config["gemini_api_key"])
-        except Exception:
-            pass
+    if settings:
+        api_key = settings.gemini_api_key
             
     if not api_key:
         return ToolResult(success=False, message="Gemini API Key not found for URL research")
@@ -2405,11 +2377,8 @@ async def generate_image(
     api_key = None
     result = await session.execute(select(UserSettings).filter(UserSettings.user_id == user_id))
     settings = result.scalars().first()
-    if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
-        try:
-            api_key = decrypt_string(settings.ai_config["gemini_api_key"])
-        except Exception:
-            pass
+    if settings:
+        api_key = settings.gemini_api_key
             
     if not api_key:
         return ToolResult(success=False, message="Gemini API Key not found for image generation")

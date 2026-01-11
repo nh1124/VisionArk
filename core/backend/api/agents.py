@@ -129,9 +129,7 @@ async def chat_with_hub(
         # Get user's Gemini API key for file upload
         result = await db.execute(select(UserSettings).filter(UserSettings.user_id == identity.user_id))
         settings = result.scalars().first()
-        api_key = None
-        if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
-            api_key = decrypt_string(settings.ai_config["gemini_api_key"])
+        api_key = settings.gemini_api_key if settings else None
         
         if api_key:
             try:

@@ -304,10 +304,7 @@ async def _get_user_api_key(db: AsyncSession, user_id: str) -> Optional[str]:
         UserSettings.user_id == user_id
     ))
     settings = result.scalars().first()
-    
-    if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
-        return decrypt_string(settings.ai_config["gemini_api_key"])
-    return None
+    return settings.gemini_api_key if settings else None
 
 
 # Create a separate router for generic file management

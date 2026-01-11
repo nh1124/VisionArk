@@ -93,6 +93,22 @@ class UserSettings(Base):
     general_settings = Column(JSON, default=dict) # { "theme": "dark", "language": "en" }
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    @property
+    def gemini_api_key(self) -> Optional[str]:
+        """Automatically decrypt and return the Gemini API key"""
+        if not self.ai_config:
+            return None
+            
+        encrypted_key = self.ai_config.get("gemini_api_key")
+        if not encrypted_key or encrypted_key == "********":
+            return None
+            
+        from utils.encryption import decrypt_string
+        try:
+            return decrypt_string(encrypted_key)
+        except Exception:
+            return None
+
 
 class ServiceRegistry(Base):
     """Registry of connected microservices (LBS, Knowledge Core, etc.)"""
@@ -109,6 +125,18 @@ class ServiceRegistry(Base):
     health_status = Column(String(50), nullable=True)  # "healthy", "unreachable", "error"
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, onupdate=datetime.utcnow)
+    
+    @property
+    def api_key(self) -> Optional[str]:
+        """Automatically decrypt and return the service API key"""
+        if not self.api_key_encrypted:
+            return None
+            
+        from utils.encryption import decrypt_string
+        try:
+            return decrypt_string(self.api_key_encrypted)
+        except Exception:
+            return None
     
     # Relationship
     user = relationship("User", back_populates="service_connections")
@@ -196,6 +224,37 @@ class ChatMessage(Base):
     
     # Relationship
     session = relationship("ChatSession", back_populates="messages")
+
+
+class ArchivedContext(Base):
+    """Archived conversation contexts and summaries"""
+    __tablename__ = "archived_contexts"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    node_id = Column(String(36), ForeignKey("nodes.id"), nullable=True, index=True)
+    spoke_name = Column(String(100), nullable=False, index=True)
+    archived_at = Column(DateTime, default=datetime.utcnow)
+    summary_path = Column(Text, nullable=True)
+    log_path = Column(Text, nullable=True)
+    token_count = Column(Integer, nullable=True)
+    
+    # Relationships
+    user = relationship("User")
+    node = relationship("Node")
+
+
+class RagMetadata(Base):
+    """Tracking metadata for RAG-indexed files"""
+    __tablename__ = "rag_metadata"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    spoke_name = Column(String(100), nullable=False, index=True)
+    file_name = Column(String(255), nullable=False)
+    file_path = Column(String(512), nullable=False)
+    file_hash = Column(String(128), nullable=True)
+    indexed_at = Column(DateTime, default=datetime.utcnow)
+    chunk_count = Column(Integer, default=0)
 
 
 class UploadedFile(Base):

@@ -67,13 +67,7 @@ class SpokeAgent(BaseAgent):
         )
         settings = result.scalars().first()
         
-        if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
-            encrypted_key = settings.ai_config["gemini_api_key"]
-            if encrypted_key == "********":
-                return None
-            return decrypt_string(encrypted_key)
-            
-        return None
+        return settings.gemini_api_key if settings else None
 
     def __init__(self, user_id: str, spoke_name: str, db_session: AsyncSession, node_id: str, api_key: Optional[str] = None):
         super().__init__(node_id=node_id, db_session=db_session, api_key=api_key, user_id=user_id)
@@ -237,16 +231,20 @@ Files in your reference library are automatically available. Use them to provide
         )
         profile = result.scalars().first()
         
-        spoke_specific = ""
         if profile and profile.system_prompt:
-            spoke_specific = "\n\n" + profile.system_prompt
+            base_prompt = f"Agent Persona:\n{profile.system_prompt}"
+        else:
+            base_prompt = f"You are the {self.spoke_name} Spoke agent."
+            
+        # Add summary from previous sessions
+        summary_context = await self._load_latest_summary(context_type="spoke", context_name=self.spoke_name)
         
-        # 2. Combine with global prompt
+        # Combine with global prompt and default spoke prompt
         global_prompt = get_user_global_prompt(self.user_id)
         separator = f"\n\n---\n\n# {self.spoke_name.replace('_', ' ').title()} (Role-Specific Instructions)\n\n" if global_prompt else ""
         
-        # New construction: global_prompt + default_spoke_prompt + spoke_specific
-        return global_prompt + separator + self._get_default_spoke_prompt() + spoke_specific
+        # New construction: global_prompt + default_spoke_prompt + summary_context + base_prompt
+        return global_prompt + separator + self._get_default_spoke_prompt() + "\n\n" + summary_context + "\n\n" + base_prompt
     
     def get_node_name(self) -> str:
         return self.spoke_name

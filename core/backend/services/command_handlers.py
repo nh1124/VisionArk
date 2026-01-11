@@ -7,6 +7,7 @@ from pathlib import Path
 from datetime import datetime, date
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
+import uuid
 
 from services.command_parser import register_command, CommandResult, _registry
 from services.inbox_handler import InboxHandler
@@ -468,9 +469,23 @@ async def handle_archive(args: List[str], context_type: str = "hub", context_nam
         active_session = result.scalars().first()
         
         if active_session:
+            # --- New: Summary-then-Rotate logic ---
+            try:
+                from services.context_manager import ContextManager
+                manager = ContextManager(
+                    user_id=user_id,
+                    context_type=node.node_type.lower(),
+                    context_name=node.name,
+                    session=session
+                )
+                await manager.archive_context(force=True) # This handles summary + record keeping
+            except Exception as summary_err:
+                print(f"[Archive] Summary generation failed during archive: {summary_err}")
+                # Continue with rotation even if summary fails to avoid blocking the user
+            
             active_session.is_archived = True
             await session.commit()
-            
+           
         # 4. Create new session
         new_session = ChatSession(
             id=str(uuid.uuid4()),

@@ -22,14 +22,7 @@ async def _get_lbs_client(user_id: str, db: AsyncSession) -> Optional[LBSClient]
     if not service:
         return None
         
-    api_key = None
-    if service.api_key_encrypted:
-        try:
-            api_key = decrypt_string(service.api_key_encrypted)
-        except Exception:
-            pass
-            
-    return LBSClient(base_url=service.base_url, api_key=api_key)
+    return LBSClient(base_url=service.base_url, api_key=service.api_key)
 
 def _get_today_jst() -> str:
     """Get current date in JST (YYYY-MM-DD)."""

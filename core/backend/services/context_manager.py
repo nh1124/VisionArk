@@ -43,49 +43,70 @@ class ContextManager:
         self.logs_archive_dir = self.base_dir / "logs"
         self.logs_archive_dir.mkdir(parents=True, exist_ok=True)
         
-        self.llm = get_provider()
+        # Will be initialized on demand with user API key
+        self._llm = None
     
-    def get_conversation_history(self) -> List[Dict[str, str]]:
+    async def get_conversation_history(self) -> List[Dict[str, str]]:
         """
-        Load conversation history from chat log
+        Load conversation history from database (preferred) or chat log (fallback)
         """
+        if self.session:
+            from models.database import Node, ChatSession, ChatMessage
+            from sqlalchemy import select
+            
+            try:
+                # 1. Find the Node
+                node_result = await self.session.execute(select(Node).filter(
+                    Node.user_id == self.user_id,
+                    Node.name == self.context_name,
+                    Node.node_type == self.context_type.upper()
+                ))
+                node = node_result.scalars().first()
+                if not node:
+                    return []
+                
+                # 2. Get active session
+                session_result = await self.session.execute(select(ChatSession).filter(
+                    ChatSession.node_id == node.id,
+                    ChatSession.is_archived == False
+                ).order_by(ChatSession.created_at.desc()))
+                chat_session = session_result.scalars().first()
+                if not chat_session:
+                    return []
+                
+                # 3. Get messages
+                msg_result = await self.session.execute(select(ChatMessage).filter(
+                    ChatMessage.session_id == chat_session.id
+                ).order_by(ChatMessage.created_at.asc()))
+                db_messages = msg_result.scalars().all()
+                
+                return [
+                    {"role": m.role, "content": m.content}
+                    for m in db_messages
+                ]
+            except Exception as e:
+                print(f"[ContextManager] DB history fetch failed: {e}")
+                # Fall through to legacy log check
+        
+        # Legacy: Load conversation history from chat log
         if not self.chat_log_path.exists():
             return []
-        
-        messages = []
-        current_role = None
-        current_content = []
-        
-        with open(self.chat_log_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith("User:"):
-                    if current_role:
-                        messages.append({
-                            "role": current_role,
-                            "content": "\n".join(current_content)
-                        })
-                    current_role = "user"
-                    current_content = [line[5:].strip()]
-                elif line.startswith("Assistant:"):
-                    if current_role:
-                        messages.append({
-                            "role": current_role,
-                            "content": "\n".join(current_content)
-                        })
-                    current_role = "assistant"
-                    current_content = [line[10:].strip()]
-                elif line and current_role:
-                    current_content.append(line)
-        
-        if current_role and current_content:
-            messages.append({
-                "role": current_role,
-                "content": "\n".join(current_content)
-            })
-        
-        return messages
     
+    async def _get_llm(self):
+        """Lazy load LLM with user context"""
+        if self._llm:
+            return self._llm
+            
+        from models.database import UserSettings
+        from sqlalchemy import select
+        
+        result = await self.session.execute(select(UserSettings).filter(UserSettings.user_id == self.user_id))
+        settings = result.scalars().first()
+        api_key = settings.gemini_api_key if settings else None
+        
+        self._llm = get_provider(api_key=api_key)
+        return self._llm
+
     async def generate_summary(self, conversation: List[Dict[str, str]]) -> str:
         """
         Generate AI summary of conversation asynchronously
@@ -103,30 +124,25 @@ Format as markdown with these sections. Be concise but comprehensive.
 Conversation to summarize:
 ---
 """
-        for msg in conversation[-50:]:
+        for msg in conversation:
             summary_prompt += f"\n{msg['role'].capitalize()}: {msg['content']}\n"
         
         summary_prompt += "\n---\nGenerate the summary now:"
         
         try:
+            llm = await self._get_llm()
             messages = [Message(role="user", content=summary_prompt)]
-            response = await self.llm.complete_async(messages, temperature=0.3)
+            response = await llm.complete_async(messages, temperature=0.3)
             return response.content
         except Exception as e:
             return f"Summary generation failed: {str(e)}\n\nConversation had {len(conversation)} messages."
     
     async def archive_context(self, force: bool = False) -> Dict:
         """
-        Archive current context and rotate logs asynchronously
+        Archive current context asynchronously. 
+        Supports injecting external 'conversation' data or defaults to get_conversation_history().
         """
-        if not self.chat_log_path.exists():
-            return {
-                "archived": False,
-                "reason": "no_chat_log",
-                "message": "No chat history to archive"
-            }
-        
-        conversation = await asyncio.to_thread(self.get_conversation_history)
+        conversation = await self.get_conversation_history()
         
         if not conversation and not force:
             return {
@@ -137,29 +153,33 @@ Conversation to summarize:
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         summary = await self.generate_summary(conversation)
-        summary_path = self.base_dir / f"archived_summary_{timestamp}.md"
+        summary_path = self.logs_archive_dir / f"archived_summary_{timestamp}.md"
         await asyncio.to_thread(summary_path.write_text, summary, encoding='utf-8')
         
-        archived_log_path = self.logs_archive_dir / f"chat_{timestamp}.log"
-        await asyncio.to_thread(shutil.move, str(self.chat_log_path), str(archived_log_path))
+        if self.chat_log_path.exists():
+            # Only rotate files if we didn't use injected conversation (Legacy Sync)
+            archived_log_path = self.logs_archive_dir / f"chat_{timestamp}.log"
+            await asyncio.to_thread(shutil.move, str(self.chat_log_path), str(archived_log_path))
+            await asyncio.to_thread(self.chat_log_path.touch)
+        else:
+            # If we had injected data or no log file, just record None for log path
+            archived_log_path = None
         
-        await asyncio.to_thread(self.chat_log_path.touch)
-        
-        if self.session and self.context_type == "spoke":
+        if self.session:
             await self._save_archive_record(summary_path, archived_log_path, len(conversation))
         
         return {
             "archived": True,
             "timestamp": timestamp,
             "summary_path": str(summary_path),
-            "log_path": str(archived_log_path),
+            "log_path": str(archived_log_path) if archived_log_path else None,
             "message_count": len(conversation),
             "message": f"✅ Archived {len(conversation)} messages. Context refreshed."
         }
     
     async def get_latest_summary(self) -> Optional[str]:
         """Get the most recent archived summary asynchronously"""
-        summaries = sorted(self.base_dir.glob("archived_summary_*.md"))
+        summaries = sorted(self.logs_archive_dir.glob("archived_summary_*.md"))
         
         if not summaries:
             return None
@@ -170,7 +190,7 @@ Conversation to summarize:
     
     async def get_stats(self) -> Dict:
         """Get context statistics"""
-        history = await asyncio.to_thread(self.get_conversation_history)
+        history = await self.get_conversation_history()
         archives = await self.get_archive_history()
         
         return {
@@ -184,32 +204,35 @@ Conversation to summarize:
     
     async def get_archive_history(self) -> List[Dict]:
         """Get list of all archived contexts asynchronously"""
-        if self.context_type == "spoke" and self.session:
-            query = text("""
-                SELECT id, archived_at, summary_path, log_path, token_count
-                FROM archived_contexts
-                WHERE spoke_name = :spoke_name AND user_id = :user_id
-                ORDER BY archived_at DESC
-            """)
+        if self.session:
+            from models.database import ArchivedContext
+            from sqlalchemy import select
             
-            result = await self.session.execute(query, {
-                "spoke_name": self.context_name,
-                "user_id": self.user_id
-            })
-            
-            return [
-                {
-                    "id": row.id,
-                    "archived_at": row.archived_at,
-                    "summary_path": row.summary_path,
-                    "log_path": row.log_path,
-                    "message_count": row.token_count
-                }
-                for row in result
-            ]
+            try:
+                result = await self.session.execute(
+                    select(ArchivedContext).filter(
+                        ArchivedContext.spoke_name == self.context_name,
+                        ArchivedContext.user_id == self.user_id
+                    ).order_by(ArchivedContext.archived_at.desc())
+                )
+                archives = result.scalars().all()
+                
+                return [
+                    {
+                        "id": row.id,
+                        "archived_at": row.archived_at,
+                        "summary_path": row.summary_path,
+                        "log_path": row.log_path,
+                        "message_count": row.token_count
+                    }
+                    for row in archives
+                ]
+            except Exception as e:
+                print(f"[ContextManager] DB archive fetch failed: {e}")
+                # Fall through to filesystem check
         
         # Fallback: list from filesystem
-        summaries = sorted(self.base_dir.glob("archived_summary_*.md"))
+        summaries = sorted(self.logs_archive_dir.glob("archived_summary_*.md"))
         return [
             {
                 "summary_path": str(s),
@@ -219,25 +242,37 @@ Conversation to summarize:
         ]
     
     async def _save_archive_record(self, summary_path: Path, log_path: Path, message_count: int):
-        """Save archive metadata to database asynchronously"""
+        """Save archive metadata to database asynchronously using ORM"""
         if not self.session:
             return
         
+        from models.database import ArchivedContext, Node
+        from sqlalchemy import select
+        
         try:
-            query = text("""
-                INSERT INTO archived_contexts (spoke_name, user_id, archived_at, summary_path, log_path, token_count)
-                VALUES (:spoke_name, :user_id, :archived_at, :summary_path, :log_path, :token_count)
-            """)
+            # Try to find node_id for better indexing
+            result = await self.session.execute(
+                select(Node.id).filter(
+                    Node.user_id == self.user_id,
+                    Node.name == self.context_name,
+                    Node.node_type == self.context_type.upper()
+                )
+            )
+            node_id = result.scalars().first()
             
-            await self.session.execute(query, {
-                "spoke_name": self.context_name,
-                "user_id": self.user_id,
-                "archived_at": datetime.now(),
-                "summary_path": str(summary_path),
-                "log_path": str(log_path),
-                "token_count": message_count
-            })
+            new_record = ArchivedContext(
+                user_id=self.user_id,
+                node_id=node_id,
+                spoke_name=self.context_name,
+                archived_at=datetime.utcnow(),
+                summary_path=str(summary_path),
+                log_path=str(log_path) if log_path else None,
+                token_count=message_count
+            )
+            
+            self.session.add(new_record)
             await self.session.commit()
+            print(f"[ContextManager] Archived context record saved for {self.context_name}")
         except Exception as e:
             print(f"Failed to save archive record: {e}")
             await self.session.rollback()

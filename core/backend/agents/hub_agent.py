@@ -33,13 +33,7 @@ class HubAgent(BaseAgent):
         )
         settings = result.scalars().first()
         
-        if settings and settings.ai_config and "gemini_api_key" in settings.ai_config:
-            encrypted_key = settings.ai_config["gemini_api_key"]
-            if encrypted_key == "********":
-                return None
-            return decrypt_string(encrypted_key)
-        
-        return None
+        return settings.gemini_api_key if settings else None
 
     @classmethod
     async def get_or_create_hub_node(cls, user_id: str, db_session: AsyncSession) -> Node:
