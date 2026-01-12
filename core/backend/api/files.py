@@ -311,64 +311,39 @@ async def _get_user_api_key(db: AsyncSession, user_id: str) -> Optional[str]:
 files_router = APIRouter(prefix="/api/files", tags=["Files"])
 
 
-@files_router.get("/{node_type}/{node_name}")
-async def list_node_files(
-    node_type: str,
-    node_name: str,
-    identity: Identity = Depends(resolve_identity),
+# --- Specific Routes First ---
+
+@files_router.get("/download/{file_id}")
+async def download_file_by_id(
+    file_id: str,
+    identity: Identity = Depends(resolve_identity_for_download),
     db: AsyncSession = Depends(get_async_db)
 ):
-    """List all files for a Hub or Spoke"""
-    if node_type.lower() not in ["hub", "spoke"]:
-        raise HTTPException(status_code=400, detail="node_type must be 'hub' or 'spoke'")
+    """Download an uploaded file by its ID (References)"""
+    # Verify ownership
+    result = await db.execute(select(UploadedFile).filter(
+        UploadedFile.id == file_id
+    ))
+    file_record = result.scalars().first()
     
-    api_key = await _get_user_api_key(db, identity.user_id)
-    service = FileService(db, identity.user_id, api_key)
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found")
     
-    files = await service.list_files(node_type, node_name)
-    return {"files": files, "count": len(files)}
-
-
-@files_router.post("/{node_type}/{node_name}/upload")
-async def upload_node_file(
-    node_type: str,
-    node_name: str,
-    file: UploadFile = File(...),
-    identity: Identity = Depends(resolve_identity),
-    db: AsyncSession = Depends(get_async_db)
-):
-    """Upload a file to Hub or Spoke storage"""
-    if node_type.lower() not in ["hub", "spoke"]:
-        raise HTTPException(status_code=400, detail="node_type must be 'hub' or 'spoke'")
+    # Check ownership via node
+    result = await db.execute(select(Node).filter(Node.id == file_record.node_id))
+    node = result.scalars().first()
+    if not node or node.user_id != identity.user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     
-    # Read file content
-    content = await file.read()
+    file_path = Path(file_record.storage_path)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Physical file missing")
     
-    # Get MIME type
-    mime_type, _ = mimetypes.guess_type(file.filename)
-    mime_type = mime_type or file.content_type or "application/octet-stream"
-    
-    api_key = await _get_user_api_key(db, identity.user_id)
-    service = FileService(db, identity.user_id, api_key)
-    
-    try:
-        uploaded_file = await service.save_file(
-            content=content,
-            filename=file.filename,
-            mime_type=mime_type,
-            node_type=node_type,
-            node_name=node_name
-        )
-        
-        return {
-            "id": uploaded_file.id,
-            "filename": uploaded_file.filename,
-            "size_bytes": uploaded_file.size_bytes,
-            "mime_type": uploaded_file.mime_type,
-            "message": f"File '{file.filename}' uploaded successfully"
-        }
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    return FileResponse(
+        file_path,
+        media_type=file_record.mime_type,
+        filename=file_record.filename
+    )
 
 
 @files_router.post("/{node_type}/{node_name}/sync-gemini")
@@ -459,37 +434,70 @@ async def delete_file_by_id(
         raise HTTPException(status_code=500, detail="Failed to delete file")
 
 
-@files_router.get("/download/{file_id}")
-async def download_file_by_id(
-    file_id: str,
-    identity: Identity = Depends(resolve_identity_for_download),
+# --- Generic Parametrized Routes Last ---
+
+@files_router.get("/{node_type}/{node_name}")
+async def list_node_files(
+    node_type: str,
+    node_name: str,
+    identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
-    """Download an uploaded file by its ID (References)"""
-    # Verify ownership
-    result = await db.execute(select(UploadedFile).filter(
-        UploadedFile.id == file_id
-    ))
-    file_record = result.scalars().first()
+    """List all files for a Hub or Spoke"""
+    if node_type.lower() not in ["hub", "spoke"]:
+        raise HTTPException(status_code=400, detail="node_type must be 'hub' or 'spoke'")
     
-    if not file_record:
-        raise HTTPException(status_code=404, detail="File not found")
+    api_key = await _get_user_api_key(db, identity.user_id)
+    service = FileService(db, identity.user_id, api_key)
     
-    # Check ownership via node
-    result = await db.execute(select(Node).filter(Node.id == file_record.node_id))
-    node = result.scalars().first()
-    if not node or node.user_id != identity.user_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    files = await service.list_files(node_type, node_name)
+    return {"files": files, "count": len(files)}
+
+
+@files_router.post("/{node_type}/{node_name}/upload")
+async def upload_node_file(
+    node_type: str,
+    node_name: str,
+    file: UploadFile = File(...),
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Upload a file to Hub or Spoke storage"""
+    if node_type.lower() not in ["hub", "spoke"]:
+        raise HTTPException(status_code=400, detail="node_type must be 'hub' or 'spoke'")
     
-    file_path = Path(file_record.storage_path)
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Physical file missing")
+    # Read file content
+    content = await file.read()
     
-    return FileResponse(
-        file_path,
-        media_type=file_record.mime_type,
-        filename=file_record.filename
+    # Get MIME type
+    mime_type, _ = mimetypes.guess_type(file.filename)
+    mime_type = mime_type or file.content_type or "application/octet-stream"
+    
+    # Get user's Gemini API key for file upload
+    api_key = await _get_user_api_key(db, identity.user_id)
+    service = FileService(db, identity.user_id, api_key)
+    
+    # Save file via service
+    db_file = await service.save_file(
+        content=content,
+        filename=file.filename,
+        mime_type=mime_type,
+        node_type=node_type,
+        node_name=node_name
     )
+    
+    # If Gemini is configured, trigger upload
+    # (Optional: check if the user wants Gemini upload specifically)
+    if api_key and mime_type in GEMINI_SUPPORTED_TYPES:
+        await service.upload_to_gemini(db_file)
+        
+    return {
+        "id": db_file.id,
+        "filename": db_file.filename,
+        "size_bytes": db_file.size_bytes,
+        "mime_type": db_file.mime_type,
+        "gemini_available": db_file.gemini_file_uri is not None
+    }
 
 
 @files_router.get("/{node_type}/{node_name}/{directory}/{file_path:path}")
