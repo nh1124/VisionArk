@@ -59,8 +59,7 @@ app.include_router(agents.router)
 app.include_router(commands.router)
 app.include_router(rag.router)
 app.include_router(context.router)
-app.include_router(files.router)
-app.include_router(files.files_router)  # New generic file management endpoints
+app.include_router(files.files_router)  # Unified file management endpoints
 app.include_router(settings_api.router)
 app.include_router(decomposer.router)
 app.include_router(suggestions.router)

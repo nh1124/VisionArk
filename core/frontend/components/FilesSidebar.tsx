@@ -90,7 +90,6 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
     const [artifacts, setArtifacts] = useState<ArtifactInfo[]>([]);
     const [activeTab, setActiveTab] = useState<"refs" | "artifacts">("refs");
     const [loading, setLoading] = useState(false);
-    const [syncing, setSyncing] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(0);
     const [error, setError] = useState<string | null>(null);
@@ -233,17 +232,6 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
 
 
 
-    // Cleanup Gemini files
-    const cleanupFiles = useCallback(async () => {
-        try {
-            await apiFetch(`/api/files/${nodeType}/${nodeName}/cleanup-gemini`, {
-                method: "POST"
-            });
-            console.log(`[FilesSidebar] Cleaned up Gemini files for ${nodeType}/${nodeName}`);
-        } catch (error) {
-            console.error("Failed to cleanup Gemini files:", error);
-        }
-    }, [nodeType, nodeName]);
 
     // Load artifacts (AI-created files)
     const loadArtifacts = useCallback(async () => {
@@ -296,16 +284,11 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
         }
     };
 
-    // Load files and sync on mount
+    // Load files on mount
     useEffect(() => {
         loadFiles();
         loadArtifacts();
-
-        // Cleanup on unmount
-        return () => {
-            cleanupFiles();
-        };
-    }, [nodeType, nodeName]);
+    }, [nodeType, nodeName, loadFiles, loadArtifacts]);
 
     // Handle file upload
     const handleUpload = async (file: File) => {
@@ -506,7 +489,7 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
                             {files.map((file) => (
                                 <div key={file.id} className="flex items-center justify-between bg-gray-800/50 border border-gray-700/50 p-2.5 rounded-lg text-sm group hover:bg-gray-800 transition-colors">
                                     <div className="flex items-center gap-2 flex-1 min-w-0">
-                                        <div className={`w-2 h-2 rounded-full ${file.has_gemini_ref ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]" : "bg-gray-600 items-pulse"}`} title={file.has_gemini_ref ? "Synced to AI" : "Syncing..."} />
+                                        <div className="w-2 h-2 rounded-full bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.4)]" />
                                         <span className="truncate text-gray-200 font-medium" title={file.filename}>{file.filename}</span>
                                     </div>
                                     <div className="flex items-center gap-1.5">
