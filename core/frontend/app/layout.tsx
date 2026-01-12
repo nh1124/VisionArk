@@ -11,6 +11,13 @@ const outfit = Outfit({ subsets: ["latin"], variable: "--font-outfit" });
 export const metadata: Metadata = {
   title: "Vision Ark",
   description: "Advanced AI Task Management OS",
+  manifest: "/manifest.json",
+  themeColor: "#121212",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Vision Ark",
+  },
 };
 
 export default function RootLayout({
