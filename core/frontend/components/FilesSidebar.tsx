@@ -231,27 +231,7 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
         }
     }, [nodeType, nodeName]);
 
-    // Sync files to Gemini
-    const syncFiles = useCallback(async () => {
-        setSyncing(true);
-        setError(null);
-        try {
-            const response = await apiFetch(`/api/files/${nodeType}/${nodeName}/sync-gemini`, {
-                method: "POST"
-            });
-            const data = await response.json();
-            console.log(`[FilesSidebar] Synced ${data.synced_count} files to Gemini`);
-            await loadFiles();
-            if (onSyncComplete) {
-                onSyncComplete(files);
-            }
-        } catch (error: any) {
-            console.error("Failed to sync files:", error);
-            setError("Failed to sync files to Gemini");
-        } finally {
-            setSyncing(false);
-        }
-    }, [nodeType, nodeName, loadFiles, files, onSyncComplete]);
+
 
     // Cleanup Gemini files
     const cleanupFiles = useCallback(async () => {
@@ -318,9 +298,7 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
 
     // Load files and sync on mount
     useEffect(() => {
-        loadFiles().then(() => {
-            syncFiles();
-        });
+        loadFiles();
         loadArtifacts();
 
         // Cleanup on unmount
@@ -367,8 +345,6 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
             }
 
             await loadFiles();
-            // Sync new file to Gemini
-            await syncFiles();
             setUploadProgress(100);
             setTimeout(() => setUploadProgress(0), 1000);
         } catch (error: any) {
@@ -470,16 +446,16 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
             {/* References Tab Content */}
             {activeTab === "refs" && (
                 <>
-                    {/* Sync button */}
+                    {/* Refresh button */}
                     <div className="flex items-center justify-between mb-2">
                         <span className="text-sm text-gray-400">Reference Files</span>
                         <button
-                            onClick={syncFiles}
-                            disabled={syncing}
+                            onClick={loadFiles}
+                            disabled={loading}
                             className={`flex items-center gap-1 text-xs px-2 py-1 ${nodeType === "hub" ? "bg-purple-600 hover:bg-purple-500" : "bg-cyan-600 hover:bg-cyan-500"} rounded disabled:opacity-50 transition-colors`}
                         >
-                            {syncing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                            <span>Sync</span>
+                            {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                            <span>Refresh</span>
                         </button>
                     </div>
 
@@ -563,10 +539,10 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
                     {/* Sync Status */}
                     <div className="mt-4 pt-4 border-t border-gray-800">
                         <p className="text-xs text-gray-500">
-                            {syncing ? "⏳ Syncing to Gemini..." :
-                                files.filter(f => f.has_gemini_ref).length === files.length && files.length > 0
-                                    ? "✅ All files synced"
-                                    : `${files.filter(f => f.has_gemini_ref).length}/${files.length} synced`}
+                            {loading ? "⏳ Loading files..." :
+                                files.length > 0
+                                    ? `${files.length} files loaded`
+                                    : "No files loaded"}
                         </p>
                     </div>
                 </>
@@ -604,6 +580,14 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
                                 >
                                     <Download size={16} />
                                     Download
+                                </button>
+                                <button
+                                    onClick={loadFiles}
+                                    className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-all"
+                                    title="Refresh file list"
+                                    disabled={loading}
+                                >
+                                    <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
                                 </button>
                                 <button
                                     onClick={() => setSelectedArtifact(null)}

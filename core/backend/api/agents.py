@@ -275,19 +275,7 @@ async def chat_with_hub(
                     attached_files=file_metadata
                 )
 
-    # === TIMING START ===
-    _chat_start = time.time()
-    print(f"[Hub/Timing] === Chat request started ===")
-    
-    # FIX: Only sync files when user uploads NEW files (not every request)
-    if file_service and files:  # Only when there are new uploads
-        # 2. Sync newly uploaded files to Gemini
-        t0 = time.time()
-        print(f"[Hub] Syncing newly uploaded files to Gemini...")
-        await file_service.sync_files_for_session("hub", "hub")
-        print(f"[Hub/Timing] sync_files_for_session: {time.time()-t0:.2f}s")
-    else:
-        print(f"[Hub/Timing] sync_files_for_session: SKIPPED (no new uploads)")
+    # (Library-wide sync removed as per new policy)
     
     # FIX: Don't load ALL reference files into every message
     # Reference files should be queried via KnowledgeCore RAG
@@ -830,13 +818,7 @@ async def chat_with_spoke(
                     attached_files=file_metadata
                 )
 
-    # FIX: Only sync files when user uploads NEW files (not every request)
-    if file_service and files:  # Only when there are new uploads
-        # 2. Sync newly uploaded files to Gemini
-        print(f"[Spoke {spoke_name}] Syncing newly uploaded files to Gemini...")
-        await file_service.sync_files_for_session("spoke", spoke_name)
-    else:
-        print(f"[Spoke {spoke_name}] sync_files_for_session: SKIPPED (no new uploads)")
+    # (Library-wide sync removed as per new policy)
     
     # FIX: Don't load ALL reference files into every message
     # Reference files should be queried via KnowledgeCore RAG

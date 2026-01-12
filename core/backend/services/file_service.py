@@ -37,9 +37,12 @@ def _resolve_portable_path(stored_path: str) -> Path:
         
     return p
 
-
 class FileService:
     """Service for managing files with Gemini File API integration (New SDK)"""
+    
+    # Class-level dictionary to track in-progress syncs
+    # Format: { (user_id, node_type, node_name): asyncio.Event }
+    _syncing_nodes = {}
     
     def __init__(self, db: AsyncSession, user_id: str, api_key: str = None):
         self.db = db
@@ -242,7 +245,10 @@ class FileService:
             gemini_file = await asyncio.to_thread(client.files.get, name=file_record.gemini_file_name)
             return gemini_file.state == "ACTIVE"
         except Exception as e:
-            print(f"[FileService] Gemini file not available: {file_record.gemini_file_name} - {e}")
+            # Only log if it's not a common "not found" or "permission denied" error (which we handle by re-uploading)
+            err_str = str(e)
+            if "403" not in err_str and "404" not in err_str:
+                print(f"[FileService] Gemini file check error: {file_record.gemini_file_name} - {err_str}")
             return False
     
     async def sync_files_for_session(
@@ -253,14 +259,82 @@ class FileService:
         """
         Ensure all files for a node are uploaded to Gemini.
         Re-uploads if files are not available.
-        
-        Args:
-            node_type: "hub" or "spoke"
-            node_name: Node name
-        
-        Returns:
-            List of file status dicts
+        Uses a lock to prevent parallel syncs for the same node.
         """
+        sync_key = (self.user_id, node_type.lower(), node_name.lower())
+        
+        # Check if already syncing
+        if sync_key in self._syncing_nodes:
+            print(f"[FileService] Sync already in progress for {node_type}/{node_name}, waiting...")
+            await self._syncing_nodes[sync_key].wait()
+            # After waiting, we can return something or re-run, but for now just let it finish
+            # Actually, if we waited, the sync is done. Let's just return current status.
+            return await self.list_files_with_status(node_type, node_name)
+
+        # Mark as syncing
+        sync_event = asyncio.Event()
+        self._syncing_nodes[sync_key] = sync_event
+        
+        try:
+            node = await self._get_node(node_type, node_name)
+            if not node:
+                return []
+            
+            result = await self.db.execute(select(UploadedFile).filter(
+                UploadedFile.node_id == node.id
+            ))
+            files = result.scalars().all()
+            
+            results = []
+            for file_record in files:
+                status = {
+                    "id": file_record.id,
+                    "filename": file_record.filename,
+                    "size_bytes": file_record.size_bytes,
+                    "mime_type": file_record.mime_type,
+                    "gemini_available": False,
+                    "gemini_file_uri": None
+                }
+                
+                # Check if already uploaded and available
+                if file_record.gemini_file_name:
+                    if await self.check_gemini_availability(file_record):
+                        status["gemini_available"] = True
+                        status["gemini_file_uri"] = file_record.gemini_file_uri
+                    else:
+                        # Clear stale reference
+                        file_record.gemini_file_uri = None
+                        file_record.gemini_file_name = None
+                        await self.db.commit()
+                
+                # Upload if not available
+                if not status["gemini_available"]:
+                    try:
+                        # Check if local file actually exists before trying to upload
+                        resolved_path = _resolve_portable_path(file_record.storage_path)
+                        if not resolved_path.exists():
+                            print(f"[FileService] Warning: Local file missing, skipping sync: {file_record.filename}")
+                            status["error"] = "Local file missing"
+                            continue
+                            
+                        result = await self.upload_to_gemini(file_record)
+                        status["gemini_available"] = True
+                        status["gemini_file_uri"] = result["gemini_file_uri"]
+                    except Exception as e:
+                        print(f"[FileService] Failed to sync file: {file_record.filename} - {e}")
+                        status["error"] = str(e)
+                
+                results.append(status)
+            
+            return results
+        finally:
+            # Done syncing
+            sync_event.set()
+            if sync_key in self._syncing_nodes:
+                del self._syncing_nodes[sync_key]
+
+    async def list_files_with_status(self, node_type: str, node_name: str) -> List[Dict[str, Any]]:
+        """Helper to get current file status without re-syncing"""
         node = await self._get_node(node_type, node_name)
         if not node:
             return []
@@ -270,48 +344,17 @@ class FileService:
         ))
         files = result.scalars().all()
         
-        results = []
-        for file_record in files:
-            status = {
-                "id": file_record.id,
-                "filename": file_record.filename,
-                "size_bytes": file_record.size_bytes,
-                "mime_type": file_record.mime_type,
-                "gemini_available": False,
-                "gemini_file_uri": None
+        return [
+            {
+                "id": f.id,
+                "filename": f.filename,
+                "size_bytes": f.size_bytes,
+                "mime_type": f.mime_type,
+                "gemini_available": f.gemini_file_uri is not None,
+                "gemini_file_uri": f.gemini_file_uri
             }
-            
-            # Check if already uploaded and available
-            if file_record.gemini_file_name:
-                if await self.check_gemini_availability(file_record):
-                    status["gemini_available"] = True
-                    status["gemini_file_uri"] = file_record.gemini_file_uri
-                else:
-                    # Clear stale reference
-                    file_record.gemini_file_uri = None
-                    file_record.gemini_file_name = None
-                    await self.db.commit()
-            
-            # Upload if not available
-            if not status["gemini_available"]:
-                try:
-                    # Check if local file actually exists before trying to upload
-                    resolved_path = _resolve_portable_path(file_record.storage_path)
-                    if not resolved_path.exists():
-                        print(f"[FileService] Warning: Local file missing, skipping sync: {file_record.filename}")
-                        status["error"] = "Local file missing"
-                        continue
-                        
-                    result = await self.upload_to_gemini(file_record)
-                    status["gemini_available"] = True
-                    status["gemini_file_uri"] = result["gemini_file_uri"]
-                except Exception as e:
-                    print(f"[FileService] Failed to sync file: {file_record.filename} - {e}")
-                    status["error"] = str(e)
-            
-            results.append(status)
-        
-        return results
+            for f in files
+        ]
     
     async def cleanup_gemini_files(self, node_type: str, node_name: str) -> int:
         """
