@@ -10,6 +10,7 @@ import FilesSidebar from "@/components/FilesSidebar";
 import CommandAutocomplete, { CommandAutocompleteHandle } from "../../components/CommandAutocomplete";
 import { apiFetch } from "@/lib/api";
 import { Settings, Files, RotateCcw } from "lucide-react";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 interface MessageAttachment {
     name: string;
@@ -36,6 +37,7 @@ export default function SpokeChatPage({
     const [showSidebar, setShowSidebar] = useState(false);
     const [showCommandHelp, setShowCommandHelp] = useState(false);
     const [selectedModel, setSelectedModel] = useState("gemini-3-pro-preview");
+    const isMobile = useIsMobile();
     const router = useRouter();
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const [displayName, setDisplayName] = useState("");
@@ -361,25 +363,27 @@ export default function SpokeChatPage({
             <div className="flex-1 flex flex-col h-full overflow-hidden">
                 {/* Header - Minimal Gemini-style */}
                 <div className="bg-gray-900/50 border-b border-gray-800/50 px-4 py-2.5 flex items-center justify-between flex-shrink-0">
-                    <h1 className="text-lg font-semibold text-cyan-400 truncate" title={displayName}>
+                    <h1 className="text-lg font-semibold text-cyan-400 truncate pr-4" title={displayName}>
                         {displayName}
                     </h1>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 items-center">
                         <Link href={`/spokes/${spokeName}/settings`}
                             className="p-2 text-gray-400 hover:bg-gray-800 hover:text-white rounded-lg transition-all"
                             title="Settings"
                         >
                             <Settings size={18} />
                         </Link>
-                        <button
-                            onClick={() => setShowSidebar(!showSidebar)}
-                            className={`p-2 rounded-lg transition-all ${showSidebar
-                                ? "bg-cyan-500/20 text-cyan-400"
-                                : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
-                            title={showSidebar ? "Hide Files" : "Show Files"}
-                        >
-                            <Files size={18} />
-                        </button>
+                        {!isMobile && (
+                            <button
+                                onClick={() => setShowSidebar(!showSidebar)}
+                                className={`p-2 rounded-lg transition-all ${showSidebar
+                                    ? "bg-cyan-500/20 text-cyan-400"
+                                    : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
+                                title={showSidebar ? "Hide Files" : "Show Files"}
+                            >
+                                <Files size={18} />
+                            </button>
+                        )}
                     </div>
                 </div>
 
@@ -505,10 +509,12 @@ export default function SpokeChatPage({
                 </div>
             </div>
 
-            {/* Sidebar */}
-            {showSidebar && (
-                <div className="w-80 bg-gray-900 border-l border-gray-800 p-4 flex-shrink-0">
-                    <FilesSidebar nodeType="spoke" nodeName={spokeName} />
+            {/* Sidebar (Desktop only) */}
+            {!isMobile && showSidebar && (
+                <div className="fixed inset-y-0 right-0 z-50 w-80 bg-gray-900 border-l border-gray-800 p-4 flex-shrink-0 flex-col h-full shadow-2xl md:shadow-none md:relative md:translate-x-0 animate-in slide-in-from-right-full duration-300 ease-out">
+                    <div className="flex-1 overflow-hidden">
+                        <FilesSidebar nodeType="spoke" nodeName={spokeName} />
+                    </div>
                 </div>
             )}
         </div>

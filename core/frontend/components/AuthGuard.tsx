@@ -2,28 +2,18 @@
 
 import { useAuth } from "@/lib/AuthContext";
 import { useRouter, usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
-import Sidebar from "@/components/Sidebar";
-import Navbar from "@/components/Navbar";
+import { useEffect } from "react";
+import { useIsMobile } from "@/hooks/useIsMobile";
+import DesktopLayout from "@/components/layout/DesktopLayout";
+import MobileLayout from "@/components/layout/MobileLayout";
 
 interface AuthGuardProps {
     children: React.ReactNode;
 }
 
 export default function AuthGuard({ children }: AuthGuardProps) {
-    const { isAuthenticated, isLoading, logout } = useAuth();
-    const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-
-    useEffect(() => {
-        const saved = localStorage.getItem("sidebar-collapsed");
-        setSidebarCollapsed(saved === "true");
-    }, []);
-
-    const toggleSidebar = () => {
-        const newState = !sidebarCollapsed;
-        setSidebarCollapsed(newState);
-        localStorage.setItem("sidebar-collapsed", newState.toString());
-    };
+    const { isAuthenticated, isLoading } = useAuth();
+    const isMobile = useIsMobile();
 
     const router = useRouter();
     const pathname = usePathname();
@@ -38,7 +28,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
     }, [isAuthenticated, isLoading, isAuthPage, router]);
 
     // Loading state
-    if (isLoading) {
+    if (isLoading || isMobile === null) {
         return (
             <div className="min-h-screen bg-gray-950 flex items-center justify-center text-white">
                 <div className="text-center">
@@ -56,23 +46,15 @@ export default function AuthGuard({ children }: AuthGuardProps) {
         return <>{children}</>;
     }
 
-    // Protected pages - show sidebar if authenticated
+    // Protected pages - show layout if authenticated
     if (!isAuthenticated) {
         return null; // Will redirect
     }
 
-    return (
-        <div className="flex h-screen overflow-hidden bg-gray-950">
-            {/* Sidebar is the master vertical anchor on the left */}
-            <Sidebar isCollapsed={sidebarCollapsed} onToggle={toggleSidebar} />
-
-            {/* Content area is a vertical stack on the right */}
-            <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-                <Navbar isSidebarCollapsed={sidebarCollapsed} />
-                <main className="flex-1 relative flex flex-col min-w-0 overflow-y-auto">
-                    {children}
-                </main>
-            </div>
-        </div>
+    // Adaptive Switcher
+    return isMobile ? (
+        <MobileLayout>{children}</MobileLayout>
+    ) : (
+        <DesktopLayout>{children}</DesktopLayout>
     );
 }

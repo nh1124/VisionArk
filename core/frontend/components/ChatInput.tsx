@@ -268,14 +268,15 @@ function ChatInputComponent({
                 </div>
 
                 {/* Bottom Row: Controls */}
-                <div className="flex items-center justify-between gap-1 px-4 py-2 border-t border-gray-800/50">
+                <div className={`flex items-center justify-between gap-1 px-2 sm:px-4 py-2 border-t border-gray-800/50 ${showModelMenu || showToolsMenu ? "" : "overflow-x-auto no-scrollbar"
+                    }`}>
                     {/* Left Side Buttons */}
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-0.5 sm:gap-1 flex-shrink-0">
                         {/* File Attach Button (+) */}
                         {allowFileAttach && (
                             <button
                                 onClick={() => fileInputRef.current?.click()}
-                                className="p-2.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-all"
+                                className="p-3 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-all min-w-[44px] min-h-[44px] flex items-center justify-center"
                                 title="Attach files"
                                 disabled={disabled}
                             >
@@ -289,7 +290,7 @@ function ChatInputComponent({
                         <div className="relative" ref={toolsMenuRef}>
                             <button
                                 onClick={() => setShowToolsMenu(!showToolsMenu)}
-                                className="p-2.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-all flex items-center gap-2 px-3 sm:px-4 group"
+                                className="p-3 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-all flex items-center gap-2 px-3 sm:px-4 group min-h-[44px]"
                                 title="Tools"
                                 disabled={disabled}
                             >
@@ -297,7 +298,7 @@ function ChatInputComponent({
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                                 </svg>
-                                <span className="text-sm font-medium hidden sm:inline whitespace-nowrap">ツール</span>
+                                <span className="text-sm font-medium hidden xs:inline whitespace-nowrap">ツール</span>
                             </button>
 
                             {/* Tools Dropdown */}
@@ -334,12 +335,12 @@ function ChatInputComponent({
                             <div className="relative" ref={modelMenuRef}>
                                 <button
                                     onClick={() => setShowModelMenu(!showModelMenu)}
-                                    className="px-3 sm:px-4 py-2 text-gray-300 hover:text-white hover:bg-gray-800 rounded-full transition-all text-xs sm:text-sm flex items-center gap-2 border border-gray-700/50 whitespace-nowrap"
+                                    className="px-3 sm:px-4 py-2 text-gray-300 hover:text-white hover:bg-gray-800 rounded-full transition-all text-xs sm:text-sm flex items-center gap-1.5 sm:gap-2 border border-gray-700/50 whitespace-nowrap min-h-[44px] flex-shrink-0"
                                     title="Select model"
                                 >
                                     <span className="font-medium text-[10px] uppercase tracking-wider text-gray-500 hidden xs:inline">Model:</span>
-                                    <span>{selectedModel.includes("pro") ? "Pro" : selectedModel.includes("flash-lite") ? "Lite" : "Flash"}</span>
-                                    <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <span className="max-w-[100px] sm:max-w-none truncate font-semibold">{selectedModel.includes("pro") ? "Gemini Pro" : selectedModel.includes("flash-lite") ? "Flash Lite" : "Gemini Flash"}</span>
+                                    <svg className="w-4 h-4 text-gray-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                                     </svg>
                                 </button>
@@ -370,7 +371,7 @@ function ChatInputComponent({
 
                         {/* Voice Button */}
                         <button
-                            className="p-2.5 text-gray-500 hover:text-gray-300 hover:bg-gray-800 rounded-full transition-all"
+                            className="p-3 text-gray-500 hover:text-gray-300 hover:bg-gray-800 rounded-full transition-all min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0"
                             title="Voice input"
                             disabled
                         >
@@ -383,7 +384,7 @@ function ChatInputComponent({
                         <button
                             onClick={handleSend}
                             disabled={disabled || (!internalValue.trim() && attachedFiles.length === 0)}
-                            className="p-2.5 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-800 disabled:text-gray-600 rounded-full shadow-lg transition-all ml-1"
+                            className="p-3 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-800 disabled:text-gray-600 rounded-full shadow-lg transition-all ml-1 min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0"
                             title="Send message"
                         >
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

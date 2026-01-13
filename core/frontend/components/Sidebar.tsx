@@ -5,6 +5,8 @@ import { usePathname } from "next/navigation";
 import { useState, useEffect, useRef } from "react";
 import { apiFetch, getFileToken } from "@/lib/api";
 
+import { useSpokes } from "@/hooks/useSpokes";
+
 interface SidebarProps {
     isCollapsed: boolean;
     onToggle: () => void;
@@ -12,15 +14,11 @@ interface SidebarProps {
 
 export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
     const pathname = usePathname();
-    const [spokes, setSpokes] = useState<{ name: string; path: string; display_name?: string }[]>([]);
+    const { spokes } = useSpokes();
     const [spokesExpanded, setSpokesExpanded] = useState(true);
     const [hoveredSpoke, setHoveredSpoke] = useState<string | null>(null);
     const [menuOpen, setMenuOpen] = useState<string | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        loadSpokes();
-    }, []);
 
     // Close menu when clicking outside
     useEffect(() => {
@@ -32,29 +30,6 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
         document.addEventListener("mousedown", handleClickOutside);
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
-
-    const loadSpokes = async () => {
-        try {
-            const response = await apiFetch("/api/agents/spoke/list");
-            const data = await response.json();
-
-            if (data && data.spokes && Array.isArray(data.spokes)) {
-                const sortedSpokes = data.spokes.sort((a: any, b: any) =>
-                    a.name.localeCompare(b.name)
-                );
-
-                setSpokes(sortedSpokes.map((s: any) => ({
-                    name: s.name,
-                    display_name: s.display_name,
-                    path: `/spokes/${s.name}`
-                })));
-            } else {
-                setSpokes([]);
-            }
-        } catch (error) {
-            console.error("Failed to load spokes:", error);
-        }
-    };
 
     const handleExportChat = async (spokeName: string) => {
         try {

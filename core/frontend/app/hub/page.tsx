@@ -8,6 +8,7 @@ import CommandAutocomplete, { CommandAutocompleteHandle } from "../components/Co
 import FilesSidebar from "@/components/FilesSidebar";
 import InboxView from "@/components/InboxView";
 import { apiFetch } from "@/lib/api";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { Files, RotateCcw } from "lucide-react";
 
 interface MessageAttachment {
@@ -35,6 +36,7 @@ export default function HubPage() {
     const router = useRouter();
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const commandRef = useRef<CommandAutocompleteHandle>(null);
+    const isMobile = useIsMobile();
 
     // Auto-scroll to bottom when messages change
     useEffect(() => {
@@ -355,17 +357,19 @@ export default function HubPage() {
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                        <button
-                            onClick={() => setShowSidebar(!showSidebar)}
-                            className={`p-2 rounded-lg transition-all ${showSidebar
-                                ? "bg-purple-500/20 text-purple-400"
-                                : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
-                            title={showSidebar ? "Hide Files" : "Show Files"}
-                        >
-                            <Files size={18} />
-                        </button>
-                    </div>
+                    {!isMobile && (
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => setShowSidebar(!showSidebar)}
+                                className={`p-2 rounded-lg transition-all ${showSidebar
+                                    ? "bg-purple-500/20 text-purple-400"
+                                    : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
+                                title={showSidebar ? "Hide Files" : "Show Files"}
+                            >
+                                <Files size={18} />
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 {view === "chat" ? (
@@ -501,10 +505,12 @@ export default function HubPage() {
                 )}
             </div>
 
-            {/* Sidebar - Files & Artifacts */}
-            {showSidebar && (
-                <div className="w-80 bg-gray-900 border-l border-gray-800 p-4 flex-shrink-0">
-                    <FilesSidebar nodeType="hub" nodeName="hub" />
+            {/* Sidebar - Files & Artifacts (Desktop only) */}
+            {!isMobile && showSidebar && (
+                <div className="fixed inset-y-0 right-0 z-50 w-80 bg-gray-900 border-l border-gray-800 p-4 flex-shrink-0 flex-col h-full shadow-2xl md:shadow-none md:relative md:translate-x-0 animate-in slide-in-from-right-full duration-300 ease-out">
+                    <div className="flex-1 overflow-hidden">
+                        <FilesSidebar nodeType="hub" nodeName="hub" />
+                    </div>
                 </div>
             )}
         </div>

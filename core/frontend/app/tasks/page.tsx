@@ -224,7 +224,7 @@ export default function UnifiedTasksPage() {
             {/* Background Gradient/Image style (MS To-Do like) */}
             <div className="fixed inset-0 bg-gradient-to-b from-blue-900/20 to-gray-950 -z-10" />
 
-            <div className="w-full max-w-5xl px-8 py-12 flex-1 flex flex-col min-h-0">
+            <div className="w-full max-w-5xl px-4 sm:px-8 py-8 sm:py-12 flex-1 flex flex-col min-h-0">
                 {/* Header */}
                 <div className="flex justify-between items-start mb-10">
                     <div>
@@ -390,7 +390,7 @@ export default function UnifiedTasksPage() {
 
                 {/* Bottom Quick Add (Floating Chatbox Style) - Only show in list view */}
                 {viewMode === "list" && (
-                    <div className="absolute bottom-6 left-8 right-8 flex justify-center pointer-events-none">
+                    <div className="absolute bottom-6 left-4 right-4 sm:left-8 sm:right-8 flex justify-center pointer-events-none">
                         <div className="w-full max-w-5xl pointer-events-auto relative" ref={quickAddRef}>
                             {/* Quick Add Options Bar - Floating Above */}
                             {(activeOptions || quickAddName) && (
