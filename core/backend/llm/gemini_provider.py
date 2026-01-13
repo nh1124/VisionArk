@@ -313,6 +313,11 @@ class GeminiProvider(BaseLLMProvider):
         if attached_files:
             for attached_file in attached_files:
                 if hasattr(attached_file, 'gemini_file_uri') and attached_file.gemini_file_uri:
+                    # Gemini DOES NOT support application/octet-stream for multimodal parts
+                    if attached_file.file_type == "application/octet-stream":
+                        print(f"[Gemini] Skipping unsupported file type: {attached_file.file_type} for {attached_file.filename}")
+                        continue
+                        
                     try:
                         # New SDK uses Part.from_uri or similar
                         file_part = types.Part.from_uri(
@@ -648,6 +653,11 @@ class GeminiProvider(BaseLLMProvider):
         if attached_files:
             for attached_file in attached_files:
                 if hasattr(attached_file, 'gemini_file_uri') and attached_file.gemini_file_uri:
+                    # Gemini DOES NOT support application/octet-stream for multimodal parts
+                    if attached_file.file_type == "application/octet-stream":
+                        print(f"[Gemini] Skipping unsupported file type (stream): {attached_file.file_type}")
+                        continue
+                        
                     try:
                         file_part = types.Part.from_uri(
                             file_uri=attached_file.gemini_file_uri,

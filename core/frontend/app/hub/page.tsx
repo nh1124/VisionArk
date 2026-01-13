@@ -175,6 +175,12 @@ export default function HubPage() {
                                         }
                                     }
                                 }
+                            } else if (event.type === "error") {
+                                setMessages((prev) => [
+                                    ...prev.slice(0, -1),
+                                    { role: "assistant", content: `❌ Error: ${event.data}` }
+                                ]);
+                                return;
                             }
                         } catch (e) {
                             console.error("Failed to parse event:", e, "Line:", line);
@@ -182,14 +188,12 @@ export default function HubPage() {
                     }
                 }
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error("Error:", error);
+            const errorMsg = error.message || "Could not connect to Hub agent.";
             setMessages((prev) => [
-                ...prev,
-                {
-                    role: "assistant",
-                    content: "Error: Could not connect to Hub agent. Is the backend running?",
-                },
+                ...prev.slice(0, -1),
+                { role: "assistant", content: `❌ Error: ${errorMsg}` }
             ]);
         } finally {
             clearInterval(timerInterval);

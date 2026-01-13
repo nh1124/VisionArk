@@ -187,6 +187,12 @@ export default function SpokeChatPage({
                                         }
                                     }
                                 }
+                            } else if (event.type === "error") {
+                                setMessages((prev) => [
+                                    ...prev.slice(0, -1),
+                                    { role: "assistant", content: `❌ Error: ${event.data}` }
+                                ]);
+                                return; // Stop processing
                             }
                         } catch (e) {
                             console.error("Failed to parse event:", e, "Line:", line);
@@ -194,9 +200,13 @@ export default function SpokeChatPage({
                     }
                 }
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error("Error:", error);
-            setMessages((prev) => [...prev, { role: "assistant", content: "Error: Could not connect to Spoke agent." }]);
+            const errorMsg = error.message || "Could not connect to Spoke agent.";
+            setMessages((prev) => [
+                ...prev.slice(0, -1),
+                { role: "assistant", content: `❌ Error: ${errorMsg}` }
+            ]);
         } finally {
             clearInterval(timerInterval);
             setLoading(false);

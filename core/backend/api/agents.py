@@ -104,7 +104,7 @@ async def get_spoke_agent(user_id: str, spoke_name: str, db: AsyncSession) -> Sp
 # Endpoints
 @router.post("/hub/chat", response_model=ChatResponse)
 async def chat_with_hub(
-    message: str = Form(...),
+    message: str = Form(""),
     files: List[UploadFile] = File(default=[]),
     stream: bool = Form(False),
     identity: Identity = Depends(resolve_identity),
@@ -112,6 +112,12 @@ async def chat_with_hub(
     x_preferred_model: Optional[str] = Header(None, alias="X-Preferred-Model")
 ):
     """Chat with the Hub agent (supports file attachments via Gemini File API)"""
+    # 0. Debug log
+    print(f"[Hub Chat] Request from user {identity.user_id}")
+    print(f"[Hub Chat] Message length: {len(message)}")
+    print(f"[Hub Chat] Number of files: {len(files)}")
+
+    # 1. Validate identity
     from services.command_parser import parse_command, execute_command
     from models.message import AttachedFile
     from llm import get_provider
@@ -287,41 +293,46 @@ async def chat_with_hub(
     
     if stream:
         async def event_generator():
-            # Use a wrapper for tool context
-            tool_context = {
-                'session': db,
-                'user_id': identity.user_id,
-                'node_id': hub.node_id,
-                'node_type': 'HUB',
-                'context_name': 'hub'
-            }
-            # We need to calculate load for meta_info once if needed
-            meta_info_str = None
             try:
-                from services.lbs_client import LBSClient
-                from models.database import ServiceRegistry
-                from utils.encryption import decrypt_string
-                from datetime import date
-                lbs_api_key = None
-                lbs_url = None
-                result = await db.execute(select(ServiceRegistry).filter(
-                    ServiceRegistry.user_id == identity.user_id,
-                    ServiceRegistry.service_name == "lbs"
-                ))
-                service = result.scalars().first()
-                if service:
-                    lbs_url = service.base_url
-                    if service.api_key_encrypted:
-                        try: lbs_api_key = decrypt_string(service.api_key_encrypted)
-                        except Exception: pass
-                client = LBSClient(base_url=lbs_url, api_key=lbs_api_key)
-                daily_data = await client.calculate_load(date.today())
-                load = daily_data.get("adjusted_load", 0.0)
-                meta_info_str = f"Load: {load:.1f}/10.0 | Capacity: 10.0"
-            except Exception: pass
+                # Use a wrapper for tool context
+                tool_context = {
+                    'session': db,
+                    'user_id': identity.user_id,
+                    'node_id': hub.node_id,
+                    'node_type': 'HUB',
+                    'context_name': 'hub'
+                }
+                # We need to calculate load for meta_info once if needed
+                meta_info_str = None
+                try:
+                    from services.lbs_client import LBSClient
+                    from models.database import ServiceRegistry
+                    from utils.encryption import decrypt_string
+                    from datetime import date
+                    lbs_api_key = None
+                    lbs_url = None
+                    result = await db.execute(select(ServiceRegistry).filter(
+                        ServiceRegistry.user_id == identity.user_id,
+                        ServiceRegistry.service_name == "lbs"
+                    ))
+                    service = result.scalars().first()
+                    if service:
+                        lbs_url = service.base_url
+                        if service.api_key_encrypted:
+                            try: lbs_api_key = decrypt_string(service.api_key_encrypted)
+                            except Exception: pass
+                    client = LBSClient(base_url=lbs_url, api_key=lbs_api_key)
+                    daily_data = await client.calculate_load(date.today())
+                    load = daily_data.get("adjusted_load", 0.0)
+                    meta_info_str = f"Load: {load:.1f}/10.0 | Capacity: 10.0"
+                except Exception: pass
 
-            async for event in hub.chat_stream(message, attached_files, preferred_model=x_preferred_model, tool_context=tool_context, meta_info=meta_info_str):
-                yield f"data: {json.dumps(event)}\n\n"
+                async for event in hub.chat_stream(message, attached_files, preferred_model=x_preferred_model, tool_context=tool_context, meta_info=meta_info_str):
+                    yield f"data: {json.dumps(event)}\n\n"
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
         
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -334,7 +345,18 @@ async def chat_with_hub(
         'context_name': 'hub'
     }
     
-    response_text, tool_calls = await hub.chat(message, attached_files, preferred_model=x_preferred_model, tool_context=tool_context)
+    try:
+        response_text, tool_calls = await hub.chat(message, attached_files, preferred_model=x_preferred_model, tool_context=tool_context)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return ChatResponse(
+            response=f"❌ Error: {str(e)}",
+            meta_actions=[],
+            executed_commands=executed_commands,
+            attached_files=file_metadata,
+            tool_calls=[]
+        )
     
     return ChatResponse(
         response=response_text,
@@ -628,7 +650,7 @@ async def get_hub_artifact(
 @router.post("/spoke/{spoke_name}/chat", response_model=ChatResponse)
 async def chat_with_spoke(
     spoke_name: str,
-    message: str = Form(...),
+    message: str = Form(""),
     files: List[UploadFile] = File(default=[]),
     stream: bool = Form(False),
     identity: Identity = Depends(resolve_identity),
@@ -636,7 +658,12 @@ async def chat_with_spoke(
     x_preferred_model: Optional[str] = Header(None, alias="X-Preferred-Model")
 ):
     """Chat with a specific Spoke agent (supports file attachments)"""
-    # Validate spoke name
+    # 0. Debug log
+    print(f"[Spoke Chat] Request for {spoke_name} from user {identity.user_id}")
+    print(f"[Spoke Chat] Message length: {len(message)}")
+    print(f"[Spoke Chat] Number of files: {len(files)}")
+
+    # 1. Validate spoke name
     valid, error = validate_name(spoke_name, "spoke_name")
     if not valid:
         raise HTTPException(status_code=400, detail=error)
@@ -829,31 +856,36 @@ async def chat_with_spoke(
     
     if stream:
         async def spoke_event_generator():
-            tool_context = {
-                'session': db,
-                'user_id': identity.user_id,
-                'node_id': spoke.node_id,
-                'node_type': 'SPOKE',
-                'spoke_name': spoke_name,
-                'context_name': spoke_name
-            }
-            final_content = ""
-            async for event in spoke.chat_stream(user_message, attached_file_objects, preferred_model=x_preferred_model, tool_context=tool_context):
-                if event["type"] == "content":
-                    final_content += event["data"]
-                elif event["type"] == "final_response":
-                    final_content = event["data"].get("content", final_content)
-                yield f"data: {json.dumps(event)}\n\n"
-            
-            # After stream finishes, process meta-actions
             try:
-                meta_actions = extract_meta_actions_from_chat(final_content)
-                if meta_actions:
-                    inbox = InboxHandler(db, user_id=identity.user_id)
-                    for meta_xml in meta_actions:
-                        await inbox.push_to_inbox("hub", meta_xml)
+                tool_context = {
+                    'session': db,
+                    'user_id': identity.user_id,
+                    'node_id': spoke.node_id,
+                    'node_type': 'SPOKE',
+                    'spoke_name': spoke_name,
+                    'context_name': spoke_name
+                }
+                final_content = ""
+                async for event in spoke.chat_stream(user_message, attached_file_objects, preferred_model=x_preferred_model, tool_context=tool_context):
+                    if event["type"] == "content":
+                        final_content += event["data"]
+                    elif event["type"] == "final_response":
+                        final_content = event["data"].get("content", final_content)
+                    yield f"data: {json.dumps(event)}\n\n"
+                
+                # After stream finishes, process meta-actions
+                try:
+                    meta_actions = extract_meta_actions_from_chat(final_content)
+                    if meta_actions:
+                        inbox = InboxHandler(db, user_id=identity.user_id)
+                        for meta_xml in meta_actions:
+                            await inbox.push_to_inbox("hub", meta_xml)
+                except Exception as e:
+                    print(f"[Spoke Streaming] Meta-action processing failed: {e}")
             except Exception as e:
-                print(f"[Spoke Streaming] Meta-action processing failed: {e}")
+                import traceback
+                traceback.print_exc()
+                yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
         
         return StreamingResponse(spoke_event_generator(), media_type="text/event-stream")
 
@@ -865,7 +897,18 @@ async def chat_with_spoke(
         'spoke_name': spoke_name,
         'context_name': spoke_name
     }
-    response_text, tool_calls = await spoke.chat(user_message, attached_file_objects, preferred_model=x_preferred_model, tool_context=tool_context)
+    try:
+        response_text, tool_calls = await spoke.chat(user_message, attached_file_objects, preferred_model=x_preferred_model, tool_context=tool_context)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return ChatResponse(
+            response=f"❌ Error: {str(e)}",
+            meta_actions=[],
+            executed_commands=executed_commands,
+            attached_files=file_metadata,
+            tool_calls=[]
+        )
     
     # Extract meta-actions
     meta_actions = extract_meta_actions_from_chat(response_text)
