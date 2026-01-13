@@ -10,7 +10,7 @@ import InboxView from "@/components/InboxView";
 import { apiFetch } from "@/lib/api";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useModel } from "@/lib/ModelContext";
-import { Files, RotateCcw } from "lucide-react";
+import { Files, RotateCcw, X } from "lucide-react";
 
 interface MessageAttachment {
     name: string;
@@ -362,19 +362,17 @@ export default function HubPage() {
                         </div>
                     </div>
 
-                    {!isMobile && (
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={() => setShowSidebar(!showSidebar)}
-                                className={`p-2 rounded-lg transition-all ${showSidebar
-                                    ? "bg-purple-500/20 text-purple-400"
-                                    : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
-                                title={showSidebar ? "Hide Files" : "Show Files"}
-                            >
-                                <Files size={18} />
-                            </button>
-                        </div>
-                    )}
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setShowSidebar(!showSidebar)}
+                            className={`p-2 rounded-lg transition-all ${showSidebar
+                                ? "bg-purple-500/20 text-purple-400"
+                                : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
+                            title={showSidebar ? "Hide Files" : "Show Files"}
+                        >
+                            <Files size={18} />
+                        </button>
+                    </div>
                 </div>
 
                 {view === "chat" ? (
@@ -510,13 +508,33 @@ export default function HubPage() {
                 )}
             </div>
 
-            {/* Sidebar - Files & Artifacts (Desktop only) */}
-            {!isMobile && showSidebar && (
-                <div className="fixed inset-y-0 right-0 z-50 w-80 bg-gray-900 border-l border-gray-800 p-4 flex-shrink-0 flex-col h-full shadow-2xl md:shadow-none md:relative md:translate-x-0 animate-in slide-in-from-right-full duration-300 ease-out">
-                    <div className="flex-1 overflow-hidden">
-                        <FilesSidebar nodeType="hub" nodeName="hub" />
+            {/* Sidebar - Files & Artifacts */}
+            {showSidebar && (
+                <>
+                    {/* Backdrop for mobile */}
+                    {isMobile && (
+                        <div
+                            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 animate-in fade-in duration-200"
+                            onClick={() => setShowSidebar(false)}
+                        />
+                    )}
+                    <div className={`fixed inset-y-0 right-0 z-50 bg-gray-900 border-l border-gray-800 p-4 flex flex-col shadow-2xl animate-in slide-in-from-right duration-300 ease-out ${isMobile ? "w-full" : "w-80"
+                        }`}>
+                        {/* Header with close button */}
+                        <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-800">
+                            <h3 className="text-sm font-semibold text-gray-300">Files & Artifacts</h3>
+                            <button
+                                onClick={() => setShowSidebar(false)}
+                                className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+                        <div className="flex-1 overflow-hidden">
+                            <FilesSidebar nodeType="hub" nodeName="hub" />
+                        </div>
                     </div>
-                </div>
+                </>
             )}
         </div>
     );
