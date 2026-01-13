@@ -11,6 +11,7 @@ import CommandAutocomplete, { CommandAutocompleteHandle } from "../../components
 import { apiFetch } from "@/lib/api";
 import { Settings, Files, RotateCcw } from "lucide-react";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useModel } from "@/lib/ModelContext";
 
 interface MessageAttachment {
     name: string;
@@ -36,7 +37,7 @@ export default function SpokeChatPage({
     const [loading, setLoading] = useState(false);
     const [showSidebar, setShowSidebar] = useState(false);
     const [showCommandHelp, setShowCommandHelp] = useState(false);
-    const [selectedModel, setSelectedModel] = useState("gemini-3-pro-preview");
+    const { selectedModel, setSelectedModel } = useModel();
     const isMobile = useIsMobile();
     const router = useRouter();
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -502,7 +503,7 @@ export default function SpokeChatPage({
                             allowFileAttach={true}
                             selectedModel={selectedModel}
                             onModelChange={setSelectedModel}
-                            showModelSelector={true}
+                            showModelSelector={!isMobile}
                             onClone={handleClone}
                         />
                     </div>

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter, Outfit } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/lib/AuthContext";
+import { ModelProvider } from "@/lib/ModelContext";
 import AuthGuard from "@/components/AuthGuard";
 import Navbar from "@/components/Navbar";
 
@@ -29,9 +30,11 @@ export default function RootLayout({
     <html lang="en" className="dark" suppressHydrationWarning={true}>
       <body className={`${inter.variable} ${outfit.variable} font-sans bg-gray-950 text-gray-100 min-h-screen flex flex-col`}>
         <AuthProvider>
-          <AuthGuard>
-            {children}
-          </AuthGuard>
+          <ModelProvider>
+            <AuthGuard>
+              {children}
+            </AuthGuard>
+          </ModelProvider>
         </AuthProvider>
       </body>
     </html>

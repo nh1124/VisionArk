@@ -9,6 +9,7 @@ import FilesSidebar from "@/components/FilesSidebar";
 import InboxView from "@/components/InboxView";
 import { apiFetch } from "@/lib/api";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useModel } from "@/lib/ModelContext";
 import { Files, RotateCcw } from "lucide-react";
 
 interface MessageAttachment {
@@ -31,7 +32,7 @@ export default function HubPage() {
     const [commandInputValue, setCommandInputValue] = useState("");
     const [loading, setLoading] = useState(false);
     const [showSidebar, setShowSidebar] = useState(false);
-    const [selectedModel, setSelectedModel] = useState("gemini-3-pro-preview");
+    const { selectedModel, setSelectedModel } = useModel();
     const [view, setView] = useState<"chat" | "inbox">("chat");
     const router = useRouter();
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -495,7 +496,7 @@ export default function HubPage() {
                                     allowFileAttach={true}
                                     selectedModel={selectedModel}
                                     onModelChange={setSelectedModel}
-                                    showModelSelector={true}
+                                    showModelSelector={!isMobile}
                                 />
                             </div>
                         </div>

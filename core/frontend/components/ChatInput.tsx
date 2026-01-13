@@ -18,19 +18,7 @@ interface ChatInputProps {
     onClone?: () => void;
 }
 
-const MODEL_OPTIONS = [
-    { group: "Gemini 3 (Preview)", models: ["gemini-3-pro-preview", "gemini-3-flash-preview"] },
-    { group: "Gemini 2.5", models: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-preview", "gemini-2.5-flash-lite", "gemini-2.5-flash-lite-preview"] },
-    { group: "Gemini 2.0", models: ["gemini-2.0-flash", "gemini-2.0-flash-lite"] },
-];
-
-const getModelDisplayName = (model: string) => {
-    const parts = model.split("-");
-    if (parts.length >= 3) {
-        return parts.slice(1).join(" ").replace(/\b\w/g, c => c.toUpperCase());
-    }
-    return model;
-};
+import { MODEL_OPTIONS, getModelDisplayName } from "@/lib/ModelContext";
 
 function ChatInputComponent({
     value,
@@ -57,6 +45,9 @@ function ChatInputComponent({
     const modelMenuRef = useRef<HTMLDivElement>(null);
     const toolsMenuRef = useRef<HTMLDivElement>(null);
     const [showToolsMenu, setShowToolsMenu] = useState(false);
+    const [isRecording, setIsRecording] = useState(false);
+    const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+    const audioChunksRef = useRef<Blob[]>([]);
 
     // Update internal value when external value prop changes
     useEffect(() => {
@@ -179,6 +170,65 @@ function ChatInputComponent({
     const handleModelSelect = (model: string) => {
         onModelChange?.(model);
         setShowModelMenu(false);
+    };
+
+    const startRecording = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const mimeType = MediaRecorder.isTypeSupported("audio/webm")
+                ? "audio/webm"
+                : MediaRecorder.isTypeSupported("audio/mp4")
+                    ? "audio/mp4"
+                    : "audio/aac";
+
+            const recorder = new MediaRecorder(stream, { mimeType });
+            audioChunksRef.current = [];
+
+            recorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    audioChunksRef.current.push(event.data);
+                }
+            };
+
+            recorder.onstop = () => {
+                const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+                const extension = mimeType.split("/")[1].split(";")[0];
+                const file = new File([audioBlob], `voice-recording-${new Date().getTime()}.${extension}`, {
+                    type: mimeType
+                });
+
+                // Automatically send the voice message along with any text or other attachments
+                onSend(internalValue, [...attachedFiles, file]);
+                setInternalValue("");
+                setAttachedFiles([]);
+
+                // Stop all tracks in the stream to release the microphone
+                stream.getTracks().forEach(track => track.stop());
+            };
+
+            recorder.start();
+            setMediaRecorder(recorder);
+            setIsRecording(true);
+        } catch (error) {
+            console.error("Error accessing microphone:", error);
+            alert("Could not access microphone. Please check permissions.");
+        }
+    };
+
+    const stopRecording = () => {
+        if (mediaRecorder && mediaRecorder.state !== "inactive") {
+            mediaRecorder.stop();
+            setMediaRecorder(null);
+            setIsRecording(false);
+        }
+    };
+
+    const toggleRecording = () => {
+        if (isRecording) {
+            stopRecording();
+        } else {
+            startRecording();
+        }
     };
 
     return (
@@ -371,11 +421,16 @@ function ChatInputComponent({
 
                         {/* Voice Button */}
                         <button
-                            className="p-3 text-gray-500 hover:text-gray-300 hover:bg-gray-800 rounded-full transition-all min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0"
-                            title="Voice input"
-                            disabled
+                            onClick={toggleRecording}
+                            className={`p-3 rounded-full transition-all min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0 ${isRecording
+                                ? "text-red-500 bg-red-500/10 animate-pulse border border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.4)]"
+                                : "text-gray-500 hover:text-gray-300 hover:bg-gray-800"
+                                }`}
+                            title={isRecording ? "Stop recording" : "Voice input"}
+                            disabled={disabled}
+                            type="button"
                         >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg className="w-5 h-5" fill={isRecording ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
                             </svg>
                         </button>
