@@ -898,16 +898,22 @@ class GeminiProvider(BaseLLMProvider):
             yield {"type": "status", "data": f"Thinking (Turn {turn_count})..."}
             
             try:
-                # Use generate_content instead of generate_content_stream for stability
-                # This aligns with the stable complete() method
+                # DEBUG: Log the API call attempt
+                print(f"[DEBUG stream_chat] Calling Gemini API: model={model_name}, history_len={len(history)}")
+                
+                # Synchronous call (stream_chat is NOT async, use sync client)
                 response = self.client.models.generate_content(
                     model=model_name,
                     contents=history,
                     config=generation_config
                 )
                 
+                # DEBUG: Log response status
+                print(f"[DEBUG stream_chat] Response received: candidates={len(response.candidates) if response.candidates else 0}")
+                
                 # Check if valid response
                 if not response.candidates or not response.candidates[0].content.parts:
+                    print(f"[DEBUG stream_chat] Empty response - no candidates or parts")
                     break
                     
                 model_content = response.candidates[0].content
@@ -919,6 +925,7 @@ class GeminiProvider(BaseLLMProvider):
                 if not function_calls:
                     # Final response reached
                     final_text = self._extract_response_content(response)
+                    print(f"[DEBUG stream_chat] Final text length: {len(final_text) if final_text else 0}")
                     yield {"type": "content", "data": final_text}
                     
                     yield {

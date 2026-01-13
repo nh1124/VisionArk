@@ -354,6 +354,9 @@ class BaseAgent(ABC):
         final_content = ""
         final_tool_calls = []
 
+        # DEBUG: Log before streaming
+        print(f"[DEBUG chat_stream] Starting stream: model={preferred_model}, msg_len={len(user_message)}")
+
         # Stream from LLM - USE stream_chat_async
         async for event in self.llm.stream_chat_async(
             messages,
@@ -363,6 +366,9 @@ class BaseAgent(ABC):
             tool_definitions=self._agent_tool_definitions,
             tool_functions=self._agent_tool_functions
         ):
+            # DEBUG: Log each event type
+            print(f"[DEBUG chat_stream] Event: type={event.get('type')}, data_len={len(str(event.get('data', '')))}")
+            
             if event["type"] == "content":
                 final_content += event["data"]
             elif event["type"] == "final_response":
