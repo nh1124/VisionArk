@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 
 from models.database import init_database
 from api import lbs, inbox, agents, commands, rag, context, files, auth, settings as settings_api, export
-from api import decomposer, suggestions
+from api import decomposer, suggestions, scheduler
 
 from config import settings
 
@@ -64,6 +64,7 @@ app.include_router(settings_api.router)
 app.include_router(decomposer.router)
 app.include_router(suggestions.router)
 app.include_router(export.router)
+app.include_router(scheduler.router)
 
 
 @app.get("/")

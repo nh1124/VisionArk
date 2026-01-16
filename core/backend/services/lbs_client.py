@@ -317,6 +317,14 @@ class LBSClient:
         """Register a task exception."""
         return await self._request("POST", "exceptions", json=exception_data)
 
+    async def get_exceptions(self, start_date: Union[date, str], end_date: Union[date, str]) -> List[Dict]:
+        """Get exceptions for a date range."""
+        params = {
+            "start_date": start_date.isoformat() if isinstance(start_date, date) else start_date,
+            "end_date": end_date.isoformat() if isinstance(end_date, date) else end_date
+        }
+        return await self._request("GET", "exceptions", params=params)
+
     async def update_condition(self, target_date: Union[date, str], cognitive_fatigue: int, note: Optional[str] = None) -> Dict:
         """Update daily condition."""
         date_str = target_date.isoformat() if isinstance(target_date, date) else target_date

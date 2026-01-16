@@ -4,6 +4,8 @@ import { useEffect, useState, useMemo } from "react";
 import { apiFetch } from "@/lib/api";
 import HeatMapCalendar from "@/components/HeatMapCalendar";
 import HubSuggestionBanner from "@/components/HubSuggestionBanner";
+import ScheduleView from "@/components/ScheduleView";
+import { suggestSchedule, ScheduleResult } from "@/lib/schedule";
 
 interface DashboardData {
     today: {
@@ -34,18 +36,30 @@ export default function DashboardPage() {
     const [refreshKey, setRefreshKey] = useState(0);
     const [selectedDate, setSelectedDate] = useState<string | null>(null);
     const [dayDetails, setDayDetails] = useState<any>(null);
+    const [scheduleData, setScheduleData] = useState<ScheduleResult | null>(null);
+    const [scheduleLoading, setScheduleLoading] = useState(false);
 
     useEffect(() => {
         const loadAllData = async () => {
             setLoading(true);
+            setScheduleLoading(true);
             try {
                 const dashRes = await apiFetch("/api/lbs/dashboard");
                 const dashData = await dashRes.json();
                 setData(dashData);
+
+                // Fetch schedule suggestion
+                try {
+                    const schedule = await suggestSchedule({ fatigue: 0 });
+                    setScheduleData(schedule);
+                } catch (schedErr) {
+                    console.error("Error loading schedule:", schedErr);
+                }
             } catch (error) {
                 console.error("Error loading dashboard data:", error);
             } finally {
                 setLoading(false);
+                setScheduleLoading(false);
             }
         };
         loadAllData();
@@ -197,6 +211,37 @@ export default function DashboardPage() {
                     </div>
                 </div>
 
+                {/* Dynamic Schedule */}
+                <div className="mb-8">
+                    <div className="flex items-center justify-between mb-4">
+                        <div>
+                            <h2 className="text-lg font-medium tracking-tight text-gray-200">Today&apos;s Schedule</h2>
+                            <p className="text-xs font-medium text-gray-500 mt-1">AI-optimized task timeline with breaks</p>
+                        </div>
+                        {scheduleData && (
+                            <span className="text-xs text-gray-500">
+                                Shutdown: {new Date(scheduleData.shutdown_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                        )}
+                    </div>
+                    {scheduleLoading ? (
+                        <div className="bg-gray-900/40 border-2 border-gray-800 rounded-2xl p-8 text-center">
+                            <div className="text-gray-500 animate-pulse">Loading schedule...</div>
+                        </div>
+                    ) : scheduleData ? (
+                        <ScheduleView
+                            schedule={scheduleData.schedule}
+                            overflow={scheduleData.overflow}
+                            shutdownTime={scheduleData.shutdown_time}
+                            fatigueLevel={scheduleData.fatigue_level}
+                            className="border-2 border-gray-800"
+                        />
+                    ) : (
+                        <div className="bg-gray-900/40 border-2 border-gray-800 rounded-2xl p-8 text-center text-gray-500">
+                            Could not load schedule
+                        </div>
+                    )}
+                </div>
 
                 {/* LBS Calendar */}
                 <div className="bg-gray-900/40 border-2 border-gray-800 rounded-2xl p-6 backdrop-blur-sm shadow-xl relative">
