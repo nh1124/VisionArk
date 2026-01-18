@@ -7,6 +7,10 @@ from .library.knowledge import SearchKnowledgeTool, IngestKnowledgeTool
 from .library.search import GoogleSearchTool, ResearchURLTool, SearchPlacesTool
 from .library.markdown import InitPlanTool, UpdatePlanProgressTool, GetCurrentStatusTool, ReadMDSectionTool
 from .library.ai import GenerateImageTool, MermaidVisualizerTool, ExecuteCodeTool
+from .library.commands import (
+    ArchiveChatTool, MovePageTool, CreateProjectTool, DeleteProjectTool, CloneProjectTool,
+    CheckInboxTool, SendMessageTool, ReportTool, ProcessInboxTool
+)
 from .library.condition import GetCurrentConditionTool, UpdateUserConditionTool
 
 __all__ = [
@@ -37,6 +41,15 @@ __all__ = [
     "GenerateImageTool",
     "MermaidVisualizerTool",
     "ExecuteCodeTool",
+    "ArchiveChatTool",
+    "MovePageTool",
+    "CreateProjectTool",
+    "DeleteProjectTool",
+    "CloneProjectTool",
+    "CheckInboxTool",
+    "SendMessageTool",
+    "ReportTool",
+    "ProcessInboxTool",
     "GetCurrentConditionTool",
     "UpdateUserConditionTool"
 ]

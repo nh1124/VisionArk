@@ -4,7 +4,7 @@ Handles slash commands in chat input (/check_inbox, /archive, etc.)
 """
 import re
 import shlex
-from typing import Optional, Dict, Callable, Any, List
+from typing import Optional, Dict, Callable, Any, List, Type
 from dataclasses import dataclass
 
 
@@ -138,47 +138,84 @@ async def execute_command(
     **kwargs
 ) -> CommandResult:
     """
-    Execute a parsed command
-    
-    Args:
-        command: Parsed Command object
-        context: Execution context (hub or spoke)
-        **kwargs: Additional context (session, agent, etc.)
-    
-    Returns:
-        CommandResult with success status and message
+    Execute a parsed command using the new Node-native BaseTool architecture
     """
-    handler = _registry.get_handler(command.name)
+    from tools import (
+        ArchiveChatTool, MovePageTool, CreateProjectTool, DeleteProjectTool, CloneProjectTool,
+        CheckInboxTool, SendMessageTool, ReportTool, ProcessInboxTool
+    )
     
-    if handler is None:
-        available = list(_registry.list_commands(context).keys())
-        return CommandResult(
-            success=False,
-            message=f"Unknown command: /{command.name}. Available: {', '.join(available)}"
-        )
-    
-    # Check context availability
-    allowed_contexts = _registry._contexts.get(command.name, ["both"])
-    if "both" not in allowed_contexts and context not in allowed_contexts:
-        return CommandResult(
-            success=False,
-            message=f"Command /{command.name} not available in {context} context"
-        )
-    
-    try:
-        # Execute handler (support both async and sync)
-        import inspect
-        if inspect.iscoroutinefunction(handler):
-            result = await handler(command.args, **kwargs)
-        else:
-            result = handler(command.args, **kwargs)
+    # Mapping of slash commands to tool classes
+    # NOTE: In a more dynamic setup, this could be registered via metadata
+    tool_map: Dict[str, Type] = {
+        "archive": ArchiveChatTool,
+        "move": MovePageTool,
+        "mv": MovePageTool,
+        "create_project": CreateProjectTool,
+        "delete_project": DeleteProjectTool,
+        "kill": DeleteProjectTool,
+        "clone": CloneProjectTool,
+        "check_inbox": CheckInboxTool,
+        "send_message": SendMessageTool,
+        "report": ReportTool,
+        "process_inbox": ProcessInboxTool,
+    }
+
+    tool_cls = tool_map.get(command.name)
+    if not tool_cls:
+        # Fallback to legacy registry if needed (temporary)
+        handler = _registry.get_handler(command.name)
+        if not handler:
+            return CommandResult(success=False, message=f"Unknown command: /{command.name}")
         
-        return result
-    except Exception as e:
+        # Execute legacy handler
+        try:
+            import inspect
+            if inspect.iscoroutinefunction(handler):
+                result = await handler(command.args, **kwargs)
+            else:
+                result = handler(command.args, **kwargs)
+            
+            # Convert legacy result to CommandResult if needed
+            if hasattr(result, "success") and hasattr(result, "message"):
+                return result
+            return CommandResult(success=True, message=str(result))
+        except Exception as e:
+            return CommandResult(success=False, message=f"Legacy command failed: {str(e)}")
+
+    # Execute via BaseTool
+    try:
+        tool_instance = tool_cls()
+        
+        # Parse arguments from string list into tool's args_schema
+        # We use Pydantic's validation here
+        schema = tool_instance.args_schema
+        
+        # Simple positional to keyword mapping for now
+        # For more complex parsing, we'd need a robust mapping logic
+        fields = list(schema.model_fields.keys())
+        parsed_args = {}
+        
+        for i, arg in enumerate(command.args):
+            if "=" in arg:
+                k, v = arg.split("=", 1)
+                parsed_args[k.strip()] = v.strip().strip('"').strip("'")
+            elif i < len(fields):
+                parsed_args[fields[i]] = arg.strip().strip('"').strip("'")
+        
+        # Validate and run
+        validated = schema(**parsed_args)
+        raw_result = await tool_instance.run(**validated.model_dump(), **kwargs)
+        
+        # Convert tool output (Dict) to CommandResult
         return CommandResult(
-            success=False,
-            message=f"Command execution failed: {str(e)}"
+            success=raw_result.get("success", True),
+            message=raw_result.get("message", ""),
+            data=raw_result.get("data")
         )
+
+    except Exception as e:
+        return CommandResult(success=False, message=f"Command execution failed: {str(e)}")
 
 
 def get_command_help() -> str:

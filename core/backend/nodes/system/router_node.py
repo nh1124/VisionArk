@@ -153,6 +153,7 @@ class RouterNode(BaseNode):
                         context=context_type, 
                         context_type=context_type,
                         context_name=context_name,
+                        project_name=context_name,
                         session=db,
                         user_id=self.user_id
                     )
