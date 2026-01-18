@@ -8,7 +8,6 @@ from models.database import get_async_db
 from models.message import Message, MessageRole, AttachedFile
 from datetime import datetime
 from uuid import uuid4
-from tools import PROJECT_TOOL_DEFINITIONS, TOOL_FUNCTIONS
 
 class ProjectNode(BaseNode):
     """
@@ -28,9 +27,33 @@ class ProjectNode(BaseNode):
         self.session_id = None
         self.node_id = None
         
-        # Tools
-        self.tool_definitions = PROJECT_TOOL_DEFINITIONS
-        self.tool_functions = TOOL_FUNCTIONS
+        # New Class-Based Tools
+        from tools.library.system import AskNodeTool, DelegateTaskTool
+        from tools.library.lbs import ListTasksTool, CreateTaskTool, UpdateTaskTool, CompleteLBSTaskTool
+        from tools.library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool
+        from tools.library.knowledge import SearchKnowledgeTool, IngestKnowledgeTool
+        from tools.library.search import GoogleSearchTool
+        from tools.library.ai import GenerateImageTool
+        from tools.library.condition import GetCurrentConditionTool, UpdateUserConditionTool
+        
+        self.tools = [
+            AskNodeTool(),
+            DelegateTaskTool(),
+
+            ListTasksTool(),
+            CreateTaskTool(),
+            UpdateTaskTool(),
+            CompleteLBSTaskTool(),
+            SaveArtifactTool(),
+            ReadReferenceTool(),
+            ListFilesTool(),
+            SearchKnowledgeTool(),
+            IngestKnowledgeTool(),
+            GoogleSearchTool(),
+            GenerateImageTool(),
+            GetCurrentConditionTool(),
+            UpdateUserConditionTool()
+        ]
 
     async def pre_process(self):
         # 1. Ensure Project Node exists & Get Session
@@ -135,8 +158,6 @@ class ProjectNode(BaseNode):
         llm_response = await self.chat_with_tools(
             system_prompt=system_prompt,
             message_history=history,
-            tool_definitions=self.tool_definitions,
-            tool_functions=self.tool_functions,
             tool_context={
                 'user_id': self.user_id,
                 'session': self.context.get('db_session'),  # For tools that need DB access

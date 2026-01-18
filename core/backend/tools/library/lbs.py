@@ -1,0 +1,246 @@
+from typing import Any, Optional, Dict
+from pydantic import BaseModel, Field
+from datetime import date
+from tools.base import BaseTool
+from tools.utils import get_lbs_client
+from sqlalchemy.ext.asyncio import AsyncSession
+
+class ListTasksArgs(BaseModel):
+    context: Optional[str] = Field(None, description="Filter by context/project name")
+
+class ListTasksTool(BaseTool):
+    name = "list_tasks"
+    description = (
+        "List active tasks from the LBS system for the current or a specific context. "
+        "HOW TO USE: 'list_tasks()' to see all active tasks, or 'list_tasks(context=\"research\")' to filter."
+    )
+    args_schema = ListTasksArgs
+
+    async def run(self, context: Optional[str] = None, **kwargs) -> Any:
+        session: AsyncSession = kwargs.get("session")
+        user_id: str = kwargs.get("user_id")
+        context_name: str = kwargs.get("context_name", "general")
+        if not session or not user_id:
+            return {"success": False, "message": "Context error"}
+        
+        try:
+            client = await get_lbs_client(user_id, session)
+            tasks = await client.list_tasks(context=context or context_name)
+            if not tasks:
+                return {"success": True, "message": f"No tasks for {context or context_name}.", "data": {"tasks": []}}
+            
+            lines = [f"• [{t['task_id']}] {t['task_name']} ({t.get('rule_type')})" for t in tasks]
+            return {"success": True, "message": "Tasks:\n" + "\n".join(lines), "data": {"tasks": tasks}}
+        except Exception as e:
+            return {"success": False, "message": f"Failed to list tasks: {e}"}
+
+class CreateTaskArgs(BaseModel):
+    task_name: str = Field(..., description="Name of the task")
+    workload: float = Field(..., description="Estimated load (1-10)")
+    project: Optional[str] = Field(None, description="Context/Project name")
+    rule_type: str = Field("ONCE", description="Recurrence type: ONCE, WEEKLY, EVERY_N_DAYS, MONTHLY_DAY")
+    due_date: Optional[str] = Field(None, description="YYYY-MM-DD for ONCE tasks")
+    days: Optional[str] = Field(None, description="Comma-separated days for WEEKLY (mon,tue,...)")
+    interval_days: Optional[int] = Field(None, description="Interval in days for EVERY_N_DAYS")
+    month_day: Optional[int] = Field(None, description="Day of month for MONTHLY_DAY")
+    notes: Optional[str] = Field(None, description="Additional notes")
+
+class CreateTaskTool(BaseTool):
+    name = "create_task"
+    description = (
+        "Create a new task in the LBS system with a specific recurrence rule. "
+        "ATTENTION: 'workload' is a score from 1-10 representing estimated cognitive load. "
+        "HOW TO USE: 'create_task(task_name=\"Analyze Log\", workload=3.0, rule_type=\"ONCE\", due_date=\"2025-12-01\")'."
+    )
+    args_schema = CreateTaskArgs
+
+    async def run(self, **args) -> Any:
+        session: AsyncSession = args.pop("session", None)
+        user_id: str = args.pop("user_id", None)
+        context_name: str = args.pop("context_name", "general")
+        if not session or not user_id:
+            return {"success": False, "message": "Context error"}
+        
+        try:
+            client = await get_lbs_client(user_id, session)
+            task_name = args.get("task_name")
+            project = args.get("project")
+            workload = args.get("workload")
+            rule_type = args.get("rule_type", "ONCE").upper()
+            
+            data = {
+                "task_name": task_name,
+                "context": project or context_name,
+                "base_load_score": float(workload),
+                "rule_type": rule_type,
+                "active": True,
+                "notes": args.get("notes")
+            }
+            
+            if rule_type == "ONCE" and args.get("due_date"):
+                data["due_date"] = args.get("due_date")
+            elif rule_type == "WEEKLY" and args.get("days"):
+                dm = {d.strip().lower(): True for d in args.get("days").split(",")}
+                data.update({k: dm.get(k, False) for k in ["mon","tue","wed","thu","fri","sat","sun"]})
+            elif rule_type == "EVERY_N_DAYS":
+                data["interval_days"] = args.get("interval_days")
+            elif rule_type == "MONTHLY_DAY":
+                data["month_day"] = args.get("month_day")
+                
+            res = await client.create_task(data)
+            return {"success": True, "message": f"✅ Created task {task_name}", "data": res}
+        except Exception as e:
+            return {"success": False, "message": f"Failed to create task: {e}"}
+
+class UpdateTaskArgs(BaseModel):
+    task_id: str = Field(..., description="ID of the task to update")
+    task_name: Optional[str] = None
+    workload: Optional[float] = None
+    project: Optional[str] = None
+    notes: Optional[str] = None
+
+class UpdateTaskTool(BaseTool):
+    name = "update_task_details"
+    description = (
+        "Update the metadata (name, workload, project, notes) of an existing task. "
+        "HOW TO USE: 'update_task_details(task_id=\"...\", workload=5.0)'."
+    )
+    args_schema = UpdateTaskArgs
+
+    async def run(self, task_id: str, **args) -> Any:
+        session: AsyncSession = args.pop("session", None)
+        user_id: str = args.pop("user_id", None)
+        if not session or not user_id:
+            return {"success": False, "message": "Context error"}
+        
+        try:
+            client = await get_lbs_client(user_id, session)
+            upd = {k: v for k,v in args.items() if v is not None}
+            if 'workload' in upd: upd['base_load_score'] = float(upd.pop('workload'))
+            if 'project' in upd: upd['context'] = upd.pop('project')
+            
+            if not upd:
+                return {"success": False, "message": "No changes provided"}
+                
+            await client.update_task(task_id, upd)
+            return {"success": True, "message": f"Updated task {task_id}"}
+        except Exception as e:
+            return {"success": False, "message": f"Failed to update task: {e}"}
+
+class DeleteTaskArgs(BaseModel):
+    task_id: str = Field(..., description="ID of the task to delete")
+
+class DeleteTaskTool(BaseTool):
+    name = "delete_task_by_id"
+    description = (
+        "Delete a task from the LBS system permanently. "
+        "ATTENTION: This action is IRREVERSIBLE. Use it only if a task was created by mistake. "
+        "HOW TO USE: 'delete_task_by_id(task_id=\"...\")'."
+    )
+    args_schema = DeleteTaskArgs
+
+    async def run(self, task_id: str, **kwargs) -> Any:
+        session: AsyncSession = kwargs.get("session")
+        user_id: str = kwargs.get("user_id")
+        if not session or not user_id:
+            return {"success": False, "message": "Context error"}
+        
+        try:
+            client = await get_lbs_client(user_id, session)
+            await client.delete_task(task_id)
+            return {"success": True, "message": f"Deleted task {task_id}"}
+        except Exception as e:
+            return {"success": False, "message": f"Failed to delete task: {e}"}
+
+class CompleteLBSTaskArgs(BaseModel):
+    task_id: str = Field(..., description="ID of the task")
+    target_date: str = Field(..., description="YYYY-MM-DD")
+    status: str = Field("done", description="Status (done, skipped, partial)")
+
+class CompleteLBSTaskTool(BaseTool):
+    name = "complete_lbs_task"
+    description = (
+        "Mark an LBS task as completed, skipped, or partially done for a specific date. "
+        "ATTENTION: 'target_date' must be in YYYY-MM-DD format. "
+        "HOW TO USE: 'complete_lbs_task(task_id=\"...\", target_date=\"2025-01-20\", status=\"done\")'."
+    )
+    args_schema = CompleteLBSTaskArgs
+
+    async def run(self, task_id: str, target_date: str, status: str = "done", **kwargs) -> Any:
+        session: AsyncSession = kwargs.get("session")
+        user_id: str = kwargs.get("user_id")
+        if not session or not user_id:
+            return {"success": False, "message": "Context error"}
+        
+        try:
+            from services.lbs_client import TaskStatus
+            client = await get_lbs_client(user_id, session)
+            await client.toggle_task_completion(task_id, date.fromisoformat(target_date), TaskStatus(status))
+            return {"success": True, "message": f"Marked {task_id} as {status} for {target_date}"}
+        except Exception as e:
+            return {"success": False, "message": f"Failed to complete task: {e}"}
+
+class GetLBSScheduleArgs(BaseModel):
+    start_date: str = Field(..., description="YYYY-MM-DD")
+    end_date: str = Field(..., description="YYYY-MM-DD")
+
+class GetLBSScheduleTool(BaseTool):
+    name = "get_lbs_schedule"
+    description = "Get the LBS schedule for a specific date range."
+    args_schema = GetLBSScheduleArgs
+
+    async def run(self, start_date: str, end_date: str, **kwargs) -> Any:
+        session: AsyncSession = kwargs.get("session")
+        user_id: str = kwargs.get("user_id")
+        if not session or not user_id:
+            return {"success": False, "message": "Context error"}
+        
+        try:
+            client = await get_lbs_client(user_id, session)
+            sch = await client.get_schedule(date.fromisoformat(start_date), date.fromisoformat(end_date))
+            return {"success": True, "message": f"Schedule found ({len(sch)} days)", "data": {"schedule": sch}}
+        except Exception as e:
+            return {"success": False, "message": f"Failed to get schedule: {e}"}
+
+class GetLoadOnDayArgs(BaseModel):
+    target_date: str = Field(..., description="YYYY-MM-DD")
+
+class GetLoadOnDayTool(BaseTool):
+    name = "get_load_on_day"
+    description = "Calculate the load score for a specific day."
+    args_schema = GetLoadOnDayArgs
+
+    async def run(self, target_date: str, **kwargs) -> Any:
+        session: AsyncSession = kwargs.get("session")
+        user_id: str = kwargs.get("user_id")
+        if not session or not user_id:
+            return {"success": False, "message": "Context error"}
+        
+        try:
+            client = await get_lbs_client(user_id, session)
+            res = await client.calculate_load(date.fromisoformat(target_date))
+            return {"success": True, "message": f"Load: {res.get('adjusted_load')}", "data": res}
+        except Exception as e:
+            return {"success": False, "message": f"Failed to get load: {e}"}
+
+class GetLoadInPeriodArgs(BaseModel):
+    start_date: str = Field(..., description="YYYY-MM-DD")
+    end_date: str = Field(..., description="YYYY-MM-DD")
+
+class GetLoadInPeriodTool(BaseTool):
+    name = "get_load_in_period"
+    description = "Get the load heatmap for a specific date range."
+    args_schema = GetLoadInPeriodArgs
+
+    async def run(self, start_date: str, end_date: str, **kwargs) -> Any:
+        session: AsyncSession = kwargs.get("session")
+        user_id: str = kwargs.get("user_id")
+        if not session or not user_id:
+            return {"success": False, "message": "Context error"}
+        
+        try:
+            client = await get_lbs_client(user_id, session)
+            hm = await client.get_heatmap(date.fromisoformat(start_date), date.fromisoformat(end_date))
+            return {"success": True, "message": f"Heatmap: {len(hm)} days", "data": {"heatmap": hm}}
+        except Exception as e:
+            return {"success": False, "message": f"Failed to get heatmap: {e}"}

@@ -1,6 +1,5 @@
 from typing import Any
 from nodes.base_node import BaseNode
-from tools import RESEARCHER_TOOL_DEFINITIONS, TOOL_FUNCTIONS
 from models.message import Message
 
 class ResearcherNode(BaseNode):
@@ -9,6 +8,23 @@ class ResearcherNode(BaseNode):
     Focus: External knowledge and Search.
     """
     
+    def __init__(self, context: Any):
+        super().__init__(context)
+        from tools.library.search import GoogleSearchTool, ResearchURLTool, SearchPlacesTool
+        from tools.library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool
+        from tools.library.knowledge import SearchKnowledgeTool, IngestKnowledgeTool
+        
+        self.tools = [
+            GoogleSearchTool(),
+            ResearchURLTool(),
+            SearchPlacesTool(),
+            SaveArtifactTool(),
+            ReadReferenceTool(),
+            ListFilesTool(),
+            SearchKnowledgeTool(),
+            IngestKnowledgeTool()
+        ]
+
     async def pre_process(self):
         pass
 
@@ -20,8 +36,7 @@ class ResearcherNode(BaseNode):
         llm_response = await self.chat_with_tools(
             system_prompt=system_prompt,
             message_history=[Message(role="user", content=message)],
-            tool_definitions=RESEARCHER_TOOL_DEFINITIONS,
-            tool_functions=TOOL_FUNCTIONS
+            tool_context=self.context
         )
         
         return llm_response.content or ""

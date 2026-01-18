@@ -12,10 +12,11 @@ class BaseNode(ABC):
         self.user_id = context.get("user_id")
         self.task_id = context.get("task_id")
         # LLM Provider (Stateless: configured per call or context)
-        # We can initialize it here if we have API key in context, 
-        # or pass it to chat_with_tools.
-        # For V3, let's allow on-demand initialization.
         self.llm = None 
+        
+        # New Class-Based Tools
+        from tools.base import BaseTool
+        self.tools: List[BaseTool] = []
         
     def load_system_prompt(self, role_name: Optional[str] = None) -> str:
         """
@@ -122,11 +123,29 @@ class BaseNode(ABC):
             t0 = time.time()
             messages = self.llm.format_messages(effective_system_prompt, llm_messages)
             
+            # --- Handle Class-Based Tools ---
+            # If explicit tool_definitions are passed (even []), use them.
+            # Otherwise, fall back to self.tools if present.
+            final_tool_defs = tool_definitions
+            final_tool_funcs = tool_functions
+            
+            if tool_definitions is None:
+                if self.tools:
+                    print(f"[{self.__class__.__name__}] Using {len(self.tools)} class-based tools.")
+                    final_tool_defs = [tool.declaration() for tool in self.tools]
+                    final_tool_funcs = {tool.name: tool.run for tool in self.tools}
+                else:
+                    final_tool_defs = []
+                    final_tool_funcs = {}
+            elif tool_functions is None:
+                # If definitions were passed but no functions, check if we can map from self.tools
+                final_tool_funcs = {tool.name: tool.run for tool in self.tools} if self.tools else {}
+
             response = await self.llm.complete_async(
                 messages, 
                 tool_context=tool_context or {},
-                tool_definitions=tool_definitions or [],
-                tool_functions=tool_functions or {},
+                tool_definitions=final_tool_defs,
+                tool_functions=final_tool_funcs,
                 preferred_model=preferred_model
             )
             print(f"[{self.__class__.__name__}/Timing] LLM complete: {time.time()-t0:.2f}s")

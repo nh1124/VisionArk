@@ -1,6 +1,6 @@
 """
 Gemini LLM Provider  
-Supports Gemini 1.5 and 2.0 models with Function Calling using the new google-genai SDK
+Supports Gemini 3 models with Function Calling using the new google-genai SDK
 """
 from google.genai import Client, types
 from typing import List, Optional, Any, Dict

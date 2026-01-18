@@ -2,7 +2,6 @@ from typing import Any, List
 from nodes.base_node import BaseNode
 from nodes.system.scheduler_node import SchedulerNode
 from models.message import Message
-from tools import ADVOCATE_TOOL_DEFINITIONS, TOOL_FUNCTIONS
 
 class AdvocateNode(BaseNode):
     """
@@ -14,6 +13,20 @@ class AdvocateNode(BaseNode):
         super().__init__(context)
         # We need a reference to Scheduler to propose tasks
         self.scheduler = SchedulerNode(context)
+        
+        from tools.library.condition import GetCurrentConditionTool, UpdateUserConditionTool
+        from tools.library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool
+        from tools.library.knowledge import SearchKnowledgeTool, IngestKnowledgeTool
+        
+        self.tools = [
+            GetCurrentConditionTool(),
+            UpdateUserConditionTool(),
+            SaveArtifactTool(),
+            ReadReferenceTool(),
+            ListFilesTool(),
+            SearchKnowledgeTool(),
+            IngestKnowledgeTool()
+        ]
 
     async def pre_process(self):
         pass
@@ -36,23 +49,10 @@ class AdvocateNode(BaseNode):
         system_prompt = self.load_system_prompt("advocate")
         
         # 2. Call LLM (using BaseNode's capability)
-        # We need to format the messages for the LLM
-        # We can reuse chat_with_tools but we want strict JSON and no tools.
-        # So we use self.llm.complete_async direct if possible, or chat_with_tools with system prompt.
-        # Let's use chat_with_tools as it handles history formatting, 
-        # but we need to ensure we get JSON.
-        
-        # We'll use a temporary "system" prompt override strictly for this call.
-        extraction_prompt = system_prompt
-        
-        # We need to initialize LLM if not present (BaseNode check)
         llm_response = await self.chat_with_tools(
-            system_prompt=extraction_prompt, 
+            system_prompt=system_prompt, 
             message_history=messages[-5:], # Analyze last 5 messages context
-            tool_definitions=ADVOCATE_TOOL_DEFINITIONS, 
-            api_key=None, # Use default
-            tool_context=self.context,
-            tool_functions=TOOL_FUNCTIONS
+            tool_context=self.context
         )
         
         # 3. Parse JSON

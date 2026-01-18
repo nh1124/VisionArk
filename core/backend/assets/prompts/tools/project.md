@@ -2,7 +2,6 @@
 
 ### Coordination & Delegation
 - **`delegate_to_member`**: Your primary way to scale. Use it to send complex tasks to specialized agents (Planner, Researcher, etc.).
-- **`report_to_hub`**: Critical when working within a sub-project to inform the central Hub of your progress.
 - **`ask_node`**: Direct peer-to-peer communication between different project nodes.
 
 ### Task & Execution

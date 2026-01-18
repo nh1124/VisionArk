@@ -1,6 +1,5 @@
 from typing import Any
 from nodes.base_node import BaseNode
-from tools import RULER_TOOL_DEFINITIONS, TOOL_FUNCTIONS
 from models.message import Message
 
 class RulerNode(BaseNode):
@@ -9,6 +8,23 @@ class RulerNode(BaseNode):
     Focus: File organization and Indexing.
     """
     
+    def __init__(self, context: Any):
+        super().__init__(context)
+        from tools.library.lbs import ListTasksTool, CreateTaskTool, UpdateTaskTool, CompleteLBSTaskTool, GetLBSScheduleTool, GetLoadOnDayTool
+        from tools.library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool
+        
+        self.tools = [
+            ListTasksTool(),
+            CreateTaskTool(),
+            UpdateTaskTool(),
+            CompleteLBSTaskTool(),
+            GetLBSScheduleTool(),
+            GetLoadOnDayTool(),
+            SaveArtifactTool(),
+            ReadReferenceTool(),
+            ListFilesTool()
+        ]
+
     async def pre_process(self):
         pass
 
@@ -20,8 +36,7 @@ class RulerNode(BaseNode):
         llm_response = await self.chat_with_tools(
             system_prompt=system_prompt,
             message_history=[Message(role="user", content=message)],
-            tool_definitions=RULER_TOOL_DEFINITIONS,
-            tool_functions=TOOL_FUNCTIONS
+            tool_context=self.context
         )
         
         return llm_response.content or ""
