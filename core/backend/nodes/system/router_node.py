@@ -143,12 +143,16 @@ class RouterNode(BaseNode):
             cmd = parse_command(message.strip())
             if cmd:
                 print(f"[RouterNode] Executing system command: {cmd.name}")
+                # Dynamic context based on current request
+                context_name = self.context.get("project_name", "hub")
+                context_type = "project" if context_name != "hub" else "hub"
+
                 async with AsyncSessionLocal() as db:
                     result = await execute_command(
                         cmd,
-                        context="hub", 
-                        context_type="hub",
-                        context_name="hub",
+                        context=context_type, 
+                        context_type=context_type,
+                        context_name=context_name,
                         session=db,
                         user_id=self.user_id
                     )
