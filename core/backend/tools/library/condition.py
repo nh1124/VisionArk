@@ -1,6 +1,6 @@
 from typing import Any, Optional, Dict
 from pydantic import BaseModel, Field
-from tools.base import BaseTool
+from tools.base import BaseTool, NoArgs
 from sqlalchemy.ext.asyncio import AsyncSession
 from tools.lbs_tools import update_user_condition, get_current_condition, reset_user_condition
 
@@ -10,7 +10,7 @@ class GetCurrentConditionTool(BaseTool):
         "Retrieve the user's current reported physical and mental energy metrics (0-10). "
         "HOW TO USE: 'get_current_condition()'."
     )
-    args_schema = BaseModel
+    args_schema = NoArgs
 
     async def run(self, **kwargs) -> Any:
         session: AsyncSession = kwargs.get("session")

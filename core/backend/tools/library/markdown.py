@@ -1,6 +1,6 @@
 from typing import Any, Optional, Dict
 from pydantic import BaseModel, Field
-from tools.base import BaseTool
+from tools.base import BaseTool, NoArgs
 from tools.library.files import ReadReferenceTool, SaveArtifactTool
 
 CURRENT_PLAN_FILE = "PLAN.md"
@@ -94,7 +94,7 @@ class GetCurrentStatusTool(BaseTool):
         "Retrieve the Current Status section from PLAN.md. "
         "HOW TO USE: 'get_current_status()'."
     )
-    args_schema = BaseModel # No args
+    args_schema = NoArgs # No args
 
     async def run(self, **kwargs) -> Any:
         reader = ReadMDSectionTool()

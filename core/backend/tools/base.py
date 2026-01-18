@@ -2,6 +2,10 @@ from abc import ABC, abstractmethod
 from typing import Type, Dict, Any, Optional
 from pydantic import BaseModel
 
+class NoArgs(BaseModel):
+    """Fallback model for tools with no arguments to avoid calling model_json_schema on BaseModel directly."""
+    pass
+
 class BaseTool(ABC):
     name: str
     description: str
