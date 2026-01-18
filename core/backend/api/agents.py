@@ -105,18 +105,44 @@ async def chat_with_project(
 ):
     """Chat with a specific Project agent"""
     from queue_system.manager import QueueManager
+    from utils.paths import get_project_dir
+    import mimetypes
     
     # 0. Debug log
     print(f"[Project Chat] Request for {project_name} from user {identity.user_id}")
 
-    # 1. Enqueue Task
+    # 1. Handle File Uploads
+    attached_files = []
+    if files:
+        project_dir = get_project_dir(identity.user_id, project_name)
+        for file in files:
+            # Save file to temporary location
+            temp_file_path = project_dir / f"{uuid.uuid4()}_{file.filename}"
+            with open(temp_file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            
+            # Guess mime type if not provided
+            mime_type = file.content_type
+            if not mime_type:
+                mime_type, _ = mimetypes.guess_type(file.filename)
+                mime_type = mime_type or "application/octet-stream"
+            
+            attached_files.append({
+                "path": str(temp_file_path),
+                "filename": file.filename,
+                "mime_type": mime_type
+            })
+        print(f"[Project Chat] Saved {len(attached_files)} files to {project_dir}")
+
+    # 2. Enqueue Task
     manager = QueueManager()
     
     context = {
         "user_id": identity.user_id,
         "preferred_model": x_preferred_model,
         "env": "v4",
-        "project_name": project_name
+        "project_name": project_name,
+        "files": attached_files
     }
     
     task_id = manager.enqueue(identity.user_id, message, context)

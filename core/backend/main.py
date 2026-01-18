@@ -16,17 +16,17 @@ from config import settings
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize database on startup"""
-    print("🚀 Initializing AI TaskManagement OS...")
+    print("Initializing AI TaskManagement OS...")
     print(f"   Environment: {settings.atmos_env}")
     print(f"   Bind: {settings.host}:{settings.backend_port}")
     
     if settings.atmos_env == "prod" and settings.atmos_api_key_pepper == "dev_pepper_change_in_prod":
-        print("⚠️  WARNING: ATMOS_API_KEY_PEPPER not changed from default in production!")
+        print("WARNING: ATMOS_API_KEY_PEPPER not changed from default in production!")
     
     init_database()  # Use automatic path detection
-    print("✅ Database initialized")
+    print("Database initialized")
     yield
-    print("👋 Shutting down...")
+    print("Shutting down...")
 
 
 # Create FastAPI app

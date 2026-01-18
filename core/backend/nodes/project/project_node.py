@@ -108,10 +108,10 @@ class ProjectNode(BaseNode):
                 # DEBUG LOG
                 k = self.context['api_key']
                 masked_key = f"{k[:4]}...{k[-4:]}" if k and len(k) > 8 else "INVALID"
-                print(f"[ProjectNode] 🔑 Loaded API Key for user {self.user_id}: {masked_key}", flush=True) # Ensure flush
+                print(f"[ProjectNode] Loaded API Key for user {self.user_id}: {masked_key}", flush=True) # Ensure flush
             else:
                 self.context['api_key'] = None
-                print(f"[ProjectNode] ❌ No API Key found in settings for user {self.user_id}", flush=True)
+                print(f"[ProjectNode] No API Key found in settings for user {self.user_id}", flush=True)
             
         finally:
             if should_close:

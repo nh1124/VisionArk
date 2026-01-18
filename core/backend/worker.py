@@ -11,7 +11,7 @@ from queue_system.manager import QueueManager
 from nodes.system.router_node import RouterNode
 
 async def worker():
-    print("🚀 Worker started. Waiting for tasks... (V3 Router Enabled)")
+    print("Worker started. Waiting for tasks... (V3 Router Enabled)")
     manager = QueueManager()
     
     while True:
