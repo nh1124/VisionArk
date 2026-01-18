@@ -91,9 +91,9 @@ class TTLLRUCache:
 
 # Global agent caches
 # Hub agents: keyed by user_id
-# Spoke agents: keyed by "{user_id}:{spoke_name}"
+# Spoke/Project agents: keyed by "{user_id}:{project_name}"
 _hub_agent_cache = TTLLRUCache(max_size=100, ttl_seconds=3600)  # 1 hour TTL
-_spoke_agent_cache = TTLLRUCache(max_size=500, ttl_seconds=1800)  # 30 min TTL
+_project_agent_cache = TTLLRUCache(max_size=500, ttl_seconds=1800)  # 30 min TTL
 
 
 def get_hub_agent_cache() -> TTLLRUCache:
@@ -101,6 +101,7 @@ def get_hub_agent_cache() -> TTLLRUCache:
     return _hub_agent_cache
 
 
-def get_spoke_agent_cache() -> TTLLRUCache:
-    """Get the spoke agent cache instance."""
-    return _spoke_agent_cache
+def get_project_agent_cache() -> TTLLRUCache:
+    """Get the project agent cache instance."""
+    return _project_agent_cache
+

@@ -13,7 +13,7 @@ from sqlalchemy import text
 
 from llm import get_provider
 from llm.base_provider import Message
-from utils.paths import get_spoke_dir, get_user_hub_dir
+from utils.paths import get_project_dir
 
 
 class ContextManager:
@@ -25,19 +25,19 @@ class ContextManager:
         
         Args:
             user_id: User ID for scoped paths
-            context_type: "hub" or "spoke"
-            context_name: Hub or spoke name
+            context_type: "project" (formerly hub/spoke)
+            context_name: Project name (slug)
             session: Database session for tracking
         """
         self.user_id = user_id
-        self.context_type = context_type
+        self.context_type = context_type # kept for compat, but usually "project" now
         self.context_name = context_name
         self.session = session
         
-        if context_type == "hub":
-            self.base_dir = get_user_hub_dir(user_id)
-        else:
-            self.base_dir = get_spoke_dir(user_id, context_name)
+        # V4: Unified Project Paths
+        # Hub is treated as a project named 'hub'
+        target_name = "hub" if context_type == "hub" or context_name == "hub" else context_name
+        self.base_dir = get_project_dir(user_id, target_name)
         
         self.chat_log_path = self.base_dir / "chat.log"
         self.logs_archive_dir = self.base_dir / "logs"
@@ -55,11 +55,11 @@ class ContextManager:
             from sqlalchemy import select
             
             try:
-                # 1. Find the Node
+                # 1. Find the Node by name (uniqueness per user enforced by app logic)
+                # We ignore node_type for lookup to be safe with V3->V4 migration
                 node_result = await self.session.execute(select(Node).filter(
                     Node.user_id == self.user_id,
-                    Node.name == self.context_name,
-                    Node.node_type == self.context_type.upper()
+                    Node.name == self.context_name
                 ))
                 node = node_result.scalars().first()
                 if not node:
@@ -254,8 +254,7 @@ Conversation to summarize:
             result = await self.session.execute(
                 select(Node.id).filter(
                     Node.user_id == self.user_id,
-                    Node.name == self.context_name,
-                    Node.node_type == self.context_type.upper()
+                    Node.name == self.context_name
                 )
             )
             node_id = result.scalars().first()

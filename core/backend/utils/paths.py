@@ -133,42 +133,49 @@ def get_user_root_dir(user_id: str) -> Path:
     return user_dir
 
 
-def get_user_spokes_dir(user_id: str) -> Path:
+# Legacy Spoke/Hub directory functions have been removed.
+# Use get_project_dir(user_id, project_name) for all projects (including "hub").
+
+
+
+# ============================================================
+# Project Directory Functions (V3 Unified Architecture)
+# ============================================================
+
+def get_user_projects_dir(user_id: str) -> Path:
     """
-    Get user's spokes directory: /data/users/{user_id}/spokes/
+    Get user's projects directory: /data/users/{user_id}/projects/
     Creates directory if it doesn't exist.
     """
     user_root = get_user_root_dir(user_id)
-    user_spokes = user_root / "spokes"
-    user_spokes.mkdir(parents=True, exist_ok=True)
-    return user_spokes
+    projects_dir = user_root / "projects"
+    projects_dir.mkdir(parents=True, exist_ok=True)
+    return projects_dir
 
 
-def get_spoke_dir(user_id: str, spoke_name: str) -> Path:
+def get_project_dir(user_id: str, project_name: str) -> Path:
     """
-    Get user's spoke directory: /data/users/{user_id}/spokes/{spoke_name}/
-    Does NOT auto-create the directory.
+    Get user's project directory: /data/users/{user_id}/projects/{project_name}/
+    Creates directory if it doesn't exist.
+    
+    Args:
+        user_id: User UUID
+        project_name: Project name/slug
+    
+    Returns:
+        Path to the project directory
     
     Raises:
-        ValueError: If user_id/spoke_name is invalid or path traversal detected
+        ValueError: If user_id/project_name is invalid or path traversal detected
     """
-    valid, error = validate_name(spoke_name, "spoke_name")
+    valid, error = validate_name(project_name, "project_name")
     if not valid:
         raise ValueError(error)
     
-    user_spokes = get_user_spokes_dir(user_id)
-    return secure_path_join(user_spokes, spoke_name)
-
-
-def get_user_hub_dir(user_id: str) -> Path:
-    """
-    Get user's hub data directory: /data/users/{user_id}/hub_data/
-    Creates directory if it doesn't exist.
-    """
-    user_root = get_user_root_dir(user_id)
-    user_hub = user_root / "hub_data"
-    user_hub.mkdir(parents=True, exist_ok=True)
-    return user_hub
+    projects_dir = get_user_projects_dir(user_id)
+    project_path = secure_path_join(projects_dir, project_name)
+    project_path.mkdir(parents=True, exist_ok=True)
+    return project_path
 
 
 def get_user_global_assets_dir(user_id: str) -> Path:
@@ -191,6 +198,13 @@ def get_default_assets_dir() -> Path:
     # In Docker: /app/utils/paths.py -> /app/assets
     # Locally: .../app/backend/utils/paths.py -> .../app/backend/assets
     return current_file.parent.parent / "assets"
+
+
+def get_prompts_dir() -> Path:
+    """
+    Get the prompts directory: core/backend/assets/prompts/
+    """
+    return get_default_assets_dir() / "prompts"
 
 
 # ============================================================

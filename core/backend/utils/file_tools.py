@@ -11,8 +11,9 @@ import mimetypes
 import google.generativeai as genai
 from datetime import datetime, timedelta
 
+
 # Import path utilities
-from utils.paths import get_spoke_dir
+from utils.paths import get_project_dir
 
 # File upload cache: {file_path: (uri, upload_time, file_name)}
 _file_upload_cache: Dict[str, tuple] = {}
@@ -40,7 +41,7 @@ def is_text_file(mime_type: str) -> bool:
 
 class SaveArtifactInput(BaseModel):
     """Input schema for save_artifact tool"""
-    spoke_name: str = Field(..., description="Name of the spoke (project)")
+    project_name: str = Field(..., description="Name of the project")
     file_path: str = Field(..., description="Relative path within artifacts/ directory (e.g., 'draft.md' or 'code/script.py')")
     content: str = Field(..., description="Full content of the file to save")
     overwrite: bool = Field(False, description="Set True to overwrite existing file")
@@ -55,7 +56,7 @@ class SaveArtifactInput(BaseModel):
 
 class ReadReferenceInput(BaseModel):
     """Input schema for read_reference tool"""
-    spoke_name: str = Field(..., description="Name of the spoke (project)")
+    project_name: str = Field(..., description="Name of the project")
     file_path: str = Field(..., description="Relative path within refs/ directory")
     
     @validator('file_path')
@@ -68,7 +69,7 @@ class ReadReferenceInput(BaseModel):
 
 class ListDirectoryInput(BaseModel):
     """Input schema for list_directory tool"""
-    spoke_name: str = Field(..., description="Name of the spoke (project)")
+    project_name: str = Field(..., description="Name of the project")
     sub_dir: str = Field(..., description="Subdirectory to list: 'refs' or 'artifacts'")
     
     @validator('sub_dir', allow_reuse=True)
@@ -80,12 +81,12 @@ class ListDirectoryInput(BaseModel):
 
 
 @tool("save_artifact", args_schema=SaveArtifactInput)
-def save_artifact(spoke_name: str, file_path: str, content: str, overwrite: bool = False, user_id: str = None) -> str:
+def save_artifact(project_name: str, file_path: str, content: str, overwrite: bool = False, user_id: str = None) -> str:
     """
-    Save code or document to the spoke's artifacts directory.
+    Save code or document to the project's artifacts directory.
     
     Args:
-        spoke_name: Name of the spoke (project)
+        project_name: Name of the project
         file_path: Relative path within artifacts/ (e.g., 'draft.md')
         content: Full text content to save
         overwrite: Whether to overwrite if file exists
@@ -99,8 +100,8 @@ def save_artifact(spoke_name: str, file_path: str, content: str, overwrite: bool
         
     try:
         # Construct full path
-        spoke_dir = get_spoke_dir(user_id, spoke_name)
-        artifacts_dir = spoke_dir / "artifacts"
+        project_dir = get_project_dir(user_id, project_name)
+        artifacts_dir = project_dir / "artifacts"
         full_path = artifacts_dir / file_path
         
         # Create artifacts directory if needed
@@ -123,13 +124,13 @@ def save_artifact(spoke_name: str, file_path: str, content: str, overwrite: bool
 
 
 @tool("read_reference", args_schema=ReadReferenceInput)
-def read_reference(spoke_name: str, file_path: str, user_id: str = None) -> str:
+def read_reference(project_name: str, file_path: str, user_id: str = None) -> str:
     """
-    Read a file from the spoke's refs directory.
+    Read a file from the project's refs directory.
     Supports text files, PDFs, and images via Gemini File API.
     
     Args:
-        spoke_name: Name of the spoke (project)
+        project_name: Name of the project
         file_path: Relative path within refs/ directory
         user_id: [Injected] User ID for scoping
         
@@ -141,13 +142,13 @@ def read_reference(spoke_name: str, file_path: str, user_id: str = None) -> str:
         
     try:
         # Construct full path
-        spoke_dir = get_spoke_dir(user_id, spoke_name)
-        refs_dir = spoke_dir / "refs"
+        project_dir = get_project_dir(user_id, project_name)
+        refs_dir = project_dir / "refs"
         full_path = refs_dir / file_path
         
-        # Validate spoke exists
-        if not spoke_dir.exists():
-            return f"Error: Spoke '{spoke_name}' does not exist for this user."
+        # Validate project exists
+        if not project_dir.exists():
+            return f"Error: Project '{project_name}' does not exist for this user."
         
         # Validate file exists
         if not full_path.exists():
@@ -214,12 +215,12 @@ def read_reference(spoke_name: str, file_path: str, user_id: str = None) -> str:
 
 
 @tool("list_directory", args_schema=ListDirectoryInput)
-def list_directory(spoke_name: str, sub_dir: str, user_id: str = None) -> str:
+def list_directory(project_name: str, sub_dir: str, user_id: str = None) -> str:
     """
-    List files in the spoke's refs or artifacts directory.
+    List files in the project's refs or artifacts directory.
     
     Args:
-        spoke_name: Name of the spoke (project)
+        project_name: Name of the project
         sub_dir: Either 'refs' or 'artifacts'
         user_id: [Injected] User ID for scoping
         
@@ -231,12 +232,12 @@ def list_directory(spoke_name: str, sub_dir: str, user_id: str = None) -> str:
         
     try:
         # Construct full path
-        spoke_dir = get_spoke_dir(user_id, spoke_name)
-        target_dir = spoke_dir / sub_dir
+        project_dir = get_project_dir(user_id, project_name)
+        target_dir = project_dir / sub_dir
         
         # Create target directory if it doesn't exist
         if not target_dir.exists():
-            return f"Error: Directory '{sub_dir}' does not exist in spoke '{spoke_name}'."
+            return f"Error: Directory '{sub_dir}' does not exist in project '{project_name}'."
         
         # List files
         files = []

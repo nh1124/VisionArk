@@ -16,7 +16,7 @@ from services.auth import get_db, resolve_identity, Identity
 from utils.password import hash_password, verify_password, MIN_PASSWORD_LENGTH
 from utils.jwt import create_access_token, decode_access_token, decode_token
 from datetime import timedelta
-from utils.paths import get_user_hub_dir, get_user_spokes_dir, get_user_global_assets_dir, get_default_assets_dir
+from utils.paths import get_user_projects_dir, get_project_dir, get_user_global_assets_dir, get_default_assets_dir
 from utils.encryption import encrypt_string
 import os
 import httpx
@@ -196,10 +196,13 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
     # Generate access token
     access_token = create_access_token(user_id=user_id, username=req.username)
     
-    # Create user directories for spokes, hub_data, and global_assets
+    # Create user directories for projects and hub
     try:
-        get_user_hub_dir(user_id)  # Creates /hub_data/{user_id}/
-        get_user_spokes_dir(user_id)  # Creates /spokes/{user_id}/
+        get_user_projects_dir(user_id)  # Creates /projects/{user_id}/
+        
+        # Create 'hub' project directory (The Root Project)
+        get_project_dir(user_id, "hub")  # Creates /projects/{user_id}/hub/
+        
         user_global_assets = get_user_global_assets_dir(user_id)  # Creates /global_assets/{user_id}/
         
         # Populate default assets

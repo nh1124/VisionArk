@@ -1,5 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Hide Next.js development indicator
+  devIndicators: false,
   // Increase body size limit for file uploads
   experimental: {
     serverActions: {

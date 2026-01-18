@@ -42,7 +42,7 @@ class InboxQueue(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(String(36), nullable=False, index=True)  # Owner user
-    source_spoke = Column(String, nullable=False)
+    source_project = Column(String, nullable=False)
     message_type = Column(String, nullable=False)  # share, complete, alert
     payload = Column(JSON, nullable=False)  # Structured <meta-action> data
     is_processed = Column(Boolean, default=False)
@@ -97,16 +97,26 @@ class UserSettings(Base):
     def gemini_api_key(self) -> Optional[str]:
         """Automatically decrypt and return the Gemini API key"""
         if not self.ai_config:
+            print("[UserSettings] ai_config is empty/None")
             return None
             
         encrypted_key = self.ai_config.get("gemini_api_key")
-        if not encrypted_key or encrypted_key == "********":
-            return None
+        if not encrypted_key:
+             print("[UserSettings] gemini_api_key missing in ai_config")
+             return None
+        
+        if encrypted_key == "********":
+             print("[UserSettings] Key is masked '********' (not real key)")
+             return None
             
         from utils.encryption import decrypt_string
         try:
-            return decrypt_string(encrypted_key)
-        except Exception:
+            val = decrypt_string(encrypted_key)
+            if not val:
+                 print("[UserSettings] Decrypted key is empty")
+            return val
+        except Exception as e:
+            print(f"[UserSettings] Decryption failed: {e}")
             return None
 
 
@@ -155,14 +165,15 @@ class ExternalIdentity(Base):
 
 
 class Node(Base):
-    """Agent Nodes (Contexts) - HUB or SPOKE"""
+    """Project/Workspace - unified model replacing old HUB/SPOKE distinction"""
     __tablename__ = "nodes"
     
     id = Column(String(36), primary_key=True)  # UUID
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
-    name = Column(String(100), nullable=False)  # Slug
+    name = Column(String(100), nullable=False)  # Slug/identifier
     display_name = Column(String(200), nullable=False)
-    node_type = Column(String(50), nullable=False)  # HUB, SPOKE
+    # node_type removed in V4
+    # node_type = Column(String(50), nullable=True, default="PROJECT")
     lbs_access_level = Column(String(50), default="READ_ONLY")  # READ_ONLY, WRITE
     is_archived = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -233,7 +244,7 @@ class ArchivedContext(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     node_id = Column(String(36), ForeignKey("nodes.id"), nullable=True, index=True)
-    spoke_name = Column(String(100), nullable=False, index=True)
+    project_name = Column(String(100), nullable=False, index=True)
     archived_at = Column(DateTime, default=datetime.utcnow)
     summary_path = Column(Text, nullable=True)
     log_path = Column(Text, nullable=True)
@@ -249,7 +260,7 @@ class RagMetadata(Base):
     __tablename__ = "rag_metadata"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    spoke_name = Column(String(100), nullable=False, index=True)
+    project_name = Column(String(100), nullable=False, index=True)
     file_name = Column(String(255), nullable=False)
     file_path = Column(String(512), nullable=False)
     file_hash = Column(String(128), nullable=True)
@@ -387,3 +398,7 @@ async def get_async_db():
     async_session = get_async_session_maker(engine)
     async with async_session() as session:
         yield session
+
+# Create global async session maker for direct usage (non-FastAPI)
+async_engine_global = get_async_engine()
+AsyncSessionLocal = get_async_session_maker(async_engine_global)

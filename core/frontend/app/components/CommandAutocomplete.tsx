@@ -21,7 +21,7 @@ interface CommandAutocompleteProps {
     onChange: (value: string) => void;
     onSubmit: () => void;
     placeholder: string;
-    context: "hub" | "spoke";
+    context: "hub" | "project";
     disabled?: boolean;
     showInput?: boolean;
 }
@@ -48,30 +48,30 @@ const CommandAutocomplete = forwardRef<CommandAutocompleteHandle, CommandAutocom
     // Debounce input value to reduce filtering frequency (50ms delay)
     const debouncedValue = useDebounce(value, 50);
 
-    // ... (hubCommands and spokeCommands remain same)
+    // ... (hubCommands and projectCommands remain same)
     const hubCommands: Command[] = [
-        { name: "/create_spoke", description: "Create a new Spoke", usage: "/create_spoke <name>" },
-        { name: "/create_task", description: "Create a new LBS task", usage: '/create_task name="Task" spoke="spoke" workload=5.0' },
+        { name: "/create_project", description: "Create a new Project", usage: "/create_project <name>" },
+        { name: "/create_task", description: "Create a new LBS task", usage: '/create_task name="Task" project="project" workload=5.0' },
         { name: "/check_inbox", description: "Check pending inbox messages", usage: "/check_inbox" },
-        { name: "/send_message", description: "Send message to a Spoke", usage: "/check_inbox name=<spoke_name> message=<message>" },
-        { name: "/kill", description: "Delete a Spoke permanently", usage: "/kill <spoke_name>" },
-        { name: "/archive", description: "Archive Hub or Spoke conversation", usage: "/archive [spoke_name]" },
-        { name: "/move", description: "Move to Hub or Spoke page", usage: "/move [node_name]" },
-        { name: "/mv", description: "Move to Hub or Spoke page (alias)", usage: "/mv [node_name]" },
+        { name: "/send_message", description: "Send message to a Project", usage: "/send_message name=<project_name> message=<message>" },
+        { name: "/kill", description: "Delete a Project permanently", usage: "/kill <project_name>" },
+        { name: "/archive", description: "Archive Hub or Project conversation", usage: "/archive [project_name]" },
+        { name: "/move", description: "Move to Hub or Project page", usage: "/move [node_name]" },
+        { name: "/mv", description: "Move to Hub or Project page (alias)", usage: "/mv [node_name]" },
     ];
 
-    const spokeCommands: Command[] = [
-        { name: "/create_task", description: "Create a new LBS task", usage: '/create_task name="Task" spoke="spoke" workload=5.0' },
+    const projectCommands: Command[] = [
+        { name: "/create_task", description: "Create a new LBS task", usage: '/create_task name="Task" project="project" workload=5.0' },
         { name: "/share", description: "Share update with Hub", usage: "/share [message]" },
         { name: "/complete", description: "Mark task as complete", usage: "/complete <task_id> [notes]" },
         { name: "/report", description: "Generate progress report", usage: "/report [summary]" },
-        { name: "/kill", description: "Delete this Spoke (self-destruct)", usage: "/kill" },
+        { name: "/kill", description: "Delete this Project (self-destruct)", usage: "/kill" },
         { name: "/archive", description: "Archive this conversation", usage: "/archive" },
-        { name: "/move", description: "Move to Hub or Spoke page", usage: "/move [node_name]" },
-        { name: "/mv", description: "Move to Hub or Spoke page (alias)", usage: "/mv [node_name]" },
+        { name: "/move", description: "Move to Hub or Project page", usage: "/move [node_name]" },
+        { name: "/mv", description: "Move to Hub or Project page (alias)", usage: "/mv [node_name]" },
     ];
 
-    const availableCommands = context === "hub" ? hubCommands : spokeCommands;
+    const availableCommands = context === "hub" ? hubCommands : projectCommands;
 
     useEffect(() => {
         if (debouncedValue.startsWith("/") && debouncedValue.length > 1) {

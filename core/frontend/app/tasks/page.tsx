@@ -77,8 +77,8 @@ export default function UnifiedTasksPage() {
     const quickAddRef = useRef<HTMLDivElement>(null);
     const qaDateRef = useRef<HTMLInputElement>(null);
 
-    // Spokes list
-    const [allSpokes, setAllSpokes] = useState<string[]>([]);
+    // Projects list
+    const [allProjects, setAllProjects] = useState<string[]>([]);
 
     // Quick Add Options
     const [qaContext, setQaContext] = useState<string>("personal");
@@ -88,7 +88,7 @@ export default function UnifiedTasksPage() {
     // Load data
     useEffect(() => {
         loadTasks();
-        loadAllSpokes();
+        loadAllProjects();
     }, [targetDate]);
 
     // Handle clicks outside quick add to hide options
@@ -103,15 +103,15 @@ export default function UnifiedTasksPage() {
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
-    const loadAllSpokes = async () => {
+    const loadAllProjects = async () => {
         try {
-            const response = await apiFetch("/api/agents/spoke/list");
+            const response = await apiFetch("/api/agents/project/list");
             const data = await response.json();
-            if (data && data.spokes && Array.isArray(data.spokes)) {
-                setAllSpokes(data.spokes.map((s: any) => s.name));
+            if (data && data.projects && Array.isArray(data.projects)) {
+                setAllProjects(data.projects.map((s: any) => s.name));
             }
         } catch (err) {
-            console.error("Failed to load spokes:", err);
+            console.error("Failed to load projects:", err);
         }
     };
 
@@ -133,12 +133,12 @@ export default function UnifiedTasksPage() {
         }
     };
 
-    const availableSpokes = useMemo(() => {
-        const spokesFromTasks = tasks.map(t => t.context);
-        // Only include "personal" if no spokes are found, otherwise rely on actual spoke list
-        const defaults = allSpokes.length === 0 ? ["personal"] : [];
-        return Array.from(new Set([...allSpokes, ...spokesFromTasks, ...defaults])).sort();
-    }, [tasks, allSpokes]);
+    const availableProjects = useMemo(() => {
+        const projectsFromTasks = tasks.map(t => t.context);
+        // Only include "personal" if no projects are found, otherwise rely on actual project list
+        const defaults = allProjects.length === 0 ? ["personal"] : [];
+        return Array.from(new Set([...allProjects, ...projectsFromTasks, ...defaults])).sort();
+    }, [tasks, allProjects]);
 
     // Split tasks
     const pendingTasks = useMemo(() => tasks.filter(t => t.status !== 'done' && t.status !== 'skipped'), [tasks]);
@@ -395,14 +395,14 @@ export default function UnifiedTasksPage() {
                             {/* Quick Add Options Bar - Floating Above */}
                             {(activeOptions || quickAddName) && (
                                 <div className="absolute bottom-full left-0 mb-3 flex items-center gap-2 px-4 py-2 bg-gray-900/90 backdrop-blur-xl border border-gray-800 rounded-2xl animate-in slide-in-from-bottom-2 duration-300 shadow-2xl z-20">
-                                    {/* Spoke/Context Selector */}
+                                    {/* Project/Context Selector */}
                                     <div className="relative group">
                                         <select
                                             value={qaContext}
                                             onChange={(e) => setQaContext(e.target.value)}
                                             className="absolute inset-0 opacity-0 cursor-pointer z-10"
                                         >
-                                            {availableSpokes.map(s => <option key={s} value={s}>{s}</option>)}
+                                            {availableProjects.map(s => <option key={s} value={s}>{s}</option>)}
                                         </select>
                                         <button className="flex items-center gap-2 px-3 py-1.5 bg-gray-800/50 hover:bg-gray-800 border border-gray-700/50 rounded-xl text-[10px] font-black uppercase tracking-wider text-gray-400 group-hover:text-blue-400 transition-all">
                                             <Archive className="w-3.5 h-3.5" />
@@ -502,13 +502,13 @@ export default function UnifiedTasksPage() {
                 isOpen={createModalOpen}
                 onClose={() => setCreateModalOpen(false)}
                 onTaskCreated={() => loadTasks()}
-                availableSpokes={availableSpokes}
+                availableProjects={availableProjects}
             />
             <TaskImportModal
                 isOpen={importModalOpen}
                 onClose={() => setImportModalOpen(false)}
                 onImportComplete={() => loadTasks()}
-                existingSpokes={availableSpokes}
+                existingProjects={availableProjects}
             />
         </div>
     );

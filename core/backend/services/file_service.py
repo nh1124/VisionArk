@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from models.database import UploadedFile, Node
-from utils.paths import get_user_hub_dir, get_spoke_dir
+from utils.paths import get_project_dir
 
 # File size limit: 100MB
 MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024
@@ -56,40 +56,34 @@ class FileService:
             self.client = Client(api_key=self.api_key, http_options={'api_version': 'v1alpha'})
         return self.client
     
-    def get_files_dir(self, node_type: str, node_name: str) -> Path:
-        """Get files directory (refs) based on node type"""
-        if node_type.lower() == "hub":
-            base = get_user_hub_dir(self.user_id)
-        else:
-            base = get_spoke_dir(self.user_id, node_name)
+    def get_files_dir(self, project_id: str) -> Path:
+        """Get files directory (refs) based on project ID"""
+        # Map legacy 'root' to 'hub' for project name
+        project_name = "hub" if project_id == "root" or not project_id else project_id
+        
+        base = get_project_dir(self.user_id, project_name)
         
         path = base / "refs"  # Default to refs for library uploads
         path.mkdir(parents=True, exist_ok=True)
         return path
     
-    async def _get_node(self, node_type: str, node_name: str) -> Optional[Node]:
+    async def _get_node(self, project_id: str) -> Optional[Node]:
         """Get node from database"""
-        if node_type.lower() == "hub":
-            result = await self.db.execute(select(Node).filter(
-                Node.user_id == self.user_id,
-                Node.node_type == "HUB"
-            ))
-            return result.scalars().first()
-        else:
-            result = await self.db.execute(select(Node).filter(
-                Node.user_id == self.user_id,
-                Node.name == node_name,
-                Node.node_type == "SPOKE"
-            ))
-            return result.scalars().first()
+        node_name = "hub" if project_id == "root" or not project_id else project_id
+        
+        # V4: Query by name only
+        result = await self.db.execute(select(Node).filter(
+            Node.user_id == self.user_id,
+            Node.name == node_name
+        ))
+        return result.scalars().first()
     
     async def save_file(
         self,
         content: bytes,
         filename: str,
         mime_type: str,
-        node_type: str,
-        node_name: str
+        project_id: str
     ) -> UploadedFile:
         """
         Save file to filesystem and database.
@@ -97,16 +91,16 @@ class FileService:
         if len(content) > MAX_FILE_SIZE_BYTES:
             raise ValueError(f"File size exceeds limit of {MAX_FILE_SIZE_BYTES // (1024*1024)}MB")
         
-        node = await self._get_node(node_type, node_name)
+        node = await self._get_node(project_id)
         if not node:
-            raise ValueError(f"Node '{node_name}' not found.")
+            raise ValueError(f"Node for project '{project_id}' not found.")
         
         file_id = str(uuid4())
         ext = Path(filename).suffix
         safe_filename = f"{file_id}{ext}"
         
         # Save to filesystem
-        files_dir = self.get_files_dir(node_type, node_name)
+        files_dir = self.get_files_dir(project_id)
         file_path = files_dir / safe_filename
         await asyncio.to_thread(file_path.write_bytes, content)
         
@@ -192,11 +186,11 @@ class FileService:
         await self.db.commit()
         return True
     
-    async def list_files(self, node_type: str, node_name: str) -> List[Dict[str, Any]]:
+    async def list_files(self, project_id: str) -> List[Dict[str, Any]]:
         """
-        List all files for a node.
+        List all files for a project.
         """
-        node = await self._get_node(node_type, node_name)
+        node = await self._get_node(project_id)
         if not node:
             return []
         

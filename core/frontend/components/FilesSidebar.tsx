@@ -22,7 +22,7 @@ interface ArtifactInfo {
 }
 
 interface FilesSidebarProps {
-    nodeType: "hub" | "spoke";
+    nodeType: "hub" | "spoke" | "project";
     nodeName: string;
     onSyncComplete?: (files: FileInfo[]) => void;
 }
@@ -128,7 +128,10 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
     const openArtifact = async (path: string) => {
         try {
             const token = await getFileToken();
-            window.open(`/api/files/${nodeType}/${nodeName}/artifacts/${path}?token=${token}`, '_blank');
+            const url = nodeType === 'hub'
+                ? `/api/agents/hub/artifacts/${path}?token=${token}`
+                : `/api/agents/project/${nodeName}/artifacts/${path}?token=${token}`;
+            window.open(url, '_blank');
         } catch (error) {
             console.error("Failed to open artifact:", error);
         }
@@ -238,7 +241,7 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
         try {
             const url = nodeType === "hub"
                 ? `/api/agents/hub/artifacts`
-                : `/api/agents/${nodeType}/${nodeName}/artifacts`;
+                : `/api/agents/project/${nodeName}/artifacts`;
             const response = await apiFetch(url);
             const data = await response.json();
             setArtifacts(data.artifacts || []);
@@ -253,7 +256,7 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
             const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(name);
             const url = nodeType === "hub"
                 ? `/api/agents/hub/artifacts/${path}`
-                : `/api/agents/${nodeType}/${nodeName}/artifacts/${path}`;
+                : `/api/agents/project/${nodeName}/artifacts/${path}`;
 
             if (isImage) {
                 setSelectedArtifact({ name, path, type: 'image' });

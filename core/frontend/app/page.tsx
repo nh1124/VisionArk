@@ -31,26 +31,8 @@ export default function Home() {
             </div>
           </Link>
 
-          {/* Hub Chat Card */}
-          <Link href="/hub">
-            <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 hover:border-purple-500 transition-colors cursor-pointer">
-              <div className="flex items-center mb-3">
-                <div className="w-12 h-12 bg-purple-500/20 rounded-lg flex items-center justify-center mr-4">
-                  <svg className="w-6 h-6 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                  </svg>
-                </div>
-                <h2 className="text-xl font-semibold">Hub Agent</h2>
-              </div>
-              <p className="text-gray-400">
-                Chat with the central PM agent for strategic guidance
-              </p>
-            </div>
-          </Link>
-
-
-          {/* Spokes Card */}
-          <Link href="/spokes">
+          {/* Projects Card */}
+          <Link href="/projects">
             <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 hover:border-cyan-500 transition-colors cursor-pointer">
               <div className="flex items-center mb-3">
                 <div className="w-12 h-12 bg-cyan-500/20 rounded-lg flex items-center justify-center mr-4">
@@ -58,7 +40,7 @@ export default function Home() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                   </svg>
                 </div>
-                <h2 className="text-xl font-semibold">Projects (Spokes)</h2>
+                <h2 className="text-xl font-semibold">Projects</h2>
               </div>
               <p className="text-gray-400">
                 Manage and chat with project-specific agents

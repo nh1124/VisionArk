@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState, useEffect, useRef } from "react";
 import { apiFetch, getFileToken } from "@/lib/api";
 
-import { useSpokes } from "@/hooks/useSpokes";
+import { useProjects } from "@/hooks/useProjects";
 
 interface SidebarProps {
     isCollapsed: boolean;
@@ -14,9 +14,9 @@ interface SidebarProps {
 
 export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
     const pathname = usePathname();
-    const { spokes } = useSpokes();
-    const [spokesExpanded, setSpokesExpanded] = useState(true);
-    const [hoveredSpoke, setHoveredSpoke] = useState<string | null>(null);
+    const { projects } = useProjects();
+    const [projectsExpanded, setProjectsExpanded] = useState(true);
+    const [hoveredProject, setHoveredProject] = useState<string | null>(null);
     const [menuOpen, setMenuOpen] = useState<string | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
 
@@ -31,15 +31,15 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
-    const handleExportChat = async (spokeName: string) => {
+    const handleExportChat = async (projectName: string) => {
         try {
             const token = await getFileToken();
-            const exportUrl = `/api/export/chat/${spokeName}?token=${token}`;
+            const exportUrl = `/api/export/chat/${projectName}?token=${token}`;
 
             // Create a temporary link to trigger download
             const link = document.createElement('a');
             link.href = exportUrl;
-            link.setAttribute('download', `${spokeName}_chat.md`);
+            link.setAttribute('download', `${projectName}_chat.md`);
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
@@ -55,7 +55,8 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
         { name: "Home", path: "/" },
         { name: "Dashboard", path: "/dashboard" },
         { name: "Tasks", path: "/tasks" },
-        { name: "Hub", path: "/hub" },
+        // Hub removed from strict separate list, might be treated as project or separate depending on UI preference
+        // For now, adhering to user request to V4 structure.
     ];
 
     return (
@@ -105,58 +106,59 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                     })}
                 </div>
 
-                {/* Spokes Section */}
+                {/* Projects Section */}
                 <div className="mt-4 pt-4 border-t border-gray-800/50">
                     <button
-                        onClick={() => setSpokesExpanded(!spokesExpanded)}
+                        onClick={() => setProjectsExpanded(!projectsExpanded)}
                         className={`flex items-center w-full px-4 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-300 transition-colors ${isCollapsed ? "justify-center px-2" : ""}`}
                     >
                         {isCollapsed ? (
-                            <span>S</span>
+                            <span>P</span>
                         ) : (
                             <>
-                                <span className="flex-1 text-left uppercase tracking-wider">Spokes</span>
-                                <span className={`transition-transform duration-200 ${spokesExpanded ? "" : "-rotate-90"}`}>▾</span>
+                                <span className="flex-1 text-left uppercase tracking-wider">Projects</span>
+                                <span className={`transition-transform duration-200 ${projectsExpanded ? "" : "-rotate-90"}`}>▾</span>
                             </>
                         )}
                     </button>
 
-                    {spokesExpanded && !isCollapsed && (
+                    {projectsExpanded && !isCollapsed && (
                         <div className="mt-1 px-2 space-y-0.5">
-                            {spokes.length === 0 ? (
+                            {projects.length === 0 ? (
                                 <div className="px-3 py-2 text-xs text-gray-600 italic">
-                                    No spokes yet
+                                    No projects yet
                                 </div>
                             ) : (
-                                spokes.map((spoke) => {
-                                    const isActive = pathname.startsWith(spoke.path);
-                                    const isHovered = hoveredSpoke === spoke.name;
+                                projects.map((project) => {
+                                    const projectPath = project.path; // Already /projects/{name}
+                                    const isActive = pathname === projectPath || pathname.startsWith(projectPath + "/");
+                                    const isHovered = hoveredProject === project.name;
                                     return (
                                         <div
-                                            key={spoke.name}
+                                            key={project.name}
                                             className="relative"
-                                            onMouseEnter={() => setHoveredSpoke(spoke.name)}
+                                            onMouseEnter={() => setHoveredProject(project.name)}
                                             onMouseLeave={() => {
-                                                if (menuOpen !== spoke.name) setHoveredSpoke(null);
+                                                if (menuOpen !== project.name) setHoveredProject(null);
                                             }}
                                         >
                                             <Link
-                                                href={spoke.path}
+                                                href={projectPath}
                                                 className={`flex items-center px-3 py-2 rounded-lg text-sm transition-colors ${isActive
                                                     ? "bg-gray-800 text-white"
                                                     : "text-gray-400 hover:bg-gray-800/50 hover:text-white"
                                                     }`}
                                             >
-                                                <span className="truncate flex-1">{spoke.display_name || spoke.name}</span>
+                                                <span className="truncate flex-1">{project.display_name || project.name}</span>
                                             </Link>
 
                                             {/* Three-dot menu */}
-                                            {(isHovered || menuOpen === spoke.name) && (
+                                            {(isHovered || menuOpen === project.name) && (
                                                 <button
                                                     onClick={(e) => {
                                                         e.preventDefault();
                                                         e.stopPropagation();
-                                                        setMenuOpen(menuOpen === spoke.name ? null : spoke.name);
+                                                        setMenuOpen(menuOpen === project.name ? null : project.name);
                                                     }}
                                                     className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 text-gray-500 hover:text-white hover:bg-gray-700 rounded transition-colors"
                                                 >
@@ -167,20 +169,20 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                                             )}
 
                                             {/* Dropdown Menu */}
-                                            {menuOpen === spoke.name && (
+                                            {menuOpen === project.name && (
                                                 <div
                                                     ref={menuRef}
                                                     className="absolute right-0 top-full mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-xl py-1 min-w-[140px] z-50"
                                                 >
                                                     <Link
-                                                        href={`/spokes/${spoke.name}/settings`}
+                                                        href={`/projects/${project.name}/settings`}
                                                         className="flex items-center px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
                                                         onClick={() => setMenuOpen(null)}
                                                     >
                                                         Settings
                                                     </Link>
                                                     <button
-                                                        onClick={() => handleExportChat(spoke.name)}
+                                                        onClick={() => handleExportChat(project.name)}
                                                         className="w-full flex items-center px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
                                                     >
                                                         Export Chat
@@ -192,13 +194,13 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                                 })
                             )}
 
-                            {/* New Spoke Button */}
+                            {/* New Project Button */}
                             <Link
-                                href="/spokes"
+                                href="/projects"
                                 className="flex items-center px-3 py-2 rounded-lg text-sm text-gray-500 hover:bg-gray-800/50 hover:text-gray-300 transition-colors"
                             >
                                 <span className="mr-2">+</span>
-                                <span>New Spoke</span>
+                                <span>New Project</span>
                             </Link>
                         </div>
                     )}

@@ -7,22 +7,23 @@ import PyPDF2
 import io
 
 
-def load_reference_files(user_id: str, spoke_name: str, max_files: int = 5) -> str:
+
+def load_reference_files(user_id: str, project_name: str, max_files: int = 5) -> str:
     """
-    Load reference files from spoke's refs/ directory
+    Load reference files from project's refs/ directory
     
     Args:
         user_id: User's UUID
-        spoke_name: Name of the spoke
+        project_name: Name of the project
         max_files: Maximum number of reference files to load
     
     Returns:
         Formatted string with reference file contents
     """
-    from utils.paths import get_spoke_dir
+    from utils.paths import get_project_dir
     
-    spoke_dir = get_spoke_dir(user_id, spoke_name)
-    refs_dir = spoke_dir / "refs"
+    project_dir = get_project_dir(user_id, project_name)
+    refs_dir = project_dir / "refs"
     
     if not refs_dir.exists():
         return ""
@@ -62,3 +63,4 @@ def load_reference_files(user_id: str, spoke_name: str, max_files: int = 5) -> s
 
 
 __all__ = ['load_reference_files']
+

@@ -12,24 +12,24 @@ interface ParsedTask {
     nth_in_month: number | null;
     weekday_mon1: number | null;
     notes: string | null;
-    isNewSpoke?: boolean;
+    isNewProject?: boolean;
 }
 
 interface TaskImportModalProps {
     isOpen: boolean;
     onClose: () => void;
     onImportComplete: () => void;
-    existingSpokes: string[];
+    existingProjects: string[];
 }
 
 export default function TaskImportModal({
     isOpen,
     onClose,
     onImportComplete,
-    existingSpokes
+    existingProjects
 }: TaskImportModalProps) {
     const [parsedTasks, setParsedTasks] = useState<ParsedTask[]>([]);
-    const [autoCreateSpokes, setAutoCreateSpokes] = useState(true);
+    const [autoCreateProjects, setAutoCreateProjects] = useState(true);
     const [loading, setLoading] = useState(false);
     const [status, setStatus] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
     const [fileName, setFileName] = useState<string>("");
@@ -37,12 +37,12 @@ export default function TaskImportModal({
 
     if (!isOpen) return null;
 
-    const newSpokes = parsedTasks
+    const newProjects = parsedTasks
         .map(t => t.context)
-        .filter((spoke, idx, arr) =>
-            spoke &&
-            !existingSpokes.includes(spoke) &&
-            arr.indexOf(spoke) === idx
+        .filter((project, idx, arr) =>
+            project &&
+            !existingProjects.includes(project) &&
+            arr.indexOf(project) === idx
         );
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -77,7 +77,7 @@ export default function TaskImportModal({
                         nth_in_month: parseInt(getField(headers, values, "nth_in_month")) || null,
                         weekday_mon1: parseInt(getField(headers, values, "weekday_mon1")) || null,
                         notes: getField(headers, values, "notes") || null,
-                        isNewSpoke: !existingSpokes.includes(getField(headers, values, "context") || "general")
+                        isNewProject: !existingProjects.includes(getField(headers, values, "context") || "general")
                     };
                     tasks.push(task);
                 }
@@ -139,19 +139,19 @@ export default function TaskImportModal({
         setStatus({ type: "info", message: "Importing tasks..." });
 
         try {
-            // Create new spokes if needed
-            if (autoCreateSpokes && newSpokes.length > 0) {
-                setStatus({ type: "info", message: `Creating ${newSpokes.length} new spoke(s)...` });
+            // Create new projects if needed
+            if (autoCreateProjects && newProjects.length > 0) {
+                setStatus({ type: "info", message: `Creating ${newProjects.length} new project(s)...` });
 
-                for (const spokeName of newSpokes) {
+                for (const projectName of newProjects) {
                     try {
-                        await apiFetch("/api/agents/spoke/create", {
+                        await apiFetch("/api/agents/project/create", {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ spoke_name: spokeName })
+                            body: JSON.stringify({ project_name: projectName })
                         });
                     } catch (err) {
-                        console.error(`Failed to create spoke ${spokeName}:`, err);
+                        console.error(`Failed to create project ${projectName}:`, err);
                     }
                 }
             }
@@ -275,7 +275,7 @@ export default function TaskImportModal({
                                             <thead className="bg-gray-800">
                                                 <tr>
                                                     <th className="px-4 py-2 text-left">Task Name</th>
-                                                    <th className="px-4 py-2 text-left">Spoke</th>
+                                                    <th className="px-4 py-2 text-left">Project</th>
                                                     <th className="px-4 py-2 text-left">Impact</th>
                                                     <th className="px-4 py-2 text-left">Type</th>
                                                     <th className="px-4 py-2 text-left">Details</th>
@@ -287,7 +287,7 @@ export default function TaskImportModal({
                                                     <tr key={idx} className="border-t border-gray-800">
                                                         <td className="px-4 py-2">{task.task_name}</td>
                                                         <td className="px-4 py-2">
-                                                            {task.isNewSpoke ? (
+                                                            {task.isNewProject ? (
                                                                 <span className="text-yellow-400 flex items-center gap-1">
                                                                     <span>🆕</span> {task.context}
                                                                 </span>
@@ -317,26 +317,26 @@ export default function TaskImportModal({
                                     </div>
                                 </div>
 
-                                {/* New Spokes Warning */}
-                                {newSpokes.length > 0 && (
+                                {/* New Projects Warning */}
+                                {newProjects.length > 0 && (
                                     <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4">
                                         <div className="flex items-start gap-3">
                                             <span className="text-xl">⚠️</span>
                                             <div className="flex-1">
                                                 <p className="font-medium text-yellow-400">
-                                                    {newSpokes.length} new spoke(s) will be created:
+                                                    {newProjects.length} new project(s) will be created:
                                                 </p>
                                                 <p className="text-sm text-gray-300 mt-1">
-                                                    {newSpokes.join(", ")}
+                                                    {newProjects.join(", ")}
                                                 </p>
                                                 <label className="flex items-center gap-2 mt-3 cursor-pointer">
                                                     <input
                                                         type="checkbox"
-                                                        checked={autoCreateSpokes}
-                                                        onChange={(e) => setAutoCreateSpokes(e.target.checked)}
+                                                        checked={autoCreateProjects}
+                                                        onChange={(e) => setAutoCreateProjects(e.target.checked)}
                                                         className="w-4 h-4 accent-purple-500"
                                                     />
-                                                    <span className="text-sm">Automatically create missing spokes</span>
+                                                    <span className="text-sm">Automatically create missing projects</span>
                                                 </label>
                                             </div>
                                         </div>

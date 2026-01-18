@@ -3,10 +3,10 @@
 import { useState, useEffect } from "react";
 
 interface FileUploadProps {
-    spokeName: string;
+    projectName: string;
 }
 
-export default function FileUpload({ spokeName }: FileUploadProps) {
+export default function FileUpload({ projectName }: FileUploadProps) {
     const [uploading, setUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(0);
     const [files, setFiles] = useState<any>({ refs: [], artifacts: [] });
@@ -16,11 +16,11 @@ export default function FileUpload({ spokeName }: FileUploadProps) {
     // Load files on mount
     useEffect(() => {
         loadFiles();
-    }, [spokeName]);
+    }, [projectName]);
 
     const loadFiles = async () => {
         try {
-            const response = await fetch(`/api/spokes/${spokeName}/files`);
+            const response = await fetch(`/api/agents/project/${projectName}/files`);
             const data = await response.json();
             setFiles(data);
         } catch (error) {
@@ -61,7 +61,7 @@ export default function FileUpload({ spokeName }: FileUploadProps) {
                 xhr.addEventListener("error", () => reject(new Error("Network error")));
                 xhr.addEventListener("abort", () => reject(new Error("Upload aborted")));
 
-                xhr.open("POST", `/api/spokes/${spokeName}/upload`);
+                xhr.open("POST", `/api/agents/project/${projectName}/upload`);
                 xhr.send(formData);
             });
 
@@ -100,7 +100,7 @@ export default function FileUpload({ spokeName }: FileUploadProps) {
 
         try {
             const response = await fetch(
-                `/api/spokes/${spokeName}/files/${directory}/${filename}`,
+                `/api/agents/project/${projectName}/files/${directory}/${filename}`,
                 { method: "DELETE" }
             );
 
@@ -126,12 +126,12 @@ export default function FileUpload({ spokeName }: FileUploadProps) {
             >
                 <input
                     type="file"
-                    id={`file-upload-${spokeName}`}
+                    id={`file-upload-${projectName}`}
                     className="hidden"
                     onChange={handleFileInput}
                     disabled={uploading}
                 />
-                <label htmlFor={`file-upload-${spokeName}`} className="cursor-pointer">
+                <label htmlFor={`file-upload-${projectName}`} className="cursor-pointer">
                     <div className="text-gray-400">
                         {uploading ? (
                             <>
@@ -174,7 +174,7 @@ export default function FileUpload({ spokeName }: FileUploadProps) {
                                 className="flex items-center justify-between bg-gray-800 p-2 rounded text-sm"
                             >
                                 <a
-                                    href={`/api/spokes/${spokeName}/files/refs/${file.name}`}
+                                    href={`/api/agents/project/${projectName}/files/refs/${file.name}`}
                                     className="text-cyan-400 hover:underline truncate flex-1"
                                     target="_blank"
                                 >
@@ -206,7 +206,7 @@ export default function FileUpload({ spokeName }: FileUploadProps) {
                                 className="flex items-center justify-between bg-gray-800 p-2 rounded text-sm"
                             >
                                 <a
-                                    href={`/api/spokes/${spokeName}/files/artifacts/${file.name}`}
+                                    href={`/api/agents/project/${projectName}/files/artifacts/${file.name}`}
                                     className="text-cyan-400 hover:underline truncate flex-1"
                                     target="_blank"
                                 >

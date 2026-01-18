@@ -6,7 +6,7 @@ import { apiFetch } from "@/lib/api";
 interface SuggestedTask {
     task_name: string;
     workload: number;
-    spoke: string;
+    project: string;
     notes?: string;
     rule_type: string;
 }
@@ -164,7 +164,7 @@ export default function TaskDecomposer({
                                                     {task.task_name}
                                                 </span>
                                                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-800 text-gray-400 uppercase">
-                                                    {task.spoke}
+                                                    {task.project}
                                                 </span>
                                             </div>
                                             {task.notes && (
@@ -177,8 +177,8 @@ export default function TaskDecomposer({
                                             <div className="flex items-center gap-1">
                                                 <span className="text-xs text-gray-500">Impact:</span>
                                                 <span className={`text-sm font-bold tabular-nums ${task.workload >= 7 ? 'text-red-400' :
-                                                        task.workload >= 4 ? 'text-amber-400' :
-                                                            'text-emerald-400'
+                                                    task.workload >= 4 ? 'text-amber-400' :
+                                                        'text-emerald-400'
                                                     }`}>
                                                     {task.workload}
                                                 </span>

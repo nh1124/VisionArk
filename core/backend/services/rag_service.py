@@ -10,20 +10,22 @@ from sqlalchemy import text
 import asyncio
 
 from .pdf_processor import PDFProcessor
+
+from .pdf_processor import PDFProcessor
 from .vector_store import get_vector_store
-from utils.paths import get_spoke_dir
+from utils.paths import get_project_dir
 
 
 class RAGService:
-    """High-level RAG operations for a Spoke (per-user)"""
+    """High-level RAG operations for a Project (per-user)"""
     
-    def __init__(self, user_id: str, spoke_name: str, session: Optional[AsyncSession] = None):
+    def __init__(self, user_id: str, project_name: str, session: Optional[AsyncSession] = None):
         self.user_id = user_id
-        self.spoke_name = spoke_name
+        self.project_name = project_name
         self.session = session
-        self.vector_store = get_vector_store(user_id, spoke_name)
+        self.vector_store = get_vector_store(user_id, project_name)
         self.pdf_processor = PDFProcessor(chunk_size=800, chunk_overlap=150)
-        self.refs_dir = get_spoke_dir(user_id, spoke_name) / "refs"
+        self.refs_dir = get_project_dir(user_id, project_name) / "refs"
         self.refs_dir.mkdir(parents=True, exist_ok=True)
     
     async def index_pdf(self, pdf_path: Path, reindex: bool = False) -> Dict:
@@ -136,15 +138,17 @@ class RAGService:
         if not self.session:
             return []
         
+        # Note: Database schema still uses column 'spoke_name' for backward compatibility
+        # We pass 'project_name' into it.
         query = text("""
             SELECT file_name, file_path, file_hash, indexed_at, chunk_count
             FROM rag_metadata
-            WHERE spoke_name = :spoke_name AND user_id = :user_id
+            WHERE spoke_name = :project_name AND user_id = :user_id
             ORDER BY indexed_at DESC
         """)
         
         result = await self.session.execute(query, {
-            "spoke_name": self.spoke_name,
+            "project_name": self.project_name,
             "user_id": self.user_id
         })
         
@@ -169,12 +173,12 @@ class RAGService:
         return await self.index_directory()
     
     async def get_stats(self) -> Dict:
-        """Get RAG statistics for this Spoke"""
+        """Get RAG statistics for this Project"""
         vector_stats = await asyncio.to_thread(self.vector_store.get_stats)
         
         stats = {
             "user_id": self.user_id,
-            "spoke_name": self.spoke_name,
+            "project_name": self.project_name,
             "vector_store": vector_stats,
             "refs_directory": str(self.refs_dir),
             "pdf_count": len(list(self.refs_dir.glob("**/*.pdf")))
@@ -192,13 +196,14 @@ class RAGService:
         if not self.session:
             return False
         
+        # Schema uses 'spoke_name'
         query = text("""
             SELECT file_hash FROM rag_metadata
-            WHERE spoke_name = :spoke_name AND user_id = :user_id AND file_path = :file_path
+            WHERE spoke_name = :project_name AND user_id = :user_id AND file_path = :file_path
         """)
         
         result = (await self.session.execute(query, {
-            "spoke_name": self.spoke_name,
+            "project_name": self.project_name,
             "user_id": self.user_id,
             "file_path": str(pdf_path)
         })).fetchone()
@@ -207,9 +212,10 @@ class RAGService:
     
     async def _update_index_metadata(self, pdf_path: Path, file_hash: str, chunk_count: int):
         """Update database tracking for indexed files"""
+        # Schema uses 'spoke_name'
         upsert_query = text("""
             INSERT INTO rag_metadata (spoke_name, user_id, file_name, file_path, file_hash, chunk_count, indexed_at)
-            VALUES (:spoke_name, :user_id, :file_name, :file_path, :file_hash, :chunk_count, :indexed_at)
+            VALUES (:project_name, :user_id, :file_name, :file_path, :file_hash, :chunk_count, :indexed_at)
             ON CONFLICT(spoke_name, user_id, file_path) DO UPDATE SET
                 file_hash = :file_hash,
                 chunk_count = :chunk_count,
@@ -217,7 +223,7 @@ class RAGService:
         """)
         
         await self.session.execute(upsert_query, {
-            "spoke_name": self.spoke_name,
+            "project_name": self.project_name,
             "user_id": self.user_id,
             "file_name": pdf_path.name,
             "file_path": str(pdf_path),

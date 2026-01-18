@@ -61,8 +61,8 @@ async def get_hub_suggestions(
             high_load_suggestions = await _check_high_load_days(lbs_client, today)
             suggestions.extend(high_load_suggestions)
         
-        # Check for inactive spokes
-        inactive_suggestions = _check_inactive_spokes(user_id, session, today)
+        # Check for inactive projects
+        inactive_suggestions = _check_inactive_projects(user_id, session, today)
         suggestions.extend(inactive_suggestions)
         
         # Check for pending inbox messages
@@ -165,51 +165,54 @@ async def _check_high_load_days(lbs_client: LBSClient, today: date) -> List[HubS
     return suggestions
 
 
-def _check_inactive_spokes(user_id: str, session: Session, today: date) -> List[HubSuggestion]:
-    """Check for spokes with no recent activity"""
+
+def _check_inactive_projects(user_id: str, session: Session, today: date) -> List[HubSuggestion]:
+    """Check for projects with no recent activity"""
     suggestions = []
     
     try:
-        # Get all spoke nodes for the user
-        spokes = session.query(Node).filter_by(
-            user_id=user_id,
-            node_type="spoke",
-            status="active"
+        # Get all project nodes for the user (excluding hub)
+        # V4: Query by name != 'hub'
+        projects = session.query(Node).filter(
+            Node.user_id == user_id,
+            Node.name != "hub",
+            Node.is_archived == False
         ).all()
         
         inactive_threshold = today - timedelta(days=3)
         
-        inactive_spokes = []
-        for spoke in spokes:
+        inactive_projects = []
+        for project in projects:
             # Check last activity (updated_at)
-            if spoke.updated_at:
-                last_activity = spoke.updated_at.date() if hasattr(spoke.updated_at, 'date') else spoke.updated_at
+            if project.updated_at:
+                last_activity = project.updated_at.date() if hasattr(project.updated_at, 'date') else project.updated_at
                 if last_activity < inactive_threshold:
-                    inactive_spokes.append(spoke.name)
+                    inactive_projects.append(project.name)
         
-        if inactive_spokes:
-            count = len(inactive_spokes)
-            spoke_names = ", ".join(inactive_spokes[:3])
+        if inactive_projects:
+            count = len(inactive_projects)
+            project_names = ", ".join(inactive_projects[:3])
             if count > 3:
-                spoke_names += f" and {count - 3} more"
+                project_names += f" and {count - 3} more"
             
             suggestions.append(HubSuggestion(
                 id=f"inactive-{uuid.uuid4().hex[:8]}",
-                type="inactive_spoke",
+                type="inactive_project",
                 severity="info",
-                title=f"{count} inactive spoke{'s' if count > 1 else ''}",
-                description=f"The following spoke{'s have' if count > 1 else ' has'} been inactive for 3+ days: {spoke_names}. Consider archiving or reviewing {'them' if count > 1 else 'it'}.",
-                action_label="Manage Spokes",
+                title=f"{count} inactive project{'s' if count > 1 else ''}",
+                description=f"The following project{'s have' if count > 1 else ' has'} been inactive for 3+ days: {project_names}. Consider archiving or reviewing {'them' if count > 1 else 'it'}.",
+                action_label="Manage Projects",
                 action_type="navigate",
                 action_data={
-                    "route": "/spokes",
-                    "inactive_spokes": inactive_spokes
+                    "route": "/projects",
+                    "inactive_projects": inactive_projects
                 }
             ))
     except Exception as e:
-        print(f"[Suggestions] Error checking inactive spokes: {e}")
+        print(f"[Suggestions] Error checking inactive projects: {e}")
     
     return suggestions
+
 
 
 def _check_pending_inbox(user_id: str, session: Session) -> List[HubSuggestion]:

@@ -29,9 +29,11 @@ services:
       dockerfile: Dockerfile
     container_name: atmos-backend
     environment:
+      - PYTHONUNBUFFERED=1
       - DATABASE_URL=postgresql://${POSTGRES_USER:-atmos}:${POSTGRES_PASSWORD:-atmos_secret}@db:5432/${POSTGRES_DB:-atmos}
       - ATMOS_ENV=${ATMOS_ENV:-dev}
       - HOST=0.0.0.0
+      - REDIS_HOST=redis
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
       - ATMOS_SERVICE_KEY=${ATMOS_SERVICE_KEY}
@@ -49,6 +51,38 @@ services:
     networks:
       - atmos-network
     restart: unless-stopped
+    env_file:
+      - ../.env
+
+  # Background Worker
+  worker:
+    build:
+      context: ../core/backend
+      dockerfile: Dockerfile
+    container_name: atmos-worker
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-atmos}:${POSTGRES_PASSWORD:-atmos_secret}@db:5432/${POSTGRES_DB:-atmos}
+      - ATMOS_ENV=${ATMOS_ENV:-dev}
+      - HOST=0.0.0.0
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
+      - ATMOS_SERVICE_KEY=${ATMOS_SERVICE_KEY}
+    volumes:
+      - ../core/backend:/app
+      - ../data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - atmos-network
+    restart: unless-stopped
+    command: python worker.py
     env_file:
       - ../.env
 
@@ -75,6 +109,15 @@ services:
     restart: unless-stopped
     env_file:
       - ../.env
+
+  # Redis Queue
+  redis:
+    image: redis:alpine
+    container_name: visionark-redis
+    restart: always
+    ports: [ "6379:6379" ]
+    networks:
+      - atmos-network
 
 networks:
   atmos-network:

@@ -250,18 +250,14 @@ async def calculate_schedule_with_agent(
     Returns:
         ScheduleResult with scheduled items and overflow
     """
-    from agents.scheduler_agent import enrich_tasks_with_agent
+    # from agents.scheduler_agent import enrich_tasks_with_agent # DEPRECATED
     
     if not tasks:
         return ScheduleResult()
     
-    try:
-        # Step 1: LLM preprocessing (adds travel, fixes estimates, reorders)
-        enriched_tasks = await enrich_tasks_with_agent(tasks, now, fatigue, api_key)
-        logger.info(f"Agent enriched {len(tasks)} -> {len(enriched_tasks)} tasks")
-    except Exception as e:
-        logger.warning(f"Agent enrichment failed: {e}, using original tasks")
-        enriched_tasks = tasks
+    # Placeholder: Skip enrichment for now
+    enriched_tasks = tasks
+    logger.info("Agent enrichment skipped (logic pending migration)")
     
     # Step 2: Ensure we respect task's planned start_time
     # Use max(current_time, plan_start_time) as anchor
@@ -438,7 +434,7 @@ async def calculate_schedule_v3(
     3. Deterministic Slotting (if needed or as part of optimization)
     4. Diff (Generate Commands)
     """
-    from agents.scheduler_agent import enrich_tasks_with_agent
+    # from agents.scheduler_agent import enrich_tasks_with_agent # DEPRECATED
     
     target_date_str = now.strftime("%Y-%m-%d")
 
@@ -446,16 +442,11 @@ async def calculate_schedule_v3(
     merged_tasks = merge_tasks_and_exceptions(tasks, exceptions, now)
     
     # Step 2: Optimize (Agent)
-    # Filter locked tasks to pass as anchors (implemented in agent prompt logic)
-    # We pass all tasks, agent should respect locks.
-    try:
-        enriched_tasks = await enrich_tasks_with_agent(merged_tasks, now, fatigue, api_key)
-    except Exception as e:
-        logger.error(f"V3 Agent failed: {e}")
-        enriched_tasks = merged_tasks
-
-    # Step 2.5: Deterministic Slotting (to get concrete start/end times)
-    # The agent might give estimates, but calculate_schedule gives definitive times.
+    # Placeholder: skipping agent enrichment implementation as agent is deleted.
+    # Logic should be moved to SchedulerNode in future iteration.
+    enriched_tasks = merged_tasks
+    
+    # Step 2.5: Deterministic Slotting
     schedule_result = calculate_schedule(enriched_tasks, fatigue, now)
     
     # Step 3: Diff
@@ -465,5 +456,5 @@ async def calculate_schedule_v3(
         schedule=schedule_result.schedule,
         overflow=schedule_result.overflow,
         commands=commands,
-        agent_used=(api_key is not None)
+        agent_used=False
     )

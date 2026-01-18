@@ -10,12 +10,21 @@ from .base_provider import BaseLLMProvider, Message, CompletionResponse
 from config import settings
 
 
+import logging
+logger = logging.getLogger(__name__)
+
 class GeminiProvider(BaseLLMProvider):
     """Google Gemini API provider with function calling support"""
     
     def __init__(self, model_name: str = "gemini-3-pro-preview", api_key: str = None, **kwargs):
         super().__init__(model_name, api_key, **kwargs)
         # Initialize the new SDK client
+        if self.api_key:
+             masked_key = f"{self.api_key[:4]}...{self.api_key[-4:]}" if len(self.api_key) > 8 else "SHORT_KEY"
+             logger.info(f"Initializing Client with key: {masked_key}")
+        else:
+             logger.warning("Initializing Client with NO KEY")
+             
         self.client = Client(api_key=self.api_key, http_options={'api_version': 'v1alpha', 'timeout': 600000})
         self.tools = []  # Store tools for function calling
     
@@ -140,7 +149,7 @@ class GeminiProvider(BaseLLMProvider):
                         )
                         content_parts.append(file_part)
                     except Exception as e:
-                        print(f"[Gemini] Failed to add file part: {e}")
+                        logger.error(f"[Gemini] Failed to add file part: {e}")
         
         content_parts.append(types.Part.from_text(text=full_prompt))
         
@@ -151,6 +160,9 @@ class GeminiProvider(BaseLLMProvider):
             tools_for_model = self._convert_dict_tools_to_gemini(self._tool_definitions)
         else:
             tools_for_model = []
+        
+        tool_count = len(tools_for_model[0].function_declarations) if tools_for_model and hasattr(tools_for_model[0], 'function_declarations') else 0
+        logger.info(f"[Gemini] Tools passed to model: {tool_count}")
         
         generation_config = types.GenerateContentConfig(
             temperature=temperature,
@@ -178,7 +190,7 @@ class GeminiProvider(BaseLLMProvider):
                     config=generation_config
                 )
             except Exception as e:
-                print(f"[Gemini] Async Generation error: {e}")
+                logger.error(f"[Gemini] Async Generation error: {e}")
                 if accumulated_tool_results:
                     return CompletionResponse(
                         content=f"Error during continuation: {str(e)}",
@@ -195,6 +207,7 @@ class GeminiProvider(BaseLLMProvider):
             history.append(model_content)
             
             function_calls = [p.function_call for p in model_content.parts if p.function_call]
+            logger.info(f"[Gemini] Turn {turn_count}: Found {len(function_calls)} function calls in response. Parts: {[type(p).__name__ for p in model_content.parts]}")
             
             if not function_calls:
                 # Final text response
@@ -219,7 +232,7 @@ class GeminiProvider(BaseLLMProvider):
             for fc in function_calls:
                 function_name = fc.name
                 function_args = fc.args
-                print(f"[Gemini] Executing function (async flow): {function_name}")
+                logger.info(f"[Gemini] Executing function (async flow): {function_name}")
                 
                 tool_result = None
                 if function_name in active_tool_functions:
@@ -231,7 +244,7 @@ class GeminiProvider(BaseLLMProvider):
                         accepted_params = set(sig.parameters.keys())
                         
                         full_args = {**function_args}
-                        for key in ['session', 'user_id', 'node_id', 'node_type', 'spoke_name', 'context_name', 'meta_info']:
+                        for key in ['session', 'user_id', 'node_id', 'project_name', 'context_name', 'meta_info']:
                             if key in tool_context and key in accepted_params:
                                 full_args[key] = tool_context[key]
                         
@@ -271,13 +284,13 @@ class GeminiProvider(BaseLLMProvider):
                         mime_type = result.data.get('mime_type')
                         # Gemini DOES NOT support application/octet-stream for multimodal parts
                         if mime_type and mime_type != "application/octet-stream":
-                            print(f"[Gemini] Injecting tool-discovered file (async): {file_uri} ({mime_type})")
+                            logger.info(f"[Gemini] Injecting tool-discovered file (async): {file_uri} ({mime_type})")
                             tool_response_parts.append(types.Part.from_uri(
                                 file_uri=file_uri,
                                 mime_type=mime_type
                             ))
                         else:
-                            print(f"[Gemini] Skipping unsupported tool file type: {mime_type} for {file_uri}")
+                            logger.warning(f"[Gemini] Skipping unsupported tool file type: {mime_type} for {file_uri}")
             
             history.append(types.Content(role="tool", parts=tool_response_parts))
             
@@ -453,7 +466,7 @@ class GeminiProvider(BaseLLMProvider):
                         # Merge function args with only the injected context that the function accepts
                         full_args = {**function_args}
                         injected_keys = []
-                        for key in ['session', 'user_id', 'node_id', 'node_type', 'spoke_name', 'context_name', 'meta_info']:
+                        for key in ['session', 'user_id', 'node_id', 'project_name', 'context_name', 'meta_info']:
                             if key in tool_context and key in accepted_params:
                                 full_args[key] = tool_context[key]
                                 injected_keys.append(key)
@@ -741,7 +754,7 @@ class GeminiProvider(BaseLLMProvider):
                     elif function_name == "google_search": status_msg = "Searching Google..."
                     elif function_name == "create_task": status_msg = "Adding task to schedule..."
                     elif function_name == "get_lbs_schedule": status_msg = "Checking workload..."
-                    elif function_name == "ask_spoke": status_msg = f"Messaging Spoke: {function_args.get('spoke_name')}..."
+                    elif function_name == "ask_node": status_msg = f"Messaging Node/Project: {function_args.get('target')}..."
                     
                     yield {"type": "status", "data": status_msg}
                     
@@ -754,7 +767,7 @@ class GeminiProvider(BaseLLMProvider):
                             accepted_params = set(sig.parameters.keys())
                             
                             full_args = {**function_args}
-                            for key in ['session', 'user_id', 'node_id', 'node_type', 'spoke_name', 'context_name', 'meta_info']:
+                            for key in ['session', 'user_id', 'node_id', 'project_name', 'context_name', 'meta_info']:
                                 if key in tool_context and key in accepted_params:
                                     full_args[key] = tool_context[key]
                             
@@ -950,7 +963,7 @@ class GeminiProvider(BaseLLMProvider):
                     elif function_name == "google_search": status_msg = "Searching Google..."
                     elif function_name == "create_task": status_msg = "Adding task to schedule..."
                     elif function_name == "get_lbs_schedule": status_msg = "Checking workload..."
-                    elif function_name == "ask_spoke": status_msg = f"Messaging Spoke: {function_args.get('spoke_name')}..."
+                    elif function_name == "ask_node": status_msg = f"Messaging Node/Project: {function_args.get('target')}..."
                     
                     yield {"type": "status", "data": status_msg}
                     
@@ -964,7 +977,7 @@ class GeminiProvider(BaseLLMProvider):
                             accepted_params = set(sig.parameters.keys())
                             
                             full_args = {**function_args}
-                            for key in ['session', 'user_id', 'node_id', 'node_type', 'spoke_name', 'context_name', 'meta_info']:
+                            for key in ['session', 'user_id', 'node_id', 'project_name', 'context_name', 'meta_info']:
                                 if key in tool_context and key in accepted_params:
                                     full_args[key] = tool_context[key]
                             

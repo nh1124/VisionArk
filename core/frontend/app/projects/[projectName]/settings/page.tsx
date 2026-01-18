@@ -6,12 +6,12 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import MarkdownRenderer from "@/components/MarkdownRenderer";
 
-export default function SpokeSettingsPage({
+export default function ProjectSettingsPage({
     params,
 }: {
-    params: Promise<{ spokeName: string }>;
+    params: Promise<{ projectName: string }>;
 }) {
-    const { spokeName } = use(params);
+    const { projectName } = use(params);
     const [prompt, setPrompt] = useState("");
     const [initialPrompt, setInitialPrompt] = useState("");
     const [loading, setLoading] = useState(true);
@@ -21,11 +21,11 @@ export default function SpokeSettingsPage({
 
     useEffect(() => {
         loadPrompt();
-    }, [spokeName]);
+    }, [projectName]);
 
     const loadPrompt = async () => {
         try {
-            const response = await apiFetch(`/api/agents/spoke/${spokeName}/prompt`);
+            const response = await apiFetch(`/api/agents/project/${projectName}/prompt`);
             const data = await response.json();
             setPrompt(data.content || "");
             setInitialPrompt(data.content || "");
@@ -41,7 +41,7 @@ export default function SpokeSettingsPage({
         setSaving(true);
         setSaveStatus("");
         try {
-            const response = await apiFetch(`/api/agents/spoke/${spokeName}/prompt`, {
+            const response = await apiFetch(`/api/agents/project/${projectName}/prompt`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ content: prompt }),
@@ -70,13 +70,13 @@ export default function SpokeSettingsPage({
                 <div className="flex items-center justify-between">
                     <div>
                         <Link
-                            href={`/spokes/${spokeName}`}
+                            href={`/projects/${projectName}`}
                             className="text-sm text-gray-400 hover:text-cyan-400 mb-2 inline-block transition-colors"
                         >
-                            ← Back to {spokeName}
+                            ← Back to {projectName}
                         </Link>
                         <h1 className="text-2xl font-bold text-cyan-400">
-                            {spokeName} - Settings
+                            {projectName} - Settings
                         </h1>
                         <p className="text-gray-400 text-sm mt-1">
                             Configure project-specific instructions and behavior

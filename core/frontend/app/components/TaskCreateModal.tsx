@@ -8,18 +8,18 @@ interface TaskCreateModalProps {
     isOpen: boolean;
     onClose: () => void;
     onTaskCreated: () => void;
-    availableSpokes?: string[];
+    availableProjects?: string[];
 }
 
 export default function TaskCreateModal({
     isOpen,
     onClose,
     onTaskCreated,
-    availableSpokes = []
+    availableProjects = []
 }: TaskCreateModalProps) {
     const [loading, setLoading] = useState(false);
     const [status, setStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
-    const [isNewSpoke, setIsNewSpoke] = useState(false);
+    const [isNewProject, setIsNewProject] = useState(false);
     const [formData, setFormData] = useState({
         task_name: "",
         context: "",
@@ -55,18 +55,18 @@ export default function TaskCreateModal({
         setStatus(null);
 
         try {
-            // Auto-create spoke if it's a new one
-            if (isNewSpoke && formData.context && !availableSpokes.includes(formData.context)) {
-                setStatus({ type: "success", message: `Creating spoke "${formData.context}"...` });
+            // Auto-create project if it's a new one
+            if (isNewProject && formData.context && !availableProjects.includes(formData.context)) {
+                setStatus({ type: "success", message: `Creating project "${formData.context}"...` });
                 try {
-                    await apiFetch("/api/agents/spoke/create", {
+                    await apiFetch("/api/agents/project/create", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ spoke_name: formData.context })
+                        body: JSON.stringify({ project_name: formData.context })
                     });
                 } catch (err) {
-                    console.error("Failed to create spoke:", err);
-                    // Continue anyway - the spoke might already exist
+                    console.error("Failed to create project:", err);
+                    // Continue anyway - the project might already exist
                 }
             }
 
@@ -134,7 +134,7 @@ export default function TaskCreateModal({
                     end_date: "",
                 });
                 setStatus(null);
-                setIsNewSpoke(false);
+                setIsNewProject(false);
             } else {
                 const errorData = await response.json().catch(() => ({ detail: "Failed to create task" }));
                 setStatus({ type: "error", message: errorData.detail || "Failed to create task" });
@@ -186,13 +186,13 @@ export default function TaskCreateModal({
                                 setFormData({
                                     ...formData,
                                     task_name: task.task_name,
-                                    context: task.spoke,
+                                    context: task.project,
                                     base_load_score: task.workload,
                                     notes: task.notes || "",
                                 });
-                                // Check if the spoke is new
-                                if (!availableSpokes.includes(task.spoke)) {
-                                    setIsNewSpoke(true);
+                                // Check if the project is new
+                                if (!availableProjects.includes(task.project)) {
+                                    setIsNewProject(true);
                                 }
                             }}
                         />
@@ -213,17 +213,17 @@ export default function TaskCreateModal({
                             />
                         </div>
 
-                        {/* Spoke/Context */}
+                        {/* Project/Context */}
                         <div>
                             <label className="block text-sm font-medium text-gray-400 mb-2">
-                                Spoke *
+                                Project *
                             </label>
-                            {isNewSpoke || availableSpokes.length === 0 ? (
+                            {isNewProject || availableProjects.length === 0 ? (
                                 <div className="flex gap-2">
                                     <input
                                         type="text"
                                         required
-                                        autoFocus={isNewSpoke}
+                                        autoFocus={isNewProject}
                                         value={formData.context}
                                         onChange={(e) =>
                                             setFormData({ ...formData, context: e.target.value })
@@ -231,12 +231,12 @@ export default function TaskCreateModal({
                                         className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500"
                                         placeholder="e.g., research, writing, development"
                                     />
-                                    {availableSpokes.length > 0 && (
+                                    {availableProjects.length > 0 && (
                                         <button
                                             type="button"
                                             onClick={() => {
-                                                setIsNewSpoke(false);
-                                                setFormData({ ...formData, context: availableSpokes[0] });
+                                                setIsNewProject(false);
+                                                setFormData({ ...formData, context: availableProjects[0] });
                                             }}
                                             className="px-4 bg-gray-800 border border-gray-700 rounded-lg text-gray-400 hover:text-white transition-colors"
                                         >
@@ -249,8 +249,8 @@ export default function TaskCreateModal({
                                     required
                                     value={formData.context}
                                     onChange={(e) => {
-                                        if (e.target.value === "NEW_SPOKE") {
-                                            setIsNewSpoke(true);
+                                        if (e.target.value === "NEW_PROJECT") {
+                                            setIsNewProject(true);
                                             setFormData({ ...formData, context: "" });
                                         } else {
                                             setFormData({ ...formData, context: e.target.value });
@@ -258,11 +258,11 @@ export default function TaskCreateModal({
                                     }}
                                     className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500 appearance-none"
                                 >
-                                    <option value="" disabled>Select a Spoke</option>
-                                    {availableSpokes.map((s) => (
+                                    <option value="" disabled>Select a Project</option>
+                                    {availableProjects.map((s) => (
                                         <option key={s} value={s}>{s}</option>
                                     ))}
-                                    <option value="NEW_SPOKE" className="text-purple-400 font-bold">+ Create New Spoke...</option>
+                                    <option value="NEW_PROJECT" className="text-purple-400 font-bold">+ Create New Project...</option>
                                 </select>
                             )}
                         </div>

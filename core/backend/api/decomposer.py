@@ -20,13 +20,13 @@ router = APIRouter(prefix="/api/decompose", tags=["decompose"])
 class DecomposeRequest(BaseModel):
     task_description: str
     max_subtasks: int = 5
-    context: Optional[str] = None  # Optional spoke context
+    context: Optional[str] = None  # Optional project context
 
 
 class SuggestedTask(BaseModel):
     task_name: str
     workload: float  # 0-10
-    spoke: str
+    project: str
     notes: Optional[str] = None
     rule_type: str = "ONCE"
 
@@ -52,7 +52,7 @@ async def decompose_task(
 ):
     """
     Use Gemini to decompose a high-level task into structured subtasks.
-    Returns suggested task names, workloads, and spoke assignments.
+    Returns suggested task names, workloads, and project assignments.
     """
     user_id = current_user.user_id
     
@@ -69,16 +69,16 @@ Maximum subtasks: {request.max_subtasks}
 For each subtask, provide:
 1. task_name: A clear, actionable task name (max 50 chars)
 2. workload: Estimated effort on a scale of 0-10 (0=trivial, 10=major effort)
-3. spoke: Suggested project/context category (use the provided context if available, otherwise suggest appropriate ones like "personal", "work", "admin", etc.)
+3. project: Suggested project/context category (use the provided context if available, otherwise suggest appropriate ones like "personal", "work", "admin", etc.)
 4. notes: Optional brief notes or tips
 
-Return your response as a JSON array of objects with keys: task_name, workload, spoke, notes
+Return your response as a JSON array of objects with keys: task_name, workload, project, notes
 Return ONLY the JSON array, no other text.
 
 Example output:
 [
-  {{"task_name": "Research moving companies", "workload": 3, "spoke": "personal", "notes": "Get at least 3 quotes"}},
-  {{"task_name": "Pack non-essential items", "workload": 5, "spoke": "personal", "notes": "Start with off-season clothes"}}
+  {{"task_name": "Research moving companies", "workload": 3, "project": "personal", "notes": "Get at least 3 quotes"}},
+  {{"task_name": "Pack non-essential items", "workload": 5, "project": "personal", "notes": "Start with off-season clothes"}}
 ]
 """
     
@@ -107,7 +107,7 @@ Example output:
             suggested_tasks.append(SuggestedTask(
                 task_name=task_data.get("task_name", "Untitled Task")[:50],
                 workload=min(10, max(0, float(task_data.get("workload", 5)))),
-                spoke=task_data.get("spoke", request.context or "general"),
+                project=task_data.get("project", task_data.get("spoke", request.context or "general")), # Fallback to spoke/context
                 notes=task_data.get("notes"),
                 rule_type="ONCE"
             ))

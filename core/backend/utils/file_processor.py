@@ -80,24 +80,25 @@ def extract_text_from_pdf(pdf_content: bytes) -> str:
         raise Exception(f"PDF extraction failed: {str(e)}")
 
 
-async def save_file_to_spoke(user_id: str, file_content: bytes, filename: str, spoke_name: str, file_type: str = "refs") -> Path:
+
+async def save_file_to_project(user_id: str, file_content: bytes, filename: str, project_name: str, file_type: str = "refs") -> Path:
     """
-    Save uploaded file to spoke directory (user-scoped)
+    Save uploaded file to project directory (user-scoped)
     
     Args:
         user_id: User ID for scoped path
         file_content: File bytes
         filename: Original filename
-        spoke_name: Spoke name
+        project_name: Project name
         file_type: "refs" or "artifacts"
     
     Returns:
         Path to saved file
     """
-    from utils.paths import get_spoke_dir
+    from utils.paths import get_project_dir
     
-    spoke_dir = get_spoke_dir(user_id, spoke_name)
-    target_dir = spoke_dir / file_type
+    project_dir = get_project_dir(user_id, project_name)
+    target_dir = project_dir / file_type
     target_dir.mkdir(parents=True, exist_ok=True)
     
     # Save file

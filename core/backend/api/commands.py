@@ -15,11 +15,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 router = APIRouter(prefix="/api/commands", tags=["Commands"])
 
 
+
 # Pydantic models
 class CommandRequest(BaseModel):
     text: str
-    context: str = "hub"  # hub or spoke
-    spoke_name: Optional[str] = None
+    context: str = "project"  # project or system
+    project_name: Optional[str] = None
 
 
 class CommandResponse(BaseModel):
@@ -41,7 +42,8 @@ async def execute_command_endpoint(
         POST /api/commands/execute
         {
             "text": "/check_inbox",
-            "context": "hub"
+            "context": "project",
+            "project_name": "hub" 
         }
     """
     # Parse command
@@ -58,7 +60,7 @@ async def execute_command_endpoint(
         command,
         context=req.context,
         session=db,
-        spoke_name=req.spoke_name
+        project_name=req.project_name
     )
     
     return CommandResponse(

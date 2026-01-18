@@ -30,6 +30,7 @@ async def _get_user_api_key(db: AsyncSession, user_id: str) -> Optional[str]:
     return user_settings.gemini_api_key if user_settings else None
 
 
+
 # --- Specific Routes (IDs or fixed paths) First to avoid shadowing ---
 @files_router.post("/{node_type}/{node_name}/upload")
 async def upload_node_file(
@@ -39,9 +40,11 @@ async def upload_node_file(
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
-    """Upload a file to Hub or Spoke storage"""
-    if node_type.lower() not in ["hub", "spoke"]:
-        raise HTTPException(status_code=400, detail="node_type must be 'hub' or 'spoke'")
+    """Upload a file to Project storage (Legacy: Hub/Spoke)"""
+    # Accept hub/spoke/project
+    if node_type.lower() not in ["hub", "spoke", "project"]:
+        # We allow 'project' as well now
+        pass 
     
     # Read file content
     content = await file.read()
@@ -51,16 +54,18 @@ async def upload_node_file(
     mime_type = mime_type or file.content_type or "application/octet-stream"
     
     # FileService handles storage and DB recording
-    # Gemini upload is now handled explicitly by agents when needed, 
-    # not during the initial upload to the library.
     service = FileService(db, identity.user_id)
     
+    # V4 Migration: Map legacy node_type to project_name
+    # If node_type is hub, name might be anything, but we force "hub"
+    project_name = "hub" if node_type.lower() == "hub" else node_name
+    
+    # FileService expects 'project_id' arg but logic maps it to project name
     db_file = await service.save_file(
         content=content,
         filename=file.filename,
         mime_type=mime_type,
-        node_type=node_type,
-        node_name=node_name
+        project_id=project_name
     )
     
     return {
@@ -78,14 +83,14 @@ async def list_node_files(
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
-    """List all files for a Hub or Spoke"""
-    if node_type.lower() not in ["hub", "spoke"]:
-        raise HTTPException(status_code=400, detail="node_type must be 'hub' or 'spoke'")
-    
+    """List all files for a Project"""
     api_key = await _get_user_api_key(db, identity.user_id)
     service = FileService(db, identity.user_id, api_key)
     
-    files = await service.list_files(node_type, node_name)
+    # V4 Migration: Map legacy node_type to project_name
+    project_name = "hub" if node_type.lower() == "hub" else node_name
+    
+    files = await service.list_files(project_name)
     return {"files": files, "count": len(files)}
 
 
@@ -99,24 +104,20 @@ async def get_node_file(
     db: AsyncSession = Depends(get_async_db)
 ):
     """
-    Serve a file from Hub or Spoke directory (refs, artifacts, or files) by its path.
+    Serve a file from Project directory (refs, artifacts, or files) by its path.
     Used for image previews and artifact downloads.
     """
-    if node_type.lower() not in ["hub", "spoke"]:
-        raise HTTPException(status_code=400, detail="node_type must be 'hub' or 'spoke'")
-    
     if directory not in ["refs", "artifacts", "files"]:
         raise HTTPException(status_code=400, detail="Directory must be 'refs', 'artifacts', or 'files'")
     
     user_id = identity.user_id
     
     try:
-        if node_type.lower() == "hub":
-            from utils.paths import get_user_hub_dir
-            base_dir = get_user_hub_dir(user_id)
-        else:
-            from utils.paths import get_spoke_dir
-            base_dir = get_spoke_dir(user_id, node_name)
+        from utils.paths import get_project_dir
+        
+        # V4 Migration: Use unified project logic
+        project_name = "hub" if node_type.lower() == "hub" else node_name
+        base_dir = get_project_dir(user_id, project_name)
         
         from utils.paths import secure_path_join
         full_path = secure_path_join(base_dir / directory, file_path)

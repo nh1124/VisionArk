@@ -26,12 +26,12 @@ interface Message {
     tool_calls?: any[];
 }
 
-export default function SpokeChatPage({
+export default function ProjectChatPage({
     params,
 }: {
-    params: Promise<{ spokeName: string }>;
+    params: Promise<{ projectName: string }>;
 }) {
-    const { spokeName } = use(params);
+    const { projectName } = use(params);
     const [messages, setMessages] = useState<Message[]>([]);
     const [commandInputValue, setCommandInputValue] = useState("");
     const [loading, setLoading] = useState(false);
@@ -54,18 +54,18 @@ export default function SpokeChatPage({
     useEffect(() => {
         const loadMetadata = async () => {
             try {
-                const response = await apiFetch(`/api/agents/spoke/${spokeName}`);
+                const response = await apiFetch(`/api/agents/project/${projectName}`);
                 const data = await response.json();
-                setDisplayName(data.display_name || spokeName.replace("_", " "));
+                setDisplayName(data.display_name || projectName.replace("_", " "));
             } catch (error) {
                 console.error("Failed to load metadata:", error);
-                setDisplayName(spokeName.replace("_", " "));
+                setDisplayName(projectName.replace("_", " "));
             }
         };
 
         const loadHistory = async () => {
             try {
-                const response = await apiFetch(`/api/agents/spoke/${spokeName}/history`);
+                const response = await apiFetch(`/api/agents/project/${projectName}/history`);
                 const data = await response.json();
                 if (data.history && Array.isArray(data.history)) {
                     setMessages(data.history.map((m: any) => ({
@@ -82,7 +82,7 @@ export default function SpokeChatPage({
 
         loadMetadata();
         loadHistory();
-    }, [spokeName]);
+    }, [projectName]);
 
     const [statusText, setStatusText] = useState("");
 
@@ -103,6 +103,11 @@ export default function SpokeChatPage({
         setLoading(true);
         setStatusText("Thinking...");
         setElapsedTime(0);
+
+        // Create a temporary assistant message that we will update
+        const assistantMsgIndex = messages.length + 1; // +1 because we added userMessage
+        setMessages((prev) => [...prev, { role: "assistant", content: "", attached_files: [] }]);
+
         const startTime = Date.now();
         const timerInterval = setInterval(() => {
             setElapsedTime(Math.floor((Date.now() - startTime) / 1000));
@@ -112,115 +117,119 @@ export default function SpokeChatPage({
             const formData = new FormData();
             formData.append("message", content);
             files.forEach((file) => formData.append("files", file));
-            formData.append("stream", "true");
+            formData.append("stream", "false"); // Polling mode
 
-            const response = await apiFetch(`/api/agents/spoke/${spokeName}/chat`, {
+            const response = await apiFetch(`/api/agents/project/${projectName}/chat`, {
                 method: "POST",
                 body: formData,
                 headers: {
-                    "X-Preferred-Model": selectedModel
+                    "X-Preferred-Model": selectedModel || ""
                 }
             });
 
             if (!response.ok) throw new Error("Failed to send message");
 
-            // Handle streaming response
-            const reader = response.body?.getReader();
-            if (!reader) throw new Error("No reader");
+            const data = await response.json();
+            const taskId = data.task_id;
 
-            const decoder = new TextDecoder();
-            let assistantContent = "";
-            let toolCalls: any[] = [];
-            let buffer = "";
+            if (!taskId) {
+                // Determine if it was a sync response (fallback)
+                if (data.response) {
+                    setMessages((prev) => {
+                        const next = [...prev];
+                        next[next.length - 1] = {
+                            ...next[next.length - 1],
+                            content: data.response
+                        };
+                        return next;
+                    });
+                    setLoading(false);
+                    clearInterval(timerInterval);
+                    return;
+                }
+                throw new Error("No task ID returned");
+            }
 
-            // Create a temporary assistant message that we will update
-            setMessages((prev) => [...prev, { role: "assistant", content: "", attached_files: [] }]);
+            // Start Polling
+            const pollInterval = setInterval(async () => {
+                try {
+                    const statusRes = await apiFetch(`/api/agents/tasks/${taskId}`);
+                    if (!statusRes.ok) return;
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
+                    const statusData = await statusRes.json();
+                    const status = statusData.status;
 
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split("\n\n");
-                buffer = lines.pop() || "";
+                    if (status === "completed") {
+                        clearInterval(pollInterval);
+                        clearInterval(timerInterval);
+                        setLoading(false);
+                        setStatusText("");
 
-                for (const line of lines) {
-                    if (line.trim().startsWith("data: ")) {
+                        // Re-fetch history to get complete message with tool_calls
                         try {
-                            const event = JSON.parse(line.trim().substring(6));
-                            if (event.type === "status") {
-                                setStatusText(event.data);
-                            } else if (event.type === "content") {
-                                assistantContent += event.data;
-                                setMessages((prev) => {
-                                    const next = [...prev];
-                                    if (next.length > 0) {
-                                        next[next.length - 1] = {
-                                            ...next[next.length - 1],
-                                            content: assistantContent
-                                        };
-                                    }
-                                    return next;
-                                });
-                            } else if (event.type === "final_response") {
-                                toolCalls = event.data.tool_calls || [];
-                                // Update the last message with final data
-                                setMessages((prev) => {
-                                    const next = [...prev];
-                                    if (next.length > 0) {
-                                        next[next.length - 1] = {
-                                            ...next[next.length - 1],
-                                            content: event.data.content,
-                                            tool_calls: toolCalls,
-                                            attached_files: event.data.attached_files || []
-                                        };
-                                    }
-                                    return next;
-                                });
-
-                                // Handle command-based redirection
-                                if (event.data.executed_commands) {
-                                    for (const cmd of event.data.executed_commands) {
-                                        if (cmd.success && cmd.data?.redirect_url) {
-                                            router.push(cmd.data.redirect_url);
-                                            break;
-                                        }
-                                    }
-                                }
-                            } else if (event.type === "error") {
-                                setMessages((prev) => [
-                                    ...prev.slice(0, -1),
-                                    { role: "assistant", content: `❌ Error: ${event.data}` }
-                                ]);
-                                return; // Stop processing
+                            const historyRes = await apiFetch(`/api/agents/project/${projectName}/history`);
+                            const historyData = await historyRes.json();
+                            if (historyData.history && Array.isArray(historyData.history)) {
+                                setMessages(historyData.history.map((m: any) => ({
+                                    role: m.role,
+                                    content: m.content,
+                                    attached_files: m.meta_payload?.attached_files || [],
+                                    tool_calls: m.meta_payload?.tool_calls || []
+                                })));
                             }
                         } catch (e) {
-                            console.error("Failed to parse event:", e, "Line:", line);
+                            console.error("Failed to refresh history:", e);
+                            // Fallback: just update content
+                            setMessages((prev) => {
+                                const next = [...prev];
+                                const lastIdx = next.length - 1;
+                                if (lastIdx >= 0) {
+                                    next[lastIdx] = {
+                                        ...next[lastIdx],
+                                        content: statusData.result || "Task completed."
+                                    };
+                                }
+                                return next;
+                            });
                         }
+                    } else if (status === "failed") {
+                        clearInterval(pollInterval);
+                        clearInterval(timerInterval);
+                        setLoading(false);
+                        setMessages((prev) => {
+                            const next = [...prev];
+                            next[next.length - 1] = {
+                                role: "assistant",
+                                content: `❌ Error: ${statusData.result || "Task failed"}`
+                            };
+                            return next;
+                        });
+                    } else {
+                        setStatusText(status === "queued" ? "Queued..." : "Processing...");
                     }
+                } catch (err) {
+                    console.error("Polling error:", err);
                 }
-            }
+            }, 1000);
+
         } catch (error: any) {
             console.error("Error:", error);
-            const errorMsg = error.message || "Could not connect to Spoke agent.";
+            const errorMsg = error.message || "Could not connect to Project agent.";
             setMessages((prev) => [
                 ...prev.slice(0, -1),
                 { role: "assistant", content: `❌ Error: ${errorMsg}` }
             ]);
-        } finally {
-            clearInterval(timerInterval);
             setLoading(false);
-            setStatusText("");
-            setElapsedTime(0);
+            clearInterval(timerInterval);
         }
     };
 
     const handleClone = async () => {
-        const newName = `${spokeName}_copy`;
+        const newName = `${projectName}_copy`;
 
         try {
             setLoading(true);
-            const response = await apiFetch(`/api/agents/spoke/${spokeName}/clone`, {
+            const response = await apiFetch(`/api/agents/project/${projectName}/clone`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ new_name: newName || undefined }),
@@ -228,8 +237,8 @@ export default function SpokeChatPage({
 
             if (response.ok) {
                 const data = await response.json();
-                alert(`Project cloned successfully as '${data.new_spoke_name}'`);
-                window.location.href = `/spokes/${data.new_spoke_name}`;
+                alert(`Project cloned successfully as '${data.new_project_name}'`);
+                window.location.href = `/projects/${data.new_project_name}`;
             } else {
                 const err = await response.json();
                 alert(`Failed to clone project: ${err.detail || 'Unknown error'}`);
@@ -270,7 +279,7 @@ export default function SpokeChatPage({
 
         try {
             setLoading(true);
-            const response = await apiFetch(`/api/agents/spoke/${spokeName}/branch`, {
+            const response = await apiFetch(`/api/agents/project/${projectName}/branch`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ message_index: index })
@@ -278,10 +287,10 @@ export default function SpokeChatPage({
 
             if (response.ok) {
                 const data = await response.json();
-                console.log("Branched to new spoke:", data.new_spoke_name);
+                console.log("Branched to new project:", data.new_project_name);
 
-                // Navigate to the new spoke
-                window.location.href = `/spokes/${data.new_spoke_name}`;
+                // Navigate to the new project
+                window.location.href = `/projects/${data.new_project_name}`;
             } else {
                 throw new Error("Failed to branch chat");
             }
@@ -290,7 +299,7 @@ export default function SpokeChatPage({
         } finally {
             setLoading(false);
         }
-    }, [loading, spokeName]);
+    }, [loading, projectName]);
 
     const handleEdit = useCallback(async (index: number) => {
         if (loading) return;
@@ -299,7 +308,7 @@ export default function SpokeChatPage({
 
         try {
             setLoading(true);
-            const response = await apiFetch(`/api/agents/spoke/${spokeName}/messages/truncate`, {
+            const response = await apiFetch(`/api/agents/project/${projectName}/messages/truncate`, {
                 method: "DELETE",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ message_index: index })
@@ -318,13 +327,13 @@ export default function SpokeChatPage({
         } finally {
             setLoading(false);
         }
-    }, [messages, loading, spokeName]);
+    }, [messages, loading, projectName]);
 
     const handleDelete = useCallback(async (index: number) => {
         if (loading) return;
         try {
             setLoading(true);
-            const response = await apiFetch(`/api/agents/spoke/${spokeName}/messages/truncate`, {
+            const response = await apiFetch(`/api/agents/project/${projectName}/messages/truncate`, {
                 method: "DELETE",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ message_index: index })
@@ -340,7 +349,7 @@ export default function SpokeChatPage({
         } finally {
             setLoading(false);
         }
-    }, [loading, spokeName]);
+    }, [loading, projectName]);
 
     const handleUndo = useCallback(async () => {
         if (loading || messages.length === 0) return;
@@ -378,7 +387,7 @@ export default function SpokeChatPage({
                         {displayName}
                     </h1>
                     <div className="flex gap-2 items-center">
-                        <Link href={`/spokes/${spokeName}/settings`}
+                        <Link href={`/projects/${projectName}/settings`}
                             className="p-2 text-gray-400 hover:bg-gray-800 hover:text-white rounded-lg transition-all"
                             title="Settings"
                         >
@@ -425,8 +434,8 @@ export default function SpokeChatPage({
                                     content={msg.content}
                                     attached_files={msg.attached_files}
                                     tool_calls={msg.tool_calls}
-                                    nodeType="spoke"
-                                    nodeName={spokeName}
+                                    nodeType="project"
+                                    nodeName={projectName}
                                     onRegenerate={messageCallbacks[idx]?.onRegenerate}
                                     onBranch={messageCallbacks[idx]?.onBranch}
                                     onEdit={messageCallbacks[idx]?.onEdit}
@@ -468,7 +477,7 @@ export default function SpokeChatPage({
                                 onChange={setCommandInputValue}
                                 onSubmit={() => sendMessage(commandInputValue, [])}
                                 placeholder=""
-                                context="spoke"
+                                context="project"
                                 disabled={loading}
                                 showInput={false}
                             />
@@ -541,7 +550,7 @@ export default function SpokeChatPage({
                             </button>
                         </div>
                         <div className="flex-1 overflow-hidden">
-                            <FilesSidebar nodeType="spoke" nodeName={spokeName} />
+                            <FilesSidebar nodeType="project" nodeName={projectName} />
                         </div>
                     </div>
                 </>

@@ -3,7 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useSpokes } from "@/hooks/useSpokes";
+import { useProjects } from "@/hooks/useProjects";
 import { useModel, MODEL_OPTIONS, getModelDisplayName } from "@/lib/ModelContext";
 import { X, Home, LayoutDashboard, ListTodo, MessageSquare, Plus, Settings, ChevronDown, Check } from "lucide-react";
 
@@ -14,7 +14,7 @@ interface MobileSidebarProps {
 
 export default function MobileSidebar({ isOpen, onClose }: MobileSidebarProps) {
     const pathname = usePathname();
-    const { spokes } = useSpokes();
+    const { projects } = useProjects();
     const { selectedModel, setSelectedModel } = useModel();
     const [showModelList, setShowModelList] = React.useState(false);
 
@@ -78,10 +78,10 @@ export default function MobileSidebar({ isOpen, onClose }: MobileSidebarProps) {
                     <div className="mt-8">
                         <div className="px-4 mb-4 flex items-center justify-between">
                             <span className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-600">
-                                Spokes
+                                Projects
                             </span>
                             <Link
-                                href="/spokes"
+                                href="/projects"
                                 onClick={onClose}
                                 className="p-1 text-gray-500 hover:text-cyan-400 transition-colors"
                             >
@@ -89,12 +89,12 @@ export default function MobileSidebar({ isOpen, onClose }: MobileSidebarProps) {
                             </Link>
                         </div>
                         <div className="space-y-1">
-                            {spokes.map((spoke) => {
-                                const isActive = pathname.startsWith(spoke.path);
+                            {projects.map((project) => {
+                                const isActive = pathname === project.path || pathname.startsWith(project.path + "/");
                                 return (
                                     <Link
-                                        key={spoke.name}
-                                        href={spoke.path}
+                                        key={project.name}
+                                        href={project.path}
                                         onClick={onClose}
                                         className={`flex items-center gap-4 px-4 py-3 rounded-xl transition-all ${isActive
                                             ? "bg-cyan-600/10 text-cyan-400 font-medium"
@@ -104,7 +104,7 @@ export default function MobileSidebar({ isOpen, onClose }: MobileSidebarProps) {
                                         <div className="w-5 h-5 flex items-center justify-center">
                                             <span className="text-xs">💼</span>
                                         </div>
-                                        <span className="truncate">{spoke.display_name || spoke.name}</span>
+                                        <span className="truncate">{project.display_name || project.name}</span>
                                     </Link>
                                 );
                             })}
