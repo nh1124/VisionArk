@@ -170,7 +170,7 @@ export default function ProjectsPage() {
         setSavingRename(true);
         try {
             const response = await apiFetch(`/api/agents/project/${projectName}/rename`, {
-                method: "PATCH",
+                method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ new_display_name: renameValue }),
             });
@@ -191,7 +191,7 @@ export default function ProjectsPage() {
     const handleExportChat = async (name: string) => {
         try {
             const token = await getFileToken();
-            const exportUrl = `/api/export/chat/${name}?token=${token}`;
+            const exportUrl = `/api/export/chat/project/${name}?token=${token}`;
 
             const link = document.createElement('a');
             link.href = exportUrl;
