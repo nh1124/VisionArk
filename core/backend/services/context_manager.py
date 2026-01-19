@@ -13,7 +13,7 @@ from sqlalchemy import text
 
 from llm import get_provider
 from llm.base_provider import Message
-from utils.paths import get_project_dir
+from utils.paths import get_project_dir, get_prompts_dir
 
 
 class ContextManager:
@@ -114,7 +114,37 @@ class ContextManager:
         if not conversation:
             return "No conversation to summarize."
         
-        summary_prompt = """You are summarizing a conversation for context preservation. Extract:
+        # Load summary prompt from assets
+        prompts_dir = get_prompts_dir()
+        summary_prompt_path = prompts_dir / "system" / "summary.md"
+        
+        if summary_prompt_path.exists():
+            try:
+                template = await asyncio.to_thread(summary_prompt_path.read_text, encoding='utf-8')
+                
+                # Format conversation for the prompt
+                conv_text = ""
+                for msg in conversation:
+                    conv_text += f"\n{msg['role'].capitalize()}: {msg['content']}\n"
+                
+                summary_prompt = template.replace("{{conversation}}", conv_text)
+            except Exception as e:
+                print(f"⚠️ Failed to load summary prompt from {summary_prompt_path}: {e}")
+                summary_prompt = self._get_default_summary_prompt(conversation)
+        else:
+            summary_prompt = self._get_default_summary_prompt(conversation)
+        
+        try:
+            llm = await self._get_llm()
+            messages = [Message(role="user", content=summary_prompt)]
+            response = await llm.complete_async(messages, temperature=0.3)
+            return response.content
+        except Exception as e:
+            return f"Summary generation failed: {str(e)}\n\nConversation had {len(conversation)} messages."
+
+    def _get_default_summary_prompt(self, conversation: List[Dict[str, str]]) -> str:
+        """Fallback hardcoded summary prompt"""
+        prompt = """You are summarizing a conversation for context preservation. Extract:
 1. **Decisions Made**: Key choices and conclusions
 2. **Pending Issues**: Unresolved problems or open questions
 3. **Key Facts**: Important information to preserve
@@ -125,22 +155,26 @@ Conversation to summarize:
 ---
 """
         for msg in conversation:
-            summary_prompt += f"\n{msg['role'].capitalize()}: {msg['content']}\n"
+            prompt += f"\n{msg['role'].capitalize()}: {msg['content']}\n"
         
-        summary_prompt += "\n---\nGenerate the summary now:"
-        
-        try:
-            llm = await self._get_llm()
-            messages = [Message(role="user", content=summary_prompt)]
-            response = await llm.complete_async(messages, temperature=0.3)
-            return response.content
-        except Exception as e:
-            return f"Summary generation failed: {str(e)}\n\nConversation had {len(conversation)} messages."
+        prompt += "\n---\nGenerate the summary now:"
+        return prompt
+
+    def export_history_to_markdown(self, conversation: List[Dict[str, str]]) -> str:
+        """Format chat messages into a Markdown string for file export"""
+        lines = ["# Chat Export", f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ""]
+        for msg in conversation:
+            role = msg.get("role", "unknown").capitalize()
+            # We don't have timestamps for all items in the dict list usually, 
+            # so we skip them or use placeholder if needed.
+            lines.append(f"### {role}")
+            lines.append(msg.get("content", ""))
+            lines.append("")
+        return "\n".join(lines)
     
     async def archive_context(self, force: bool = False) -> Dict:
         """
         Archive current context asynchronously. 
-        Supports injecting external 'conversation' data or defaults to get_conversation_history().
         """
         conversation = await self.get_conversation_history()
         
@@ -148,34 +182,72 @@ Conversation to summarize:
             return {
                 "archived": False,
                 "reason": "empty_conversation",
-                "message": "Chat log is empty"
+                "message": "Chat history is empty"
             }
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # 1. Export conversation to Markdown file
+        history_md = self.export_history_to_markdown(conversation)
+        archived_log_path = self.logs_archive_dir / f"chat_{timestamp}.md"
+        await asyncio.to_thread(archived_log_path.write_text, history_md, encoding='utf-8')
+
+        # 2. Generate summary
         summary = await self.generate_summary(conversation)
         summary_path = self.logs_archive_dir / f"archived_summary_{timestamp}.md"
         await asyncio.to_thread(summary_path.write_text, summary, encoding='utf-8')
         
+        # 3. Rotate legacy file if exists
         if self.chat_log_path.exists():
-            # Only rotate files if we didn't use injected conversation (Legacy Sync)
-            archived_log_path = self.logs_archive_dir / f"chat_{timestamp}.log"
-            await asyncio.to_thread(shutil.move, str(self.chat_log_path), str(archived_log_path))
+            legacy_archived_path = self.logs_archive_dir / f"chat_{timestamp}.log"
+            await asyncio.to_thread(shutil.move, str(self.chat_log_path), str(legacy_archived_path))
             await asyncio.to_thread(self.chat_log_path.touch)
-        else:
-            # If we had injected data or no log file, just record None for log path
-            archived_log_path = None
         
+        # 4. Save to database & Archive Session
         if self.session:
             await self._save_archive_record(summary_path, archived_log_path, len(conversation))
+            await self._mark_session_archived()
         
         return {
             "archived": True,
             "timestamp": timestamp,
             "summary_path": str(summary_path),
-            "log_path": str(archived_log_path) if archived_log_path else None,
+            "log_path": str(archived_log_path),
             "message_count": len(conversation),
+            "summary": summary,
             "message": f"✅ Archived {len(conversation)} messages. Context refreshed."
         }
+
+    async def _mark_session_archived(self):
+        """Mark the active session as archived in DB"""
+        if not self.session:
+            return
+            
+        from models.database import Node, ChatSession
+        from sqlalchemy import select, update
+        
+        try:
+            # Find the node
+            node_result = await self.session.execute(select(Node.id).filter(
+                Node.user_id == self.user_id,
+                Node.name == self.context_name
+            ))
+            node_id = node_result.scalars().first()
+            if not node_id:
+                return
+
+            # Mark all non-archived sessions for this node as archived
+            # (Usually there's only one active session)
+            await self.session.execute(
+                update(ChatSession)
+                .where(ChatSession.node_id == node_id, ChatSession.is_archived == False)
+                .values(is_archived=True, updated_at=datetime.utcnow())
+            )
+            await self.session.commit()
+            print(f"[ContextManager] Session archived in DB for {self.context_name}")
+        except Exception as e:
+            print(f"[ContextManager] Failed to mark session archived: {e}")
+            await self.session.rollback()
     
     async def get_latest_summary(self) -> Optional[str]:
         """Get the most recent archived summary asynchronously"""
@@ -211,7 +283,7 @@ Conversation to summarize:
             try:
                 result = await self.session.execute(
                     select(ArchivedContext).filter(
-                        ArchivedContext.spoke_name == self.context_name,
+                        ArchivedContext.project_name == self.context_name,
                         ArchivedContext.user_id == self.user_id
                     ).order_by(ArchivedContext.archived_at.desc())
                 )
@@ -262,7 +334,7 @@ Conversation to summarize:
             new_record = ArchivedContext(
                 user_id=self.user_id,
                 node_id=node_id,
-                spoke_name=self.context_name,
+                project_name=self.context_name,
                 archived_at=datetime.utcnow(),
                 summary_path=str(summary_path),
                 log_path=str(log_path) if log_path else None,

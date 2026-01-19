@@ -13,6 +13,16 @@ class BaseTool(ABC):
     
     # Cache storage for the declaration dict (Singleton-like behavior per class)
     _declaration_cache: Optional[Dict[str, Any]] = None
+    _status_callback: Optional[Any] = None
+
+    def set_status_callback(self, callback: Any):
+        """Set a callback for progress reporting."""
+        self._status_callback = callback
+
+    async def report_status(self, message: str, state: str = "processing"):
+        """Report execution status via callback."""
+        if self._status_callback:
+            await self._status_callback(message, state)
 
     @classmethod
     def declaration(cls) -> Dict[str, Any]:

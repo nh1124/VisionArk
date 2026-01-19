@@ -37,22 +37,38 @@ class ArchiveChatTool(BaseTool):
 
             # 2. Archive active session using ContextManager logic
             manager = ContextManager(user_id=user_id, context_type="project", context_name=project_name, session=session)
-            await manager.archive_context(force=True)
+            archive_result = await manager.archive_context(force=True)
+            summary = archive_result.get("summary", "No summary available.")
 
             # 3. Create new session
+            new_session_id = str(uuid.uuid4())
             new_session = ChatSession(
-                id=str(uuid.uuid4()),
+                id=new_session_id,
                 node_id=node.id,
-                title=f"Session started {datetime.now().strftime('%Y-%m-%d')}",
+                title=f"Session started {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
                 is_archived=False
             )
             session.add(new_session)
+            
+            # 4. Inject summary as first system message to maintain context
+            injection_msg = ChatMessage(
+                id=str(uuid.uuid4()),
+                session_id=new_session_id,
+                role="system",
+                content=f"### Previous Conversation Summary\n\n{summary}\n\n*This summary has been injected to provide context for the new session.*"
+            )
+            session.add(injection_msg)
+            
             await session.commit()
             
             return {
                 "success": True, 
-                "message": f"📦 Archived current session for {project_name}. New session started.",
-                "data": {"node_id": node.id, "new_session_id": new_session.id}
+                "message": f"📦 Archived current session for {project_name}. New session started with summary injection.",
+                "data": {
+                    "node_id": node.id, 
+                    "new_session_id": new_session_id,
+                    "summary_path": archive_result.get("summary_path")
+                }
             }
         except Exception as e:
             if session: await session.rollback()

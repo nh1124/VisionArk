@@ -7,10 +7,11 @@ from llm import get_provider
 from models.message import Message, MessageRole, AttachedFile
 
 class BaseNode(ABC):
-    def __init__(self, context: Dict[str, Any]):
+    def __init__(self, context: Dict[str, Any], status_callback: Optional[Any] = None):
         self.context = context
         self.user_id = context.get("user_id")
         self.task_id = context.get("task_id")
+        self.status_callback = status_callback
         # LLM Provider (Stateless: configured per call or context)
         self.llm = None 
         
@@ -80,6 +81,34 @@ class BaseNode(ABC):
         """Hook for side effects (Advocate, saving logs)."""
         pass
 
+    async def _execute_tool(self, tool, **kwargs):
+        """
+        Execute a tool with callback injection and status reporting.
+        """
+        tool_name = tool.name
+        
+        # Inject callback
+        if hasattr(tool, 'set_status_callback'):
+            tool.set_status_callback(self.status_callback)
+            
+        # Report Start
+        if self.status_callback:
+            await self.status_callback(f"Executing {tool_name}...", "processing")
+            
+        try:
+            # Run tool
+            result = await tool.run(**kwargs)
+            
+            # Report End
+            if self.status_callback:
+                await self.status_callback(f"Finished {tool_name}.", "processing")
+                
+            return result
+        except Exception as e:
+            if self.status_callback:
+                await self.status_callback(f"Error in {tool_name}: {str(e)}", "error")
+            raise e
+
     async def chat_with_tools(
         self, 
         system_prompt: str,
@@ -133,13 +162,20 @@ class BaseNode(ABC):
                 if self.tools:
                     print(f"[{self.__class__.__name__}] Using {len(self.tools)} class-based tools.")
                     final_tool_defs = [tool.declaration() for tool in self.tools]
-                    final_tool_funcs = {tool.name: tool.run for tool in self.tools}
+                    # Wrap tool.run in _execute_tool
+                    final_tool_funcs = {
+                        tool.name: (lambda t=tool: lambda **kwargs: self._execute_tool(t, **kwargs))() 
+                        for tool in self.tools
+                    }
                 else:
                     final_tool_defs = []
                     final_tool_funcs = {}
             elif tool_functions is None:
                 # If definitions were passed but no functions, check if we can map from self.tools
-                final_tool_funcs = {tool.name: tool.run for tool in self.tools} if self.tools else {}
+                final_tool_funcs = {
+                    tool.name: (lambda t=tool: lambda **kwargs: self._execute_tool(t, **kwargs))() 
+                    for tool in self.tools
+                } if self.tools else {}
 
             response = await self.llm.complete_async(
                 messages, 

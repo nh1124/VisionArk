@@ -71,7 +71,7 @@ class DelegateTaskTool(BaseTool):
             
             NodeClass = role_map[role_lower]
             ctx = {'user_id': user_id, 'db_session': session, 'project_id': project_id}
-            node = NodeClass(ctx)
+            node = NodeClass(ctx, status_callback=self._status_callback)
             resp = await node.process(instruction)
             return {"success": True, "message": f"Result from {role}:\n{resp}"}
         except Exception as e:

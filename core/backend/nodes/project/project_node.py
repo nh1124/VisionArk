@@ -15,13 +15,13 @@ class ProjectNode(BaseNode):
     Manages the project lifecycle, chat with user, and delegation to members.
     """
     
-    def __init__(self, context: Dict[str, Any]):
-        super().__init__(context)
+    def __init__(self, context: Dict[str, Any], status_callback: Optional[Any] = None):
+        super().__init__(context, status_callback)
         # Initialize Members
         self.members = {
-            "planner": PlannerNode(context),
-            "researcher": ResearcherNode(context),
-            "advocate": AdvocateNode(context)
+            "planner": PlannerNode(context, status_callback),
+            "researcher": ResearcherNode(context, status_callback),
+            "advocate": AdvocateNode(context) # No callback needed for background task
         }
         self.memory = MemoryNode(context)
         self.session_id = None
@@ -190,5 +190,6 @@ class ProjectNode(BaseNode):
         
         # Fire & Forget Advocate
         # Advocate will analyze and call Scheduler if needed
-        await self.members["advocate"].process_messages(recent)
+        import asyncio
+        asyncio.create_task(self.members["advocate"].process_messages(recent))
 
