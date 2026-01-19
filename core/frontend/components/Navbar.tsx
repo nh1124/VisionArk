@@ -31,26 +31,7 @@ export default function Navbar({ isSidebarCollapsed }: NavbarProps) {
                     </div>
                 )}
 
-                <div className="hidden md:flex items-center space-x-6 text-sm font-medium text-gray-400">
-                    <Link
-                        href="/dashboard"
-                        className={`hover:text-white transition-colors ${pathname === "/dashboard" ? "text-blue-400" : ""}`}
-                    >
-                        Dashboard
-                    </Link>
-                    <Link
-                        href="/hub"
-                        className={`hover:text-white transition-colors ${pathname === "/hub" ? "text-purple-400" : ""}`}
-                    >
-                        Hub
-                    </Link>
-                    <Link
-                        href="/spokes"
-                        className={`hover:text-white transition-colors ${pathname.startsWith("/spokes") ? "text-cyan-400" : ""}`}
-                    >
-                        Spokes
-                    </Link>
-                </div>
+                {/* Navigation links removed */}
             </div>
 
             <div className="flex items-center space-x-4">

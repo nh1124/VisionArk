@@ -12,6 +12,7 @@ from .library.commands import (
     CheckInboxTool, SendMessageTool, ReportTool, ProcessInboxTool
 )
 from .library.condition import GetCurrentConditionTool, UpdateUserConditionTool
+from .library.members import ListMembersTool, ManageMemberTool
 
 __all__ = [
     "BaseTool",
@@ -51,5 +52,7 @@ __all__ = [
     "ReportTool",
     "ProcessInboxTool",
     "GetCurrentConditionTool",
-    "UpdateUserConditionTool"
+    "UpdateUserConditionTool",
+    "ListMembersTool",
+    "ManageMemberTool"
 ]

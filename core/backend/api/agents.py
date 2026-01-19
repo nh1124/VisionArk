@@ -332,21 +332,36 @@ async def branch_project_chat(
         )
         db.add(new_node)
         
-        # 6. Copy agent profile
+        # 6. Copy agent profiles
         result = await db.execute(select(AgentProfile).filter(
             AgentProfile.node_id == source_node.id,
             AgentProfile.is_active == True
         ))
-        source_profile = result.scalars().first()
+        source_profiles = result.scalars().all()
         
-        new_profile = AgentProfile(
-            id=str(uuid.uuid4()),
-            node_id=new_node_id,
-            system_prompt=source_profile.system_prompt if source_profile else "You are a specialized AI assistant for this project.",
-            is_active=True,
-            version=1
-        )
-        db.add(new_profile)
+        if source_profiles:
+            for source_profile in source_profiles:
+                new_profile = AgentProfile(
+                    id=str(uuid.uuid4()),
+                    node_id=new_node_id,
+                    system_prompt=source_profile.system_prompt,
+                    role_name=source_profile.role_name,
+                    display_name=source_profile.display_name,
+                    tools=source_profile.tools,
+                    is_active=True,
+                    version=1
+                )
+                db.add(new_profile)
+        else:
+            # Fallback if no profiles found
+            new_profile = AgentProfile(
+                id=str(uuid.uuid4()),
+                node_id=new_node_id,
+                system_prompt="You are a specialized AI assistant for this project.",
+                is_active=True,
+                version=1
+            )
+            db.add(new_profile)
         
         # 7. Create new session
         new_session = ChatSession(
@@ -459,11 +474,79 @@ async def create_project(
         raise HTTPException(status_code=500, detail=f"Failed to create project: {str(e)}")
 
 
+class CreateFromPrompt(BaseModel):
+    prompt: str
+
+
+@router.post("/project/create-from-prompt")
+async def create_project_from_prompt(
+    data: CreateFromPrompt,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+    x_preferred_model: Optional[str] = Header(None, alias="X-Preferred-Model")
+):
+    """
+    Create a new Project from a user prompt.
+    Uses AI to generate a project name and system prompt, then enqueues the initial message.
+    """
+    from nodes.system.project_creator_node import ProjectCreatorNode
+    from queue_system.manager import QueueManager
+    
+    if not data.prompt.strip():
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
+    
+    try:
+        # 1. Create context for the node
+        context = {
+            "user_id": identity.user_id,
+            "db_session": db
+        }
+        
+        # 2. Initialize and run ProjectCreatorNode to create the project
+        creator = ProjectCreatorNode(context)
+        await creator.pre_process()
+        result = await creator.process(data.prompt)
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=500, detail="Failed to create project")
+        
+        project_name = result["project_name"]
+        
+        # 3. Enqueue the initial prompt to be processed by the worker
+        manager = QueueManager()
+        
+        queue_context = {
+            "user_id": identity.user_id,
+            "preferred_model": x_preferred_model,
+            "env": "v4",
+            "project_name": project_name,
+            "files": []
+        }
+        
+        task_id = manager.enqueue(identity.user_id, data.prompt, queue_context)
+        
+        return {
+            "project_name": project_name,
+            "node_id": result["node_id"],
+            "task_id": task_id,
+            "message": f"Project '{project_name}' created and initial message queued"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to create project: {str(e)}")
+
+
+
+
 @router.get("/project/list")
 async def list_projects(
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
+
     """List all existing Projects for this user"""
     
     # Query Nodes table for PROJECTS (excluding hub for list)
@@ -471,16 +554,56 @@ async def list_projects(
         Node.user_id == identity.user_id,
         Node.name != "hub",
         Node.is_archived == False
-    ))
+    ).order_by(Node.updated_at.desc()))
     project_nodes = result.scalars().all()
     
     projects = []
     for node in project_nodes:
+        # Calculate counts from disk
+        artifact_count = 0
+        ref_count = 0
+        try:
+            project_dir = get_project_dir(identity.user_id, node.name)
+            art_dir = project_dir / "artifacts"
+            ref_dir = project_dir / "refs"
+            
+            if art_dir.exists():
+                artifact_count = len([f for f in art_dir.iterdir() if f.is_file()])
+            if ref_dir.exists():
+                ref_count = len([f for f in ref_dir.iterdir() if f.is_file()])
+        except Exception:
+            pass # Fallback to 0 if directory error
+            
+        # Check for custom prompt and collect members
+        profile_res = await db.execute(select(AgentProfile).where(
+            AgentProfile.node_id == node.id,
+            AgentProfile.is_active == True
+        ))
+        profiles = profile_res.scalars().all()
+        
+        has_custom = False
+        members = []
+        for p in profiles:
+            role = p.display_name or p.role_name or "Agent"
+            if role.lower() != "orchestrator": # Hide orchestrator as it's the node itself
+                members.append(role)
+            
+            # Check for custom prompt on orchestrator/main profile
+            if p.system_prompt:
+                default_snippet = "You are a specialized AI assistant"
+                if default_snippet not in p.system_prompt or len(p.system_prompt) > 200:
+                    has_custom = True
+
         projects.append({
             "name": node.name,
             "display_name": node.display_name,
             "node_id": node.id,
-            "created_at": node.created_at
+            "created_at": node.created_at.isoformat() if node.created_at else None,
+            "updated_at": node.updated_at.isoformat() if node.updated_at else None,
+            "artifact_count": artifact_count,
+            "ref_count": ref_count,
+            "has_custom_prompt": has_custom,
+            "members": members
         })
     
     return {"projects": projects}
@@ -517,23 +640,33 @@ async def get_project_prompt(
     db: AsyncSession = Depends(get_async_db)
 ):
     """Get the system prompt for a project"""
-    # Check access (Hub is a special project)
-    if project_name.lower() == "hub":
-        # Hub prompt might be stored differently or just as a project named 'hub'
-        pass
-
+    # 1. Find Node by project_name
     result = await db.execute(
-        select(AgentProfile).where(
-            AgentProfile.name == project_name,
-            AgentProfile.user_id == identity.user_id
+        select(Node).filter(
+            Node.user_id == identity.user_id,
+            Node.name == project_name
         )
     )
-    project = result.scalars().first()
+    node = result.scalars().first()
     
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-        
-    return {"content": project.custom_prompt}
+    if not node:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+    
+    # 2. Find Active AgentProfile for this node
+    result = await db.execute(
+        select(AgentProfile).filter(
+            AgentProfile.node_id == node.id,
+            AgentProfile.is_active == True
+        ).order_by(AgentProfile.version.desc())
+    )
+    profile = result.scalars().first()
+    
+    if profile and profile.system_prompt:
+        return {"content": profile.system_prompt}
+    
+    # Fallback
+    return {"content": "You are a specialized AI assistant."}
+
 
 
 @router.put("/project/{project_name}/prompt")
@@ -544,25 +677,47 @@ async def update_project_prompt(
     db: AsyncSession = Depends(get_async_db)
 ):
     """Update the system prompt for a project"""
+    # 1. Find Node by project_name
     result = await db.execute(
-        select(AgentProfile).where(
-            AgentProfile.name == project_name,
-            AgentProfile.user_id == identity.user_id
+        select(Node).filter(
+            Node.user_id == identity.user_id,
+            Node.name == project_name
         )
     )
-    project = result.scalars().first()
+    node = result.scalars().first()
     
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-        
-    project.custom_prompt = prompt.content
+    if not node:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+    
+    # 2. Find Active AgentProfile for this node
+    result = await db.execute(
+        select(AgentProfile).filter(
+            AgentProfile.node_id == node.id,
+            AgentProfile.is_active == True
+        )
+    )
+    profile = result.scalars().first()
+    
+    if profile:
+        profile.system_prompt = prompt.content
+    else:
+        # Create new profile if none exists
+        profile = AgentProfile(
+            id=str(uuid4()),
+            node_id=node.id,
+            system_prompt=prompt.content,
+            is_active=True
+        )
+        db.add(profile)
+    
     await db.commit()
     
     # Invalidate cache
     if project_name in _project_cache:
         _project_cache.discard(project_name)
         
-    return {"status": "success", "content": project.custom_prompt}
+    return {"status": "success", "content": prompt.content}
+
 
 
 @router.delete("/project/{project_name}")

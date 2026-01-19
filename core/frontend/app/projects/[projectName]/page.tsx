@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { use } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import ChatInput from "@/components/ChatInput";
 import MessageWithAttachments from "@/components/MessageWithAttachments";
 import FilesSidebar from "@/components/FilesSidebar";
@@ -43,6 +43,7 @@ export default function ProjectChatPage({
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const [displayName, setDisplayName] = useState("");
     const [elapsedTime, setElapsedTime] = useState(0);
+    const [statusText, setStatusText] = useState("");
     const commandRef = useRef<CommandAutocompleteHandle>(null);
 
     // Auto-scroll to bottom when messages change
@@ -84,7 +85,94 @@ export default function ProjectChatPage({
         loadHistory();
     }, [projectName]);
 
-    const [statusText, setStatusText] = useState("");
+    // Handle task_id from query params (for initial prompt polling)
+    const searchParams = useSearchParams();
+    const pendingTaskIdRef = useRef<string | null>(null);
+
+    useEffect(() => {
+        const taskId = searchParams.get('task_id');
+
+        // Only start polling if this is a new task_id we haven't processed
+        if (!taskId || pendingTaskIdRef.current === taskId) return;
+
+        // Store the task_id to prevent re-processing
+        pendingTaskIdRef.current = taskId;
+
+        // Start polling for this task
+        setLoading(true);
+        setStatusText("Processing your request...");
+        const startTime = Date.now();
+
+        const timerInterval = setInterval(() => {
+            setElapsedTime(Math.floor((Date.now() - startTime) / 1000));
+        }, 1000);
+
+        const pollTask = async (): Promise<boolean> => {
+            try {
+                const statusRes = await apiFetch(`/api/agents/tasks/${taskId}`);
+                if (!statusRes.ok) return false;
+
+                const statusData = await statusRes.json();
+                const status = statusData.status;
+
+                if (status === "completed") {
+                    clearInterval(timerInterval);
+                    setLoading(false);
+                    setStatusText("");
+
+                    // Re-fetch history to get complete messages
+                    const historyRes = await apiFetch(`/api/agents/project/${projectName}/history`);
+                    const historyData = await historyRes.json();
+                    if (historyData.history && Array.isArray(historyData.history)) {
+                        setMessages(historyData.history.map((m: any) => ({
+                            role: m.role,
+                            content: m.content,
+                            attached_files: m.meta_payload?.attached_files || [],
+                            tool_calls: m.meta_payload?.tool_calls || []
+                        })));
+                    }
+
+                    // Clear URL AFTER task completes
+                    router.replace(`/projects/${projectName}`, { scroll: false });
+                    pendingTaskIdRef.current = null;
+                    return true;
+                } else if (status === "failed") {
+                    clearInterval(timerInterval);
+                    setLoading(false);
+                    setStatusText("");
+                    setMessages([{
+                        role: "assistant",
+                        content: `❌ Error: ${statusData.result || "Task failed"}`
+                    }]);
+
+                    // Clear URL on failure too
+                    router.replace(`/projects/${projectName}`, { scroll: false });
+                    pendingTaskIdRef.current = null;
+                    return true;
+                } else {
+                    setStatusText(status === "queued" ? "Queued..." : "Processing...");
+                    return false;
+                }
+            } catch (err) {
+                console.error("Polling error:", err);
+                return false;
+            }
+        };
+
+        const pollInterval = setInterval(async () => {
+            const done = await pollTask();
+            if (done) clearInterval(pollInterval);
+        }, 1000);
+
+        // Initial poll
+        pollTask();
+
+        return () => {
+            clearInterval(timerInterval);
+            clearInterval(pollInterval);
+        };
+    }, [searchParams, projectName, router]);
+
 
     const sendMessage = async (content: string, files: File[]) => {
         if (!content.trim() && files.length === 0) return;

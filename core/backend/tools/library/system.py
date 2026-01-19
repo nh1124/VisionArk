@@ -53,6 +53,15 @@ class DelegateTaskTool(BaseTool):
             return {"success": False, "message": "Context error: session or user_id missing"}
 
         try:
+            members = kwargs.get("members", {})
+            role_lower = role.lower()
+            
+            if role_lower in members:
+                node = members[role_lower]
+                resp = await node.process(instruction)
+                return {"success": True, "message": f"Result from {role}:\n{resp}"}
+            
+            # Fallback/Legacy logic if members not in context (cross-compatibility)
             from nodes.members.planner import PlannerNode
             from nodes.members.researcher import ResearcherNode
             from nodes.members.ruler import RulerNode
@@ -65,9 +74,8 @@ class DelegateTaskTool(BaseTool):
                 "advocate": AdvocateNode
             }
             
-            role_lower = role.lower()
             if role_lower not in role_map:
-                return {"success": False, "message": f"Invalid role: {role}. Must be one of {list(role_map.keys())}"}
+                return {"success": False, "message": f"Invalid role: {role}. Available: {list(members.keys()) or list(role_map.keys())}"}
             
             NodeClass = role_map[role_lower]
             ctx = {'user_id': user_id, 'db_session': session, 'project_id': project_id}

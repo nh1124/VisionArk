@@ -22,7 +22,7 @@ class BaseNode(ABC):
     def load_system_prompt(self, role_name: Optional[str] = None) -> str:
         """
         Load the system prompt from backend assets.
-        Global + Role Specific.
+        Global + Role Specific + Dynamic Tool Descriptions.
         """
         from utils.paths import get_prompts_dir
         
@@ -52,18 +52,16 @@ class BaseNode(ABC):
             except Exception as e:
                 print(f"[BaseNode] Error loading role prompt: {e}")
         
-        # 3. Load Tool usage specific
+        # 3. Dynamic Tool Descriptions
         tool_text = ""
-        if role_name:
-            tool_path = prompts_dir / "tools" / f"{role_name}.md"
-            try:
-                if tool_path.exists():
-                    tool_text = tool_path.read_text(encoding='utf-8')
-                else:
-                    print(f"[BaseNode] Note: Tool usage prompt not found for {role_name}")
-            except Exception as e:
-                print(f"[BaseNode] Error loading tool prompt: {e}")
-
+        if self.tools:
+            tool_text = "\n## Available Tools\n"
+            for tool in self.tools:
+                decl = tool.declaration()
+                name = decl.get("name")
+                desc = decl.get("description")
+                tool_text += f"- `{name}`: {desc}\n"
+        
         # 4. Combine
         parts = [p for p in [global_text, role_text, tool_text] if p]
         return "\n\n".join(parts) if parts else "You are a helpful AI assistant."

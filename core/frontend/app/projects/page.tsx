@@ -2,8 +2,9 @@
 
 import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { apiFetch, getFileToken } from "@/lib/api";
-import { Search, MoreVertical, Edit2, Trash2, X, Check, ExternalLink, Copy, FileDown } from "lucide-react";
+import { Search, MoreVertical, Edit2, Trash2, X, Check, ExternalLink, Copy, FileDown, Send, Loader2 } from "lucide-react";
 
 interface Project {
     name: string;
@@ -12,13 +13,16 @@ interface Project {
     has_custom_prompt: boolean;
     artifact_count: number;
     ref_count: number;
+    created_at?: string;
+    updated_at?: string;
+    members?: string[];
 }
 
 export default function ProjectsPage() {
     const [projects, setProjects] = useState<Project[]>([]);
 
     const [loading, setLoading] = useState(true);
-    const [newProjectName, setNewProjectName] = useState("");
+    const [newProjectPrompt, setNewProjectPrompt] = useState("");
     const [creating, setCreating] = useState(false);
     const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set());
     const [searchQuery, setSearchQuery] = useState("");
@@ -31,6 +35,9 @@ export default function ProjectsPage() {
     const [renamingProject, setRenamingProject] = useState<string | null>(null);
     const [renameValue, setRenameValue] = useState("");
     const [savingRename, setSavingRename] = useState(false);
+
+    // For navigation after creation
+    const router = useRouter();
 
     useEffect(() => {
         loadProjects();
@@ -63,23 +70,30 @@ export default function ProjectsPage() {
     };
 
     const createProject = async () => {
-        if (!newProjectName.trim()) return;
+        if (!newProjectPrompt.trim()) return;
 
         setCreating(true);
         try {
-            await apiFetch("/api/agents/project/create", {
+            const response = await apiFetch("/api/agents/project/create-from-prompt", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ project_name: newProjectName }),
+                body: JSON.stringify({ prompt: newProjectPrompt }),
             });
-            setNewProjectName("");
-            await loadProjects();
+
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.detail || "Failed to create project");
+            }
+
+            const data = await response.json();
+            // Redirect to new project with task_id
+            router.push(`/projects/${data.project_name}?task_id=${data.task_id}`);
         } catch (error) {
             console.error("Error creating project:", error);
-        } finally {
             setCreating(false);
         }
     };
+
 
     const toggleSelection = (projectName: string) => {
         const newSelected = new Set(selectedProjects);
@@ -242,30 +256,38 @@ export default function ProjectsPage() {
             <div className="bg-gray-900/40 border border-gray-800/50 backdrop-blur-sm rounded-2xl p-6 mb-10 shadow-xl overflow-hidden relative">
                 <div className="absolute top-0 left-0 w-1 h-full bg-cyan-500/50"></div>
                 <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-                    <span className="text-cyan-400 text-lg">✦</span> Create New Project
+                    <span className="text-cyan-400 text-lg">✦</span> New Project
                 </h2>
                 <div className="flex flex-col sm:flex-row gap-4">
                     <input
                         type="text"
-                        value={newProjectName}
-                        onChange={(e) => setNewProjectName(e.target.value)}
+                        value={newProjectPrompt}
+                        onChange={(e) => setNewProjectPrompt(e.target.value)}
                         onKeyPress={(e) => e.key === "Enter" && !creating && createProject()}
-                        placeholder="Project identifier (e.g., research_ai)"
+                        placeholder="Describe what you want to work on..."
                         className="flex-1 bg-gray-800/50 border border-gray-700/50 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/20 transition-all"
                         disabled={creating}
                     />
                     <button
                         onClick={createProject}
-                        disabled={creating || !newProjectName.trim()}
-                        className="bg-cyan-600 hover:bg-cyan-500 disabled:bg-gray-800 disabled:text-gray-500 px-8 py-3 rounded-xl font-semibold text-sm transition-all active:scale-95 shadow-lg shadow-cyan-900/20"
+                        disabled={creating || !newProjectPrompt.trim()}
+                        className="flex items-center justify-center gap-2 bg-cyan-600 hover:bg-cyan-500 disabled:bg-gray-800 disabled:text-gray-500 px-6 py-3 rounded-xl font-semibold text-sm transition-all active:scale-95 shadow-lg shadow-cyan-900/20"
                     >
-                        {creating ? "Creating..." : "Initialize Project"}
+                        {creating ? (
+                            <>
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                Creating...
+                            </>
+                        ) : (
+                            <>
+                                <Send className="w-4 h-4" />
+                                Start
+                            </>
+                        )}
                     </button>
                 </div>
-                <p className="text-[10px] text-gray-500 mt-3 uppercase tracking-widest font-medium opacity-60">
-                    * Names should use underscores for spaces
-                </p>
             </div>
+
 
             {/* Bulk Actions Bar */}
             {filteredProjects.length > 0 && (
@@ -370,12 +392,18 @@ export default function ProjectsPage() {
                                                 </div>
                                             ) : (
                                                 <Link href={`/projects/${project.name}`} className="block min-w-0">
-                                                    <h3 className="font-bold text-lg text-gray-100 truncate group-hover:text-cyan-400 transition-colors" title={project.display_name || project.name}>
+                                                    <h3 className="font-bold text-base text-gray-100 truncate group-hover:text-cyan-400 transition-colors" title={project.display_name || project.name}>
                                                         {project.display_name || project.name}
                                                     </h3>
-                                                    <p className="text-[10px] text-gray-600 font-mono tracking-tighter uppercase truncate opacity-70">
+                                                    <p className="text-[9px] text-gray-600 font-mono tracking-tighter uppercase truncate opacity-70">
                                                         #{project.name}
                                                     </p>
+                                                    {project.updated_at && (
+                                                        <p className="text-[8px] text-gray-500 mt-0.5 flex items-center gap-1 truncate">
+                                                            <span className="w-1 h-1 bg-green-500 rounded-full flex-shrink-0"></span>
+                                                            <span className="truncate">Active: {new Date(project.updated_at).toLocaleDateString()}</span>
+                                                        </p>
+                                                    )}
                                                 </Link>
                                             )}
                                         </div>
@@ -454,6 +482,19 @@ export default function ProjectsPage() {
                                 {project.has_custom_prompt && (
                                     <div className="flex items-center gap-1.5 mt-4 text-[9px] text-cyan-500 font-black tracking-widest uppercase bg-cyan-500/5 px-3 py-1.5 rounded-full border border-cyan-500/20 w-fit">
                                         <span className="animate-pulse">◈</span> Custom AI Instructions Active
+                                    </div>
+                                )}
+
+                                {project.members && project.members.length > 0 && (
+                                    <div className="flex flex-wrap gap-1.5 mt-3">
+                                        {project.members.map((member, idx) => (
+                                            <span
+                                                key={idx}
+                                                className="px-2 py-0.5 bg-gray-800/50 border border-gray-700/50 rounded text-[8px] text-gray-400 font-bold uppercase tracking-wider"
+                                            >
+                                                {member}
+                                            </span>
+                                        ))}
                                     </div>
                                 )}
                             </div>

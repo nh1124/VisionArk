@@ -34,7 +34,7 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
     const handleExportChat = async (projectName: string) => {
         try {
             const token = await getFileToken();
-            const exportUrl = `/api/export/chat/${projectName}?token=${token}`;
+            const exportUrl = `/api/export/chat/project/${projectName}?token=${token}`;
 
             // Create a temporary link to trigger download
             const link = document.createElement('a');
@@ -51,12 +51,46 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
         }
     };
 
+    const handleCloneProject = async (projectName: string) => {
+        try {
+            const response = await apiFetch(`/api/agents/project/${projectName}/clone`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ new_name: `${projectName}_copy` }),
+            });
+
+            if (response.ok) {
+                setMenuOpen(null);
+                window.location.reload(); // Refresh to show cloned project
+            } else {
+                const err = await response.json();
+                alert(`Failed to clone project: ${err.detail || 'Unknown error'}`);
+            }
+        } catch (error) {
+            console.error("Clone failed:", error);
+            alert("Failed to clone project.");
+        }
+    };
+
+    const handleDeleteProject = async (projectName: string) => {
+        if (!confirm(`Delete project '${projectName}'? This action cannot be undone.`)) {
+            return;
+        }
+
+        try {
+            await apiFetch(`/api/agents/project/${projectName}`, { method: "DELETE" });
+            setMenuOpen(null);
+            window.location.href = "/projects"; // Redirect after deletion
+        } catch (error) {
+            console.error("Delete failed:", error);
+            alert("Failed to delete project.");
+        }
+    };
+
     const navItems = [
-        { name: "Home", path: "/" },
         { name: "Dashboard", path: "/dashboard" },
         { name: "Tasks", path: "/tasks" },
-        // Hub removed from strict separate list, might be treated as project or separate depending on UI preference
-        // For now, adhering to user request to V4 structure.
+        { name: "Projects", path: "/projects" },
     ];
 
     return (
@@ -172,20 +206,40 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                                             {menuOpen === project.name && (
                                                 <div
                                                     ref={menuRef}
-                                                    className="absolute right-0 top-full mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-xl py-1 min-w-[140px] z-50"
+                                                    className="absolute right-0 top-full mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-xl py-1 min-w-[160px] z-50"
                                                 >
                                                     <Link
                                                         href={`/projects/${project.name}/settings`}
                                                         className="flex items-center px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
                                                         onClick={() => setMenuOpen(null)}
                                                     >
-                                                        Settings
+                                                        ⚙️ Settings
+                                                    </Link>
+                                                    <button
+                                                        onClick={() => handleCloneProject(project.name)}
+                                                        className="w-full flex items-center px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
+                                                    >
+                                                        📋 Clone Project
+                                                    </button>
+                                                    <Link
+                                                        href={`/projects/${project.name}`}
+                                                        className="flex items-center px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
+                                                        onClick={() => setMenuOpen(null)}
+                                                    >
+                                                        🚀 Open Workspace
                                                     </Link>
                                                     <button
                                                         onClick={() => handleExportChat(project.name)}
                                                         className="w-full flex items-center px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
                                                     >
-                                                        Export Chat
+                                                        📥 Export Chat
+                                                    </button>
+                                                    <div className="my-1 border-t border-gray-700"></div>
+                                                    <button
+                                                        onClick={() => handleDeleteProject(project.name)}
+                                                        className="w-full flex items-center px-3 py-2 text-sm text-red-400 hover:bg-red-500/10"
+                                                    >
+                                                        🗑️ Delete Project
                                                     </button>
                                                 </div>
                                             )}
@@ -196,8 +250,8 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
 
                             {/* New Project Button */}
                             <Link
-                                href="/projects"
-                                className="flex items-center px-3 py-2 rounded-lg text-sm text-gray-500 hover:bg-gray-800/50 hover:text-gray-300 transition-colors"
+                                href="/new"
+                                className="flex items-center px-3 py-2 rounded-lg text-sm text-cyan-500 hover:bg-cyan-500/10 hover:text-cyan-400 transition-colors"
                             >
                                 <span className="mr-2">+</span>
                                 <span>New Project</span>

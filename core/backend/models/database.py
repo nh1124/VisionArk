@@ -194,6 +194,9 @@ class AgentProfile(Base):
     node_id = Column(String(36), ForeignKey("nodes.id"), nullable=False, index=True)
     version = Column(Integer, default=1)
     system_prompt = Column(Text, nullable=True)
+    role_name = Column(String(50), nullable=True) # e.g. "planner", "researcher", "orchestrator"
+    display_name = Column(String(200), nullable=True)
+    tools = Column(JSON, default=list) # List of tool names: ["google_search", "list_tasks"]
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     
@@ -363,6 +366,17 @@ def _run_migrations(engine):
                 ))
                 conn.commit()
                 print("✅ Migration: Added Gemini File API columns to uploaded_files")
+
+    # Migration: Add role_name, display_name, tools to agent_profiles if missing
+    if 'agent_profiles' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('agent_profiles')]
+        if 'role_name' not in columns:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE agent_profiles ADD COLUMN role_name VARCHAR(50)"))
+                conn.execute(text("ALTER TABLE agent_profiles ADD COLUMN display_name VARCHAR(200)"))
+                conn.execute(text("ALTER TABLE agent_profiles ADD COLUMN tools JSON"))
+                conn.commit()
+                print("✅ Migration: Added role_name, display_name, and tools columns to agent_profiles")
 
 
 def get_session(engine):

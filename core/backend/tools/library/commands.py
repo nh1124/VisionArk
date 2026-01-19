@@ -241,9 +241,18 @@ class CloneProjectTool(BaseTool):
 
             from models.database import AgentProfile
             res_prof = await session.execute(select(AgentProfile).filter(AgentProfile.node_id == source_node.id, AgentProfile.is_active == True))
-            source_profile = res_prof.scalars().first()
-            if source_profile:
-                new_profile = AgentProfile(id=str(uuid.uuid4()), node_id=new_node_id, system_prompt=source_profile.system_prompt, is_active=True, version=1)
+            source_profiles = res_prof.scalars().all()
+            for source_profile in source_profiles:
+                new_profile = AgentProfile(
+                    id=str(uuid.uuid4()), 
+                    node_id=new_node_id, 
+                    system_prompt=source_profile.system_prompt, 
+                    role_name=source_profile.role_name,
+                    display_name=source_profile.display_name,
+                    tools=source_profile.tools,
+                    is_active=True, 
+                    version=1
+                )
                 session.add(new_profile)
 
             # Copy physical files

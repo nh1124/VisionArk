@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from nodes.base_node import BaseNode
 from nodes.members.planner import PlannerNode
 from nodes.members.researcher import ResearcherNode
@@ -17,12 +17,8 @@ class ProjectNode(BaseNode):
     
     def __init__(self, context: Dict[str, Any], status_callback: Optional[Any] = None):
         super().__init__(context, status_callback)
-        # Initialize Members
-        self.members = {
-            "planner": PlannerNode(context, status_callback),
-            "researcher": ResearcherNode(context, status_callback),
-            "advocate": AdvocateNode(context) # No callback needed for background task
-        }
+        # Members will be initialized dynamically in pre_process
+        self.members = {}
         self.memory = MemoryNode(context)
         self.session_id = None
         self.node_id = None
@@ -35,10 +31,13 @@ class ProjectNode(BaseNode):
         from tools.library.search import GoogleSearchTool
         from tools.library.ai import GenerateImageTool
         from tools.library.condition import GetCurrentConditionTool, UpdateUserConditionTool
+        from tools.library.members import ListMembersTool, ManageMemberTool
         
         self.tools = [
             AskNodeTool(),
             DelegateTaskTool(),
+            ListMembersTool(),
+            ManageMemberTool(),
 
             ListTasksTool(),
             CreateTaskTool(),
@@ -113,9 +112,52 @@ class ProjectNode(BaseNode):
                 self.context['api_key'] = None
                 print(f"[ProjectNode] No API Key found in settings for user {self.user_id}", flush=True)
             
+            # 5. Load Members Dynamic
+            await self._init_dynamic_members(session)
+            
         finally:
             if should_close:
                 await session.close()
+
+    async def _init_dynamic_members(self, session):
+        """Load member agents from database or fall back to defaults."""
+        from nodes.members.dynamic_node import DynamicMemberNode
+        from models.database import AgentProfile
+        from sqlalchemy import select
+        
+        # Fetch all profiles for this node
+        result = await session.execute(select(AgentProfile).where(
+            AgentProfile.node_id == self.node_id,
+            AgentProfile.is_active == True
+        ))
+        profiles = result.scalars().all()
+        
+        dynamic_members = {}
+        for profile in profiles:
+            if profile.role_name and profile.role_name != "orchestrator":
+                dynamic_members[profile.role_name] = DynamicMemberNode(
+                    self.context, 
+                    profile, 
+                    status_callback=self.status_callback
+                )
+        
+        # Hardcoded Fallbacks (Planner, Researcher, Advocate)
+        # These will be used if no DB profile overrides them
+        from nodes.members.planner import PlannerNode
+        from nodes.members.researcher import ResearcherNode
+        from nodes.members.advocate import AdvocateNode
+        
+        fallbacks = {
+            "planner": PlannerNode(self.context),
+            "researcher": ResearcherNode(self.context),
+            "advocate": AdvocateNode(self.context)
+        }
+        
+        for role, node in fallbacks.items():
+            if role not in dynamic_members:
+                dynamic_members[role] = node
+                
+        self.members = dynamic_members
 
 
     async def process(self, message: str) -> Any:
@@ -164,7 +206,8 @@ class ProjectNode(BaseNode):
                 'session_id': self.session_id,
                 'node_id': self.node_id,
                 'project_name': self.context.get('project_name'),  # V4: Project name
-                'context_data': self.context_data  # Pass full context data if needed
+                'context_data': self.context_data,  # Pass full context data if needed
+                'members': self.members
             }
         )
         
