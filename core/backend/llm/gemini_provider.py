@@ -255,6 +255,10 @@ class GeminiProvider(BaseLLMProvider):
                             # Run sync function in thread to avoid blocking loop
                             result = await asyncio.to_thread(func, **full_args)
                         
+                        # Fix: If result is an awaitable (e.g. from a lambda returning a coroutine), await it
+                        if inspect.isawaitable(result):
+                            result = await result
+                        
                         if hasattr(result, 'to_dict'):
                             tool_result = result.message
                         else:
@@ -484,6 +488,21 @@ class GeminiProvider(BaseLLMProvider):
                         
                         result = func(**full_args)
                         
+                        # Handle potential coroutine if func returned one (e.g. from async wrapper in sync context)
+                        if inspect.isawaitable(result):
+                            # This is the sync 'complete' method, but we might encounter an awaitable
+                            # Try to run it in a new event loop or just fail gracefully
+                            try:
+                                import asyncio
+                                loop = asyncio.get_event_loop()
+                                if loop.is_running():
+                                    # We are already in a loop, this is bad for sync 'complete'
+                                    result = f"Error: Tool {function_name} returned a coroutine in a sync context."
+                                else:
+                                    result = loop.run_until_complete(result)
+                            except:
+                                result = f"Error: Failed to await tool {function_name} in sync context."
+
                         # Handle ToolResult objects
                         if hasattr(result, 'to_dict'):
                             tool_result = result.message
@@ -775,6 +794,10 @@ class GeminiProvider(BaseLLMProvider):
                                 result = await func(**full_args)
                             else:
                                 result = await asyncio.to_thread(func, **full_args)
+                                
+                            # Fix: If result is an awaitable, await it
+                            if inspect.isawaitable(result):
+                                result = await result
                                 
                             if hasattr(result, 'to_dict'):
                                 tool_result = result.message

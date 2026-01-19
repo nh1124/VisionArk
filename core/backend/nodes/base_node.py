@@ -160,20 +160,22 @@ class BaseNode(ABC):
                 if self.tools:
                     print(f"[{self.__class__.__name__}] Using {len(self.tools)} class-based tools.")
                     final_tool_defs = [tool.declaration() for tool in self.tools]
-                    # Wrap tool.run in _execute_tool
-                    final_tool_funcs = {
-                        tool.name: (lambda t=tool: lambda **kwargs: self._execute_tool(t, **kwargs))() 
-                        for tool in self.tools
-                    }
+                    # Wrap tool.run in _execute_tool with an explicit async function
+                    final_tool_funcs = {}
+                    for tool in self.tools:
+                        async def wrapper(t=tool, **kwargs):
+                            return await self._execute_tool(t, **kwargs)
+                        final_tool_funcs[tool.name] = wrapper
                 else:
                     final_tool_defs = []
                     final_tool_funcs = {}
             elif tool_functions is None:
                 # If definitions were passed but no functions, check if we can map from self.tools
-                final_tool_funcs = {
-                    tool.name: (lambda t=tool: lambda **kwargs: self._execute_tool(t, **kwargs))() 
-                    for tool in self.tools
-                } if self.tools else {}
+                final_tool_funcs = {}
+                for tool in self.tools:
+                    async def wrapper(t=tool, **kwargs):
+                        return await self._execute_tool(t, **kwargs)
+                    final_tool_funcs[tool.name] = wrapper
 
             response = await self.llm.complete_async(
                 messages, 
