@@ -27,13 +27,25 @@ class SaveArtifactTool(BaseTool):
         if not user_id: return {"success": False, "message": "Context error"}
         
         try:
-            d = await resolve_project_artifacts_dir(user_id, project_id, session)
-            p = secure_path_join(d, file_path)
+            root_dir = get_project_dir(user_id, project_id)
+            # Standardize: If starts with artifacts/, treat as relative to root. Else, relative to artifacts/
+            if file_path.startswith("artifacts/"):
+                p = secure_path_join(root_dir, file_path)
+            else:
+                artifacts_dir = await resolve_project_artifacts_dir(user_id, project_id, session)
+                p = secure_path_join(artifacts_dir, file_path)
+            
             p.parent.mkdir(parents=True, exist_ok=True)
             if p.exists() and not overwrite:
                 return {"success": False, "message": f"File {file_path} already exists and overwrite is False"}
             p.write_text(content, encoding='utf-8')
-            return {"success": True, "message": f"Saved artifact to {file_path}"}
+            
+            # Return path relative to project root
+            rel_path = f"artifacts/{p.name}" if not file_path.startswith("artifacts/") else file_path
+            # Better: get actual relative path to root
+            actual_rel = p.relative_to(root_dir).as_posix()
+            
+            return {"success": True, "message": f"Saved artifact to {actual_rel}", "data": {"path": actual_rel}}
         except Exception as e:
             return {"success": False, "message": f"Failed to save artifact: {e}"}
 
@@ -89,10 +101,13 @@ class ListFilesTool(BaseTool):
         if not user_id: return {"success": False, "message": "Context error"}
         
         try:
-            d = get_project_dir(user_id, project_id) / sub_dir
+            root_dir = get_project_dir(user_id, project_id)
+            d = root_dir / sub_dir
             if not d.exists():
                 return {"success": True, "message": f"Subdirectory {sub_dir} is empty or doesn't exist.", "data": {"files": []}}
-            files = [f.name for f in d.rglob('*') if f.is_file()]
+            
+            # Return paths relative to project root
+            files = [f.relative_to(root_dir).as_posix() for f in d.rglob('*') if f.is_file()]
             return {"success": True, "message": "\n".join(files), "data": {"files": files}}
         except Exception as e:
             return {"success": False, "message": f"Failed to list files: {e}"}
@@ -116,11 +131,17 @@ class DeleteArtifactTool(BaseTool):
         if not user_id: return {"success": False, "message": "Context error"}
         
         try:
-            d = await resolve_project_artifacts_dir(user_id, project_id, session)
-            p = secure_path_join(d, file_path)
+            root_dir = get_project_dir(user_id, project_id)
+            if file_path.startswith("artifacts/"):
+                p = secure_path_join(root_dir, file_path)
+            else:
+                artifacts_dir = await resolve_project_artifacts_dir(user_id, project_id, session)
+                p = secure_path_join(artifacts_dir, file_path)
+                
             if p.exists():
                 p.unlink()
-                return {"success": True, "message": f"Deleted artifact {file_path}"}
+                rel_path = p.relative_to(root_dir).as_posix()
+                return {"success": True, "message": f"Deleted artifact {rel_path}"}
             return {"success": False, "message": f"Artifact {file_path} not found"}
         except Exception as e:
             return {"success": False, "message": f"Failed to delete artifact: {e}"}

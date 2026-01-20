@@ -19,10 +19,9 @@ export default function MobileSidebar({ isOpen, onClose }: MobileSidebarProps) {
     const [showModelList, setShowModelList] = React.useState(false);
 
     const navItems = [
-        { name: "Home", path: "/", icon: <Home size={20} /> },
         { name: "Dashboard", path: "/dashboard", icon: <LayoutDashboard size={20} /> },
         { name: "Tasks", path: "/tasks", icon: <ListTodo size={20} /> },
-        { name: "Hub", path: "/hub", icon: <MessageSquare size={20} /> },
+        { name: "Projects", path: "/projects", icon: <MessageSquare size={20} /> },
     ];
 
     if (!isOpen) return null;
@@ -111,52 +110,7 @@ export default function MobileSidebar({ isOpen, onClose }: MobileSidebarProps) {
                         </div>
                     </div>
 
-                    {/* Model Selector Section */}
-                    <div className="mt-8">
-                        <div className="px-4 mb-4">
-                            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-600">
-                                AI Model
-                            </span>
-                        </div>
-                        <div className="px-4">
-                            <button
-                                onClick={() => setShowModelList(!showModelList)}
-                                className="w-full flex items-center justify-between gap-4 px-4 py-3 rounded-xl bg-gray-900 border border-gray-800 text-gray-200 hover:border-purple-500/50 transition-all"
-                            >
-                                <div className="flex items-center gap-3">
-                                    <span className="text-purple-400">✨</span>
-                                    <span className="text-sm font-medium">{getModelDisplayName(selectedModel)}</span>
-                                </div>
-                                <ChevronDown size={16} className={`transition-transform duration-200 ${showModelList ? "rotate-180" : ""}`} />
-                            </button>
 
-                            {showModelList && (
-                                <div className="mt-2 space-y-1 animate-in fade-in slide-in-from-top-2 duration-200">
-                                    {MODEL_OPTIONS.map((group) => (
-                                        <div key={group.group} className="mb-2">
-                                            <div className="px-4 py-1.5 text-[9px] text-gray-600 font-bold uppercase tracking-wider">{group.group}</div>
-                                            {group.models.map((model) => (
-                                                <button
-                                                    key={model}
-                                                    onClick={() => {
-                                                        setSelectedModel(model);
-                                                        setShowModelList(false);
-                                                    }}
-                                                    className={`w-full flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg text-sm transition-all ${selectedModel === model
-                                                        ? "bg-purple-600/10 text-purple-400 font-medium"
-                                                        : "text-gray-500 hover:bg-gray-900 hover:text-gray-300"
-                                                        }`}
-                                                >
-                                                    <span>{getModelDisplayName(model)}</span>
-                                                    {selectedModel === model && <Check size={14} />}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                    </div>
                 </div>
 
                 {/* Footer */}

@@ -545,29 +545,31 @@ export default function ProjectChatPage({
     return (
         <div className="flex h-full">
             <div className="flex-1 flex flex-col h-full overflow-hidden">
-                {/* Header - Minimal Gemini-style */}
-                <div className="bg-gray-900/50 border-b border-gray-800/50 px-4 py-2.5 flex items-center justify-between flex-shrink-0">
-                    <h1 className="text-lg font-semibold text-cyan-400 truncate pr-4" title={displayName}>
-                        {displayName}
-                    </h1>
-                    <div className="flex gap-2 items-center">
-                        <Link href={`/projects/${projectId}/settings`}
-                            className="p-2 text-gray-400 hover:bg-gray-800 hover:text-white rounded-lg transition-all"
-                            title="Settings"
-                        >
-                            <Settings size={18} />
-                        </Link>
-                        <button
-                            onClick={() => setShowSidebar(!showSidebar)}
-                            className={`p-2 rounded-lg transition-all ${showSidebar
-                                ? "bg-cyan-500/20 text-cyan-400"
-                                : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
-                            title={showSidebar ? "Hide Files" : "Show Files"}
-                        >
-                            <Files size={18} />
-                        </button>
+                {/* Header - Minimal Gemini-style - Hide on mobile since the global header handles it */}
+                {!isMobile && (
+                    <div className="bg-gray-900/50 border-b border-gray-800/50 px-4 py-2.5 flex items-center justify-between flex-shrink-0">
+                        <h1 className="text-lg font-semibold text-cyan-400 truncate pr-4" title={displayName}>
+                            {displayName}
+                        </h1>
+                        <div className="flex gap-2 items-center">
+                            <Link href={`/projects/${projectId}/settings`}
+                                className="p-2 text-gray-400 hover:bg-gray-800 hover:text-white rounded-lg transition-all"
+                                title="Settings"
+                            >
+                                <Settings size={18} />
+                            </Link>
+                            <button
+                                onClick={() => setShowSidebar(!showSidebar)}
+                                className={`p-2 rounded-lg transition-all ${showSidebar
+                                    ? "bg-cyan-500/20 text-cyan-400"
+                                    : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
+                                title={showSidebar ? "Hide Files" : "Show Files"}
+                            >
+                                <Files size={18} />
+                            </button>
+                        </div>
                     </div>
-                </div>
+                )}
 
                 {/* Messages - Scrollable area */}
                 <div className="flex-1 overflow-y-auto px-4 py-8">

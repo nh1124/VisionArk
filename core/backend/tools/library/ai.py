@@ -58,10 +58,15 @@ class GenerateImageTool(BaseTool):
                 
             file_path.write_bytes(image_bytes)
             
+            # Standardize return path relative to project root
+            from utils.paths import get_project_dir
+            root_dir = get_project_dir(user_id, project_id)
+            rel_path = file_path.relative_to(root_dir).as_posix()
+            
             return {
                 "success": True, 
-                "message": f"✅ Generated and saved image: `{filename}`",
-                "data": {"filename": filename, "embed_path": f"artifacts/{filename}"}
+                "message": f"✅ Generated and saved image: `{rel_path}`",
+                "data": {"filename": filename, "embed_path": rel_path, "path": rel_path}
             }
         except Exception as e:
             return {"success": False, "message": f"Image generation failed: {e}"}
@@ -83,7 +88,8 @@ class MermaidVisualizerTool(BaseTool):
         from tools.library.files import SaveArtifactTool
         saver = SaveArtifactTool()
         content = f"```mermaid\n{diagram_type}\n{data}\n```"
-        return await saver.run(file_path=f"visuals/{title}.md", content=content, overwrite=True, **kwargs)
+        # Standardize: save using project-relative path
+        return await saver.run(file_path=f"artifacts/visuals/{title}.md", content=content, overwrite=True, **kwargs)
 
 class ExecuteCodeArgs(BaseModel):
     prompt: str = Field(..., description="The code or logic to execute via Gemini")
