@@ -91,6 +91,23 @@ def validate_user_id(user_id: str) -> Tuple[bool, str]:
     
     return True, ""
 
+def validate_project_id(project_id: str) -> Tuple[bool, str]:
+    """
+    Validate project_id format (UUID or special 'hub' expected).
+    """
+    if not project_id:
+        return False, "project_id is required"
+    
+    # UUID format: 8-4-4-4-12 hex chars
+    uuid_pattern = re.compile(
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+        re.IGNORECASE
+    )
+    
+    if not uuid_pattern.match(project_id):
+        return False, "Invalid project_id format"
+    
+    return True, ""
 
 def secure_path_join(base_dir: Path, *parts: str) -> Path:
     """
@@ -139,6 +156,59 @@ def get_user_root_dir(user_id: str) -> Path:
 
 
 # ============================================================
+# Project Name & Cache Utilities
+# ============================================================
+
+# Global cache: (user_id, project_id) -> safe_folder_name
+_PROJECT_NAME_CACHE = {}
+
+def update_project_name_cache(user_id: str, project_id: str, display_name: str):
+    """
+    Explicitly update the folder name cache.
+    Called when a project is created or renamed.
+    """
+    safe_name = "".join(c for c in display_name if c.isalnum() or c in (' ', '_', '-')).strip()
+    safe_name = safe_name.replace(' ', '_')
+    _PROJECT_NAME_CACHE[(user_id, project_id)] = safe_name
+
+def get_project_name(user_id: str, project_id: str) -> str:
+    """
+    Get the folder name for a project. 
+    First checks cache, then falls back to synchronous DB query.
+    """
+    if project_id == "hub":
+        return "hub"
+    
+    cache_key = (user_id, project_id)
+    if cache_key in _PROJECT_NAME_CACHE:
+        return _PROJECT_NAME_CACHE[cache_key]
+    
+    # Synchronous DB query fallback
+    try:
+        from models.database import Project, get_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy import select
+        
+        engine = get_engine()
+        Session = sessionmaker(bind=engine)
+        with Session() as session:
+            result = session.execute(
+                select(Project.name).filter(
+                    Project.user_id == user_id,
+                    Project.id == project_id
+                )
+            ).scalar_one_or_none()
+            
+            if result:
+                update_project_name_cache(user_id, project_id, result)
+                return _PROJECT_NAME_CACHE[cache_key]
+    except Exception as e:
+        # Fallback to project_id if DB query fails
+        print(f"Warning: Failed to fetch project name for {project_id}: {e}")
+        
+    return project_id
+
+# ============================================================
 # Project Directory Functions (V3 Unified Architecture)
 # ============================================================
 
@@ -153,27 +223,31 @@ def get_user_projects_dir(user_id: str) -> Path:
     return projects_dir
 
 
-def get_project_dir(user_id: str, project_name: str) -> Path:
+def get_project_dir(user_id: str, project_id: str) -> Path:
     """
-    Get user's project directory: /data/users/{user_id}/projects/{project_name}/
+    Get user's project directory: /data/users/{user_id}/projects/{folder_name}/
     Creates directory if it doesn't exist.
     
     Args:
         user_id: User UUID
-        project_name: Project name/slug
+        project_id: Project UUID or identifier
     
     Returns:
         Path to the project directory
     
     Raises:
-        ValueError: If user_id/project_name is invalid or path traversal detected
+        ValueError: If user_id/project_id is invalid or path traversal detected
     """
-    valid, error = validate_name(project_name, "project_name")
+    valid, error = validate_project_id(project_id)
     if not valid:
         raise ValueError(error)
-    
+
     projects_dir = get_user_projects_dir(user_id)
-    project_path = secure_path_join(projects_dir, project_name)
+    
+    # ID -> Display Name lookup for folder naming
+    folder_name = get_project_name(user_id, project_id)
+    
+    project_path = secure_path_join(projects_dir, folder_name)
     project_path.mkdir(parents=True, exist_ok=True)
     return project_path
 

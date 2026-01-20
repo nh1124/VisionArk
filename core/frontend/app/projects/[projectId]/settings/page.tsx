@@ -9,9 +9,9 @@ import MarkdownRenderer from "@/components/MarkdownRenderer";
 export default function ProjectSettingsPage({
     params,
 }: {
-    params: Promise<{ projectName: string }>;
+    params: Promise<{ projectId: string }>;
 }) {
-    const { projectName } = use(params);
+    const { projectId } = use(params);
     const [prompt, setPrompt] = useState("");
     const [initialPrompt, setInitialPrompt] = useState("");
     const [loading, setLoading] = useState(true);
@@ -21,11 +21,11 @@ export default function ProjectSettingsPage({
 
     useEffect(() => {
         loadPrompt();
-    }, [projectName]);
+    }, [projectId]);
 
     const loadPrompt = async () => {
         try {
-            const response = await apiFetch(`/api/agents/project/${projectName}/prompt`);
+            const response = await apiFetch(`/api/agents/project/${projectId}/prompt`);
             const data = await response.json();
             setPrompt(data.content || "");
             setInitialPrompt(data.content || "");
@@ -41,7 +41,7 @@ export default function ProjectSettingsPage({
         setSaving(true);
         setSaveStatus("");
         try {
-            const response = await apiFetch(`/api/agents/project/${projectName}/prompt`, {
+            const response = await apiFetch(`/api/agents/project/${projectId}/prompt`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ content: prompt }),
@@ -70,16 +70,16 @@ export default function ProjectSettingsPage({
                 <div className="flex items-center justify-between">
                     <div>
                         <Link
-                            href={`/projects/${projectName}`}
+                            href={`/projects/${projectId}`}
                             className="text-sm text-gray-400 hover:text-cyan-400 mb-2 inline-block transition-colors"
                         >
-                            ← Back to {projectName}
+                            ← Back to Project
                         </Link>
                         <h1 className="text-2xl font-bold text-cyan-400">
-                            {projectName} - Settings
+                            Project Settings
                         </h1>
                         <p className="text-gray-400 text-sm mt-1">
-                            Configure project-specific instructions and behavior
+                            {projectId}
                         </p>
                     </div>
                     <div className="flex items-center gap-4">

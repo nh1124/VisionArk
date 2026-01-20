@@ -73,7 +73,7 @@ class InboxHandler:
             print(f"XML Parse Error: {e}")
             return None
     
-    async def push_to_inbox(self, source_spoke: str, meta_action_xml: str) -> Optional[int]:
+    async def push_to_inbox(self, source_project_id: str, meta_action_xml: str) -> Optional[int]:
         """
         Push a <meta-action> message to the inbox queue
         Returns queue ID if successful, None if parsing failed
@@ -86,7 +86,7 @@ class InboxHandler:
         
         inbox_msg = InboxQueue(
             user_id=self.user_id,  # Include user_id for filtering
-            source_spoke=source_spoke,
+            source_project_id=source_project_id,
             message_type=message_type,
             payload=parsed,
             is_processed=False,

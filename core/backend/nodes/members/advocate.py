@@ -46,7 +46,7 @@ class AdvocateNode(BaseNode):
         print("[Advocate] Analyzing recent messages for tasks...")
         
         # 1. Load Prompt (Advocate Role contains JSON schema)
-        system_prompt = self.load_system_prompt("advocate")
+        system_prompt = await self.load_system_prompt("advocate")
         
         # 2. Call LLM (using BaseNode's capability)
         llm_response = await self.chat_with_tools(

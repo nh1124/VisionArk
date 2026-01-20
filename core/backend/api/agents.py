@@ -17,8 +17,8 @@ from typing import Optional, List, Dict
 
 from services.inbox_handler import InboxHandler, extract_meta_actions_from_chat
 from services.auth import resolve_identity, Identity
-from models.database import Node, AgentProfile, get_async_db
-from utils.paths import get_project_dir, get_user_projects_dir, validate_name, secure_path_join
+from models.database import Node, Project, get_async_db
+from utils.paths import get_project_dir, get_user_projects_dir, validate_name, secure_path_join, update_project_name_cache as update_cache
 from uuid import uuid4
 from datetime import datetime
 
@@ -93,9 +93,9 @@ async def get_task_status(
 # PROJECTS (Formerly SPOKES)
 # ----------------------------------------------------------------------
 
-@router.post("/project/{project_name}/chat", response_model=ChatResponse)
+@router.post("/project/{project_id}/chat", response_model=ChatResponse)
 async def chat_with_project(
-    project_name: str,
+    project_id: str,
     message: str = Form(""),
     files: List[UploadFile] = File(default=[]),
     stream: bool = Form(False),
@@ -105,48 +105,69 @@ async def chat_with_project(
 ):
     """Chat with a specific Project agent"""
     from queue_system.manager import QueueManager
-    from utils.paths import get_project_dir
+    from services.file_service import FileService
+    from models.database import UploadedFile
     import mimetypes
     
-    # 0. Debug log
-    print(f"[Project Chat] Request for {project_name} from user {identity.user_id}")
 
-    # 1. Handle File Uploads
-    attached_files = []
-    if files:
-        project_dir = get_project_dir(identity.user_id, project_name)
+    async def upload_files(file_service: FileService, files: List[UploadFile]) -> List[UploadedFile]:
+        uploaded_files = []
         for file in files:
-            # Save file to temporary location
-            temp_file_path = project_dir / f"{uuid.uuid4()}_{file.filename}"
-            with open(temp_file_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
+            content = await file.read()
+            mime_type = mimetypes.guess_type(file.filename)[0]
             
-            # Guess mime type if not provided
-            mime_type = file.content_type
-            if not mime_type:
-                mime_type, _ = mimetypes.guess_type(file.filename)
-                mime_type = mime_type or "application/octet-stream"
-            
-            attached_files.append({
-                "path": str(temp_file_path),
-                "filename": file.filename,
-                "mime_type": mime_type
-            })
-        print(f"[Project Chat] Saved {len(attached_files)} files to {project_dir}")
+            try:
+                db_file = await file_service.save_file(
+                    content=content,
+                    filename=file.filename,
+                    mime_type=mime_type,
+                    project_id=project_id
+                )
 
-    # 2. Enqueue Task
+                uploaded_files.append(db_file)
+
+            except Exception as e:
+                print(f"Error saving file: {e}")
+
+        return uploaded_files
+
+    # 1. Verify Project Exists
+    result = await db.execute(select(Project).filter(
+        Project.user_id == identity.user_id,
+        Project.id == project_id
+    ))
+    if not result.scalars().first():
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    
+    print(f"[Project Chat] Request for {project_id} from user {identity.user_id}")
+    
+    # 1.5 Update cache with latest info if available (Node case)
+    result_node = await db.execute(select(Node).filter(Node.id == project_id))
+    node_obj = result_node.scalars().first()
+    if node_obj:
+        update_cache(identity.user_id, node_obj.id, node_obj.display_name)
+
+    # 2. Handle File Uploads
+    uploaded_files = None
+    if files:
+        file_service = FileService(db, identity.user_id)
+        uploaded_files = await upload_files(file_service, files)
+        print(f"[Project Chat] Uploaded {len(uploaded_files)} files")
+   
+    # 3. Enqueue Task
     manager = QueueManager()
     
     context = {
         "user_id": identity.user_id,
         "preferred_model": x_preferred_model,
         "env": "v4",
-        "project_name": project_name,
-        "files": attached_files
+        "project_id": project_id,
+        "files": [uploaded_file.id for uploaded_file in uploaded_files] if uploaded_files else []
     }
     
     task_id = manager.enqueue(identity.user_id, message, context)
-    
+    print(f"[Project Chat] Enqueued task {task_id} for project {project_id}")
+
     # Return placeholder response compliant with ChatResponse
     return ChatResponse(
         response=f"Task enqueued. Track ID: {task_id}",
@@ -159,34 +180,30 @@ async def chat_with_project(
 
 
 
-@router.get("/project/{project_name}/history")
+@router.get("/project/{project_id}/history")
 async def get_project_history(
-    project_name: str,
+    project_id: str,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
     """Get Project conversation history"""
     from models.database import ChatSession, ChatMessage
     
-    # Validate project name
-    valid, error = validate_name(project_name, "project_name")
-    if not valid:
-        raise HTTPException(status_code=400, detail=error)
-    
     try:
-        # Get project node
-        result = await db.execute(select(Node).filter(
-            Node.user_id == identity.user_id,
-            Node.name == project_name
+        # Get project node or project itself
+        result = await db.execute(select(Project).filter(
+            Project.user_id == identity.user_id,
+            Project.id == project_id
         ))
-        project_node = result.scalars().first()
+        proj = result.scalars().first()
         
-        if not project_node:
-            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+        if not proj:
+            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+        target_project_id = proj.id
         
-        # Get active session
+        # Get active session using project_id
         result = await db.execute(select(ChatSession).filter(
-            ChatSession.node_id == project_node.id,
+            ChatSession.project_id == target_project_id,
             ChatSession.is_archived == False
         ).order_by(ChatSession.created_at.desc()))
         active_session = result.scalars().first()
@@ -214,38 +231,32 @@ async def get_project_history(
         raise
     except Exception as e:
         import traceback
-        print(f"!!! Error in get_project_history for {project_name}: {e}")
+        print(f"!!! Error in get_project_history for {project_id}: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/project/{project_name}/messages/truncate")
+@router.delete("/project/{project_id}/messages/truncate")
 async def delete_project_messages_truncate(
-    project_name: str,
+    project_id: str,
     request: TruncateRequest,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
     """Delete messages from a certain index onwards in the active Project session"""
-    from models.database import ChatSession, ChatMessage
-    
-    valid, error = validate_name(project_name, "project_name")
-    if not valid:
-        raise HTTPException(status_code=400, detail=error)
-        
     try:
-        # Get project node
-        result = await db.execute(select(Node).filter(
-            Node.user_id == identity.user_id,
-            Node.name == project_name
+        # Get project
+        result = await db.execute(select(Project).filter(
+            Project.user_id == identity.user_id,
+            Project.id == project_id
         ))
-        project_node = result.scalars().first()
-        if not project_node:
-            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+        proj = result.scalars().first()
+        if not proj:
+            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
             
         # Get active session
         result = await db.execute(select(ChatSession).filter(
-            ChatSession.node_id == project_node.id,
+            ChatSession.project_id == proj.id,
             ChatSession.is_archived == False
         ).order_by(ChatSession.created_at.desc()))
         active_session = result.scalars().first()
@@ -276,9 +287,9 @@ async def delete_project_messages_truncate(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/project/{project_name}/branch")
+@router.post("/project/{project_id}/branch")
 async def branch_project_chat(
-    project_name: str,
+    project_id: str,
     branch_data: BranchChat,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
@@ -287,18 +298,18 @@ async def branch_project_chat(
     from models.database import ChatSession, ChatMessage
     
     try:
-        # 1. Get source node
-        result = await db.execute(select(Node).filter(
-            Node.user_id == identity.user_id,
-            Node.name == project_name
+        # 1. Get source project
+        result = await db.execute(select(Project).filter(
+            Project.user_id == identity.user_id,
+            Project.id == project_id
         ))
-        source_node = result.scalars().first()
-        if not source_node:
-            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+        source_proj = result.scalars().first()
+        if not source_proj:
+            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
         
         # 2. Get active session
         result = await db.execute(select(ChatSession).filter(
-            ChatSession.node_id == source_node.id,
+            ChatSession.project_id == source_proj.id,
             ChatSession.is_archived == False
         ).order_by(ChatSession.created_at.desc()))
         active_session = result.scalars().first()
@@ -316,58 +327,48 @@ async def branch_project_chat(
             
         copied_messages = messages[:branch_data.message_index + 1]
         
-        # 4. Generate name
+        # 4. Generate name (slug)
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        new_project_name = f"{project_name}_branch_{timestamp}"
+        new_project_name = f"{source_proj.name}_branch_{timestamp}"
         
-        # 5. Create new Node
+        # 5. Create new Project & Node
+        new_project_id = str(uuid.uuid4())
+        new_project = Project(
+            id=new_project_id,
+            user_id=identity.user_id,
+            name=f"{source_proj.name} Branch ({timestamp})",
+            priority=source_proj.priority,
+            lbs_access_level=source_proj.lbs_access_level
+        )
+        db.add(new_project)
+        
         new_node_id = str(uuid.uuid4())
         new_node = Node(
             id=new_node_id,
-            user_id=identity.user_id,
-            name=new_project_name,
-            display_name=f"{source_node.display_name or project_name} Branch ({timestamp})",
-            # node_type="PROJECT", # V4 Default
-            lbs_access_level=source_node.lbs_access_level
+            project_id=new_project_id,
+            node_type="PROJECT",
+            display_name=new_project.name,
+            system_prompt="You are a specialized AI assistant for this project.",
+            status="active"
         )
         db.add(new_node)
         
-        # 6. Copy agent profiles
-        result = await db.execute(select(AgentProfile).filter(
-            AgentProfile.node_id == source_node.id,
-            AgentProfile.is_active == True
+        # 6. Copy system prompt/tools from original project nodes
+        # (Simplified: find first PROJECT node of source)
+        node_res = await db.execute(select(Node).filter(
+            Node.project_id == source_proj.id,
+            Node.node_type == "PROJECT"
         ))
-        source_profiles = result.scalars().all()
-        
-        if source_profiles:
-            for source_profile in source_profiles:
-                new_profile = AgentProfile(
-                    id=str(uuid.uuid4()),
-                    node_id=new_node_id,
-                    system_prompt=source_profile.system_prompt,
-                    role_name=source_profile.role_name,
-                    display_name=source_profile.display_name,
-                    tools=source_profile.tools,
-                    is_active=True,
-                    version=1
-                )
-                db.add(new_profile)
-        else:
-            # Fallback if no profiles found
-            new_profile = AgentProfile(
-                id=str(uuid.uuid4()),
-                node_id=new_node_id,
-                system_prompt="You are a specialized AI assistant for this project.",
-                is_active=True,
-                version=1
-            )
-            db.add(new_profile)
+        orig_node = node_res.scalars().first()
+        if orig_node:
+            new_node.system_prompt = orig_node.system_prompt
+            new_node.tools = orig_node.tools
         
         # 7. Create new session
         new_session = ChatSession(
             id=str(uuid.uuid4()),
-            node_id=new_node_id,
-            title=f"Branched from {project_name} (step {branch_data.message_index + 1})",
+            project_id=new_project_id,
+            title=f"Branched from {project_id} (step {branch_data.message_index + 1})",
             is_archived=False
         )
         db.add(new_session)
@@ -386,7 +387,7 @@ async def branch_project_chat(
             db.add(new_msg)
         
         # 9. Create project directory
-        project_dir = get_project_dir(identity.user_id, new_project_name)
+        project_dir = get_project_dir(identity.user_id, new_node_id)
         project_dir.mkdir(parents=True, exist_ok=True)
         (project_dir / "files").mkdir(exist_ok=True)
         (project_dir / "artifacts").mkdir(exist_ok=True)
@@ -417,42 +418,43 @@ async def create_project(
         raise HTTPException(status_code=400, detail=error)
     
     try:
-        # 2. Check if node already exists
-        result = await db.execute(select(Node).filter(
-            Node.user_id == identity.user_id,
-            Node.name == project.project_name,
-            Node.is_archived == False
+        # 2. Check if display_name already exists
+        result = await db.execute(select(Project).filter(
+            Project.user_id == identity.user_id,
+            Project.name == project.project_name,
+            Project.status != "archived"
         ))
-        existing_node = result.scalars().first()
+        existing_proj = result.scalars().first()
         
-        if existing_node:
+        if existing_proj:
             raise HTTPException(status_code=400, detail=f"Project '{project.project_name}' already exists")
         
-        # 3. Create new Node
-        node_id = str(uuid4())
-        new_node = Node(
-            id=node_id,
+        # 3. Create new Project
+        project_id = str(uuid4())
+        new_project = Project(
+            id=project_id,
             user_id=identity.user_id,
             name=project.project_name,
+            status="active"
+        )
+        db.add(new_project)
+        
+        # 4. Create main Node
+        node_id = str(uuid4())
+        system_prompt = project.custom_prompt or "You are a specialized AI assistant for this project. Help the user manage tasks, analyze data, and generate insights."
+        new_node = Node(
+            id=node_id,
+            project_id=project_id,
+            node_type="PROJECT",
             display_name=project.project_name,
-            # node_type="PROJECT", # V4 Default
-            lbs_access_level="NONE"
+            system_prompt=system_prompt,
+            status="active"
         )
         db.add(new_node)
-        
-        # 4. Create AgentProfile
-        system_prompt = project.custom_prompt or "You are a specialized AI assistant for this project. Help the user manage tasks, analyze data, and generate insights."
-        new_profile = AgentProfile(
-            id=str(uuid4()),
-            node_id=node_id,
-            system_prompt=system_prompt,
-            is_active=True,
-            version=1
-        )
-        db.add(new_profile)
+        update_cache(identity.user_id, project_id, project.project_name)
         
         # 5. Create project directory on disk
-        project_dir = get_project_dir(identity.user_id, project.project_name)
+        project_dir = get_project_dir(identity.user_id, project_id)
         project_dir.mkdir(parents=True, exist_ok=True)
         (project_dir / "files").mkdir(exist_ok=True)
         (project_dir / "artifacts").mkdir(exist_ok=True)
@@ -462,6 +464,7 @@ async def create_project(
         
         return {
             "project_name": project.project_name,
+            "project_id": project_id,
             "node_id": node_id,
             "message": f"Project '{project.project_name}' created successfully"
         }
@@ -519,7 +522,7 @@ async def create_project_from_prompt(
             "user_id": identity.user_id,
             "preferred_model": x_preferred_model,
             "env": "v4",
-            "project_name": project_name,
+            "project_id": result["node_id"],
             "files": []
         }
         
@@ -549,21 +552,20 @@ async def list_projects(
 
     """List all existing Projects for this user"""
     
-    # Query Nodes table for PROJECTS (excluding hub for list)
-    result = await db.execute(select(Node).filter(
-        Node.user_id == identity.user_id,
-        Node.name != "hub",
-        Node.is_archived == False
-    ).order_by(Node.updated_at.desc()))
-    project_nodes = result.scalars().all()
+    # Query Projects table
+    result = await db.execute(select(Project).filter(
+        Project.user_id == identity.user_id,
+        Project.status != "archived"
+    ).order_by(Project.updated_at.desc()))
+    project_list = result.scalars().all()
     
     projects = []
-    for node in project_nodes:
+    for proj in project_list:
         # Calculate counts from disk
         artifact_count = 0
         ref_count = 0
         try:
-            project_dir = get_project_dir(identity.user_id, node.name)
+            project_dir = get_project_dir(identity.user_id, proj.id)
             art_dir = project_dir / "artifacts"
             ref_dir = project_dir / "refs"
             
@@ -571,35 +573,46 @@ async def list_projects(
                 artifact_count = len([f for f in art_dir.iterdir() if f.is_file()])
             if ref_dir.exists():
                 ref_count = len([f for f in ref_dir.iterdir() if f.is_file()])
+            
+            # Update cache while we are listing
+            update_cache(identity.user_id, proj.id, proj.name)
         except Exception:
             pass # Fallback to 0 if directory error
             
-        # Check for custom prompt and collect members
-        profile_res = await db.execute(select(AgentProfile).where(
-            AgentProfile.node_id == node.id,
-            AgentProfile.is_active == True
+        # Get nodes (agents) for this project
+        node_res = await db.execute(select(Node).where(
+            Node.project_id == proj.id,
+            Node.status == "active"
         ))
-        profiles = profile_res.scalars().all()
+        nodes = node_res.scalars().all()
         
+        orchestrator_id = proj.id # Fallback
         has_custom = False
         members = []
-        for p in profiles:
-            role = p.display_name or p.role_name or "Agent"
-            if role.lower() != "orchestrator": # Hide orchestrator as it's the node itself
+        for n in nodes:
+            if n.node_type == "PROJECT":
+                orchestrator_id = n.id
+                
+            role = n.display_name or n.role_name or "Agent"
+            if n.node_type == "MEMBER":
                 members.append(role)
             
-            # Check for custom prompt on orchestrator/main profile
-            if p.system_prompt:
+            # Check for custom prompt
+            if n.system_prompt:
                 default_snippet = "You are a specialized AI assistant"
-                if default_snippet not in p.system_prompt or len(p.system_prompt) > 200:
+                if default_snippet not in n.system_prompt or len(n.system_prompt) > 200:
                     has_custom = True
 
         projects.append({
-            "name": node.name,
-            "display_name": node.display_name,
-            "node_id": node.id,
-            "created_at": node.created_at.isoformat() if node.created_at else None,
-            "updated_at": node.updated_at.isoformat() if node.updated_at else None,
+            "id": proj.id,
+            "name": proj.name,
+            "display_name": proj.name,
+            "project_id": proj.id,
+            "node_id": orchestrator_id,
+            "status": proj.status,
+            "priority": proj.priority,
+            "created_at": proj.created_at.isoformat() if proj.created_at else None,
+            "updated_at": proj.updated_at.isoformat() if proj.updated_at else None,
             "artifact_count": artifact_count,
             "ref_count": ref_count,
             "has_custom_prompt": has_custom,
@@ -609,187 +622,98 @@ async def list_projects(
     return {"projects": projects}
 
 
-@router.get("/project/{project_name}")
+
+@router.get("/project/{project_id}")
 async def get_project_metadata(
-    project_name: str,
+    project_id: str,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
     """Get metadata for a specific project"""
-    result = await db.execute(select(Node).filter(
-        Node.user_id == identity.user_id,
-        Node.name == project_name
+    result = await db.execute(select(Project).filter(
+        Project.user_id == identity.user_id,
+        Project.id == project_id
     ))
-    node = result.scalars().first()
+    proj = result.scalars().first()
     
-    if not node:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
         
     return {
-        "name": node.name,
-        "display_name": node.display_name,
-        "node_id": node.id,
-        "created_at": node.created_at
+        "id": proj.id,
+        "name": proj.name,
+        "display_name": proj.name,
+        "status": proj.status,
+        "priority": proj.priority,
+        "created_at": proj.created_at.isoformat() if proj.created_at else None,
+        "updated_at": proj.updated_at.isoformat() if proj.updated_at else None
     }
 
-
-@router.get("/project/{project_name}/prompt")
-async def get_project_prompt(
-    project_name: str,
-    identity: Identity = Depends(resolve_identity),
-    db: AsyncSession = Depends(get_async_db)
-):
-    """Get the system prompt for a project"""
-    # 1. Find Node by project_name
-    result = await db.execute(
-        select(Node).filter(
-            Node.user_id == identity.user_id,
-            Node.name == project_name
-        )
-    )
-    node = result.scalars().first()
-    
-    if not node:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
-    
-    # 2. Find Active AgentProfile for this node
-    result = await db.execute(
-        select(AgentProfile).filter(
-            AgentProfile.node_id == node.id,
-            AgentProfile.is_active == True
-        ).order_by(AgentProfile.version.desc())
-    )
-    profile = result.scalars().first()
-    
-    if profile and profile.system_prompt:
-        return {"content": profile.system_prompt}
-    
-    # Fallback
-    return {"content": "You are a specialized AI assistant."}
-
-
-
-@router.put("/project/{project_name}/prompt")
-async def update_project_prompt(
-    project_name: str,
-    prompt: UpdatePrompt,
-    identity: Identity = Depends(resolve_identity),
-    db: AsyncSession = Depends(get_async_db)
-):
-    """Update the system prompt for a project"""
-    # 1. Find Node by project_name
-    result = await db.execute(
-        select(Node).filter(
-            Node.user_id == identity.user_id,
-            Node.name == project_name
-        )
-    )
-    node = result.scalars().first()
-    
-    if not node:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
-    
-    # 2. Find Active AgentProfile for this node
-    result = await db.execute(
-        select(AgentProfile).filter(
-            AgentProfile.node_id == node.id,
-            AgentProfile.is_active == True
-        )
-    )
-    profile = result.scalars().first()
-    
-    if profile:
-        profile.system_prompt = prompt.content
-    else:
-        # Create new profile if none exists
-        profile = AgentProfile(
-            id=str(uuid4()),
-            node_id=node.id,
-            system_prompt=prompt.content,
-            is_active=True
-        )
-        db.add(profile)
-    
-    await db.commit()
-    
-    # Invalidate cache
-    if project_name in _project_cache:
-        _project_cache.discard(project_name)
-        
-    return {"status": "success", "content": prompt.content}
-
-
-
-@router.delete("/project/{project_name}")
+@router.delete("/project/{project_id}")
 async def delete_project(
-    project_name: str,
+    project_id: str,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
     """Delete a Project by marking it as archived in DB (soft delete)"""
-    from models.database import ChatSession, ChatMessage, AgentProfile
+    from models.database import ChatSession, ChatMessage
     import shutil
     
-    # Validate project name
-    valid, error = validate_name(project_name, "project_name")
-    if not valid:
-        raise HTTPException(status_code=400, detail=error)
-    
-    # Find the project node
-    result = await db.execute(select(Node).filter(
-        Node.user_id == identity.user_id,
-        Node.name == project_name
+    # Find the project
+    result = await db.execute(select(Project).filter(
+        Project.user_id == identity.user_id,
+        Project.id == project_id
     ))
-    node = result.scalars().first()
+    proj = result.scalars().first()
     
-    if not node:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+        
+    proj_id = proj.id
     
     try:
         # Soft delete: mark as archived
-        node.is_archived = True
+        proj.status = "archived"
         await db.commit()
         
         # Clear from cache
-        cache_key = f"{identity.user_id}:{project_name}"
+        cache_key = f"{identity.user_id}:{project_id}"
         if cache_key in _project_cache:
             _project_cache.remove(cache_key)
         
-        # Optionally delete files on disk? 
-        # For now, let's keep them (Archives) or move them? 
-        # V3 migration left them.
-        # But if we delete, we should probably rename folder to avoid name collision on re-create.
-        # (Implementing logic to rename folder to include timestamp)
-        
+        # Rename folder to archive
         try:
-            project_dir = get_project_dir(identity.user_id, project_name)
+            project_dir = get_project_dir(identity.user_id, proj_id)
             if project_dir.exists():
                 timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-                archive_name = f"{project_name}_archived_{timestamp}"
+                archive_name = f"{proj_id}_archived_{timestamp}"
                 project_dir.rename(project_dir.parent / archive_name)
         except Exception as e:
             print(f"[Delete Project] Failed to move files: {e}")
         
-        return {"success": True, "message": f"Project '{project_name}' deleted"}
+        return {"success": True, "message": f"Project '{project_id}' deleted"}
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete project: {str(e)}")
 
 
-@router.get("/project/{project_name}/artifacts")
+@router.get("/project/{project_id}/artifacts")
 async def list_project_artifacts(
-    project_name: str,
+    project_id: str,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
     """List all artifacts created by the AI for a project"""
-    # Validate project name
-    valid, error = validate_name(project_name, "project_name")
-    if not valid:
-        raise HTTPException(status_code=400, detail=error)
-    
     try:
-        project_dir = get_project_dir(identity.user_id, project_name)
+        # Verify project exists
+        result = await db.execute(select(Project.id).filter(
+            Project.user_id == identity.user_id,
+            Project.id == project_id
+        ))
+        if not result.scalars().first():
+            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+
+        project_dir = get_project_dir(identity.user_id, project_id)
         artifacts_dir = project_dir / "artifacts"
         
         if not artifacts_dir.exists():
@@ -811,9 +735,9 @@ async def list_project_artifacts(
         raise HTTPException(status_code=500, detail=f"Failed to list artifacts: {str(e)}")
 
 
-@router.get("/project/{project_name}/artifacts/{file_path:path}")
+@router.get("/project/{project_id}/artifacts/{file_path:path}")
 async def get_project_artifact(
-    project_name: str,
+    project_id: str,
     file_path: str,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
@@ -821,13 +745,16 @@ async def get_project_artifact(
     """Get the content of an artifact file"""
     from fastapi.responses import FileResponse
     
-    # Validate project name
-    valid, error = validate_name(project_name, "project_name")
-    if not valid:
-        raise HTTPException(status_code=400, detail=error)
-    
     try:
-        project_dir = get_project_dir(identity.user_id, project_name)
+        # Verify project exists
+        result = await db.execute(select(Project.id).filter(
+            Project.user_id == identity.user_id,
+            Project.id == project_id
+        ))
+        if not result.scalars().first():
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        project_dir = get_project_dir(identity.user_id, project_id)
         full_path = secure_path_join(project_dir / "artifacts", file_path)
         
         if not full_path.exists():
@@ -845,113 +772,97 @@ async def get_project_artifact(
         raise HTTPException(status_code=500, detail=f"Failed to read artifact: {str(e)}")
 
 
-@router.get("/project/{project_name}/prompt")
-@router.get("/project/{project_name}/system-prompt")
+@router.get("/project/{project_id}/prompt")
+@router.get("/project/{project_id}/system-prompt")
 async def get_project_system_prompt(
-    project_name: str,
+    project_id: str,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
-    """Get system prompt for a project from DB AgentProfile"""
-    # 1. Find Node
+    """Get system prompt for a project from the main Node"""
+    # Find the main project node
     result = await db.execute(select(Node).filter(
-        Node.user_id == identity.user_id,
-        Node.name == project_name
+        Node.project_id == project_id,
+        Node.node_type == "PROJECT",
+        Node.status == "active"
     ))
     node = result.scalars().first()
     
-    if not node:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+    if node and node.system_prompt:
+        return {"content": node.system_prompt}
     
-    # 2. Find Active Profile
-    result = await db.execute(select(AgentProfile).filter(
-        AgentProfile.node_id == node.id,
-        AgentProfile.is_active == True
-    ).order_by(AgentProfile.version.desc()))
-    profile = result.scalars().first()
-    
-    if profile and profile.system_prompt:
-        return {"content": profile.system_prompt}
-    
-    # Fallback to default prompt?
+    # Fallback to default
     return {"content": "You are a specialized AI assistant."}
 
 
-@router.post("/project/{project_name}/system-prompt")
+@router.put("/project/{project_id}/prompt")
+@router.post("/project/{project_id}/system-prompt")
 async def update_project_system_prompt(
-    project_name: str,
+    project_id: str,
     update: UpdatePrompt,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
-    """Update system prompt in DB AgentProfile"""
-    # 1. Find Node
+    """Update system prompt in the main project Node"""
+    # Find the main project node
     result = await db.execute(select(Node).filter(
-        Node.user_id == identity.user_id,
-        Node.name == project_name
+        Node.project_id == project_id,
+        Node.node_type == "PROJECT",
+        Node.status == "active"
     ))
     node = result.scalars().first()
     
     if not node:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
-    
-    # 2. Update/Create Profile
-    result = await db.execute(select(AgentProfile).filter(
-        AgentProfile.node_id == node.id,
-        AgentProfile.is_active == True
-    ))
-    profile = result.scalars().first()
-    
-    if profile:
-        profile.system_prompt = update.content
-    else:
-        # Create new profile if none exists
-        profile = AgentProfile(
+        # Create one if it doesn't exist
+        node = Node(
             id=str(uuid4()),
-            node_id=node.id,
+            project_id=project_id,
+            node_type="PROJECT",
+            display_name="Main Agent",
             system_prompt=update.content,
-            is_active=True
+            status="active"
         )
-        db.add(profile)
+        db.add(node)
+    else:
+        node.system_prompt = update.content
     
     await db.commit()
     
     # Clear cache
-    cache_key = f"{identity.user_id}:{project_name}"
-    if cache_key in _project_cache:
-        _project_cache.remove(cache_key)
+    if project_id in _project_cache:
+        _project_cache.remove(project_id)
     
-    return {"success": True, "message": "System prompt updated in DB"}
+    return {"success": True, "message": "System prompt updated"}
 
 
-@router.post("/project/{project_name}/rename")
+@router.post("/project/{project_id}/rename")
 async def rename_project(
-    project_name: str,
+    project_id: str,
     update: RenameProject,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
     """Rename a project's display name"""
-    # 1. Find the project node
-    # Using async usage
-    result = await db.execute(select(Node).filter(
-        Node.user_id == identity.user_id,
-        Node.name == project_name
+    # Find the project
+    result = await db.execute(select(Project).filter(
+        Project.user_id == identity.user_id,
+        Project.id == project_id
     ))
-    node = result.scalars().first()
+    proj = result.scalars().first()
     
-    if not node:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
     
     try:
-        # Update display name
-        node.display_name = update.new_display_name
+        proj.name = update.new_display_name
         await db.commit()
         
+        # Update cache for folder resolution
+        update_cache(identity.user_id, project_id, update.new_display_name)
+        
         # Clear cache 
-        cache_key = f"{identity.user_id}:{project_name}"
-        if cache_key in _project_cache:
-            _project_cache.remove(cache_key)
+        if project_id in _project_cache:
+            _project_cache.remove(project_id)
         
         return {
             "success": True, 
@@ -963,9 +874,9 @@ async def rename_project(
         raise HTTPException(status_code=500, detail=f"Failed to rename project: {str(e)}")
 
 
-@router.post("/project/{project_name}/clone")
+@router.post("/project/{project_id}/clone")
 async def clone_project(
-    project_name: str,
+    project_id: str,
     clone_data: Optional[ProjectClone] = None,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
@@ -974,24 +885,27 @@ async def clone_project(
     Clone an existing project, including chat history, files, and artifacts.
     """
     # 1. Verify source project exists
-    result = await db.execute(select(Node).filter(
-        Node.user_id == identity.user_id,
-        Node.name == project_name,
-        Node.is_archived == False
+    result = await db.execute(select(Project).filter(
+        Project.user_id == identity.user_id,
+        Project.id == project_id,
+        Project.status != "archived"
     ))
-    source_node = result.scalars().first()
+    source_proj = result.scalars().first()
     
-    if not source_node:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+    if not source_proj:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
         
+    source_proj_id = source_proj.id
+    source_proj_name = source_proj.name
+
     # 2. Determine new name
-    new_name = clone_data.new_name if clone_data and clone_data.new_name else f"{project_name}_copy"
+    new_name = clone_data.new_name if clone_data and clone_data.new_name else f"{source_proj_name}_copy"
     
     # Prevent collision - add numeric suffix if needed
     base_new_name = new_name
     counter = 1
     while True:
-        result = await db.execute(select(Node).filter(Node.user_id == identity.user_id, Node.name == new_name))
+        result = await db.execute(select(Project).filter(Project.user_id == identity.user_id, Project.name == new_name))
         if result.scalars().first() is None:
             break
         new_name = f"{base_new_name}_{counter}"
@@ -1003,44 +917,52 @@ async def clone_project(
         raise HTTPException(status_code=400, detail=err)
         
     try:
-        # 3. Create new Node
-        new_node_id = str(uuid.uuid4())
-        new_node = Node(
-            id=new_node_id,
+        # 3. Create new Project
+        new_project_id = str(uuid.uuid4())
+        new_project = Project(
+            id=new_project_id,
             user_id=identity.user_id,
             name=new_name,
-            display_name=f"{source_node.display_name} (Copy)" if source_node.display_name else new_name.replace('_', ' ').title(),
-            # node_type="PROJECT",
-            lbs_access_level=source_node.lbs_access_level
+            status="active",
+            priority=source_proj.priority,
+            lbs_access_level=source_proj.lbs_access_level
         )
-        db.add(new_node)
+        db.add(new_project)
+        update_cache(identity.user_id, new_project_id, new_name)
         
-        # 4. Copy Agent Profile
-        result = await db.execute(select(AgentProfile).filter(
-            AgentProfile.node_id == source_node.id,
-            AgentProfile.is_active == True
+        # 4. Copy Nodes (agents) from source project
+        result = await db.execute(select(Node).filter(
+            Node.project_id == source_proj_id,
+            Node.status == "active"
         ))
-        source_profile = result.scalars().first()
+        source_nodes = result.scalars().all()
         
-        if source_profile:
-            new_profile = AgentProfile(
-                id=str(uuid.uuid4()),
-                node_id=new_node_id,
-                system_prompt=source_profile.system_prompt,
-                is_active=True,
+        node_id_map = {}  # old_node_id -> new_node_id
+        for sn in source_nodes:
+            new_node_id = str(uuid.uuid4())
+            node_id_map[sn.id] = new_node_id
+            new_node = Node(
+                id=new_node_id,
+                project_id=new_project_id,
+                node_type=sn.node_type,
+                role_name=sn.role_name,
+                display_name=sn.display_name,
+                system_prompt=sn.system_prompt,
+                tools=sn.tools,
+                status="active",
                 version=1
             )
-            db.add(new_profile)
+            db.add(new_node)
             
         # 5. Copy Chat Sessions and Messages
         from models.database import ChatSession, ChatMessage
-        result = await db.execute(select(ChatSession).filter(ChatSession.node_id == source_node.id))
+        result = await db.execute(select(ChatSession).filter(ChatSession.project_id == source_proj_id))
         sessions = result.scalars().all()
         for session in sessions:
             new_session_id = str(uuid.uuid4())
             new_session = ChatSession(
                 id=new_session_id,
-                node_id=new_node_id,
+                project_id=new_project_id,
                 title=session.title,
                 is_archived=session.is_archived,
                 summary=session.summary,
@@ -1064,31 +986,28 @@ async def clone_project(
                 
         # 6. Copy Files Database Records
         from models.database import UploadedFile
-        result = await db.execute(select(UploadedFile).filter(UploadedFile.node_id == source_node.id))
+        result = await db.execute(select(UploadedFile).filter(UploadedFile.project_id == source_proj_id))
         files = result.scalars().all()
         
-        # NEW PATHS API
-        source_project_dir = get_project_dir(identity.user_id, project_name)
-        new_project_dir = get_project_dir(identity.user_id, new_name)
+        # Resolve folders
+        source_project_dir = get_project_dir(identity.user_id, source_proj_id)
+        new_project_dir = get_project_dir(identity.user_id, new_project_id)
         new_project_dir.mkdir(parents=True, exist_ok=True)
         
         for f in files:
             new_file_id = str(uuid.uuid4())
-            # We need to update the storage path to the new project directory
             old_path = Path(f.storage_path)
-            # Find relative part after 'project_name'
             import os
             try:
                 relative_path = os.path.relpath(old_path, source_project_dir)
             except ValueError:
-                # If path isn't relative for some reason (e.g. legacy), just use filename in files/
                 relative_path = f"files/{f.filename}"
 
             new_storage_path = str(new_project_dir / relative_path)
             
             new_file = UploadedFile(
                 id=new_file_id,
-                node_id=new_node_id,
+                project_id=new_project_id,
                 filename=f.filename,
                 mime_type=f.mime_type,
                 size_bytes=f.size_bytes,
@@ -1103,7 +1022,6 @@ async def clone_project(
             
         # 7. Physical File Copy
         if source_project_dir.exists():
-            # Copy 'files' and 'artifacts' and 'refs' directories if they exist
             for sub in ['files', 'artifacts', 'refs']:
                 src_sub = source_project_dir / sub
                 if src_sub.exists():
@@ -1111,7 +1029,7 @@ async def clone_project(
                     shutil.copytree(src_sub, dest_sub, dirs_exist_ok=True)
                     
         await db.commit()
-        return {"success": True, "message": f"Project '{project_name}' cloned to '{new_name}'", "new_project_name": new_name}
+        return {"success": True, "message": f"Project cloned to '{new_name}'", "new_project_id": new_project_id, "new_name": new_name}
         
     except Exception as e:
         db.rollback()

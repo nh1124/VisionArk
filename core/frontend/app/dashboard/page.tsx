@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import HeatMapCalendar from "@/components/HeatMapCalendar";
 import HubSuggestionBanner from "@/components/HubSuggestionBanner";
@@ -93,11 +93,6 @@ export default function DashboardPage() {
         setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + delta, 1));
     };
 
-    const loadPercentage = useMemo(() => {
-        if (!data?.today) return 0;
-        return Math.min(100, (data.today.adjusted_load / data.today.cap) * 100);
-    }, [data]);
-
     const getLoadStatus = (pct: number) => {
         if (pct <= 60) return { label: "Focus", color: "text-emerald-400", bg: "bg-emerald-500", border: "border-emerald-500/30" };
         if (pct <= 90) return { label: "Flow", color: "text-blue-400", bg: "bg-blue-500", border: "border-blue-500/30" };
@@ -179,13 +174,13 @@ export default function DashboardPage() {
                     </div>
 
                     {/* Weekly Recovery */}
-                    <div className="bg-gray-900/40 border-2 border-gray-800 rounded-2xl p-8 backdrop-blur-sm shadow-xl">
+                    <div className="md:col-span-2 bg-gray-900/40 border-2 border-gray-800 rounded-2xl p-8 backdrop-blur-sm shadow-xl">
                         <span className="text-sm font-bold text-gray-400 uppercase tracking-widest">Recovery Level</span>
-                        <div className="mt-6 flex items-baseline gap-3">
-                            <span className={`text-4xl font-bold tracking-tight ${recoveryStatus.color}`}>{recoveryStatus.label}</span>
-                            <span className="text-xs font-medium text-gray-600 tabular-nums">{data.weekly?.recovery_rate.toFixed(0)}%</span>
+                        <div className="mt-8 flex items-baseline gap-3">
+                            <span className={`text-5xl font-bold tracking-tight ${recoveryStatus.color}`}>{recoveryStatus.label}</span>
+                            <span className="text-sm font-medium text-gray-600 tabular-nums">{data.weekly?.recovery_rate.toFixed(0)}%</span>
                         </div>
-                        <p className="text-xs font-bold text-gray-600 mt-2 uppercase">Efficiency Context</p>
+                        <p className="text-xs font-bold text-gray-600 mt-4 uppercase">Efficiency Context</p>
                         <div className="mt-8 flex gap-1.5">
                             {[1, 2, 3, 4, 5, 6, 7].map(i => (
                                 <div
@@ -196,34 +191,10 @@ export default function DashboardPage() {
                         </div>
                         <p className="text-[10px] font-bold text-gray-600 mt-3 uppercase tracking-wider">Days over capacity this week</p>
                     </div>
-
-                    {/* Daily Stats */}
-                    <div className="bg-gray-900/40 border-2 border-gray-800 rounded-2xl p-8 backdrop-blur-sm shadow-xl">
-                        <span className="text-sm font-bold text-gray-400 uppercase tracking-widest">Today's Tasks</span>
-                        <div className="mt-6 flex items-baseline gap-2">
-                            <span className="text-4xl font-semibold tabular-nums tracking-tight">{data.today?.task_count}</span>
-                        </div>
-                        <p className="text-xs font-bold text-gray-600 mt-2 uppercase">Active tasks</p>
-                        <div className="mt-8 flex items-center justify-between py-3 px-4 bg-gray-800/30 rounded-xl border border-gray-800/50">
-                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Contexts</span>
-                            <span className="text-lg font-bold text-blue-400 tabular-nums">{data.today?.unique_contexts}</span>
-                        </div>
-                    </div>
                 </div>
 
                 {/* Dynamic Schedule */}
                 <div className="mb-8">
-                    <div className="flex items-center justify-between mb-4">
-                        <div>
-                            <h2 className="text-lg font-medium tracking-tight text-gray-200">Today&apos;s Schedule</h2>
-                            <p className="text-xs font-medium text-gray-500 mt-1">AI-optimized task timeline with breaks</p>
-                        </div>
-                        {scheduleData && (
-                            <span className="text-xs text-gray-500">
-                                Shutdown: {new Date(scheduleData.shutdown_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                        )}
-                    </div>
                     {scheduleLoading ? (
                         <div className="bg-gray-900/40 border-2 border-gray-800 rounded-2xl p-8 text-center">
                             <div className="text-gray-500 animate-pulse">Loading schedule...</div>

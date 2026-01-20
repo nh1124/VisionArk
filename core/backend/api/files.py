@@ -32,20 +32,22 @@ async def _get_user_api_key(db: AsyncSession, user_id: str) -> Optional[str]:
 
 
 # --- Specific Routes (IDs or fixed paths) First to avoid shadowing ---
-@files_router.post("/{node_type}/{node_name}/upload")
+@files_router.post("/{project_id}/upload")
 async def upload_node_file(
-    node_type: str,
-    node_name: str,
+    project_id: str,
     file: UploadFile = File(...),
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
-    """Upload a file to Project storage (Legacy: Hub/Spoke)"""
-    # Accept hub/spoke/project
-    if node_type.lower() not in ["hub", "spoke", "project"]:
-        # We allow 'project' as well now
-        pass 
-    
+    """Upload a file to Project storage"""
+    # Verify Project Exists
+    result = await db.execute(select(Node.id).filter(
+        Node.user_id == identity.user_id,
+        Node.id == project_id
+    ))
+    if not result.scalars().first():
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+
     # Read file content
     content = await file.read()
     
@@ -56,16 +58,12 @@ async def upload_node_file(
     # FileService handles storage and DB recording
     service = FileService(db, identity.user_id)
     
-    # V4 Migration: Map legacy node_type to project_name
-    # If node_type is hub, name might be anything, but we force "hub"
-    project_name = "hub" if node_type.lower() == "hub" else node_name
-    
-    # FileService expects 'project_id' arg but logic maps it to project name
+    # FileService expects 'project_id' arg
     db_file = await service.save_file(
         content=content,
         filename=file.filename,
         mime_type=mime_type,
-        project_id=project_name
+        project_id=project_id
     )
     
     return {
@@ -76,28 +74,31 @@ async def upload_node_file(
     }
 
 
-@files_router.get("/{node_type}/{node_name}")
+@files_router.get("/{project_id}")
 async def list_node_files(
-    node_type: str,
-    node_name: str,
+    project_id: str,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
     """List all files for a Project"""
+    # Verify Project Exists
+    result = await db.execute(select(Node.id).filter(
+        Node.user_id == identity.user_id,
+        Node.id == project_id
+    ))
+    if not result.scalars().first():
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+
     api_key = await _get_user_api_key(db, identity.user_id)
     service = FileService(db, identity.user_id, api_key)
     
-    # V4 Migration: Map legacy node_type to project_name
-    project_name = "hub" if node_type.lower() == "hub" else node_name
-    
-    files = await service.list_files(project_name)
+    files = await service.list_files(project_id)
     return {"files": files, "count": len(files)}
 
 
-@files_router.get("/{node_type}/{node_name}/{directory}/{file_path:path}")
+@files_router.get("/{project_id}/{directory}/{file_path:path}")
 async def get_node_file(
-    node_type: str,
-    node_name: str,
+    project_id: str,
     directory: str,
     file_path: str,
     identity: Identity = Depends(resolve_identity_for_download),
@@ -115,9 +116,15 @@ async def get_node_file(
     try:
         from utils.paths import get_project_dir
         
-        # V4 Migration: Use unified project logic
-        project_name = "hub" if node_type.lower() == "hub" else node_name
-        base_dir = get_project_dir(user_id, project_name)
+        # Verify Project Exists
+        result = await db.execute(select(Node.id).filter(
+            Node.user_id == user_id,
+            Node.id == project_id
+        ))
+        if not result.scalars().first():
+            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+
+        base_dir = get_project_dir(user_id, project_id)
         
         from utils.paths import secure_path_join
         full_path = secure_path_join(base_dir / directory, file_path)

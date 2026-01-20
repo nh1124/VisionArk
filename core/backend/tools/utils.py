@@ -26,20 +26,22 @@ async def get_lbs_client(user_id: str, session: AsyncSession) -> LBSClient:
 def get_kc_service(user_id: str, session: AsyncSession) -> KnowledgeCoreService:
     return KnowledgeCoreService(session, user_id)
 
-async def get_project_name_from_id(user_id: str, project_id: str, session: AsyncSession) -> str:
-    if not project_id or project_id == 'root': return 'hub'
+async def get_project_display_name_from_id(user_id: str, project_id: str, session: AsyncSession) -> str:
+    """Get display name for a project by its ID."""
+    if not project_id or project_id == 'root': return 'Hub'
     try:
         uuid.UUID(project_id, version=4)
         if session:
-            res = await session.execute(select(Node.name).filter(Node.id==project_id, Node.user_id==user_id))
+            from models.database import Project
+            res = await session.execute(select(Project.name).filter(Project.id==project_id, Project.user_id==user_id))
             name = res.scalar()
             if name: return name
     except: pass
     return project_id
 
 async def resolve_project_artifacts_dir(user_id: str, project_id: str, session: AsyncSession = None) -> Path:
-    name = await get_project_name_from_id(user_id, project_id, session)
-    d = get_project_dir(user_id, name) / "artifacts"
+    # Use project_id directly for directory resolution
+    d = get_project_dir(user_id, project_id) / "artifacts"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

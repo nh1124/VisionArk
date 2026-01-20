@@ -19,12 +19,14 @@ class BaseNode(ABC):
         from tools.base import BaseTool
         self.tools: List[BaseTool] = []
         
-    def load_system_prompt(self, role_name: Optional[str] = None) -> str:
+    async def load_system_prompt(self, role_name: Optional[str] = None) -> str:
         """
-        Load the system prompt from backend assets.
+        Load the system prompt from database (AgentProfile) or backend assets.
         Global + Role Specific + Dynamic Tool Descriptions.
         """
         from utils.paths import get_prompts_dir
+        from models.database import AsyncSessionLocal, AgentProfile, Node
+        from sqlalchemy import select
         
         prompts_dir = get_prompts_dir()
         
@@ -40,17 +42,42 @@ class BaseNode(ABC):
         except Exception as e:
             print(f"[BaseNode] Error loading global prompt: {e}")
             
-        # 2. Load Role Specifics
+        # 2. Load Role Specifics (DB Profile first, then Fallback to static Markdown)
         role_text = ""
         if role_name:
-            role_path = prompts_dir / "roles" / f"{role_name}.md"
-            try:
-                if role_path.exists():
-                    role_text = role_path.read_text(encoding='utf-8')
-                else:
-                    print(f"[BaseNode] Warning: Role prompt not found for {role_name}")
-            except Exception as e:
-                print(f"[BaseNode] Error loading role prompt: {e}")
+            # Try DB first
+            async with AsyncSessionLocal() as db:
+                try:
+                    # Find node_id from context/project_id if possible
+                    p_id = self.context.get("project_id")
+                    node_result = await db.execute(select(Node).filter(Node.id == p_id, Node.user_id == self.user_id))
+                    node = node_result.scalars().first()
+                    
+                    if node:
+                        profile_result = await db.execute(
+                            select(AgentProfile).filter(
+                                AgentProfile.node_id == node.id,
+                                AgentProfile.role_name == role_name,
+                                AgentProfile.is_active == True
+                            )
+                        )
+                        profile = profile_result.scalars().first()
+                        if profile and profile.system_prompt:
+                            print(f"[BaseNode] Using DB profile for {role_name} in {p_id}")
+                            role_text = profile.system_prompt
+                except Exception as e:
+                    print(f"[BaseNode] DB error fetching role prompt: {e}")
+
+            # Fallback to Markdown
+            if not role_text:
+                role_path = prompts_dir / "roles" / f"{role_name}.md"
+                try:
+                    if role_path.exists():
+                        role_text = role_path.read_text(encoding='utf-8')
+                    else:
+                        print(f"[BaseNode] Warning: Role prompt not found for {role_name}")
+                except Exception as e:
+                    print(f"[BaseNode] Error loading role prompt: {e}")
         
         # 3. Dynamic Tool Descriptions
         tool_text = ""
@@ -177,12 +204,22 @@ class BaseNode(ABC):
                         return await self._execute_tool(t, **kwargs)
                     final_tool_funcs[tool.name] = wrapper
 
+            # Extract attached files from the LAST user message only (current request)
+            # Old history files are not re-sent - they were processed in their original request
+            current_attached_files = None
+            for msg in reversed(message_history):
+                if msg.role.value == "user":
+                    if msg.attached_files and msg.attached_files != []:
+                        current_attached_files = msg.attached_files
+                    break
+
             response = await self.llm.complete_async(
                 messages, 
                 tool_context=tool_context or {},
                 tool_definitions=final_tool_defs,
                 tool_functions=final_tool_funcs,
-                preferred_model=preferred_model
+                preferred_model=preferred_model,
+                attached_files=current_attached_files if current_attached_files else None
             )
             print(f"[{self.__class__.__name__}/Timing] LLM complete: {time.time()-t0:.2f}s")
             

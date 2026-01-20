@@ -4,7 +4,7 @@ import uuid
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from tools.base import BaseTool, NoArgs
-from models.database import AgentProfile
+from models.database import Node
 
 class ListMembersTool(BaseTool):
     name = "list_members"
@@ -13,27 +13,28 @@ class ListMembersTool(BaseTool):
 
     async def run(self, **kwargs) -> Any:
         session: AsyncSession = kwargs.get("session")
-        node_id: str = kwargs.get("node_id")
-        if not session or not node_id:
-            return {"success": False, "message": "Missing context (session or node_id)"}
-
+        project_id: str = kwargs.get("project_id")
+        if not session or not project_id:
+            return {"success": False, "message": "Missing context (session or project_id)"}
+        
         try:
-            result = await session.execute(select(AgentProfile).where(
-                AgentProfile.node_id == node_id,
-                AgentProfile.is_active == True
+            result = await session.execute(select(Node).where(
+                Node.project_id == project_id,
+                Node.node_type == "MEMBER",
+                Node.status == "active"
             ))
-            profiles = result.scalars().all()
+            member_nodes = result.scalars().all()
             
-            if not profiles:
+            if not member_nodes:
                 return {"success": True, "message": "No dynamic members found for this project.", "data": {"members": []}}
 
             members_list = []
-            for p in profiles:
+            for n in member_nodes:
                 members_list.append({
-                    "role_name": p.role_name,
-                    "display_name": p.display_name,
-                    "tools": p.tools or [],
-                    "has_custom_prompt": bool(p.system_prompt)
+                    "role_name": n.role_name,
+                    "display_name": n.display_name,
+                    "tools": n.tools or [],
+                    "has_custom_prompt": bool(n.system_prompt)
                 })
 
             msg = f"Found {len(members_list)} members:\n"
@@ -58,56 +59,69 @@ class ManageMemberTool(BaseTool):
 
     async def run(self, action: str, role_name: str, **kwargs) -> Any:
         session: AsyncSession = kwargs.get("session")
-        node_id: str = kwargs.get("node_id")
-        if not session or not node_id:
-            return {"success": False, "message": "Missing context"}
+        project_id: str = kwargs.get("project_id")
+        if not session or not project_id:
+            return {"success": False, "message": "Missing context (session or project_id)"}
 
         role_name = role_name.lower().strip()
         
         try:
             if action == "create":
                 # Check exists
-                res = await session.execute(select(AgentProfile).where(AgentProfile.node_id == node_id, AgentProfile.role_name == role_name))
+                res = await session.execute(select(Node).where(
+                    Node.project_id == project_id, 
+                    Node.role_name == role_name,
+                    Node.node_type == "MEMBER"
+                ))
                 if res.scalars().first():
                     return {"success": False, "message": f"Member '{role_name}' already exists. Use 'update' instead."}
                 
-                new_profile = AgentProfile(
+                new_node = Node(
                     id=str(uuid.uuid4()),
-                    node_id=node_id,
+                    project_id=project_id,
+                    node_type="MEMBER",
                     role_name=role_name,
                     display_name=kwargs.get("display_name") or role_name.title(),
                     system_prompt=kwargs.get("system_prompt") or f"You are a helpful '{role_name}' assistant.",
                     tools=kwargs.get("tools") or [],
-                    is_active=True,
+                    status="active",
                     version=1
                 )
-                session.add(new_profile)
+                session.add(new_node)
                 await session.commit()
                 return {"success": True, "message": f"✅ Created member: {role_name}"}
 
             elif action == "update":
-                res = await session.execute(select(AgentProfile).where(AgentProfile.node_id == node_id, AgentProfile.role_name == role_name))
-                profile = res.scalars().first()
-                if not profile:
+                res = await session.execute(select(Node).where(
+                    Node.project_id == project_id, 
+                    Node.role_name == role_name,
+                    Node.node_type == "MEMBER"
+                ))
+                node = res.scalars().first()
+                if not node:
                     return {"success": False, "message": f"Member '{role_name}' not found."}
                 
                 if "display_name" in kwargs and kwargs["display_name"]:
-                    profile.display_name = kwargs["display_name"]
+                    node.display_name = kwargs["display_name"]
                 if "system_prompt" in kwargs and kwargs["system_prompt"]:
-                    profile.system_prompt = kwargs["system_prompt"]
+                    node.system_prompt = kwargs["system_prompt"]
                 if "tools" in kwargs and kwargs["tools"]:
-                    profile.tools = kwargs["tools"]
+                    node.tools = kwargs["tools"]
                 
                 await session.commit()
                 return {"success": True, "message": f"✅ Updated member: {role_name}"}
 
             elif action == "delete":
-                res = await session.execute(select(AgentProfile).where(AgentProfile.node_id == node_id, AgentProfile.role_name == role_name))
-                profile = res.scalars().first()
-                if not profile:
+                res = await session.execute(select(Node).where(
+                    Node.project_id == project_id, 
+                    Node.role_name == role_name,
+                    Node.node_type == "MEMBER"
+                ))
+                node = res.scalars().first()
+                if not node:
                     return {"success": False, "message": f"Member '{role_name}' not found."}
                 
-                await session.delete(profile)
+                await session.delete(node)
                 await session.commit()
                 return {"success": True, "message": f"🗑️ Deleted member: {role_name}"}
 

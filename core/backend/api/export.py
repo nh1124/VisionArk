@@ -36,47 +36,43 @@ async def format_chat_history(messages: list) -> str:
     return "\n".join(lines)
 
 
-@router.get("/chat/project/{project_name}")
+@router.get("/chat/project/{project_id}")
 async def export_project_chat(
-    project_name: str,
+    project_id: str,
     identity: Identity = Depends(resolve_identity_for_download),
     db: AsyncSession = Depends(get_async_db)
 ):
     """Export a specific Project's chat history as a Markdown file"""
-    logger.info(f"Export request: project='{project_name}' user='{identity.user_id}' auth='{identity.auth_method}'")
-    
-    valid, error = validate_name(project_name, "project_name")
-    if not valid:
-        raise HTTPException(status_code=400, detail=error)
+    logger.info(f"Export request: project_id='{project_id}' user='{identity.user_id}' auth='{identity.auth_method}'")
 
     try:
-        # Get project node with case-insensitive matching
+        # Get project node by ID
         result = await db.execute(select(Node).filter(
             Node.user_id == identity.user_id,
-            func.lower(Node.name) == project_name.lower()
+            Node.id == project_id
         ))
         project_node = result.scalars().first()
         
         if not project_node:
             # Log available projects for debugging
-            all_projects = await db.execute(select(Node.name).filter(Node.user_id == identity.user_id))
+            all_projects = await db.execute(select(Node.display_name).filter(Node.user_id == identity.user_id))
             available = [p[0] for p in all_projects.fetchall()]
-            logger.warning(f"Project '{project_name}' not found for user '{identity.user_id}'. Available: {available}")
+            logger.warning(f"Project '{project_id}' not found for user '{identity.user_id}'. Available: {available}")
             raise HTTPException(
                 status_code=404, 
-                detail=f"Project '{project_name}' not found. Available projects: {available[:5]}"
+                detail=f"Project '{project_id}' not found."
             )
 
         # Get active session
         result = await db.execute(select(ChatSession).filter(
-            ChatSession.node_id == project_node.id,
+            ChatSession.project_id == project_node.id,
             ChatSession.is_archived == False
         ).order_by(ChatSession.created_at.desc()))
         active_session = result.scalars().first()
         
         if not active_session:
-            logger.warning(f"No active session for project '{project_name}' (node_id={project_node.id})")
-            raise HTTPException(status_code=404, detail=f"No active chat session for project '{project_name}'")
+            logger.warning(f"No active session for project '{project_node.display_name}' (node_id={project_node.id})")
+            raise HTTPException(status_code=404, detail=f"No active chat session for project '{project_node.display_name}'")
 
         # Get messages
         result = await db.execute(select(ChatMessage).filter(
@@ -86,9 +82,9 @@ async def export_project_chat(
 
         content = await format_chat_history(messages)
         
-        filename = f"{project_node.name}_chat_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+        filename = f"{project_node.display_name}_chat_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
         
-        logger.info(f"Export success: project='{project_node.name}' messages={len(messages)}")
+        logger.info(f"Export success: project='{project_node.display_name}' messages={len(messages)}")
         
         return StreamingResponse(
             io.BytesIO(content.encode("utf-8")),

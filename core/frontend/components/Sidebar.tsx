@@ -31,15 +31,15 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
-    const handleExportChat = async (projectName: string) => {
+    const handleExportChat = async (projectId: string, displayName: string) => {
         try {
             const token = await getFileToken();
-            const exportUrl = `/api/export/chat/project/${projectName}?token=${token}`;
+            const exportUrl = `/api/export/chat/project/${projectId}?token=${token}`;
 
             // Create a temporary link to trigger download
             const link = document.createElement('a');
             link.href = exportUrl;
-            link.setAttribute('download', `${projectName}_chat.md`);
+            link.setAttribute('download', `${displayName}_chat.md`);
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
@@ -51,12 +51,12 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
         }
     };
 
-    const handleCloneProject = async (projectName: string) => {
+    const handleCloneProject = async (projectId: string, currentDisplayName: string) => {
         try {
-            const response = await apiFetch(`/api/agents/project/${projectName}/clone`, {
+            const response = await apiFetch(`/api/agents/project/${projectId}/clone`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ new_name: `${projectName}_copy` }),
+                body: JSON.stringify({ new_display_name: `${currentDisplayName} (Copy)` }),
             });
 
             if (response.ok) {
@@ -72,13 +72,13 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
         }
     };
 
-    const handleDeleteProject = async (projectName: string) => {
-        if (!confirm(`Delete project '${projectName}'? This action cannot be undone.`)) {
+    const handleDeleteProject = async (projectId: string, displayName: string) => {
+        if (!confirm(`Delete project '${displayName}'? This action cannot be undone.`)) {
             return;
         }
 
         try {
-            await apiFetch(`/api/agents/project/${projectName}`, { method: "DELETE" });
+            await apiFetch(`/api/agents/project/${projectId}`, { method: "DELETE" });
             setMenuOpen(null);
             window.location.href = "/projects"; // Redirect after deletion
         } catch (error) {
@@ -164,16 +164,16 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                                 </div>
                             ) : (
                                 projects.map((project) => {
-                                    const projectPath = project.path; // Already /projects/{name}
+                                    const projectPath = project.path; // Already /projects/{id}
                                     const isActive = pathname === projectPath || pathname.startsWith(projectPath + "/");
-                                    const isHovered = hoveredProject === project.name;
+                                    const isHovered = hoveredProject === project.id;
                                     return (
                                         <div
-                                            key={project.name}
+                                            key={project.id}
                                             className="relative"
-                                            onMouseEnter={() => setHoveredProject(project.name)}
+                                            onMouseEnter={() => setHoveredProject(project.id)}
                                             onMouseLeave={() => {
-                                                if (menuOpen !== project.name) setHoveredProject(null);
+                                                if (menuOpen !== project.id) setHoveredProject(null);
                                             }}
                                         >
                                             <Link
@@ -187,12 +187,12 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                                             </Link>
 
                                             {/* Three-dot menu */}
-                                            {(isHovered || menuOpen === project.name) && (
+                                            {(isHovered || menuOpen === project.id) && (
                                                 <button
                                                     onClick={(e) => {
                                                         e.preventDefault();
                                                         e.stopPropagation();
-                                                        setMenuOpen(menuOpen === project.name ? null : project.name);
+                                                        setMenuOpen(menuOpen === project.id ? null : project.id);
                                                     }}
                                                     className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 text-gray-500 hover:text-white hover:bg-gray-700 rounded transition-colors"
                                                 >
@@ -203,40 +203,40 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                                             )}
 
                                             {/* Dropdown Menu */}
-                                            {menuOpen === project.name && (
+                                            {menuOpen === project.id && (
                                                 <div
                                                     ref={menuRef}
                                                     className="absolute right-0 top-full mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-xl py-1 min-w-[160px] z-50"
                                                 >
                                                     <Link
-                                                        href={`/projects/${project.name}/settings`}
+                                                        href={`/projects/${project.id}/settings`}
                                                         className="flex items-center px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
                                                         onClick={() => setMenuOpen(null)}
                                                     >
                                                         ⚙️ Settings
                                                     </Link>
                                                     <button
-                                                        onClick={() => handleCloneProject(project.name)}
+                                                        onClick={() => handleCloneProject(project.id, project.display_name || project.name)}
                                                         className="w-full flex items-center px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
                                                     >
                                                         📋 Clone Project
                                                     </button>
                                                     <Link
-                                                        href={`/projects/${project.name}`}
+                                                        href={`/projects/${project.id}`}
                                                         className="flex items-center px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
                                                         onClick={() => setMenuOpen(null)}
                                                     >
                                                         🚀 Open Workspace
                                                     </Link>
                                                     <button
-                                                        onClick={() => handleExportChat(project.name)}
+                                                        onClick={() => handleExportChat(project.id, project.display_name || project.name)}
                                                         className="w-full flex items-center px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
                                                     >
                                                         📥 Export Chat
                                                     </button>
                                                     <div className="my-1 border-t border-gray-700"></div>
                                                     <button
-                                                        onClick={() => handleDeleteProject(project.name)}
+                                                        onClick={() => handleDeleteProject(project.id, project.display_name || project.name)}
                                                         className="w-full flex items-center px-3 py-2 text-sm text-red-400 hover:bg-red-500/10"
                                                     >
                                                         🗑️ Delete Project

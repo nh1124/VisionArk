@@ -36,19 +36,37 @@ class TaskStatus(str, Enum):
     SKIPPED = "skipped"
 
 
+class NodeType(str, Enum):
+    """Node type for agent categorization"""
+    SYSTEM = "SYSTEM"       # System nodes (router, memory, etc.)
+    PROJECT = "PROJECT"     # Main project orchestrator
+    MEMBER = "MEMBER"       # Project member agents
+
+
+class ProjectStatus(str, Enum):
+    """Project status"""
+    ACTIVE = "active"
+    PAUSED = "paused"
+    ARCHIVED = "archived"
+
+
 class InboxQueue(Base):
-    """Async message buffer from Spokes to Hub (per-user)"""
+    """Async message buffer from Projects to Hub (per-user)"""
     __tablename__ = "inbox_queue"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(String(36), nullable=False, index=True)  # Owner user
-    source_project = Column(String, nullable=False)
-    message_type = Column(String, nullable=False)  # share, complete, alert
-    payload = Column(JSON, nullable=False)  # Structured <meta-action> data
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    source_project_id = Column(String(36), ForeignKey("projects.id"), nullable=False)
+    message_type = Column(String(50), nullable=False)
+    payload = Column(JSON, nullable=False)
     is_processed = Column(Boolean, default=False)
     received_at = Column(DateTime, default=datetime.utcnow)
     processed_at = Column(DateTime, nullable=True)
     error_log = Column(Text, nullable=True)
+    
+    # Relationships
+    user = relationship("User")
+    source_project = relationship("Project")
 
 
 class User(Base):
@@ -64,7 +82,7 @@ class User(Base):
     updated_at = Column(DateTime, onupdate=datetime.utcnow)
     
     # Relationships
-    nodes = relationship("Node", back_populates="user", cascade="all, delete-orphan")
+    projects = relationship("Project", back_populates="user", cascade="all, delete-orphan")
     service_connections = relationship("ServiceRegistry", back_populates="user", cascade="all, delete-orphan")
 
 
@@ -164,44 +182,50 @@ class ExternalIdentity(Base):
     last_login_at = Column(DateTime, nullable=True)
 
 
-class Node(Base):
-    """Project/Workspace - unified model replacing old HUB/SPOKE distinction"""
-    __tablename__ = "nodes"
+class Project(Base):
+    """Project/Workspace - container for nodes, sessions, and files"""
+    __tablename__ = "projects"
     
     id = Column(String(36), primary_key=True)  # UUID
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
-    name = Column(String(100), nullable=False)  # Slug/identifier
-    display_name = Column(String(200), nullable=False)
-    # node_type removed in V4
-    # node_type = Column(String(50), nullable=True, default="PROJECT")
+    name = Column(String(200), nullable=False, index=True)  # Display name
+    strategy_id = Column(String(36), nullable=True)  # Optional strategy reference
+    status = Column(String(20), default="active")  # active/paused/archived
+    priority = Column(Integer, default=3)  # 1-5, default 3
+    review_cadence = Column(String(50), nullable=True)  # Review schedule
     lbs_access_level = Column(String(50), default="READ_ONLY")  # READ_ONLY, WRITE
-    is_archived = Column(Boolean, default=False)
+    notes = Column(Text, nullable=True)  # Project notes
     created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
-    user = relationship("User", back_populates="nodes")
-    sessions = relationship("ChatSession", back_populates="node", cascade="all, delete-orphan")
-    files = relationship("UploadedFile", back_populates="node", cascade="all, delete-orphan")
-    profiles = relationship("AgentProfile", back_populates="node", cascade="all, delete-orphan")
+    user = relationship("User", back_populates="projects")
+    nodes = relationship("Node", back_populates="project", cascade="all, delete-orphan")
+    sessions = relationship("ChatSession", back_populates="project", cascade="all, delete-orphan")
+    files = relationship("UploadedFile", back_populates="project", cascade="all, delete-orphan")
 
 
-class AgentProfile(Base):
-    """Agent Persona and configuration"""
-    __tablename__ = "agent_profiles"
+class Node(Base):
+    """Agent node - contains agent configuration and prompt"""
+    __tablename__ = "nodes"
     
-    id = Column(String(36), primary_key=True)
-    node_id = Column(String(36), ForeignKey("nodes.id"), nullable=False, index=True)
+    id = Column(String(36), primary_key=True)  # UUID
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)  # Null for SYSTEM nodes
+    parent_node_id = Column(String(36), ForeignKey("nodes.id"), nullable=True)  # Hierarchy for member nodes
+    node_type = Column(String(20), default="PROJECT")  # SYSTEM/PROJECT/MEMBER
+    role_name = Column(String(50), nullable=True)  # e.g. "orchestrator", "researcher"
+    display_name = Column(String(200), nullable=False, index=True)
+    system_prompt = Column(Text, nullable=True)  # Agent prompt
+    tools = Column(JSON, default=list)  # List of tool names
+    status = Column(String(20), default="active")  # active/paused/archived
     version = Column(Integer, default=1)
-    system_prompt = Column(Text, nullable=True)
-    role_name = Column(String(50), nullable=True) # e.g. "planner", "researcher", "orchestrator"
-    display_name = Column(String(200), nullable=True)
-    tools = Column(JSON, default=list) # List of tool names: ["google_search", "list_tasks"]
-    is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # Relationship
-    node = relationship("Node", back_populates="profiles")
+    # Relationships
+    project = relationship("Project", back_populates="nodes")
+    parent = relationship("Node", remote_side=[id], backref="children")
+
 
 
 class ChatSession(Base):
@@ -209,16 +233,16 @@ class ChatSession(Base):
     __tablename__ = "chat_sessions"
     
     id = Column(String(36), primary_key=True)
-    node_id = Column(String(36), ForeignKey("nodes.id"), nullable=False, index=True)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
     parent_session_id = Column(String(36), ForeignKey("chat_sessions.id"), nullable=True)
     title = Column(String(255), nullable=True)
     summary = Column(Text, nullable=True)
     is_archived = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
-    node = relationship("Node", back_populates="sessions")
+    project = relationship("Project", back_populates="sessions")
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
     parent = relationship("ChatSession", remote_side=[id], backref="child_sessions")
 
@@ -246,8 +270,8 @@ class ArchivedContext(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
     node_id = Column(String(36), ForeignKey("nodes.id"), nullable=True, index=True)
-    project_name = Column(String(100), nullable=False, index=True)
     archived_at = Column(DateTime, default=datetime.utcnow)
     summary_path = Column(Text, nullable=True)
     log_path = Column(Text, nullable=True)
@@ -255,6 +279,7 @@ class ArchivedContext(Base):
     
     # Relationships
     user = relationship("User")
+    project = relationship("Project")
     node = relationship("Node")
 
 
@@ -263,20 +288,23 @@ class RagMetadata(Base):
     __tablename__ = "rag_metadata"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    project_name = Column(String(100), nullable=False, index=True)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
     file_name = Column(String(255), nullable=False)
     file_path = Column(String(512), nullable=False)
     file_hash = Column(String(128), nullable=True)
     indexed_at = Column(DateTime, default=datetime.utcnow)
     chunk_count = Column(Integer, default=0)
+    
+    # Relationship
+    project = relationship("Project")
 
 
 class UploadedFile(Base):
-    """Files associated with a Node (Local RAG)"""
+    """Files associated with a Project"""
     __tablename__ = "uploaded_files"
     
     id = Column(String(36), primary_key=True)
-    node_id = Column(String(36), ForeignKey("nodes.id"), nullable=False, index=True)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
     filename = Column(String(255), nullable=False)
     storage_path = Column(String(512), nullable=False)
     mime_type = Column(String(100), nullable=False)
@@ -288,8 +316,10 @@ class UploadedFile(Base):
     uploaded_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships
-    node = relationship("Node", back_populates="files")
+    project = relationship("Project", back_populates="files")
     chunks = relationship("FileChunk", back_populates="file", cascade="all, delete-orphan")
+
+
 
 
 class FileChunk(Base):
@@ -377,6 +407,22 @@ def _run_migrations(engine):
                 conn.execute(text("ALTER TABLE agent_profiles ADD COLUMN tools JSON"))
                 conn.commit()
                 print("✅ Migration: Added role_name, display_name, and tools columns to agent_profiles")
+    # Migration: Rename project_name/source_project to project_id in multiple tables
+    for table, old_col, new_col in [
+        ('rag_metadata', 'project_name', 'project_id'),
+        ('archived_contexts', 'project_name', 'project_id'),
+        ('inbox_queue', 'source_project', 'source_project_id')
+    ]:
+        if table in inspector.get_table_names():
+            columns = [col['name'] for col in inspector.get_columns(table)]
+            if old_col in columns and new_col not in columns:
+                with engine.connect() as conn:
+                    try:
+                        conn.execute(text(f"ALTER TABLE {table} RENAME COLUMN {old_col} TO {new_col}"))
+                        conn.commit()
+                        print(f"✅ Migration: Renamed {old_col} to {new_col} in {table}")
+                    except Exception as e:
+                        print(f"⚠️ Migration failed for {table}: {e}")
 
 
 def get_session(engine):

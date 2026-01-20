@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "@/lib/api";
 
 export interface ProjectInfo {
+    id: string;
     name: string;
     node_id: string;
     display_name?: string;
@@ -28,14 +29,15 @@ export function useProjects() {
             if (data && data.projects && Array.isArray(data.projects)) {
                 // Sorting alphabetically
                 const sortedProjects = data.projects.sort((a: any, b: any) =>
-                    a.name.localeCompare(b.name)
+                    (a.display_name || a.name).localeCompare(b.display_name || b.name)
                 );
 
                 setProjects(sortedProjects.map((p: any) => ({
-                    name: p.name,
-                    node_id: p.node_id,
-                    display_name: p.display_name || p.name,
-                    path: `/projects/${p.name}`
+                    id: p.id,
+                    name: p.name || p.display_name || 'Untitled',
+                    node_id: p.node_id || p.id,
+                    display_name: p.display_name || p.name || 'Untitled',
+                    path: `/projects/${p.id}`
                 })));
             } else {
                 setProjects([]);

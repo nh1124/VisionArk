@@ -242,11 +242,15 @@ class GeminiProvider(BaseLLMProvider):
                         func = active_tool_functions[function_name]
                         sig = inspect.signature(func)
                         accepted_params = set(sig.parameters.keys())
+                        # Check if function accepts **kwargs (VAR_KEYWORD)
+                        accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
                         
                         full_args = {**function_args}
                         for key in ['session', 'user_id', 'node_id', 'project_name', 'context_name', 'meta_info']:
-                            if key in tool_context and key in accepted_params:
-                                full_args[key] = tool_context[key]
+                            if key in tool_context:
+                                # Inject if explicitly accepted OR if function takes **kwargs
+                                if key in accepted_params or accepts_kwargs:
+                                    full_args[key] = tool_context[key]
                         
                         # Check if function is async
                         if inspect.iscoroutinefunction(func):
@@ -466,13 +470,17 @@ class GeminiProvider(BaseLLMProvider):
                         # Get the function's signature to know what parameters it accepts
                         sig = inspect.signature(func)
                         accepted_params = set(sig.parameters.keys())
+                        # Check if function accepts **kwargs (VAR_KEYWORD)
+                        accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
                         
                         # Merge function args with only the injected context that the function accepts
                         full_args = {**function_args}
                         injected_keys = []
                         for key in ['session', 'user_id', 'node_id', 'project_name', 'context_name', 'meta_info']:
-                            if key in tool_context and key in accepted_params:
-                                full_args[key] = tool_context[key]
+                            if key in tool_context:
+                                # Inject if explicitly accepted OR if function takes **kwargs
+                                if key in accepted_params or accepts_kwargs:
+                                    full_args[key] = tool_context[key]
                                 injected_keys.append(key)
                         
                         if injected_keys:
@@ -784,11 +792,15 @@ class GeminiProvider(BaseLLMProvider):
                             func = active_tool_functions[function_name]
                             sig = inspect.signature(func)
                             accepted_params = set(sig.parameters.keys())
+                            # Check if function accepts **kwargs (VAR_KEYWORD)
+                            accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
                             
                             full_args = {**function_args}
                             for key in ['session', 'user_id', 'node_id', 'project_name', 'context_name', 'meta_info']:
-                                if key in tool_context and key in accepted_params:
-                                    full_args[key] = tool_context[key]
+                                if key in tool_context:
+                                    # Inject if explicitly accepted OR if function takes **kwargs
+                                    if key in accepted_params or accepts_kwargs:
+                                        full_args[key] = tool_context[key]
                             
                             if inspect.iscoroutinefunction(func):
                                 result = await func(**full_args)

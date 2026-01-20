@@ -22,7 +22,7 @@ class GenerateImageTool(BaseTool):
     async def run(self, prompt: str, filename: Optional[str] = None, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
         session: AsyncSession = kwargs.get("session")
-        project_name: str = kwargs.get("project_name") or 'hub'
+        project_id: str = kwargs.get("project_id")
         if not user_id or not session: return {"success": False, "message": "Context error"}
         
         try:
@@ -48,7 +48,7 @@ class GenerateImageTool(BaseTool):
             if not filename.endswith(('.png', '.jpg', '.jpeg', '.webp')):
                 filename += '.png'
             
-            artifacts_dir = await resolve_project_artifacts_dir(user_id, project_name, session)
+            artifacts_dir = await resolve_project_artifacts_dir(user_id, project_id, session)
             file_path = artifacts_dir / filename
             
             if isinstance(image_data, str):

@@ -58,7 +58,7 @@ class ProjectNode(BaseNode):
         # 1. Ensure Project Node exists & Get Session
         from models.database import get_async_engine, get_async_session_maker
         from sqlalchemy import select
-        from models.database import Node
+        from models.database import Node, Project
         
         # Use context session if available, else create one
         session = self.context.get('db_session')
@@ -70,28 +70,35 @@ class ProjectNode(BaseNode):
             should_close = True
             
         try:
-            # Fetch Project Node ID by name from context (V4: project_name is required)
-            project_name = self.context.get('project_name')
-            if not project_name:
-                raise ValueError("project_name is required in context for ProjectNode")
-            
-            result = await session.execute(select(Node).filter(
-                Node.user_id == self.user_id,
-                Node.name == project_name
+            # Fetch Project
+            project_id = self.context.get('project_id')
+            result = await session.execute(select(Project).filter(
+                Project.user_id == self.user_id,
+                Project.id == project_id
             ))
-            project_node = result.scalars().first()
-            
-            if project_node:
-                self.node_id = project_node.id
+            project = result.scalars().first()
+            if project:
+                self.project_id = project.id # Use self.project_id instead of self.node_id for clarity
+                self.context['project_id'] = self.project_id
             else:
-                raise ValueError(f"Project '{project_name}' not found for user {self.user_id}") 
+                raise ValueError(f"Project '{project_id}' not found for user {self.user_id}") 
                 
             # 2. Get/Create Session
-            # MemoryNode handles its own session logic or we pass this session?
-            # MemoryNode typically creates new session or uses one passed. 
-            # Looking at MemoryNode (not visible here but usually stateless or handles own DB)
-            self.session_id = await self.memory.get_or_create_session(self.node_id, self.user_id)
+            # Map self.project_id to the Orchestrator Node ID (V6: and PROJECT type)
+            result = await session.execute(select(Node).filter(
+                Node.project_id == self.project_id,
+                Node.node_type == "PROJECT"
+            ))
+            orchestrator_node = result.scalars().first()
+            if orchestrator_node:
+                self.node_id = orchestrator_node.id
+            else:
+                # Fallback if no specific projector node exists yet (should not happen after migration)
+                self.node_id = self.project_id
+
+            self.session_id = await self.memory.get_or_create_session(self.project_id, self.user_id)
             self.context['session_id'] = self.session_id
+            self.context['node_id'] = self.node_id
             
             # 3. Load Context (Profile, etc.)
             self.context_data = await self.memory.get_context()
@@ -122,22 +129,23 @@ class ProjectNode(BaseNode):
     async def _init_dynamic_members(self, session):
         """Load member agents from database or fall back to defaults."""
         from nodes.members.dynamic_node import DynamicMemberNode
-        from models.database import AgentProfile
+        from models.database import Node
         from sqlalchemy import select
         
-        # Fetch all profiles for this node
-        result = await session.execute(select(AgentProfile).where(
-            AgentProfile.node_id == self.node_id,
-            AgentProfile.is_active == True
+        # Fetch all member nodes for this project
+        result = await session.execute(select(Node).where(
+            Node.project_id == self.project_id,
+            Node.node_type == "MEMBER",
+            Node.status == "active"
         ))
-        profiles = result.scalars().all()
+        member_nodes = result.scalars().all()
         
         dynamic_members = {}
-        for profile in profiles:
-            if profile.role_name and profile.role_name != "orchestrator":
-                dynamic_members[profile.role_name] = DynamicMemberNode(
+        for node in member_nodes:
+            if node.role_name:
+                dynamic_members[node.role_name] = DynamicMemberNode(
                     self.context, 
-                    profile, 
+                    node, 
                     status_callback=self.status_callback
                 )
         
@@ -185,13 +193,18 @@ class ProjectNode(BaseNode):
         
         # 4. Chat with Tools (LLM)
         # Load System Prompt (Project Role)
-        system_prompt = self.load_system_prompt("project")
+        system_prompt = await self.load_system_prompt("project")
         
         # Inject Profile from Context (if loaded in pre_process)
         if hasattr(self, "context_data") and self.context_data:
             profile_text = self.context_data.get("profile", "")
             if profile_text:
                 system_prompt += f"\n\n## User Profile\n{profile_text}"
+                
+        # Inject Knowledge Core Context
+        knowledge_context = await self.memory.get_knowledge_context(message)
+        if knowledge_context:
+            system_prompt += f"\n\n## Relevant Knowledge\n{knowledge_context}"
         
         # 4. Check API Key
         if not self.context.get("api_key"):
@@ -205,7 +218,7 @@ class ProjectNode(BaseNode):
                 'session': self.context.get('db_session'),  # For tools that need DB access
                 'session_id': self.session_id,
                 'node_id': self.node_id,
-                'project_name': self.context.get('project_name'),  # V4: Project name
+                'project_id': self.node_id,
                 'context_data': self.context_data,  # Pass full context data if needed
                 'members': self.members
             }

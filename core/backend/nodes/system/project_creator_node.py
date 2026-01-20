@@ -155,9 +155,9 @@ User: "Plan my thesis research on machine learning"
         """
         from models.database import (
             get_async_engine, get_async_session_maker, 
-            Node, AgentProfile
+            Node, Project
         )
-        from utils.paths import get_project_dir, validate_name
+        from utils.paths import get_project_dir, validate_name, update_project_name_cache as update_cache
         from sqlalchemy import select
         from uuid import uuid4
         
@@ -172,45 +172,51 @@ User: "Plan my thesis research on machine learning"
         session = async_session_cls()
         
         try:
-            # Check if name exists, append number if needed
-            base_name = name
+            # Check if project name exists, append number if needed
+            display_name = name.replace('_', ' ').title()
+            base_display_name = display_name
             counter = 1
             while True:
                 result = await session.execute(
-                    select(Node).filter(
-                        Node.user_id == self.user_id,
-                        Node.name == name,
-                        Node.is_archived == False
+                    select(Project).filter(
+                        Project.user_id == self.user_id,
+                        Project.name == display_name,
+                        Project.status != "archived"
                     )
                 )
                 if not result.scalars().first():
                     break
-                name = f"{base_name}_{counter}"
+                display_name = f"{base_display_name} {counter}"
                 counter += 1
             
-            # Create Node
-            node_id = str(uuid4())
+            # 1. Create Project
+            project_id = str(uuid4())
+            new_project = Project(
+                id=project_id,
+                user_id=self.user_id,
+                name=display_name,
+                status="active"
+            )
+            session.add(new_project)
+            
+            # 2. Create Primary Node (Agent)
+            node_id = str(uuid4()) # We can use the same as project_id if we want, but let's decouple
             new_node = Node(
                 id=node_id,
-                user_id=self.user_id,
-                name=name,
-                display_name=name.replace('_', ' ').title(),
-                lbs_access_level="NONE"
+                project_id=project_id,
+                node_type="PROJECT",
+                display_name="Orchestrator",
+                system_prompt=system_prompt,
+                status="active",
+                version=1
             )
             session.add(new_node)
             
-            # Create AgentProfile with the generated system prompt
-            new_profile = AgentProfile(
-                id=str(uuid4()),
-                node_id=node_id,
-                system_prompt=system_prompt,
-                is_active=True,
-                version=1
-            )
-            session.add(new_profile)
+            # Update cache for folder resolution
+            update_cache(self.user_id, project_id, display_name)
             
-            # Create directory structure
-            project_dir = get_project_dir(self.user_id, name)
+            # 3. Create directory structure
+            project_dir = get_project_dir(self.user_id, project_id)
             project_dir.mkdir(parents=True, exist_ok=True)
             (project_dir / "files").mkdir(exist_ok=True)
             (project_dir / "artifacts").mkdir(exist_ok=True)
@@ -220,7 +226,8 @@ User: "Plan my thesis research on machine learning"
             
             return {
                 "success": True,
-                "project_name": name,
+                "project_name": display_name,
+                "project_id": project_id,
                 "node_id": node_id
             }
             

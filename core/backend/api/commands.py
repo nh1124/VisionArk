@@ -7,7 +7,6 @@ from pydantic import BaseModel
 from typing import Optional
 
 from services.command_parser import parse_command, execute_command
-from services import command_handlers  # Import to register commands
 from services.auth import resolve_identity, Identity
 from models.database import get_async_db
 from sqlalchemy.ext.asyncio import AsyncSession

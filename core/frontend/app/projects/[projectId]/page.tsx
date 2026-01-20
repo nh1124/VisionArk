@@ -29,9 +29,9 @@ interface Message {
 export default function ProjectChatPage({
     params,
 }: {
-    params: Promise<{ projectName: string }>;
+    params: Promise<{ projectId: string }>;
 }) {
-    const { projectName } = use(params);
+    const { projectId } = use(params);
     const [messages, setMessages] = useState<Message[]>([]);
     const [commandInputValue, setCommandInputValue] = useState("");
     const [loading, setLoading] = useState(false);
@@ -55,18 +55,18 @@ export default function ProjectChatPage({
     useEffect(() => {
         const loadMetadata = async () => {
             try {
-                const response = await apiFetch(`/api/agents/project/${projectName}`);
+                const response = await apiFetch(`/api/agents/project/${projectId}`);
                 const data = await response.json();
-                setDisplayName(data.display_name || projectName.replace("_", " "));
+                setDisplayName(data.display_name || projectId);
             } catch (error) {
                 console.error("Failed to load metadata:", error);
-                setDisplayName(projectName.replace("_", " "));
+                setDisplayName(projectId);
             }
         };
 
         const loadHistory = async () => {
             try {
-                const response = await apiFetch(`/api/agents/project/${projectName}/history`);
+                const response = await apiFetch(`/api/agents/project/${projectId}/history`);
                 const data = await response.json();
                 if (data.history && Array.isArray(data.history)) {
                     setMessages(data.history.map((m: any) => ({
@@ -83,7 +83,7 @@ export default function ProjectChatPage({
 
         loadMetadata();
         loadHistory();
-    }, [projectName]);
+    }, [projectId]);
 
     // Handle task_id from query params (for initial prompt polling)
     const searchParams = useSearchParams();
@@ -121,7 +121,7 @@ export default function ProjectChatPage({
                     setStatusText("");
 
                     // Re-fetch history to get complete messages
-                    const historyRes = await apiFetch(`/api/agents/project/${projectName}/history`);
+                    const historyRes = await apiFetch(`/api/agents/project/${projectId}/history`);
                     const historyData = await historyRes.json();
                     if (historyData.history && Array.isArray(historyData.history)) {
                         setMessages(historyData.history.map((m: any) => ({
@@ -133,7 +133,7 @@ export default function ProjectChatPage({
                     }
 
                     // Clear URL AFTER task completes
-                    router.replace(`/projects/${projectName}`, { scroll: false });
+                    router.replace(`/projects/${projectId}`, { scroll: false });
                     pendingTaskIdRef.current = null;
                     return true;
                 } else if (status === "failed") {
@@ -146,7 +146,7 @@ export default function ProjectChatPage({
                     }]);
 
                     // Clear URL on failure too
-                    router.replace(`/projects/${projectName}`, { scroll: false });
+                    router.replace(`/projects/${projectId}`, { scroll: false });
                     pendingTaskIdRef.current = null;
                     return true;
                 } else {
@@ -171,7 +171,7 @@ export default function ProjectChatPage({
             clearInterval(timerInterval);
             clearInterval(pollInterval);
         };
-    }, [searchParams, projectName, router]);
+    }, [searchParams, projectId, router]);
 
 
     const sendMessage = async (content: string, files: File[]) => {
@@ -207,7 +207,7 @@ export default function ProjectChatPage({
             files.forEach((file) => formData.append("files", file));
             formData.append("stream", "false"); // Polling mode
 
-            const response = await apiFetch(`/api/agents/project/${projectName}/chat`, {
+            const response = await apiFetch(`/api/agents/project/${projectId}/chat`, {
                 method: "POST",
                 body: formData,
                 headers: {
@@ -255,7 +255,7 @@ export default function ProjectChatPage({
 
                         // Re-fetch history to get complete message with tool_calls
                         try {
-                            const historyRes = await apiFetch(`/api/agents/project/${projectName}/history`);
+                            const historyRes = await apiFetch(`/api/agents/project/${projectId}/history`);
                             const historyData = await historyRes.json();
                             if (historyData.history && Array.isArray(historyData.history)) {
                                 setMessages(historyData.history.map((m: any) => ({
@@ -313,20 +313,18 @@ export default function ProjectChatPage({
     };
 
     const handleClone = async () => {
-        const newName = `${projectName}_copy`;
-
         try {
             setLoading(true);
-            const response = await apiFetch(`/api/agents/project/${projectName}/clone`, {
+            const response = await apiFetch(`/api/agents/project/${projectId}/clone`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ new_name: newName || undefined }),
+                body: JSON.stringify({ new_display_name: `${displayName} (Copy)` }),
             });
 
             if (response.ok) {
                 const data = await response.json();
-                alert(`Project cloned successfully as '${data.new_project_name}'`);
-                window.location.href = `/projects/${data.new_project_name}`;
+                alert(`Project cloned successfully!`);
+                window.location.href = `/projects/${data.new_project_id}`;
             } else {
                 const err = await response.json();
                 alert(`Failed to clone project: ${err.detail || 'Unknown error'}`);
@@ -367,7 +365,7 @@ export default function ProjectChatPage({
 
         try {
             setLoading(true);
-            const response = await apiFetch(`/api/agents/project/${projectName}/branch`, {
+            const response = await apiFetch(`/api/agents/project/${projectId}/branch`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ message_index: index })
@@ -375,10 +373,10 @@ export default function ProjectChatPage({
 
             if (response.ok) {
                 const data = await response.json();
-                console.log("Branched to new project:", data.new_project_name);
+                console.log("Branched to new project:", data.new_project_id);
 
                 // Navigate to the new project
-                window.location.href = `/projects/${data.new_project_name}`;
+                window.location.href = `/projects/${data.new_project_id}`;
             } else {
                 throw new Error("Failed to branch chat");
             }
@@ -387,7 +385,7 @@ export default function ProjectChatPage({
         } finally {
             setLoading(false);
         }
-    }, [loading, projectName]);
+    }, [loading, projectId]);
 
     const handleEdit = useCallback(async (index: number) => {
         if (loading) return;
@@ -396,7 +394,7 @@ export default function ProjectChatPage({
 
         try {
             setLoading(true);
-            const response = await apiFetch(`/api/agents/project/${projectName}/messages/truncate`, {
+            const response = await apiFetch(`/api/agents/project/${projectId}/messages/truncate`, {
                 method: "DELETE",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ message_index: index })
@@ -415,13 +413,13 @@ export default function ProjectChatPage({
         } finally {
             setLoading(false);
         }
-    }, [messages, loading, projectName]);
+    }, [messages, loading, projectId]);
 
     const handleDelete = useCallback(async (index: number) => {
         if (loading) return;
         try {
             setLoading(true);
-            const response = await apiFetch(`/api/agents/project/${projectName}/messages/truncate`, {
+            const response = await apiFetch(`/api/agents/project/${projectId}/messages/truncate`, {
                 method: "DELETE",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ message_index: index })
@@ -437,7 +435,7 @@ export default function ProjectChatPage({
         } finally {
             setLoading(false);
         }
-    }, [loading, projectName]);
+    }, [loading, projectId]);
 
     const handleUndo = useCallback(async () => {
         if (loading || messages.length === 0) return;
@@ -475,7 +473,7 @@ export default function ProjectChatPage({
                         {displayName}
                     </h1>
                     <div className="flex gap-2 items-center">
-                        <Link href={`/projects/${projectName}/settings`}
+                        <Link href={`/projects/${projectId}/settings`}
                             className="p-2 text-gray-400 hover:bg-gray-800 hover:text-white rounded-lg transition-all"
                             title="Settings"
                         >
@@ -523,7 +521,7 @@ export default function ProjectChatPage({
                                     attached_files={msg.attached_files}
                                     tool_calls={msg.tool_calls}
                                     nodeType="project"
-                                    nodeName={projectName}
+                                    nodeName={projectId}
                                     onRegenerate={messageCallbacks[idx]?.onRegenerate}
                                     onBranch={messageCallbacks[idx]?.onBranch}
                                     onEdit={messageCallbacks[idx]?.onEdit}
@@ -638,7 +636,7 @@ export default function ProjectChatPage({
                             </button>
                         </div>
                         <div className="flex-1 overflow-hidden">
-                            <FilesSidebar nodeType="project" nodeName={projectName} />
+                            <FilesSidebar nodeType="project" nodeName={projectId} />
                         </div>
                     </div>
                 </>

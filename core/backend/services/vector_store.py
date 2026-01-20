@@ -22,13 +22,13 @@ from utils.paths import get_project_dir, get_user_projects_dir
 class VectorStore:
     """Vector store for a single Project's knowledge base (per-user)"""
     
-    def __init__(self, user_id: str, project_name: str):
+    def __init__(self, user_id: str, project_id: str):
         if not CHROMADB_AVAILABLE:
             raise ImportError("ChromaDB not installed. Run: pip install chromadb>=0.4.22")
         
         self.user_id = user_id
-        self.project_name = project_name
-        self.store_path = get_project_dir(user_id, project_name) / "vector_store"
+        self.project_id = project_id
+        self.store_path = get_project_dir(user_id, project_id) / "vector_store"
         self.store_path.mkdir(parents=True, exist_ok=True)
         
         # Initialize ChromaDB client
@@ -42,8 +42,8 @@ class VectorStore:
         
         # Get or create collection
         self.collection = self.client.get_or_create_collection(
-            name=f"{project_name}_refs",
-            metadata={"description": f"Reference documents for {project_name}"}
+            name=f"{project_id}_refs",
+            metadata={"description": f"Reference documents for {project_id}"}
         )
         
         # LLM provider for embeddings
@@ -202,7 +202,7 @@ class VectorStore:
         count = self.collection.count()
         
         return {
-            "project_name": self.project_name,
+            "project_id": self.project_id,
             "document_count": count,
             "store_path": str(self.store_path),
             "collection_name": self.collection.name
@@ -212,7 +212,7 @@ class VectorStore:
         """Clear all documents from the store"""
         self.client.delete_collection(self.collection.name)
         self.collection = self.client.create_collection(
-            name=f"{self.project_name}_refs"
+            name=f"{self.project_id}_refs"
         )
 
 
@@ -222,11 +222,11 @@ class VectorStoreManager:
     def __init__(self):
         self._stores: Dict[str, VectorStore] = {}
     
-    def get_store(self, user_id: str, project_name: str) -> VectorStore:
+    def get_store(self, user_id: str, project_id: str) -> VectorStore:
         """Get or create a vector store for a Project"""
-        cache_key = f"{user_id}:{project_name}"
+        cache_key = f"{user_id}:{project_id}"
         if cache_key not in self._stores:
-            self._stores[cache_key] = VectorStore(user_id, project_name)
+            self._stores[cache_key] = VectorStore(user_id, project_id)
         return self._stores[cache_key]
     
     def list_stores(self, user_id: str) -> List[str]:
@@ -247,6 +247,6 @@ class VectorStoreManager:
 _manager = VectorStoreManager()
 
 
-def get_vector_store(user_id: str, project_name: str) -> VectorStore:
+def get_vector_store(user_id: str, project_id: str) -> VectorStore:
     """Get vector store for a Project (singleton pattern, per-user)"""
-    return _manager.get_store(user_id, project_name)
+    return _manager.get_store(user_id, project_id)

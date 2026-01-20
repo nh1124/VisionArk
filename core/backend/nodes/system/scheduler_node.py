@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 from nodes.base_node import BaseNode
 from services.scheduler_service import calculate_schedule_v3, OperationRecord
@@ -9,6 +9,57 @@ class SchedulerNode(BaseNode):
     Wraps the SchedulerService to handle scheduling requests.
     """
     
+    async def _get_lbs_client(self) -> Any:
+        """
+        Initialize LBSClient using credentials from the database.
+        """
+        from models.database import AsyncSessionLocal, ServiceRegistry
+        from services.lbs_client import LBSClient
+        from sqlalchemy import select
+        
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(ServiceRegistry).filter(
+                    ServiceRegistry.user_id == self.user_id,
+                    ServiceRegistry.service_name == "lbs"
+                )
+            )
+            svc = result.scalars().first()
+            if not svc:
+                print(f"[SchedulerNode] No LBS service registry found for user {self.user_id}")
+                return None
+            
+            return LBSClient(base_url=svc.base_url, api_key=svc.api_key)
+
+    async def _get_lbs_context(self, client: Any, target_date: datetime) -> Dict[str, Any]:
+        """
+        Fetch tasks, exceptions, and fatigue from LBS.
+        """
+        date_str = target_date.strftime("%Y-%m-%d")
+        try:
+            # 1. Fetch Tasks (with status for the day)
+            tasks = await client.list_tasks(target_date=date_str)
+            
+            # 2. Fetch Exceptions
+            exceptions = await client.get_exceptions(start_date=date_str, end_date=date_str)
+            
+            # 3. Fetch Condition (Fatigue)
+            fatigue = 0
+            try:
+                condition = await client.get_condition(target_date=date_str)
+                fatigue = condition.get("cognitive_fatigue", 0)
+            except:
+                pass
+                
+            return {
+                "tasks": tasks,
+                "exceptions": exceptions,
+                "fatigue": fatigue
+            }
+        except Exception as e:
+            print(f"[SchedulerNode] Error fetching LBS context: {e}")
+            return {"tasks": [], "exceptions": [], "fatigue": 0}
+
     async def pre_process(self):
         pass
 
@@ -18,32 +69,30 @@ class SchedulerNode(BaseNode):
         """
         print(f"[SchedulerNode] Processing request: {message}")
         
-        # 1. Parse Intent & Extract Parameters (Mocking extraction for now)
-        # In a real scenario, we might use an LLM here to extract tasks/constraints from the message.
-        # For V3 demo, we assume the Router determined this is a schedule request.
-        
-        # 2. Fetch current state (Tasks)
-        # TODO: Fetch real tasks from DB. Mocking for now.
-        mock_tasks = [
-            {"id": "t1", "title": "Review Code", "load": 2.0, "status": "todo"},
-            {"id": "t2", "title": "Write Docs", "load": 1.5, "status": "todo"}
-        ]
-        
-        # 3. Call Scheduler Service
-        try:
-            # We use the V3 pipeline
-            result: OperationRecord = await calculate_schedule_v3(
-                tasks=mock_tasks,
-                exceptions=[], # Fetch from LBS
-                fatigue=0,     # Fetch from User State
-                now=datetime.now(),
-                api_key=None   # Pass if we want Agent optimization
-            )
-            return result.to_dict()
+        # 1. Initialize Client
+        client = await self._get_lbs_client()
+        if not client:
+            return {"error": "LBS service not configured."}
             
-        except Exception as e:
-            print(f"[SchedulerNode] Error: {e}")
-            return {"error": str(e)}
+        async with client:
+            # 2. Fetch Context
+            now = datetime.now()
+            lbs_ctx = await self._get_lbs_context(client, now)
+            
+            # 3. Call Scheduler Service (V3 Pipeline)
+            try:
+                result: OperationRecord = await calculate_schedule_v3(
+                    tasks=lbs_ctx["tasks"],
+                    exceptions=lbs_ctx["exceptions"],
+                    fatigue=lbs_ctx["fatigue"],
+                    now=now,
+                    api_key=self.context.get("api_key")
+                )
+                return result.to_dict()
+                
+            except Exception as e:
+                print(f"[SchedulerNode] Error during scheduling: {e}")
+                return {"error": str(e)}
 
     async def propose_task(self, draft_task: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -51,88 +100,75 @@ class SchedulerNode(BaseNode):
         """
         print(f"[SchedulerNode] Proposing slot for: {draft_task}")
         
-        # 1. Fetch Request params
-        duration = float(draft_task.get("load", 1.0)) # Treat load as duration hours for simplicity in V3
-        target_date = datetime.now() # Default to today/next avail
+        duration = float(draft_task.get("load", 1.0))
+        target_date = datetime.now()
         
-        # 2. Get Current Schedule State
-        # In real V3, we'd fetch actual tasks from DB via 'list_tasks' or service
-        # For now we use calculate_schedule_v3 with empty/mock to see "busy" slots logic if we had tasks.
-        # But to find a gap, we need to know what's busy. 
-        # Only mocking the *tasks input*, but running the *real logic*.
-        try:
-             # Fetch mock existing tasks (simulating DB)
-             existing_tasks = [
-                 {"id": "existing_1", "title": "Morning Sync", "start_time": "09:00", "end_time": "10:00", "is_locked": True},
-                 {"id": "existing_2", "title": "Lunch", "start_time": "12:00", "end_time": "13:00", "is_locked": True}
-             ]
-             
-             schedule_record: OperationRecord = await calculate_schedule_v3(
-                 tasks=existing_tasks,
-                 exceptions=[],
-                 fatigue=0,
-                 now=target_date
-             )
-             
-             # 3. Find Gap (Heuristic)
-             # Simple logic: Scan 09:00 to 18:00 for a gap > duration
-             business_start = 9
-             business_end = 18
-             
-             # Convert schedule to occupied ranges (in decimal hours)
-             occupied = []
-             for item in schedule_record.schedule:
-                 if item.start and item.end:
-                     s_dec = item.start.hour + item.start.minute/60.0
-                     e_dec = item.end.hour + item.end.minute/60.0
-                     occupied.append((s_dec, e_dec))
-             occupied.sort()
-             
-             proposed_start = None
-             
-             # Check distinct gaps
-             current_cursor = business_start
-             for s, e in occupied:
-                 if s - current_cursor >= duration:
-                     proposed_start = current_cursor
-                     break
-                 current_cursor = max(current_cursor, e)
-                 
-             if proposed_start is None and (business_end - current_cursor >= duration):
-                 proposed_start = current_cursor
-                 
-             if proposed_start is None:
-                 # Push to tomorrow (Mock logic)
-                 return {
-                     "status": "deferred",
-                     "reason": "No slots available today",
-                     "task": draft_task
-                 }
-                 
-             # Format Output
-             import math
-             start_h = int(proposed_start)
-             start_m = int((proposed_start - start_h) * 60)
-             end_decimal = proposed_start + duration
-             end_h = int(end_decimal)
-             end_m = int((end_decimal - end_h) * 60)
-             
-             slot_str = f"{start_h:02d}:{start_m:02d} - {end_h:02d}:{end_m:02d}"
-             
-             result = {
-                "status": "proposed",
-                "slot": {
-                    "start": f"{start_h:02d}:{start_m:02d}",
-                    "end": f"{end_h:02d}:{end_m:02d}",
-                    "date": target_date.strftime("%Y-%m-%d")
-                },
-                "task": draft_task
-             }
-             return result
+        client = await self._get_lbs_client()
+        if not client:
+            return {"status": "error", "message": "LBS service not configured."}
+            
+        async with client:
+            try:
+                # Fetch Real Context
+                lbs_ctx = await self._get_lbs_context(client, target_date)
+                
+                # Use real existing tasks/exceptions to build the schedule
+                schedule_record: OperationRecord = await calculate_schedule_v3(
+                    tasks=lbs_ctx["tasks"],
+                    exceptions=lbs_ctx["exceptions"],
+                    fatigue=lbs_ctx["fatigue"],
+                    now=target_date
+                )
+                
+                # Find Gap (Heuristic)
+                business_start = 9
+                business_end = 18
+                
+                occupied = []
+                for item in schedule_record.schedule:
+                    if item.start and item.end:
+                        s_dec = item.start.hour + item.start.minute/60.0
+                        e_dec = item.end.hour + item.end.minute/60.0
+                        occupied.append((s_dec, e_dec))
+                occupied.sort()
+                
+                proposed_start = None
+                current_cursor = business_start
+                for s, e in occupied:
+                    if s - current_cursor >= duration:
+                        proposed_start = current_cursor
+                        break
+                    current_cursor = max(current_cursor, e)
+                    
+                if proposed_start is None and (business_end - current_cursor >= duration):
+                    proposed_start = current_cursor
+                    
+                if proposed_start is None:
+                    return {
+                        "status": "deferred",
+                        "reason": "No slots available today",
+                        "task": draft_task
+                    }
+                    
+                start_h = int(proposed_start)
+                start_m = int((proposed_start - start_h) * 60)
+                end_decimal = proposed_start + duration
+                end_h = int(end_decimal)
+                end_m = int((end_decimal - end_h) * 60)
+                
+                return {
+                    "status": "proposed",
+                    "slot": {
+                        "start": f"{start_h:02d}:{start_m:02d}",
+                        "end": f"{end_h:02d}:{end_m:02d}",
+                        "date": target_date.strftime("%Y-%m-%d")
+                    },
+                    "task": draft_task
+                }
 
-        except Exception as e:
-            print(f"[SchedulerNode] Error proposing task: {e}")
-            return {"status": "error", "message": str(e)}
+            except Exception as e:
+                print(f"[SchedulerNode] Error proposing task: {e}")
+                return {"status": "error", "message": str(e)}
 
     async def post_process(self, result: Any):
         pass
@@ -142,4 +178,4 @@ class SchedulerNode(BaseNode):
         Async periodic check.
         """
         print("[SchedulerNode] Running maintenance checks...")
-        # Check for overload, overdue tasks, etc.
+        # Future: proactive overload alerts via LBS analysis

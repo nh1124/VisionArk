@@ -93,7 +93,7 @@ export default function MobileSidebar({ isOpen, onClose }: MobileSidebarProps) {
                                 const isActive = pathname === project.path || pathname.startsWith(project.path + "/");
                                 return (
                                     <Link
-                                        key={project.name}
+                                        key={project.id}
                                         href={project.path}
                                         onClick={onClose}
                                         className={`flex items-center gap-4 px-4 py-3 rounded-xl transition-all ${isActive

@@ -23,7 +23,7 @@ class SaveArtifactTool(BaseTool):
     async def run(self, file_path: str, content: str, overwrite: bool = False, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
         session: AsyncSession = kwargs.get("session")
-        project_id: str = kwargs.get("project_id") or kwargs.get("project_name") or 'hub'
+        project_id: str = kwargs.get("project_id")
         if not user_id: return {"success": False, "message": "Context error"}
         
         try:
@@ -43,7 +43,7 @@ class ReadReferenceArgs(BaseModel):
 class ReadReferenceTool(BaseTool):
     name = "read_reference"
     description = (
-        "Read a file from the project's storage. It searches in 'refs', 'files', and 'artifacts' subdirectories. "
+        "Read a file from the project's storage. It searches in project's root directory and subdirectories. "
         "HOW TO USE: 'read_reference(file_path=\"manual.pdf\")' or 'read_reference(file_path=\"artifacts/result.txt\")'."
     )
     args_schema = ReadReferenceArgs
@@ -51,12 +51,11 @@ class ReadReferenceTool(BaseTool):
     async def run(self, file_path: str, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
         session: AsyncSession = kwargs.get("session")
-        project_id: str = kwargs.get("project_id") or kwargs.get("project_name") or 'hub'
+        project_id: str = kwargs.get("project_id")
         if not user_id: return {"success": False, "message": "Context error"}
         
         try:
-            name = await get_project_name_from_id(user_id, project_id, session)
-            d = get_project_dir(user_id, name)
+            d = get_project_dir(user_id, project_id)
             p = secure_path_join(d, file_path)
             if not p.exists(): 
                 # Try subdirs
@@ -86,12 +85,11 @@ class ListFilesTool(BaseTool):
     async def run(self, sub_dir: str = "refs", **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
         session: AsyncSession = kwargs.get("session")
-        project_id: str = kwargs.get("project_id") or kwargs.get("project_name") or 'hub'
+        project_id: str = kwargs.get("project_id")
         if not user_id: return {"success": False, "message": "Context error"}
         
         try:
-            name = await get_project_name_from_id(user_id, project_id, session)
-            d = get_project_dir(user_id, name) / sub_dir
+            d = get_project_dir(user_id, project_id) / sub_dir
             if not d.exists():
                 return {"success": True, "message": f"Subdirectory {sub_dir} is empty or doesn't exist.", "data": {"files": []}}
             files = [f.name for f in d.rglob('*') if f.is_file()]
@@ -114,7 +112,7 @@ class DeleteArtifactTool(BaseTool):
     async def run(self, file_path: str, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
         session: AsyncSession = kwargs.get("session")
-        project_id: str = kwargs.get("project_id") or kwargs.get("project_name") or 'hub'
+        project_id: str = kwargs.get("project_id")
         if not user_id: return {"success": False, "message": "Context error"}
         
         try:

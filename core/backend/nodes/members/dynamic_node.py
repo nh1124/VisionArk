@@ -5,31 +5,31 @@ from tools.tool_utils import get_tool_by_name
 
 class DynamicMemberNode(BaseNode):
     """
-    A generic member node that configures itself from a DB AgentProfile.
+    A generic member node that configures itself from a DB Node (MEMBER type).
     """
     
-    def __init__(self, context: Dict[str, Any], profile: Any, status_callback: Optional[Any] = None):
+    def __init__(self, context: Dict[str, Any], node: Any, status_callback: Optional[Any] = None):
         super().__init__(context, status_callback)
-        self.profile = profile
-        self.role_name = profile.role_name
-        self.display_name = profile.display_name or self.role_name.title()
+        self.node = node
+        self.role_name = node.role_name
+        self.display_name = node.display_name or self.role_name.title()
         
         # Load tools from profile
         self.tools = []
-        if profile.tools:
-            for tool_name in profile.tools:
+        if node.tools:
+            for tool_name in node.tools:
                 tool = get_tool_by_name(tool_name)
                 if tool:
                     self.tools.append(tool)
                 else:
                     print(f"[DynamicMemberNode] Warning: Tool '{tool_name}' not found for member '{self.role_name}'")
 
-    def load_system_prompt(self, role_name: Optional[str] = None) -> str:
+    async def load_system_prompt(self, role_name: Optional[str] = None) -> str:
         """
         Prioritize DB prompt, then fallback to asset lookup.
         """
-        # If the profile has a system prompt, use it as the 'role' part
-        db_prompt = self.profile.system_prompt
+        # If the node has a system prompt, use it as the 'role' part
+        db_prompt = self.node.system_prompt
         
         # We still want the global prompt
         from utils.paths import get_prompts_dir
@@ -44,14 +44,14 @@ class DynamicMemberNode(BaseNode):
         if db_prompt:
             return f"{global_text}\n\n## Your Role: {self.display_name}\n{db_prompt}"
         
-        return super().load_system_prompt(role_name or self.role_name)
+        return await super().load_system_prompt(role_name or self.role_name)
 
     async def pre_process(self):
         pass
 
     async def process(self, message: str) -> Any:
         # Load Prompt
-        system_prompt = self.load_system_prompt()
+        system_prompt = await self.load_system_prompt()
         
         # Construct History (usually delegation is a single-shot or limited history)
         # For dynamic workers, we might want to pass more history, but let's stick to the prompt-based execution.

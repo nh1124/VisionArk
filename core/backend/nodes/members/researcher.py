@@ -30,7 +30,7 @@ class ResearcherNode(BaseNode):
 
     async def process(self, message: str) -> Any:
         # 1. Load Prompt
-        system_prompt = self.load_system_prompt("researcher")
+        system_prompt = await self.load_system_prompt("researcher")
         
         # 2. Call LLM with Tools
         llm_response = await self.chat_with_tools(

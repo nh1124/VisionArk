@@ -36,6 +36,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsLoading(false);
     }, []);
 
+    // Listen for global auth errors (e.g., 401)
+    useEffect(() => {
+        const handleAuthError = () => {
+            console.log("AuthContext: Received auth error signal, logging out...");
+            logout();
+        };
+
+        window.addEventListener("atmos-auth-error", handleAuthError);
+        return () => window.removeEventListener("atmos-auth-error", handleAuthError);
+    }, []);
+
     const login = (newToken: string, newUserId: string, newUsername: string) => {
         localStorage.setItem("atmos_access_token", newToken);
         localStorage.setItem("atmos_user_id", newUserId);

@@ -41,9 +41,9 @@ class IndexResponse(BaseModel):
     details: List[dict] = []
 
 
-@router.post("/{project_name}/search", response_model=List[SearchResult])
+@router.post("/{project_id}/search", response_model=List[SearchResult])
 async def search_knowledge_base(
-    project_name: str,
+    project_id: str,
     req: SearchRequest,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
@@ -52,16 +52,23 @@ async def search_knowledge_base(
     Semantic search in a Project's knowledge base
     """
     try:
-        rag = RAGService(identity.user_id, project_name, db)
+        # Verify Project Exists
+        stmt = select(Node.id).filter(Node.user_id == identity.user_id, Node.id == project_id)
+        if not (await db.execute(stmt)).scalars().first():
+            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+
+        rag = RAGService(identity.user_id, project_id, db)
         results = await rag.search(req.query, req.n_results, req.filter_file)
         return results
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
-@router.post("/{project_name}/index", response_model=IndexResponse)
+@router.post("/{project_id}/index", response_model=IndexResponse)
 async def index_refs_directory(
-    project_name: str,
+    project_id: str,
     req: IndexRequest,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
@@ -70,16 +77,23 @@ async def index_refs_directory(
     Index all PDFs in the Project's refs/ directory
     """
     try:
-        rag = RAGService(identity.user_id, project_name, db)
+        # Verify Project Exists
+        stmt = select(Node.id).filter(Node.user_id == identity.user_id, Node.id == project_id)
+        if not (await db.execute(stmt)).scalars().first():
+            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+
+        rag = RAGService(identity.user_id, project_id, db)
         results = await rag.index_directory()
         return results
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Indexing failed: {str(e)}")
 
 
-@router.post("/{project_name}/upload")
+@router.post("/{project_id}/upload")
 async def upload_reference_file(
-    project_name: str,
+    project_id: str,
     file: UploadFile = File(...),
     auto_index: bool = True,
     identity: Identity = Depends(resolve_identity),
@@ -96,8 +110,13 @@ async def upload_reference_file(
         import aiofiles
         import shutil
         
+        # Verify Project Exists
+        stmt = select(Node.id).filter(Node.user_id == identity.user_id, Node.id == project_id)
+        if not (await db.execute(stmt)).scalars().first():
+            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+            
         # Save file
-        refs_dir = get_project_dir(identity.user_id, project_name) / "refs"
+        refs_dir = get_project_dir(identity.user_id, project_id) / "refs"
         refs_dir.mkdir(parents=True, exist_ok=True)
         
         file_path = refs_dir / file.filename
@@ -114,18 +133,20 @@ async def upload_reference_file(
         
         # Auto-index if requested
         if auto_index:
-            rag = RAGService(identity.user_id, project_name, db)
+            rag = RAGService(identity.user_id, project_id, db)
             index_result = await rag.index_pdf(file_path)
             response["index_result"] = index_result
         
         return response
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
-@router.get("/{project_name}/files")
+@router.get("/{project_id}/files")
 async def list_indexed_files(
-    project_name: str,
+    project_id: str,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
@@ -133,16 +154,23 @@ async def list_indexed_files(
     List all indexed files in a Project's knowledge base
     """
     try:
-        rag = RAGService(identity.user_id, project_name, db)
+        # Verify Project Exists
+        stmt = select(Node.id).filter(Node.user_id == identity.user_id, Node.id == project_id)
+        if not (await db.execute(stmt)).scalars().first():
+            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+
+        rag = RAGService(identity.user_id, project_id, db)
         files = await rag.get_indexed_files()
         return {"files": files}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list files: {str(e)}")
 
 
-@router.get("/{project_name}/stats")
+@router.get("/{project_id}/stats")
 async def get_rag_stats(
-    project_name: str,
+    project_id: str,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
@@ -150,16 +178,23 @@ async def get_rag_stats(
     Get RAG statistics for a Project
     """
     try:
-        rag = RAGService(identity.user_id, project_name, db)
+        # Verify Project Exists
+        stmt = select(Node.id).filter(Node.user_id == identity.user_id, Node.id == project_id)
+        if not (await db.execute(stmt)).scalars().first():
+            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+
+        rag = RAGService(identity.user_id, project_id, db)
         stats = await rag.get_stats()
         return stats
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
 
 
-@router.post("/{project_name}/rebuild")
+@router.post("/{project_id}/rebuild")
 async def rebuild_index(
-    project_name: str,
+    project_id: str,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
@@ -167,19 +202,26 @@ async def rebuild_index(
     Rebuild the entire RAG index from scratch
     """
     try:
-        rag = RAGService(identity.user_id, project_name, db)
+        # Verify Project Exists
+        stmt = select(Node.id).filter(Node.user_id == identity.user_id, Node.id == project_id)
+        if not (await db.execute(stmt)).scalars().first():
+            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+
+        rag = RAGService(identity.user_id, project_id, db)
         results = await rag.rebuild_index()
         return {
             "rebuilt": True,
             **results
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Rebuild failed: {str(e)}")
 
 
-@router.delete("/{project_name}/files/{filename}")
+@router.delete("/{project_id}/files/{filename}")
 async def delete_reference_file(
-    project_name: str,
+    project_id: str,
     filename: str,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
@@ -187,7 +229,12 @@ async def delete_reference_file(
     """
     Delete a reference file and remove from index
     """
-    file_path = get_project_dir(identity.user_id, project_name) / "refs" / filename
+    # Verify Project Exists
+    stmt = select(Node.id).filter(Node.user_id == identity.user_id, Node.id == project_id)
+    if not (await db.execute(stmt)).scalars().first():
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+
+    file_path = get_project_dir(identity.user_id, project_id) / "refs" / filename
     
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")

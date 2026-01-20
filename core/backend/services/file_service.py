@@ -10,7 +10,7 @@ from google.genai import Client, types
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from models.database import UploadedFile, Node
+from models.database import UploadedFile, Project
 from utils.paths import get_project_dir
 
 # File size limit: 100MB
@@ -58,23 +58,20 @@ class FileService:
     
     def get_files_dir(self, project_id: str) -> Path:
         """Get files directory (refs) based on project ID"""
-        # Map legacy 'root' to 'hub' for project name
-        project_name = "hub" if project_id == "root" or not project_id else project_id
+        # Map legacy 'root' to 'hub' for project ID
+        p_id = project_id
         
-        base = get_project_dir(self.user_id, project_name)
+        base = get_project_dir(self.user_id, p_id)
         
         path = base / "refs"  # Default to refs for library uploads
         path.mkdir(parents=True, exist_ok=True)
         return path
     
-    async def _get_node(self, project_id: str) -> Optional[Node]:
-        """Get node from database"""
-        node_name = "hub" if project_id == "root" or not project_id else project_id
-        
-        # V4: Query by name only
-        result = await self.db.execute(select(Node).filter(
-            Node.user_id == self.user_id,
-            Node.name == node_name
+    async def _get_project(self, project_id: str) -> Optional[Project]:
+        """Get project from database by ID"""
+        result = await self.db.execute(select(Project).filter(
+            Project.user_id == self.user_id,
+            Project.id == project_id
         ))
         return result.scalars().first()
     
@@ -91,9 +88,9 @@ class FileService:
         if len(content) > MAX_FILE_SIZE_BYTES:
             raise ValueError(f"File size exceeds limit of {MAX_FILE_SIZE_BYTES // (1024*1024)}MB")
         
-        node = await self._get_node(project_id)
-        if not node:
-            raise ValueError(f"Node for project '{project_id}' not found.")
+        proj = await self._get_project(project_id)
+        if not proj:
+            raise ValueError(f"Project '{project_id}' not found.")
         
         file_id = str(uuid4())
         ext = Path(filename).suffix
@@ -107,7 +104,7 @@ class FileService:
         # Create database record
         uploaded_file = UploadedFile(
             id=file_id,
-            node_id=node.id,
+            project_id=proj.id,
             filename=filename,
             storage_path=str(file_path),
             mime_type=mime_type,

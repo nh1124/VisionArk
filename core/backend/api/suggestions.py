@@ -172,10 +172,8 @@ def _check_inactive_projects(user_id: str, session: Session, today: date) -> Lis
     
     try:
         # Get all project nodes for the user (excluding hub)
-        # V4: Query by name != 'hub'
         projects = session.query(Node).filter(
             Node.user_id == user_id,
-            Node.name != "hub",
             Node.is_archived == False
         ).all()
         
@@ -187,7 +185,7 @@ def _check_inactive_projects(user_id: str, session: Session, today: date) -> Lis
             if project.updated_at:
                 last_activity = project.updated_at.date() if hasattr(project.updated_at, 'date') else project.updated_at
                 if last_activity < inactive_threshold:
-                    inactive_projects.append(project.name)
+                    inactive_projects.append(project.display_name)
         
         if inactive_projects:
             count = len(inactive_projects)

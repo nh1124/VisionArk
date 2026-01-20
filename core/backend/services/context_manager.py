@@ -19,29 +19,32 @@ from utils.paths import get_project_dir, get_prompts_dir
 class ContextManager:
     """Manages conversation context rotation and archiving (per-user)"""
     
-    def __init__(self, user_id: str, context_type: str, context_name: str, session: Optional[AsyncSession] = None):
+    def __init__(self, user_id: str, context_type: str, project_id: str, session: Optional[AsyncSession] = None):
         """
         Initialize context manager
         
         Args:
             user_id: User ID for scoped paths
             context_type: "project" (formerly hub/spoke)
-            context_name: Project name (slug)
+            project_id: Project UUID or identifier
             session: Database session for tracking
         """
         self.user_id = user_id
-        self.context_type = context_type # kept for compat, but usually "project" now
-        self.context_name = context_name
+        self.context_type = context_type
+        self.project_id = project_id
         self.session = session
         
-        # V4: Unified Project Paths
-        # Hub is treated as a project named 'hub'
-        target_name = "hub" if context_type == "hub" or context_name == "hub" else context_name
-        self.base_dir = get_project_dir(user_id, target_name)
+        # V5: ID-based Unified Project Paths
+        # Hub is treated as a project with ID 'hub'
+        target_id = project_id
+        self.base_dir = get_project_dir(user_id, target_id)
         
         self.chat_log_path = self.base_dir / "chat.log"
         self.logs_archive_dir = self.base_dir / "logs"
         self.logs_archive_dir.mkdir(parents=True, exist_ok=True)
+        
+        # For legacy DB compatibility (project_name field)
+        self.context_name = None # Will resolve on demand if needed
         
         # Will be initialized on demand with user API key
         self._llm = None
@@ -51,23 +54,22 @@ class ContextManager:
         Load conversation history from database (preferred) or chat log (fallback)
         """
         if self.session:
-            from models.database import Node, ChatSession, ChatMessage
+            from models.database import Project, ChatSession, ChatMessage
             from sqlalchemy import select
             
             try:
-                # 1. Find the Node by name (uniqueness per user enforced by app logic)
-                # We ignore node_type for lookup to be safe with V3->V4 migration
-                node_result = await self.session.execute(select(Node).filter(
-                    Node.user_id == self.user_id,
-                    Node.name == self.context_name
+                # 1. Find the Project by ID
+                proj_result = await self.session.execute(select(Project).filter(
+                    Project.user_id == self.user_id,
+                    Project.id == self.project_id
                 ))
-                node = node_result.scalars().first()
-                if not node:
+                proj = proj_result.scalars().first()
+                if not proj:
                     return []
                 
                 # 2. Get active session
                 session_result = await self.session.execute(select(ChatSession).filter(
-                    ChatSession.node_id == node.id,
+                    ChatSession.project_id == proj.id,
                     ChatSession.is_archived == False
                 ).order_by(ChatSession.created_at.desc()))
                 chat_session = session_result.scalars().first()
@@ -223,28 +225,29 @@ Conversation to summarize:
         if not self.session:
             return
             
-        from models.database import Node, ChatSession
+        from models.database import Project, ChatSession
         from sqlalchemy import select, update
         
         try:
-            # Find the node
-            node_result = await self.session.execute(select(Node.id).filter(
-                Node.user_id == self.user_id,
-                Node.name == self.context_name
+            # Find the project
+            proj_result = await self.session.execute(select(Project).filter(
+                Project.user_id == self.user_id,
+                Project.id == self.project_id
             ))
-            node_id = node_result.scalars().first()
-            if not node_id:
+            proj = proj_result.scalars().first()
+            if not proj:
                 return
+            proj_id, proj_name = proj.id, proj.name
 
-            # Mark all non-archived sessions for this node as archived
+            # Mark all non-archived sessions for this project as archived
             # (Usually there's only one active session)
             await self.session.execute(
                 update(ChatSession)
-                .where(ChatSession.node_id == node_id, ChatSession.is_archived == False)
+                .where(ChatSession.project_id == proj_id, ChatSession.is_archived == False)
                 .values(is_archived=True, updated_at=datetime.utcnow())
             )
             await self.session.commit()
-            print(f"[ContextManager] Session archived in DB for {self.context_name}")
+            print(f"[ContextManager] Session archived in DB for project {proj_name}")
         except Exception as e:
             print(f"[ContextManager] Failed to mark session archived: {e}")
             await self.session.rollback()
@@ -283,7 +286,7 @@ Conversation to summarize:
             try:
                 result = await self.session.execute(
                     select(ArchivedContext).filter(
-                        ArchivedContext.project_name == self.context_name,
+                        ArchivedContext.project_id == self.project_id,
                         ArchivedContext.user_id == self.user_id
                     ).order_by(ArchivedContext.archived_at.desc())
                 )
@@ -318,23 +321,24 @@ Conversation to summarize:
         if not self.session:
             return
         
-        from models.database import ArchivedContext, Node
+        from models.database import ArchivedContext, Project
         from sqlalchemy import select
         
         try:
-            # Try to find node_id for better indexing
+            # Try to find project
             result = await self.session.execute(
-                select(Node.id).filter(
-                    Node.user_id == self.user_id,
-                    Node.name == self.context_name
+                select(Project).filter(
+                    Project.user_id == self.user_id,
+                    Project.id == self.project_id
                 )
             )
-            node_id = result.scalars().first()
+            proj = result.scalars().first()
+            if not proj:
+                return
             
             new_record = ArchivedContext(
                 user_id=self.user_id,
-                node_id=node_id,
-                project_name=self.context_name,
+                project_id=proj.id,
                 archived_at=datetime.utcnow(),
                 summary_path=str(summary_path),
                 log_path=str(log_path) if log_path else None,
@@ -343,7 +347,7 @@ Conversation to summarize:
             
             self.session.add(new_record)
             await self.session.commit()
-            print(f"[ContextManager] Archived context record saved for {self.context_name}")
+            print(f"[ContextManager] Archived context record saved for project {proj.name}")
         except Exception as e:
             print(f"Failed to save archive record: {e}")
             await self.session.rollback()

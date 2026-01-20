@@ -28,10 +28,18 @@ export async function apiFetch(
     }
 
     // Use relative URL - Next.js rewrites will proxy /api/* to backend
-    return fetch(url, {
+    const response = await fetch(url, {
         ...restOptions,
         headers,
     });
+
+    // Intercept 401 Unauthorized globally
+    if (response.status === 401 && typeof window !== "undefined") {
+        console.warn("Unauthorized request detected (401), triggering logout signal");
+        window.dispatchEvent(new CustomEvent("atmos-auth-error"));
+    }
+
+    return response;
 }
 
 /**

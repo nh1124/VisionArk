@@ -5,15 +5,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
 
 class AskNodeArgs(BaseModel):
-    target: str = Field(..., description="The name of the target project/node (e.g., 'hub', 'research-alpha')")
+    target: str = Field(..., description="The ID of the target project/node (e.g., a UUID)")
     message: str = Field(..., description="The content of the message to send")
 
 class AskNodeTool(BaseTool):
     name = "ask_node"
     description = (
         "Send a message or a sub-task to another project node. "
-        "ATTENTION: Use this for cross-project coordination. Avoid asking questions the target agent may not have context for. "
-        "HOW TO USE: 'ask_node(target=\"research-alpha\", message=\"What are the findings for phase 1?\")'."
+        "ATTENTION: Use this for cross-project coordination. Always use project_id (UUID) as the target."
+        "HOW TO USE: 'ask_node(target=\"hub\", message=\"What are the findings for phase 1?\")'."
     )
     args_schema = AskNodeArgs
 
@@ -25,7 +25,7 @@ class AskNodeTool(BaseTool):
         
         try:
             from nodes.project.project_node import ProjectNode
-            ctx = {'user_id': user_id, 'db_session': session, 'node_id': target}
+            ctx = {'user_id': user_id, 'db_session': session, 'project_id': target}
             node = ProjectNode(ctx)
             resp = await node.process(message)
             return {"success": True, "message": f"Response from {target}: {resp}", "data": {"response": resp}}
@@ -48,7 +48,7 @@ class DelegateTaskTool(BaseTool):
     async def run(self, role: str, instruction: str, **kwargs) -> Any:
         session: AsyncSession = kwargs.get("session")
         user_id: str = kwargs.get("user_id")
-        project_id: str = kwargs.get("project_id") or kwargs.get("project_name")
+        project_id: str = kwargs.get("project_id")
         if not session or not user_id:
             return {"success": False, "message": "Context error: session or user_id missing"}
 
