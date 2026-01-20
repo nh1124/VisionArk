@@ -14,6 +14,7 @@ class PlannerNode(BaseNode):
         from tools.library.markdown import InitPlanTool, UpdatePlanProgressTool, GetCurrentStatusTool
         from tools.library.ai import MermaidVisualizerTool
         from tools.library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool
+        from tools.library.members import UpdateNodeDescriptionTool
         
         self.tools = [
             InitPlanTool(),
@@ -22,7 +23,8 @@ class PlannerNode(BaseNode):
             MermaidVisualizerTool(),
             SaveArtifactTool(),
             ReadReferenceTool(),
-            ListFilesTool()
+            ListFilesTool(),
+            UpdateNodeDescriptionTool()
         ]
 
     async def pre_process(self):

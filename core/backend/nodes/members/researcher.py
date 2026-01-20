@@ -13,6 +13,7 @@ class ResearcherNode(BaseNode):
         from tools.library.search import GoogleSearchTool, ResearchURLTool, SearchPlacesTool
         from tools.library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool
         from tools.library.knowledge import SearchKnowledgeTool, IngestKnowledgeTool
+        from tools.library.members import UpdateNodeDescriptionTool
         
         self.tools = [
             GoogleSearchTool(),
@@ -22,7 +23,8 @@ class ResearcherNode(BaseNode):
             ReadReferenceTool(),
             ListFilesTool(),
             SearchKnowledgeTool(),
-            IngestKnowledgeTool()
+            IngestKnowledgeTool(),
+            UpdateNodeDescriptionTool()
         ]
 
     async def pre_process(self):

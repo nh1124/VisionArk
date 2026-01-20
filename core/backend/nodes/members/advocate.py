@@ -17,6 +17,7 @@ class AdvocateNode(BaseNode):
         from tools.library.condition import GetCurrentConditionTool, UpdateUserConditionTool
         from tools.library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool
         from tools.library.knowledge import SearchKnowledgeTool, IngestKnowledgeTool
+        from tools.library.members import UpdateNodeDescriptionTool
         
         self.tools = [
             GetCurrentConditionTool(),
@@ -25,7 +26,8 @@ class AdvocateNode(BaseNode):
             ReadReferenceTool(),
             ListFilesTool(),
             SearchKnowledgeTool(),
-            IngestKnowledgeTool()
+            IngestKnowledgeTool(),
+            UpdateNodeDescriptionTool()
         ]
 
     async def pre_process(self):

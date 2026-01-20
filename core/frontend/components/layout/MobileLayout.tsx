@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import MobileSidebar from "./MobileSidebar";
 
 interface MobileLayoutProps {
@@ -10,6 +11,15 @@ interface MobileLayoutProps {
 
 export default function MobileLayout({ children }: MobileLayoutProps) {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+    const pathname = usePathname();
+
+    const getPageTitle = () => {
+        if (pathname === "/dashboard") return "Dashboard";
+        if (pathname === "/tasks") return "Tasks";
+        if (pathname.startsWith("/projects")) return "Projects";
+        if (pathname === "/settings") return "Settings";
+        return "Vision Ark";
+    };
 
     return (
         <div className="flex flex-col h-[100dvh] w-full bg-gray-950 overflow-hidden">
@@ -21,16 +31,18 @@ export default function MobileLayout({ children }: MobileLayoutProps) {
 
             {/* Mobile Header: Simple & Focused */}
             <header className="h-14 border-b border-gray-800 flex items-center justify-between px-4 bg-gray-950/80 backdrop-blur-xl z-20 flex-shrink-0">
-                <Link href="/" className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center font-bold text-white text-sm shadow-[0_0_15px_rgba(37,99,235,0.3)]">
-                        V
-                    </div>
-                </Link>
+                <div className="flex items-center gap-3">
+                    <Link href="/" className="flex items-center gap-2">
+                        <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center font-bold text-white text-sm shadow-[0_0_15px_rgba(37,99,235,0.3)]">
+                            V
+                        </div>
+                    </Link>
+                    <h1 className="text-sm font-bold text-gray-200 tracking-tight">
+                        {getPageTitle()}
+                    </h1>
+                </div>
 
-                <div className="flex items-center gap-4">
-                    <span className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-500">
-                        Vision Ark
-                    </span>
+                <div className="flex items-center gap-2">
                     <button
                         onClick={() => setIsSidebarOpen(true)}
                         className="p-2 text-gray-400 hover:text-white transition-colors"

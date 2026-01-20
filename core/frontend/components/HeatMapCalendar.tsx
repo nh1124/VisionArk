@@ -143,8 +143,8 @@ export default function HeatMapCalendar({
                                         hover:scale-[1.02] active:scale-[0.98]
                                     `}
                                 >
-                                    <div className="flex justify-between items-center mb-1">
-                                        <span className={`text-[10px] sm:text-sm font-bold tracking-tight ${cell.data ? 'text-gray-400' : 'text-gray-700'}`}>
+                                    <div className="flex justify-between items-center mb-0.5 sm:mb-1">
+                                        <span className={`text-[9px] sm:text-xs font-bold leading-none ${cell.data ? 'text-gray-400' : 'text-gray-600'}`}>
                                             {cell.day}
                                         </span>
                                         {cell.data && (

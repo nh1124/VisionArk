@@ -49,6 +49,7 @@ class ManageMemberArgs(BaseModel):
     action: Literal["create", "update", "delete"] = Field(..., description="Action to perform")
     role_name: str = Field(..., description="The slug name of the member (e.g., 'writer')")
     display_name: Optional[str] = Field(None, description="Human readable name")
+    description: Optional[str] = Field(None, description="1-2 sentence summary of the member's expertise")
     system_prompt: Optional[str] = Field(None, description="The custom instructions for this member")
     tools: Optional[List[str]] = Field(None, description="List of tool names allowed for this member")
 
@@ -82,6 +83,7 @@ class ManageMemberTool(BaseTool):
                     node_type="MEMBER",
                     role_name=role_name,
                     display_name=kwargs.get("display_name") or role_name.title(),
+                    description=kwargs.get("description"),
                     system_prompt=kwargs.get("system_prompt") or f"You are a helpful '{role_name}' assistant.",
                     tools=kwargs.get("tools") or [],
                     status="active",
@@ -103,6 +105,8 @@ class ManageMemberTool(BaseTool):
                 
                 if "display_name" in kwargs and kwargs["display_name"]:
                     node.display_name = kwargs["display_name"]
+                if "description" in kwargs and kwargs["description"]:
+                    node.description = kwargs["description"]
                 if "system_prompt" in kwargs and kwargs["system_prompt"]:
                     node.system_prompt = kwargs["system_prompt"]
                 if "tools" in kwargs and kwargs["tools"]:
@@ -128,3 +132,53 @@ class ManageMemberTool(BaseTool):
         except Exception as e:
             if session: await session.rollback()
             return {"success": False, "message": f"Operation failed: {e}"}
+
+class UpdateNodeDescriptionArgs(BaseModel):
+    description: str = Field(..., description="The new 1-2 sentence description for this node")
+    target_role: Optional[str] = Field(None, description="The role name of the member to update. Pass None (null) to update your own description.")
+
+class UpdateNodeDescriptionTool(BaseTool):
+    name = "update_node_description"
+    description = (
+        "Update the 'Short Description' for a node. "
+        "Use this to refine your own expertise summary (pass target_role=None) or update another member's description "
+        "to help the Project Node delegate more effectively."
+    )
+    args_schema = UpdateNodeDescriptionArgs
+
+    async def run(self, description: str, target_role: Optional[str] = None, **kwargs) -> Any:
+        session: AsyncSession = kwargs.get("session")
+        project_id: str = kwargs.get("project_id")
+        current_node_id: str = kwargs.get("node_id")
+        
+        if not session or not project_id:
+            return {"success": False, "message": "Missing context (session or project_id)"}
+
+        try:
+            if target_role:
+                # Update another member
+                role_name = target_role.lower().strip()
+                res = await session.execute(select(Node).where(
+                    Node.project_id == project_id,
+                    Node.role_name == role_name,
+                    Node.node_type == "MEMBER"
+                ))
+                node = res.scalars().first()
+                if not node:
+                    return {"success": False, "message": f"Member '{role_name}' not found."}
+            else:
+                # Update self
+                if not current_node_id:
+                    return {"success": False, "message": "Missing node_id to update self."}
+                res = await session.execute(select(Node).where(Node.id == current_node_id))
+                node = res.scalars().first()
+                if not node:
+                    return {"success": False, "message": "Current node record not found."}
+
+            node.description = description
+            await session.commit()
+            return {"success": True, "message": f"✅ Updated description for {node.role_name or 'current node'}."}
+
+        except Exception as e:
+            if session: await session.rollback()
+            return {"success": False, "message": f"Failed to update description: {e}"}

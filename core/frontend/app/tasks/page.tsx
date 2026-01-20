@@ -54,6 +54,7 @@ interface Task {
 
 export default function UnifiedTasksPage() {
     // State
+    const isMobile = useIsMobile();
     const [selectedTask, setSelectedTask] = useState<Task | null>(null);
     const [panelOpen, setPanelOpen] = useState(false);
     const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -227,51 +228,62 @@ export default function UnifiedTasksPage() {
 
             <div className="w-full max-w-5xl px-4 sm:px-8 py-8 sm:py-12 flex-1 flex flex-col min-h-0">
                 {/* Header */}
-                <div className="flex justify-between items-start mb-10">
-                    <div>
+                {/* Header */}
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 sm:gap-0 mb-6 sm:mb-10">
+                    <div className={`${isMobile ? 'hidden' : 'block'}`}>
                         <h1 className="text-3xl font-bold mb-1 text-white tracking-tight">
                             Daily Results
                         </h1>
-                        <div className="flex items-center gap-3 text-gray-400 font-bold">
-                            <span>{formatDateHeader(targetDate)}</span>
-                            <div className="flex items-center gap-1 bg-gray-900/50 border border-gray-800 rounded-lg p-0.5">
-                                <button onClick={() => changeDate(-1)} className="p-1 hover:bg-gray-800 rounded-md transition-colors">
-                                    <ChevronDown className="rotate-90 w-4 h-4" />
+                    </div>
+
+                    <div className="w-full sm:w-auto flex flex-col sm:flex-row items-center gap-3">
+                        {/* Date Controls */}
+                        <div className="w-full sm:w-auto flex items-center justify-between sm:justify-start gap-3 bg-gray-900/40 sm:bg-transparent p-2 sm:p-0 rounded-xl sm:rounded-none border border-gray-800/50 sm:border-none">
+                            <div className="flex items-center gap-3 text-gray-400 font-bold">
+                                <span className={isMobile ? 'text-sm' : 'text-base'}>{formatDateHeader(targetDate)}</span>
+                                <div className="flex items-center gap-1 bg-gray-900/50 border border-gray-800 rounded-lg p-0.5">
+                                    <button onClick={() => changeDate(-1)} className="p-1 hover:bg-gray-800 rounded-md transition-colors">
+                                        <ChevronLeft className="w-4 h-4" />
+                                    </button>
+                                    <button onClick={() => changeDate(1)} className="p-1 hover:bg-gray-800 rounded-md transition-colors">
+                                        <ChevronRight className="w-4 h-4" />
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="w-full sm:w-auto flex items-center justify-center sm:justify-start gap-2">
+                            {/* View Switcher */}
+                            <div className="flex items-center gap-0.5 bg-gray-900/80 border border-gray-800 rounded-xl p-1">
+                                <button
+                                    onClick={() => setViewMode("list")}
+                                    className={`p-1.5 sm:p-2 rounded-lg transition-all ${viewMode === "list" ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
+                                    title="List View"
+                                >
+                                    <List className="w-4 h-4" />
                                 </button>
-                                <button onClick={() => changeDate(1)} className="p-1 hover:bg-gray-800 rounded-md transition-colors">
-                                    <ChevronDown className="-rotate-90 w-4 h-4" />
+                                <button
+                                    onClick={() => setViewMode("calendar")}
+                                    className={`p-1.5 sm:p-2 rounded-lg transition-all ${viewMode === "calendar" ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
+                                    title="Calendar View"
+                                >
+                                    <CalendarDays className="w-4 h-4" />
+                                </button>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                <button onClick={() => setImportModalOpen(true)} className="p-2 sm:p-3 bg-gray-900/80 border border-gray-800 rounded-xl hover:bg-gray-800 transition-all text-gray-400 hover:text-white" title="Import">
+                                    <Upload className="w-4 h-4 sm:w-5 h-5" />
+                                </button>
+                                <button onClick={handleExportCSV} className="p-2 sm:p-3 bg-gray-900/80 border border-gray-800 rounded-xl hover:bg-gray-800 transition-all text-gray-400 hover:text-white" title="Export">
+                                    <Download className="w-4 h-4 sm:w-5 h-5" />
+                                </button>
+                                <button onClick={() => { loadTasks(); setRefreshKey(k => k + 1); }} className="p-2 sm:p-3 bg-gray-900/80 border border-gray-800 rounded-xl hover:bg-gray-800 transition-all text-gray-400 hover:text-white" title="Refresh">
+                                    <RefreshCw className={`w-4 h-4 sm:w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
                                 </button>
                             </div>
                         </div>
-                    </div>
-                    <div className="flex gap-2 items-center">
-                        {/* View Switcher */}
-                        <div className="flex items-center gap-0.5 bg-gray-900/80 border border-gray-800 rounded-xl p-1 mr-2">
-                            <button
-                                onClick={() => setViewMode("list")}
-                                className={`p-2 rounded-lg transition-all ${viewMode === "list" ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
-                                title="List View"
-                            >
-                                <List className="w-4 h-4" />
-                            </button>
-                            <button
-                                onClick={() => setViewMode("calendar")}
-                                className={`p-2 rounded-lg transition-all ${viewMode === "calendar" ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
-                                title="Calendar View"
-                            >
-                                <CalendarDays className="w-4 h-4" />
-                            </button>
-                        </div>
-
-                        <button onClick={() => setImportModalOpen(true)} className="p-3 bg-gray-900/80 border border-gray-800 rounded-xl hover:bg-gray-800 transition-all text-gray-400 hover:text-white" title="Import">
-                            <Upload className="w-5 h-5" />
-                        </button>
-                        <button onClick={handleExportCSV} className="p-3 bg-gray-900/80 border border-gray-800 rounded-xl hover:bg-gray-800 transition-all text-gray-400 hover:text-white" title="Export">
-                            <Download className="w-5 h-5" />
-                        </button>
-                        <button onClick={() => { loadTasks(); setRefreshKey(k => k + 1); }} className="p-3 bg-gray-900/80 border border-gray-800 rounded-xl hover:bg-gray-800 transition-all text-gray-400 hover:text-white" title="Refresh">
-                            <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
-                        </button>
                     </div>
                 </div>
 
@@ -300,6 +312,7 @@ export default function UnifiedTasksPage() {
                                             <TaskRow
                                                 key={task.task_id}
                                                 task={task}
+                                                isMobile={!!isMobile}
                                                 onToggle={() => handleMarkDone(task.task_id, task.status || 'todo')}
                                                 onClick={async () => {
                                                     const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}`);
@@ -328,6 +341,7 @@ export default function UnifiedTasksPage() {
                                                         <TaskRow
                                                             key={task.task_id}
                                                             task={task}
+                                                            isMobile={!!isMobile}
                                                             onToggle={() => handleMarkDone(task.task_id, task.status || 'todo')}
                                                             onClick={async () => {
                                                                 const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}`);
@@ -456,11 +470,11 @@ export default function UnifiedTasksPage() {
                                 </div>
                             )}
 
-                            <div className={`bg-gray-900/95 backdrop-blur-xl border border-gray-800 rounded-3xl overflow-hidden transition-all duration-300 ${quickAddFocused ? 'bg-gray-900/98 shadow-xl shadow-black/40' : ''}`}>
-                                <div className="p-1 flex flex-col">
-                                    <div className="flex items-center gap-4 px-4 py-3">
-                                        <div className="w-6 h-6 flex items-center justify-center">
-                                            <Plus className={`w-6 h-6 ${quickAddFocused ? 'text-blue-500' : 'text-gray-600'} transition-colors`} />
+                            <div className={`bg-gray-900/95 backdrop-blur-xl border border-gray-800 rounded-2xl sm:rounded-3xl overflow-hidden transition-all duration-300 ${quickAddFocused ? 'bg-gray-900/98 shadow-xl shadow-black/40' : ''}`}>
+                                <div className="p-0.5 sm:p-1 flex flex-col">
+                                    <div className={`flex items-center gap-2 sm:gap-4 px-3 sm:px-4 ${isMobile ? 'py-1.5' : 'py-3'}`}>
+                                        <div className="w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center">
+                                            <Plus className={`${isMobile ? 'w-5 h-5' : 'w-6 h-6'} ${quickAddFocused ? 'text-blue-500' : 'text-gray-600'} transition-colors`} />
                                         </div>
                                         <input
                                             type="text"
@@ -470,16 +484,16 @@ export default function UnifiedTasksPage() {
                                             onFocus={() => { setQuickAddFocused(true); setActiveOptions(true); }}
                                             onKeyDown={(e) => e.key === 'Enter' && handleQuickAdd()}
                                             disabled={quickAddLoading}
-                                            className="flex-1 bg-transparent border-none focus:ring-0 text-lg font-bold placeholder:text-gray-600 placeholder:font-bold py-2 outline-none"
+                                            className={`flex-1 bg-transparent border-none focus:ring-0 font-bold placeholder:text-gray-600 placeholder:font-bold outline-none ${isMobile ? 'text-sm py-1' : 'text-lg py-2'}`}
                                         />
                                         {quickAddName && (
                                             <button
                                                 onClick={handleQuickAdd}
                                                 disabled={quickAddLoading}
-                                                className="p-2 bg-blue-600 hover:bg-blue-500 rounded-xl transition-all shadow-lg active:scale-95 flex items-center justify-center"
+                                                className={`${isMobile ? 'p-1.5' : 'p-2'} bg-blue-600 hover:bg-blue-500 rounded-lg sm:rounded-xl transition-all shadow-lg active:scale-95 flex items-center justify-center`}
                                             >
-                                                <div className="w-5 h-5 flex items-center justify-center">
-                                                    {quickAddLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ChevronDown className="-rotate-90 w-5 h-5" />}
+                                                <div className="w-4 h-4 sm:w-5 sm:h-5 flex items-center justify-center">
+                                                    {quickAddLoading ? <RefreshCw className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin" /> : <ChevronDown className="-rotate-90 w-4 h-4 sm:w-5 sm:h-5" />}
                                                 </div>
                                             </button>
                                         )}
@@ -516,41 +530,41 @@ export default function UnifiedTasksPage() {
 }
 
 // Sub-component for a task row
-function TaskRow({ task, onToggle, onClick }: { task: Task, onToggle: () => void, onClick: () => void }) {
+function TaskRow({ task, onToggle, onClick, isMobile }: { task: Task, onToggle: () => void, onClick: () => void, isMobile: boolean }) {
     const isCompleted = task.status === 'done' || task.status === 'skipped';
 
     return (
         <div
             onClick={onClick}
-            className={`flex items-center gap-3 px-3 py-2.5 bg-gray-900/40 hover:bg-gray-900/80 border ${isCompleted ? 'border-gray-800/30 opacity-60' : 'border-gray-800/60'} rounded-xl group transition-all cursor-pointer`}
+            className={`flex items-center gap-2 sm:gap-3 px-2 sm:px-3 py-2 sm:py-2.5 bg-gray-900/40 hover:bg-gray-900/80 border-b border-gray-800/10 sm:border ${isCompleted ? 'opacity-60' : ''} sm:rounded-xl group transition-all cursor-pointer`}
         >
             <button
                 onClick={(e) => { e.stopPropagation(); onToggle(); }}
-                className={`w-5 h-5 flex-shrink-0 flex items-center justify-center transition-transform active:scale-90 ${isCompleted ? 'text-blue-500' : 'text-gray-600 hover:text-gray-400'}`}
+                className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 flex items-center justify-center transition-transform active:scale-90 ${isCompleted ? 'text-blue-500' : 'text-gray-600 hover:text-gray-400'}`}
             >
-                {isCompleted ? <CheckCircle2 className="w-5 h-5" /> : <Circle className="w-5 h-5" />}
+                {isCompleted ? <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" /> : <Circle className="w-4 h-4 sm:w-5 sm:h-5" />}
             </button>
-            <h3 className={`flex-1 min-w-0 text-sm font-semibold truncate transition-colors group-hover:text-blue-400 ${isCompleted ? 'line-through text-gray-500' : 'text-white'}`}>
+            <h3 className={`flex-1 min-w-0 font-semibold truncate transition-colors group-hover:text-blue-400 ${isCompleted ? 'line-through text-gray-500' : 'text-white'} ${isMobile ? 'text-[13px]' : 'text-sm'}`}>
                 {task.task_name}
             </h3>
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0 ml-auto">
                 <span
-                    className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-white/5"
+                    className="text-[8px] sm:text-[9px] font-black uppercase tracking-wider px-1.2 sm:px-1.5 py-0.5 rounded bg-white/5"
                     style={{ color: getSpokeColor(task.context) }}
                 >
                     {task.context}
                 </span>
                 {task.due_date && (
-                    <span className="text-[9px] font-semibold text-gray-600 flex items-center gap-1">
-                        <Calendar className="w-3 h-3" />
-                        {task.due_date}
+                    <span className="text-[8px] sm:text-[9px] font-semibold text-gray-600 flex items-center gap-1">
+                        <Calendar className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                        <span className="whitespace-nowrap">{isMobile ? task.due_date.split('-').slice(1).join('/') : task.due_date}</span>
                     </span>
                 )}
-                <span className="text-[9px] font-bold text-gray-600 px-1.5 py-0.5 bg-gray-800/40 rounded">
+                <span className="text-[8px] sm:text-[9px] font-bold text-gray-600 px-1 sm:px-1.5 py-0.5 bg-gray-800/40 rounded min-w-[1.2rem] text-center">
                     {task.base_load_score}
                 </span>
             </div>
-            <Star className="w-4 h-4 flex-shrink-0 text-gray-700 hover:text-amber-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+            {!isMobile && <Star className="w-4 h-4 flex-shrink-0 text-gray-700 hover:text-amber-500 opacity-0 group-hover:opacity-100 transition-opacity" />}
         </div>
     );
 }

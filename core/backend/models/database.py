@@ -215,6 +215,7 @@ class Node(Base):
     node_type = Column(String(20), default="PROJECT")  # SYSTEM/PROJECT/MEMBER
     role_name = Column(String(50), nullable=True)  # e.g. "orchestrator", "researcher"
     display_name = Column(String(200), nullable=False, index=True)
+    description = Column(String(500), nullable=True)  # Short summary of expertise
     system_prompt = Column(Text, nullable=True)  # Agent prompt
     tools = Column(JSON, default=list)  # List of tool names
     status = Column(String(20), default="active")  # active/paused/archived
@@ -407,6 +408,15 @@ def _run_migrations(engine):
                 conn.execute(text("ALTER TABLE agent_profiles ADD COLUMN tools JSON"))
                 conn.commit()
                 print("✅ Migration: Added role_name, display_name, and tools columns to agent_profiles")
+
+    # Migration: Add description to nodes if missing
+    if 'nodes' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('nodes')]
+        if 'description' not in columns:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE nodes ADD COLUMN description VARCHAR(500)"))
+                conn.commit()
+                print("✅ Migration: Added description column to nodes")
     # Migration: Rename project_name/source_project to project_id in multiple tables
     for table, old_col, new_col in [
         ('rag_metadata', 'project_name', 'project_id'),

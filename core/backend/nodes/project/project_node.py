@@ -31,13 +31,14 @@ class ProjectNode(BaseNode):
         from tools.library.search import GoogleSearchTool
         from tools.library.ai import GenerateImageTool
         from tools.library.condition import GetCurrentConditionTool, UpdateUserConditionTool
-        from tools.library.members import ListMembersTool, ManageMemberTool
+        from tools.library.members import ListMembersTool, ManageMemberTool, UpdateNodeDescriptionTool
         
         self.tools = [
             AskNodeTool(),
             DelegateTaskTool(),
             ListMembersTool(),
             ManageMemberTool(),
+            UpdateNodeDescriptionTool(),
 
             ListTasksTool(),
             CreateTaskTool(),
@@ -206,8 +207,63 @@ class ProjectNode(BaseNode):
         knowledge_context = await self.memory.get_knowledge_context(message)
         if knowledge_context:
             system_prompt += f"\n\n## Relevant Knowledge\n{knowledge_context}"
+            
+        # Inject Active Team Roster (Meta-Cognition)
+        roster_text = ""
+        from models.database import AsyncSessionLocal, Node, Project
+        from sqlalchemy import select, or_, and_
+        async with AsyncSessionLocal() as db:
+            # 1. System Nodes
+            system_res = await db.execute(select(Node).filter(
+                Node.node_type == "SYSTEM",
+                Node.status == "active"
+            ))
+            system_nodes = system_res.scalars().all()
+            
+            # 2. Member Nodes (Current Project only)
+            member_res = await db.execute(select(Node).filter(
+                Node.project_id == self.project_id,
+                Node.node_type == "MEMBER",
+                Node.status == "active"
+            ))
+            member_nodes = member_res.scalars().all()
+            
+            # 3. Peer Projects (Other projects belonging to user)
+            project_res = await db.execute(
+                select(Node).join(Project, Node.project_id == Project.id).filter(
+                    Project.user_id == self.user_id,
+                    Node.node_type == "PROJECT",
+                    Node.id != self.node_id,
+                    Node.status == "active"
+                )
+            )
+            peer_projects = project_res.scalars().all()
+            
+            if system_nodes or member_nodes or peer_projects:
+                roster_text = "\n\n## Active Team Roster\nYou can delegate tasks or ask for information from these specialist nodes:\n"
+                
+                if system_nodes:
+                    roster_text += "\n### System Nodes (Infrastructure)\n"
+                    for m in system_nodes:
+                        desc = m.description or "Provides core system capabilities."
+                        roster_text += f"- **{m.display_name}** ({m.role_name}): {desc}\n"
+                
+                if member_nodes:
+                    roster_text += "\n### Project Specialists (Direct Delegation)\n"
+                    for m in member_nodes:
+                        desc = m.description or "Specialist for " + m.role_name
+                        roster_text += f"- **{m.display_name}** ({m.role_name}): {desc}\n"
+                        
+                if peer_projects:
+                    roster_text += "\n### Peer Projects (Cross-Project Collaboration)\n"
+                    for m in peer_projects:
+                        desc = m.description or "Collaborative project node."
+                        roster_text += f"- **{m.display_name}** (Project ID: {m.project_id}): {desc}\n"
         
-        # 4. Check API Key
+        if roster_text:
+            system_prompt += roster_text
+        
+        # 5. Check API Key
         if not self.context.get("api_key"):
             return "❌ No API Key found. Please configure your Gemini API Key in Settings > AI Config."
 

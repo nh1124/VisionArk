@@ -23,6 +23,10 @@ class DynamicMemberNode(BaseNode):
                     self.tools.append(tool)
                 else:
                     print(f"[DynamicMemberNode] Warning: Tool '{tool_name}' not found for member '{self.role_name}'")
+        
+        # Always allow self-description update
+        from tools.library.members import UpdateNodeDescriptionTool
+        self.tools.append(UpdateNodeDescriptionTool())
 
     async def load_system_prompt(self, role_name: Optional[str] = None) -> str:
         """

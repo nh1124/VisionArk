@@ -128,7 +128,7 @@ export default function DashboardPage() {
         <div className="min-h-screen bg-gray-950 text-white p-6 lg:p-8">
             <div className="max-w-7xl mx-auto">
                 {/* Header */}
-                <div className="flex justify-between items-center mb-8">
+                <div className="flex justify-between items-center mb-8 hidden sm:flex">
                     <div>
                         <h1 className="text-3xl font-bold text-white tracking-tight">Dashboard</h1>
                         <p className="text-gray-500 text-sm mt-1">Human State OS / Personal Load Balance</p>
