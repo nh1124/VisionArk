@@ -1,7 +1,7 @@
 from typing import Any, Optional, Dict
 from pydantic import BaseModel, Field
 from tools.base import BaseTool
-from tools.utils import resolve_project_artifacts_dir, get_project_name_from_id
+from tools.utils import resolve_project_artifacts_dir
 from utils.paths import secure_path_join, get_project_dir
 from sqlalchemy.ext.asyncio import AsyncSession
 import os

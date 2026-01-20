@@ -149,12 +149,6 @@ def get_user_root_dir(user_id: str) -> Path:
     user_dir.mkdir(parents=True, exist_ok=True)
     return user_dir
 
-
-# Legacy Spoke/Hub directory functions have been removed.
-# Use get_project_dir(user_id, project_name) for all projects (including "hub").
-
-
-
 # ============================================================
 # Project Name & Cache Utilities
 # ============================================================
@@ -176,9 +170,6 @@ def get_project_name(user_id: str, project_id: str) -> str:
     Get the folder name for a project. 
     First checks cache, then falls back to synchronous DB query.
     """
-    if project_id == "hub":
-        return "hub"
-    
     cache_key = (user_id, project_id)
     if cache_key in _PROJECT_NAME_CACHE:
         return _PROJECT_NAME_CACHE[cache_key]

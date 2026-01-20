@@ -21,11 +21,11 @@ class BaseNode(ABC):
         
     async def load_system_prompt(self, role_name: Optional[str] = None) -> str:
         """
-        Load the system prompt from database (AgentProfile) or backend assets.
+        Load the system prompt from database (Node) or backend assets.
         Global + Role Specific + Dynamic Tool Descriptions.
         """
         from utils.paths import get_prompts_dir
-        from models.database import AsyncSessionLocal, AgentProfile, Node
+        from models.database import AsyncSessionLocal, Node
         from sqlalchemy import select
         
         prompts_dir = get_prompts_dir()
@@ -55,10 +55,10 @@ class BaseNode(ABC):
                     
                     if node:
                         profile_result = await db.execute(
-                            select(AgentProfile).filter(
-                                AgentProfile.node_id == node.id,
-                                AgentProfile.role_name == role_name,
-                                AgentProfile.is_active == True
+                            select(Node).filter(
+                                Node.id == node.id,
+                                Node.role_name == role_name,
+                                Node.is_active == True
                             )
                         )
                         profile = profile_result.scalars().first()
