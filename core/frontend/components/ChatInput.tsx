@@ -2,6 +2,7 @@
 
 import { useState, useRef, DragEvent, useEffect, memo } from "react";
 import { useNotification } from "@/lib/NotificationContext";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 interface ChatInputProps {
     value?: string;
@@ -51,6 +52,7 @@ function ChatInputComponent({
     const audioChunksRef = useRef<Blob[]>([]);
 
     const { showToast } = useNotification();
+    const isMobile = useIsMobile();
 
     // Update internal value when external value prop changes
     useEffect(() => {
@@ -66,7 +68,9 @@ function ChatInputComponent({
         const textarea = textareaRef.current;
         if (textarea) {
             textarea.style.height = "auto";
-            const newHeight = Math.min(textarea.scrollHeight, isExpanded ? 600 : 200);
+            const minHeight = isMobile ? 40 : (isExpanded ? 200 : 48);
+            const maxHeight = isExpanded ? 600 : 200;
+            const newHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight);
             textarea.style.height = `${newHeight}px`;
         }
     };
@@ -235,7 +239,7 @@ function ChatInputComponent({
     };
 
     return (
-        <div className="sticky bottom-0 bg-gray-950 border-t border-gray-800 p-4">
+        <div className={`sticky bottom-0 bg-gray-950 border-t border-gray-800 ${isMobile ? "p-2" : "p-4"}`}>
             {/* File Attachments Preview */}
             {attachedFiles.length > 0 && (
                 <div className="mb-3 flex flex-wrap gap-2">
@@ -290,11 +294,11 @@ function ChatInputComponent({
                         onKeyDown={handleKeyDown}
                         onPaste={handlePaste}
                         placeholder={isDragging ? "Drop files here..." : placeholder}
-                        className={`w-full bg-transparent border-none focus:outline-none resize-none py-4 px-6 text-gray-100 placeholder-gray-600 ${isExpanded ? "flex-1 text-lg mb-4" : ""}`}
+                        className={`w-full bg-transparent border-none focus:outline-none resize-none px-4 text-gray-100 placeholder-gray-600 ${isExpanded ? "flex-1 text-lg mb-4" : ""} ${isMobile ? "py-2.5 text-sm" : "py-4"}`}
                         disabled={disabled}
                         style={{
-                            minHeight: isExpanded ? "200px" : "48px",
-                            maxHeight: isExpanded ? "none" : "120px",
+                            minHeight: isMobile ? "40px" : (isExpanded ? "200px" : "48px"),
+                            maxHeight: isExpanded ? "none" : (isMobile ? "100px" : "120px"),
                             overflowY: "auto"
                         }}
                     />
@@ -321,7 +325,7 @@ function ChatInputComponent({
                 </div>
 
                 {/* Bottom Row: Controls */}
-                <div className={`flex items-center justify-between gap-1 px-2 sm:px-4 py-2 border-t border-gray-800/50 ${showModelMenu || showToolsMenu ? "" : "overflow-x-auto no-scrollbar"
+                <div className={`flex items-center justify-between gap-1 border-t border-gray-800/50 ${isMobile ? "px-2 py-1" : "px-4 py-2"} ${showModelMenu || showToolsMenu ? "" : "overflow-x-auto no-scrollbar"
                     }`}>
                     {/* Left Side Buttons */}
                     <div className="flex items-center gap-0.5 sm:gap-1 flex-shrink-0">

@@ -137,27 +137,23 @@ export default function HeatMapCalendar({
                                     key={cellIdx}
                                     onClick={() => onDayClick?.(cell.dateStr)}
                                     className={`
-                                        aspect-square rounded-2xl border-2 p-3 flex flex-col justify-between transition-all cursor-pointer relative group
+                                        aspect-square rounded-xl border p-1.5 sm:p-3 flex flex-col justify-start transition-all cursor-pointer relative group
                                         ${getLevelBgColor(level)}
-                                        ${isActive ? 'ring-2 ring-blue-500/50 ring-offset-4 ring-offset-gray-950' : ''}
+                                        ${isActive ? 'ring-2 ring-blue-500/50 ring-offset-2 ring-offset-gray-950' : ''}
                                         hover:scale-[1.02] active:scale-[0.98]
                                     `}
                                 >
-                                    <div className="flex justify-between items-start">
-                                        <span className={`text-sm font-semibold tracking-wide ${cell.data ? 'text-gray-400' : 'text-gray-700'}`}>
+                                    <div className="flex justify-between items-center mb-1">
+                                        <span className={`text-[10px] sm:text-sm font-bold tracking-tight ${cell.data ? 'text-gray-400' : 'text-gray-700'}`}>
                                             {cell.day}
                                         </span>
                                         {cell.data && (
-                                            <div className={`w-2 h-2 rounded-full shadow-sm ${getLevelDotColor(level)}`} />
+                                            <div className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full shadow-sm ${getLevelDotColor(level)}`} />
                                         )}
                                     </div>
 
-                                    <div className="flex flex-col items-center justify-center -mt-2">
-                                        {/* Numerical load and task counts removed to reduce cognitive load */}
-                                    </div>
-
                                     {/* Glass reflection effect */}
-                                    <div className="absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/5 to-transparent rounded-t-2xl pointer-events-none" />
+                                    <div className="absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/5 to-transparent rounded-t-xl pointer-events-none" />
                                 </div>
                             );
                         })}

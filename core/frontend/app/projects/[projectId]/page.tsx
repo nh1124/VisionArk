@@ -654,21 +654,23 @@ export default function ProjectChatPage({
                 {/* Input - Fixed at bottom */}
                 <div className="pb-8 px-4">
                     <div className="max-w-4xl mx-auto flex flex-col min-h-0">
-                        <div className="flex justify-between items-center mb-2 px-4">
-                            <div className="text-[10px] text-gray-500 font-mono uppercase tracking-widest">
-                                Ready for input
+                        {!isMobile && (
+                            <div className="flex justify-between items-center mb-2 px-4">
+                                <div className="text-[10px] text-gray-500 font-mono uppercase tracking-widest">
+                                    Ready for input
+                                </div>
+                                {messages.length > 0 && (
+                                    <button
+                                        onClick={handleUndo}
+                                        disabled={loading}
+                                        className="flex items-center gap-1.5 text-[10px] font-bold text-gray-500 hover:text-cyan-400 uppercase tracking-wider transition-colors disabled:opacity-50"
+                                    >
+                                        <RotateCcw size={12} />
+                                        Undo Last
+                                    </button>
+                                )}
                             </div>
-                            {messages.length > 0 && (
-                                <button
-                                    onClick={handleUndo}
-                                    disabled={loading}
-                                    className="flex items-center gap-1.5 text-[10px] font-bold text-gray-500 hover:text-cyan-400 uppercase tracking-wider transition-colors disabled:opacity-50"
-                                >
-                                    <RotateCcw size={12} />
-                                    Undo Last
-                                </button>
-                            )}
-                        </div>
+                        )}
                         <ChatInput
                             value={commandInputValue}
                             onCommandModeChange={(isCommand, value) => {

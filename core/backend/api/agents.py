@@ -17,7 +17,7 @@ from typing import Optional, List, Dict
 
 from services.inbox_handler import InboxHandler, extract_meta_actions_from_chat
 from services.auth import resolve_identity, Identity, resolve_identity_for_download
-from models.database import Node, Project, get_async_db
+from models.database import Node, Project, ChatSession, ChatMessage, UploadedFile, get_async_db
 from utils.paths import get_project_dir, get_user_projects_dir, validate_name, secure_path_join, update_project_name_cache as update_cache
 from uuid import uuid4
 from datetime import datetime
@@ -28,7 +28,7 @@ router = APIRouter(prefix="/api/agents", tags=["Agents"])
 _project_cache = set()
 
 # Pydantic models
-class ChatMessage(BaseModel):
+class ChatMessageSchema(BaseModel):
     message: str
 
 class TruncateRequest(BaseModel):
@@ -106,7 +106,6 @@ async def chat_with_project(
     """Chat with a specific Project agent"""
     from queue_system.manager import QueueManager
     from services.file_service import FileService
-    from models.database import UploadedFile
     import mimetypes
     
 
@@ -187,7 +186,6 @@ async def get_project_history(
     db: AsyncSession = Depends(get_async_db)
 ):
     """Get Project conversation history"""
-    from models.database import ChatSession, ChatMessage
     
     try:
         # Get project node or project itself
@@ -255,7 +253,6 @@ async def delete_project_messages_truncate(
             raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
             
         # Get active session
-        from models.database import ChatSession
         result = await db.execute(select(ChatSession).filter(
             ChatSession.project_id == proj.id,
             ChatSession.is_archived == False
@@ -296,7 +293,6 @@ async def branch_project_chat(
     db: AsyncSession = Depends(get_async_db)
 ):
     """Branch Project conversation into a new Project"""
-    from models.database import ChatSession, ChatMessage
     
     try:
         # 1. Get source project
@@ -658,7 +654,6 @@ async def delete_project(
     db: AsyncSession = Depends(get_async_db)
 ):
     """Delete a Project by marking it as archived in DB (soft delete)"""
-    from models.database import ChatSession, ChatMessage
     import shutil
     
     # Find the project
@@ -957,7 +952,6 @@ async def clone_project(
             db.add(new_node)
             
         # 5. Copy Chat Sessions and Messages
-        from models.database import ChatSession, ChatMessage
         result = await db.execute(select(ChatSession).filter(ChatSession.project_id == source_proj_id))
         sessions = result.scalars().all()
         for session in sessions:
@@ -987,7 +981,6 @@ async def clone_project(
                 db.add(new_msg)
                 
         # 6. Copy Files Database Records
-        from models.database import UploadedFile
         result = await db.execute(select(UploadedFile).filter(UploadedFile.project_id == source_proj_id))
         files = result.scalars().all()
         

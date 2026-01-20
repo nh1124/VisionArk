@@ -219,7 +219,6 @@ export default function DashboardPage() {
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
                         <div>
                             <h2 className="text-lg font-medium tracking-tight text-gray-200">LBS Calendar</h2>
-                            <p className="text-xs font-medium text-gray-500 mt-1">Monthly schedule and predictive load mapping.</p>
                         </div>
 
                         <div className="flex items-center gap-4">

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import { apiFetch } from "@/lib/api";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { getSpokeColor } from "@/lib/colors";
 import TaskEditPanel from "../components/TaskEditPanel";
 import TaskCreateModal from "../components/TaskCreateModal";
