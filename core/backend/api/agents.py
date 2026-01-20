@@ -16,7 +16,7 @@ from sqlalchemy import select, update, delete
 from typing import Optional, List, Dict
 
 from services.inbox_handler import InboxHandler, extract_meta_actions_from_chat
-from services.auth import resolve_identity, Identity
+from services.auth import resolve_identity, Identity, resolve_identity_for_download
 from models.database import Node, Project, get_async_db
 from utils.paths import get_project_dir, get_user_projects_dir, validate_name, secure_path_join, update_project_name_cache as update_cache
 from uuid import uuid4
@@ -255,6 +255,7 @@ async def delete_project_messages_truncate(
             raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
             
         # Get active session
+        from models.database import ChatSession
         result = await db.execute(select(ChatSession).filter(
             ChatSession.project_id == proj.id,
             ChatSession.is_archived == False
@@ -522,7 +523,7 @@ async def create_project_from_prompt(
             "user_id": identity.user_id,
             "preferred_model": x_preferred_model,
             "env": "v4",
-            "project_id": result["node_id"],
+            "project_id": result["project_id"],
             "files": []
         }
         
@@ -530,6 +531,7 @@ async def create_project_from_prompt(
         
         return {
             "project_name": project_name,
+            "project_id": result["project_id"],
             "node_id": result["node_id"],
             "task_id": task_id,
             "message": f"Project '{project_name}' created and initial message queued"
@@ -739,7 +741,7 @@ async def list_project_artifacts(
 async def get_project_artifact(
     project_id: str,
     file_path: str,
-    identity: Identity = Depends(resolve_identity),
+    identity: Identity = Depends(resolve_identity_for_download),
     db: AsyncSession = Depends(get_async_db)
 ):
     """Get the content of an artifact file"""

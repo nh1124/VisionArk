@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, DragEvent, useEffect, memo } from "react";
+import { useNotification } from "@/lib/NotificationContext";
 
 interface ChatInputProps {
     value?: string;
@@ -48,6 +49,8 @@ function ChatInputComponent({
     const [isRecording, setIsRecording] = useState(false);
     const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
     const audioChunksRef = useRef<Blob[]>([]);
+
+    const { showToast } = useNotification();
 
     // Update internal value when external value prop changes
     useEffect(() => {
@@ -211,7 +214,7 @@ function ChatInputComponent({
             setIsRecording(true);
         } catch (error) {
             console.error("Error accessing microphone:", error);
-            alert("Could not access microphone. Please check permissions.");
+            showToast("Could not access microphone. Please check permissions.", "error");
         }
     };
 

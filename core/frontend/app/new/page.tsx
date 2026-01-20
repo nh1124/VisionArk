@@ -40,7 +40,7 @@ export default function NewProjectPage() {
             }
 
             const data = await response.json();
-            router.push(`/projects/${data.project_name}?task_id=${data.task_id}`);
+            router.push(`/projects/${data.project_id}?task_id=${data.task_id}`);
         } catch (err: any) {
             console.error("Error creating project:", err);
             setError(err.message || "Failed to create project.");

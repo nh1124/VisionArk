@@ -22,8 +22,8 @@ Vision Ark
 
 ### **目的 (Purpose)**
 
-本システムは、ユーザーの活動における「状態（State）」「事実（Facts）」「経験ログ（Episodes）」および「タスク／負荷（LBS）」を永続化し、Hub/Spoke型の対話エージェントがそれらを参照・更新できるインターフェースを提供する。  
-単なるToDo管理ではなく、ユーザーの意思決定と実行を支える \*\*Exocortex（外部化された思考基盤）\*\*として機能することを目的とする。  
+本システムは、ユーザーの活動における「状態（State）」「事実（Facts）」「経験ログ（Episodes）」および「タスク／負荷（LBS）」を永続化し、Project/Node型の対話エージェントがそれらを参照・更新できるインターフェースを提供する。  
+単なるToDo管理ではなく、ユーザーの意思決定と実行を支える **Exocortex（外部化された思考基盤）**として機能することを目的とする。  
  
 
 ## **開発哲学 (Development Philosophy)**
@@ -38,7 +38,7 @@ Vision Ark
 
 2. ### **Decentralized Execution (自律分散実行)**
 
-中央集権的な巨大な脳（Single Huge Context）を作らない。各プロジェクト（Spoke）は、それぞれ独立したファイルシステム、参照資料、Personaを持つ「閉じた宇宙」として動作する。サービスは疎結合とし、相互依存を最小化する。  
+中央集権的な巨大な脳（Single Huge Context）を作らない。各プロジェクト（Project）およびその内部ノード（Node）は、それぞれ独立したファイルシステム、参照資料、Personaを持つ「閉じた宇宙」として動作する。サービスは疎結合とし、相互依存を最小化する。  
  
 
 3. ### **tate over Memory (記憶より状態)**
@@ -286,65 +286,65 @@ AIとの対話における「待ち時間」を、単なる静止時間から「
 
 # **システムアーキテクチャ (System Architecture)**
 
-## **全体構成図 (Hub-Spoke Model)**
+## **全体構成図 (Project-Node Model)**
 
-本システムは、中央のHubが全体最適（Orchestration）を担いつつ、各Spokeが自律的に実行（Execution）と相互連携を行う「階層的連邦モデル」を採用する。ユーザーはUIを通じて任意のAgent（Node）に直接アクセスし、Agent間はツール呼び出しを通じて連携する。  
+本システムは、中央のProject Nodeが全体最適（Orchestration）を担いつつ、必要に応じてMember Nodeが専門的な実行（Execution）を行う「Project-Nodeモデル」を採用する。ユーザーはUIを通じて任意のProject（Node）に直接アクセスし、Agent間はツール呼び出しを通じて連携する。  
 graph TD  
-  subgraph UI\_Layer \[Antigravity Shell (UI)\]  
-    Chat\[Chat Interface\]  
-    Dash\[LBS Dashboard\]  
-    InboxUI\[Inbox View\]  
+  subgraph UI_Layer [Antigravity Shell (UI)]  
+    Chat[Chat Interface]  
+    Dash[LBS Dashboard]  
+    InboxUI[Inbox View]  
   end
 
-  subgraph Agent\_Runtime \[Agent Network\]  
-    Hub\[👑 Hub Agent (PM)\]  
-    SpokeA\[💎 Spoke: Research\]  
-    SpokeB\[💰 Spoke: Finance\]  
+  subgraph Agent_Runtime [Agent Network]  
+    PNode[👑 Project Node (Orchestrator)]  
+    MNodeA[💎 Member: Research]  
+    MNodeB[💰 Member: Finance]  
       
-    %% Spoke-to-Spoke (Federated)  
-    SpokeA \<--\>|Direct Dialogue| SpokeB  
+    %% Node-to-Node (Federated)  
+    MNodeA <-->|Direct Dialogue| MNodeB  
       
-    %% Hub-Spoke (Hierarchical)  
-    Hub \<--\>|Directive / Report| SpokeA  
-    Hub \<--\>|Directive / Report| SpokeB  
+    %% Hierarchy
+    PNode <-->|Directive / Report| MNodeA  
+    PNode <-->|Directive / Report| MNodeB  
   end
 
-  subgraph Coordination \[Coordination Buffer\]  
-    Inbox\[(Inbox / Request Queue)\]  
+  subgraph Coordination [Coordination Buffer]  
+    Inbox[(Inbox / Request Queue)]  
   end
 
-  subgraph OS\_Sovereignty \[Core System Storage (SSOT)\]  
-    CoreDB\[(Core DB / Internal RAG)\]  
+  subgraph OS_Sovereignty [Core System Storage (SSOT)]  
+    CoreDB[(Core DB / Internal RAG)]  
   end
 
-  subgraph Microservices \[External Services\]  
-    LBS\[LBS Service (Calculator)\]  
-    KC\[Knowledge Core (Personalization)\]  
+  subgraph Microservices [External Services]  
+    LBS[LBS Service (Calculator)]  
+    KC[Knowledge Core (Personalization)]  
   end
 
   %% UI Interaction (Manual Selection)  
-  Chat \--\>|Select Node| Hub  
-  Chat \--\>|Select Node| SpokeA  
-  Chat \--\>|Select Node| SpokeB  
+  Chat -->|Select Node| PNode  
+  Chat -->|Select Node| MNodeA  
+  Chat -->|Select Node| MNodeB  
     
-  InboxUI \<--\>|Review & Approve| Inbox  
-  Dash \<--\>|Visualize| LBS
+  InboxUI <-->|Review & Approve| Inbox  
+  Dash <-->|Visualize| LBS
 
   %% Inbox Flow (Asynchronous)  
-  SpokeA \-- Tool Call: Push Request \--\> Inbox  
-  SpokeB \-- Tool Call: Push Request \--\> Inbox  
-  Inbox \-- Batch Process \--\> Hub
+  MNodeA -- Tool Call: Push Request --> Inbox  
+  MNodeB -- Tool Call: Push Request --> Inbox  
+  Inbox -- Batch Process --> PNode
 
   %% Service Access: LBS  
-  Hub \<--\>|Read / Write (Exclusive)| LBS  
-  SpokeA \-.-\>|Read Only| LBS  
-  SpokeB \-.-\>|Read Only| LBS
+  PNode <-->|Read / Write (Exclusive)| LBS  
+  MNodeA -.->|Read Only| LBS  
+  MNodeB -.->|Read Only| LBS
 
   %% Service Access: Knowledge Core (Personalization)  
-  Hub & SpokeA & SpokeB \-.-\>|Fetch User Context| KC
+  PNode & MNodeA & MNodeB -.->|Fetch User Context| KC
 
   %% Data Access: Internal RAG (OS managed files)  
-  Hub & SpokeA & SpokeB \<--\>|Reference Documents| CoreDB
+  PNode & MNodeA & MNodeB <-->|Reference Documents| CoreDB
 
  
 
@@ -352,20 +352,20 @@ graph TD
 
 | サービス名称 | Layer | 責務 |
 | ----- | ----- | ----- |
-| **Core System (Hub)** | UI / Orchestration | ユーザー認証、エージェント管理、UI（Chat/Dashboard/Inbox）、サービス間認証（\*\*署名付き認証\*\*）を担当。LBS/KC ServiceへのAPIゲートウェイとして機能し、\*\*LBS/KCへの書き込み権限を持つ唯一のクライアント\*\*となる。 |
-| **LBS Microservice** | SSOT / Core Logic | **負荷計算、タスク正本（マスターデータ）、スケジューリングロジック、およびユーザー状態（疲労度等）管理**を担当。Hubからの承認済みActionのみを受け付け、DBへの書き込み権限を持つ（\*\*独立サービス\*\*）。 |
-| **Knowledge Core (KC)** | SSOT / Core Logic | ユーザー文脈（Facts/States/Episodes）の長期記憶と管理を担当。ユーザーとHub/Spokeのやり取りから必要な情報を記憶し，Hub/Spokeに最適な追加情報を提供する（Phase 3で統合）。 |
-| **Spoke Agents** | Execution | 各プロジェクト固有の判断・分解・生成を担当。LBS/KCへのデータ変更提案を **Inbox** に送信する。 |
+| **Core System (Project Node)** | UI / Orchestration | ユーザー認証、エージェント管理、UI（Chat/Dashboard/Inbox）、サービス間認証（**署名付き認証**）を担当。LBS/KC ServiceへのAPIゲートウェイとして機能し、**LBS/KCへの書き込み権限を持つ唯一のクライアント**となる。 |
+| **LBS Microservice** | SSOT / Core Logic | **負荷計算、タスク正本（マスターデータ）、スケジューリングロジック、およびユーザー状態（疲労度等）管理**を担当。Projectからの承認済みActionのみを受け付け、DBへの書き込み権限を持つ（**独立サービス**）。 |
+| **Knowledge Core (KC)** | SSOT / Core Logic | ユーザー文脈（Facts/States/Episodes）の長期記憶と管理を担当。ユーザーとProject/Memberのやり取りから必要な情報を記憶し，Project/Memberに最適な追加情報を提供する（Phase 3で統合）。 |
+| **Member Nodes** | Execution | 各プロジェクト固有の判断・分解・生成を担当。LBS/KCへのデータ変更提案を **Inbox** に送信する。 |
 
 ##  **データ管理とマルチテナント (DB-Centric Design & Multi-Tenancy)**
 
 | 項目 | 旧管理方法（Old） | 新管理方法（New: v2.2） |
 | ----- | ----- | ----- |
 | **データ基盤** | **JSON/Markdownファイル（ファイルシステム）** | **PostgreSQL による DB中心設計** |
-| **プロジェクト管理 (Spoke)** | **spokes/ ディレクトリ** | **` NODES ` テーブルのレコードとして管理** |
+| **プロジェクト管理 (Nodes)** | **nodes/ ディレクトリ** | **` NODES ` テーブルのレコードとして管理** |
 | **チャットログ** | **chat.log (テキストファイル)** | **` CHAT_SESSIONS ` テーブルで構造化管理 (SQL)** |
 | **ユーザー管理** | **シングルユーザー** | **マルチユーザー・マルチテナント対応。全ての主要テーブルに **user_id** を付与し、論理的なデータ隔離を担保。** |
-| **ファイル管理** | **spokes/ ディレクトリ直下** | **` UPLOADED_FILES ` テーブル + `data/users/` 物理ストレージ。Gemini File APIとの同期機能付き。** |
+| **ファイル管理** | **{project_id}/ ディレクトリ直下** | **` UPLOADED_FILES ` テーブル + `data/users/` 物理ストレージ。Gemini File APIとの同期機能付き。** |
 | **サービス間認証** | **なし** | **API Key / JWT を導入し、サービス間のセキュアな連携を実現。** |
 
 
@@ -385,16 +385,16 @@ graph TD
   * HubおよびすべてのSpokeは、起動時（コンテキスト生成時）にこのレイヤーをシステムプロンプトの一部として読み込む。  
   * AI自身がこのレイヤーを変更することは許可されない。変更にはユーザーによる明示的なファイル更新（Gitコミットやファイル上書き）が必要であり、これによりAIによる「目標の勝手な書き換え」や「ルールの自己都合解釈」を防ぐ。
 
-### **Layer 2: The HUB (Orchestration Layer)**
+### **Layer 2: The PROJECT NODE (Orchestration Layer)**
 
 * **役割:** リソース（時間・認知・労力）の最適配分と、プロジェクト間の競合調停を行う「管制塔」。  
 * **責任:**  
   * **LBS (Load Balancing System) 管理:** 全タスクの負荷スコア（Load Score）を監視・集計する。特定の日に負荷が集中した場合、優先順位の低いタスクを別日へ移動させるなどの調整案を提示し、システム全体のオーバーフローを防ぐ。  
-  * **Inbox処理 (Information Traffic Control):** Spokeから非同期に送信されてくる報告（Inbox Buffer）を処理する。ノイズを除去し、重要な更新のみをコンテキストに取り込み、LBSデータベースへ反映させる。  
-  * **Spoke管理 (Lifecycle Management):** 新規プロジェクト発生時のSpoke生成（ディレクトリ作成、初期設定）や、プロジェクト完了時のSpokeアーカイブ（ログ保存、コンテキスト破棄）を行う。  
+  * **Inbox処理 (Information Traffic Control):** Member Nodeから非同期に送信されてくる報告（Inbox Buffer）を処理する。ノイズを除去し、重要な更新のみをコンテキストに取り込み、LBSデータベースへ反映させる。  
+  * **Node管理 (Lifecycle Management):** 新規プロジェクト発生時のProject/Member Node生成（ディレクトリ作成、初期設定）や、プロジェクト完了時のNodeアーカイブ（ログ保存、コンテキスト破棄）を行う。  
 ### **ファイルシステムとストレージ (File System & Storage)**
 
-本システムは、膨大な非構造化データ（PDF, CSV, 画像など）を扱うが、これらを論理的な「ノード（Spoke/Hub）」に紐付けて管理する。物理的なファイル配置は、マルチユーザー環境を考慮した隔離構造をとる。
+本システムは、膨大な非構造化データ（PDF, CSV, 画像など）を扱うが、これらを論理的な「ノード（Project/Member）」に紐付けて管理する。物理的なファイル配置は、マルチユーザー環境を考慮した隔離構造をとる。
 
 #### **1. File Metadata (Database)**
 - すべてのアップロードファイルは `UPLOADED_FILES` テーブルにメタデータ（ファイル名、サイズ、MIMEタイプ、ハッシュ値）が記録される。
@@ -402,7 +402,7 @@ graph TD
 
 #### **2. Physical Storage (data/users/)**
 - 物理ファイルは以下の階層構造で保存される。
-  - `data/users/{user_id}/{node_name}/`
+  - `data/users/{user_id}/{project_id}/`
 - `user_id` によるディレクトリ隔離により、他ユーザーによる不正アクセスをファイルアクセスレベルで防ぐ。
 - ホスト側のボリュームマウント設定により、コンテナ再起動後もデータは永続化される。
 
@@ -410,33 +410,33 @@ graph TD
 - AIによる高度な解析（マルチモーダル処理や長文読解）が必要な場合、ファイルは Gemini File API へ一時的に同期される。
 - `kc_sync_status` により同期状態が管理され、セッション終了時やユーザーの明示的な操作により、Gemini側からの自動クリーンアップが行われる。
 * **非干渉の原則 (Non-Interference):**  
-  * Hubは、Spoke内部で行われている「具体的な作業内容」（例：Pythonコードのデバッグ、論文のパラグラフ推敲、個別のメール文面作成）には一切干渉しない。  
-  * Hubが扱うのは「メタ情報」（進捗率、障害の有無、完了予定日、次のマイルストーン）のみであり、これによりHubのコンテキスト消費を最小限に抑え、長期記憶の維持を可能にする。
+  * Project Nodeは、Member Node内部で行われている「具体的な作業内容」（例：Pythonコードのデバッグ、論文のパラグラフ推敲、個別のメール文面作成）には一切干渉しない。  
+  * Project Nodeが扱うのは「メタ情報」（進捗率、障害の有無、完了予定日、次のマイルストーン）のみであり、これによりProject Nodeのコンテキスト消費を最小限に抑え、長期記憶の維持を可能にする。
 
-### **Layer 3: The SPOKE (Execution Layer)**
+### **Layer 3: The MEMBER NODE (Execution Layer)**
 
 * **役割:** 具体的タスクの実行と記録を行う「現場」。  
 * **構成要素:**  
   * **Custom Persona:** プロジェクトの性質に応じた特化型プロンプト。  
     * 例（Research）: 「論理的整合性を最重視し、批判的思考を持つ研究パートナー」  
     * 例（Life Admin）: 「事務手続きを効率的に処理する、簡潔な秘書」  
-  * **Local Refs:** そのプロジェクト固有の参考文献。Hubには共有されない膨大なPDF（論文）、データセット、コードベースなどが含まれる。RAG（Retrieval-Augmented Generation）の検索対象となる。  
+  * **Local Refs:** そのプロジェクト固有の参考文献。Project Nodeには共有されない膨大なPDF（論文）、データセット、コードベースなどが含まれる。RAG（Retrieval-Augmented Generation）の検索対象となる。  
   * **Artifacts:** 生成された成果物（ドラフト、コード、図表）。
 
 ## **データの流れと制御フロー (Data Flow & Control Logic)**
 
 ### **制御フロー（最小要件）**
 
-1.  **Spoke → Inbox**：各判断（タスク案、優先度案、期日案）を投入  
-2.  **Inbox → Hub**：集計単位でまとめて送信（例：手動トリガ、一定件数到達、一定時間経過）  
-3.  **Hub（全体最適）**：全体負荷・優先度・競合を評価し「調整案」を生成  
-4.  **Hub → Spoke**：調整結果を通知し、Spoke側が必要に応じて再分解・再調整
+1.  **Member → Inbox**：各判断（タスク案、優先度案、期日案）を投入  
+2.  **Inbox → Project**：集計単位でまとめて送信（例：手動トリガ、一定件数到達、一定時間経過）  
+3.  **Project（全体最適）**：全体負荷・優先度・競合を評価し「調整案」を生成  
+4.  **Project → Member**：調整結果を通知し、Member側が必要に応じて再分解・再調整
 
 ## **外部連携アーキテクチャ (External Integration Architecture)**
 
 ### **Synchronization Architecture**
 
-同期処理は、Core System (Hub) ではなく、データの所有者である **LBS Service** 内部のバックグラウンドワーカー（Sync Worker）によって非同期に実行される。
+同期処理は、Core System (Project Node) ではなく、データの所有者である **LBS Service** 内部のバックグラウンドワーカー（Sync Worker）によって非同期に実行される。
 
 graph TD  
     subgraph LBS\_Microservice  
@@ -461,7 +461,7 @@ graph TD
     GraphAPI \<--\>|Sync| ToDo  
     GraphAPI \<--\>|Sync| Outlook
 
-* Sync Worker: 定期的（例: 5分ごと）またはイベントトリガー（Hubからの変更通知）により起動し、LBS DBと外部クラウドの差分を解消する。
+* Sync Worker: 定期的（例: 5分ごと）またはイベントトリガー（Projectからの変更通知）により起動し、LBS DBと外部クラウドの差分を解消する。
 
 ### **Data Flow (Sync Cycle)**
 
@@ -470,7 +470,7 @@ graph TD
 #### **Cycle 1: Outbound Sync (LBS \-\> External) LBSでタスクが作成・更新された場合、外部サービスへ反映する。**
 
 sequenceDiagram  
-    participant Spoke as Spoke/User  
+    participant Member as Member/User  
     participant DB as LBS Master DB  
     participant Agent as Sync Agent  
     participant Ext as MS ToDo / Outlook
@@ -522,7 +522,7 @@ graph TD
 
 * Frontend Parser: 正規表現を用いてコマンド名と引数を抽出する。定義済みリストにないコマンドは、ローカルでヘルプを表示する。  
 * Backend Endpoint: POST /api/commands/execute  
-  * サーバーサイドコマンドの場合、ここで認証と権限チェック（Hubのみ実行可能など）を行った上で、各サービス（LBS, DB）を操作する。  
+  * サーバーサイドコマンドの場合、ここで認証と権限チェック（Project Nodeのみ実行可能など）を行った上で、各サービス（LBS, DB）を操作する。  
   * 
 
 ## **UI設計と画面レイアウト (UI Design & Screen Layout)**
@@ -535,10 +535,10 @@ graph TD
 * ### **サイドバー構成 (Navigation Menu)**
 
   * 常時表示される左端のナビゲーションメニューにより、ユーザーは以下の主要モードへ直感的にモードを切り替えることができる。  
-    1. **🏠 Home / Hub Chat:** 統合司令塔（Hub）とのメインチャット画面。  
+    1. **🏠 Home / Project Chat:** 統合司令塔（Project Node）とのメインチャット画面。  
     2. **📊 LBS Dashboard:** LBS専用のアナリティクスビュー。  
-    3. **📥 Inbox (Notification Center):** Spokeからの報告や外部同期タスクが集まる承認ゲート。  
-    4. **💎 Projects (Spokes Explorer):** プロジェクト一覧（ツリー形式）と、各Spokeへの遷移。
+    3. **📥 Inbox (Notification Center):** Memberからの報告や外部同期タスクが集まる承認ゲート。  
+    4. **💎 Projects (Nodes Explorer):** プロジェクト一覧（ツリー形式）と、各Memberへの遷移。
 
 * ### **ワークスペース構成 (Tabbed Interface)**
 
@@ -555,16 +555,16 @@ graph TD
 
 本システムは、機能（Service）と責任（Responsibility）に基づき、マイクロサービス構成としてディレクトリを分割する。各サービスは独立したDockerコンテナとして動作し、データはファイルシステムではなくデータベース（PostgreSQL）に永続化される。
 
-Vision Ark/  
+ Vision Ark/  
  ├── data/                   # [Persistent Storage] ユーザーデータ永続化
  │   └── users/              # 各ユーザーごとのファイル保管領域
  │       └── {user_id}/      # ユーザーID別の隔離ディレクトリ
- │           └── {node_name}/ # ノード（Spoke/Hub）別の実ファイル保管
+ │           └── {project_id}/ # ノード（Project/Member）別の実ファイル保管
  │  
- ├── core/                   # [Core System] Hub & Agent Orchestrator  
+ ├── core/                   # [Core System] Project & Agent Orchestrator  
  │   │   # ユーザー対話、エージェント実行、全体統括を行うメインシステム。  
  │   ├── backend/            # Python (FastAPI + LangGraph)  
- │   │   ├── agents/         # HubおよびSpokeエージェントの思考ロジック  
+ │   │   ├── agents/         # Project NodeおよびMember Nodeのエージェント思考ロジック  
  │   │   ├── api/            # Frontend向けREST APIエンドポイント  
  │   │   ├── core/           # 設定、認証、共通ユーティリティ  
  │   │   ├── global_assets/  # 全サービス共通の定義ファイル (System Prompt等)
@@ -638,12 +638,12 @@ erDiagram
   * `remote_user_id`: 連携先でのユーザー識別子
 
 #### **5. NODES (エージェントノード)**
-* **役割:** Hubや各Spokeの実体。
+* **役割:** Project Nodeや各Member Nodeの実体。
 * **主要カラム:**
   * `id`: UUID
   * `user_id`: 所有ユーザー (FK)
   * `name`: 名前 (slug)
-  * `node_type`: "HUB" か "SPOKE"
+  * `node_type`: "PROJECT" か "MEMBER"
   * `lbs_access_level`: LBSへのアクセス権限
 
 #### **6. AGENT_PROFILES (エージェント設定)**
@@ -670,9 +670,9 @@ erDiagram
   * `gemini_file_uri`: Gemini File APIの参照URL
 
 #### **9. INBOX_QUEUE (非同期インボックス)**
-* **役割:** SpokeからHubへ通知されるメッセージのバッファ。
+* **役割:** Member NodeからProject Nodeへ通知されるメッセージのバッファ。
 * **主要カラム:**
-  * `source_spoke`: 送信元ノード名
+  * `source_node`: 送信元ノード名
   * `message_type`: 通知の種類 (share, complete, alert)
   * `payload`: 通知内容 (JSON)
 
@@ -706,18 +706,18 @@ erDiagram
 
 ## **Inbox/Push プロトコル詳細 (Inbox/Push Protocol Details)**
 
-Hubのコンテキスト汚染を防ぎ、信頼性の高い「情報の蒸留」と「伝達」を実現する非同期通信プロトコルの詳細を定義する。 本システムでは、LLMのネイティブ機能である Function Calling (Tool Use) を採用し、構造化データの確実な生成と処理を実現する。
+Project Nodeのコンテキスト汚染を防ぎ、信頼性の高い「情報の蒸留」と「伝達」を実現する非同期通信プロトコルの詳細を定義する。 本システムでは、LLMのネイティブ機能である Function Calling (Tool Use) を採用し、構造化データの確実な生成と処理を実現する。
 
-### **Push Protocol (Spoke to Inbox)**
+### **Push Protocol (Member to Inbox)**
 
 * #### **Trigger (発火):**
 
-  * **Explicit (明示的):** ユーザーがSpoke内でコマンド（例: `/share`, `/report`）を実行し、Hubへの報告を指示する場合。  
-  * **Implicit (暗黙的):** Spokeエージェントが「タスクの完了」「スケジュールの遅延」「リソース不足」などの重要イベントを検知し、Hubへの報告が必要と自律的に判断した場合。
+  * **Explicit (明示的):** ユーザーがMember Node内でコマンド（例: `/share`, `/report`）を実行し、Project Nodeへの報告を指示する場合。  
+  * **Implicit (暗黙的):** Memberエージェントが「タスクの完了」「スケジュールの遅延」「リソース不足」などの重要イベントを検知し、Project Nodeへの報告が必要と自律的に判断した場合。
 
 * #### **Generation (Function Calling):**
 
-  * Spokeエージェントは、チャット画面用の自然言語テキストとは別に、定義されたツール `submit_to_inbox` を呼び出す。これにより、パースエラーのリスクなしに構造化データを送信する。
+  * Memberエージェントは、チャット画面用の自然言語テキストとは別に、定義されたツール `submit_to_inbox` を呼び出す。これにより、パースエラーのリスクなしに構造化データを送信する。
 
 **Tool Schema:**  
 {  
@@ -747,21 +747,21 @@ Hubのコンテキスト汚染を防ぎ、信頼性の高い「情報の蒸留�
 
   * ツール実行の結果として、システムはチャット履歴に以下の戻り値（Tool Message）を記録する。  
     * `{"status": "queued", "item_id": "uuid-...", "message": "Inboxへ送信完了。承認待ちです。"}`  
-  * これにより、Spokeエージェントは「送信が成功したこと」を認識でき、重複送信を防ぐことができる。また、このやり取りはHub側のコンテキストには影響を与えない。
+  * これにより、Memberエージェントは「送信が成功したこと」を認識でき、重複送信を防ぐことができる。また、このやり取りはProject側のコンテキストには影響を与えない。
 
 * #### **Fetching & Review (取得と選別 \- Human-in-the-loop):**
 
   * **UI表示:** ユーザーがInbox画面（またはタブ）を開いた際、`status: PENDING` のアイテムがリスト表示される。  
   * **Action:** ユーザーは各アイテムに対し、以下の操作を行うことができる。  
-    * **Approve (承認):** Hubに取り込み、実行を許可する。  
+    * **Approve (承認):** Projectに取り込み、実行を許可する。  
     * **Reject (却下):** 取り込みを拒否する（`status: REJECTED`）。  
     * **Edit (修正):** 内容（期日や優先度など）を修正した上で承認する。
 
 * #### **Processing (統合と実行):**
 
-  * 承認されたアクションは、**Hub (PM Agent)** の権限行使としてシステムにより実行される。  
-    * **LBS操作:** `TASK_CREATE` 等の場合、Hubが LBS API (`POST /tasks`) をコールしてスケジュールを更新する。  
-    * **情報統合:** `REPORT` 等の場合、その要約がHubのチャットコンテキストに注入され、全体計画の調整材料として使用される。
+  * 承認されたアクションは、**Project Node** の権限行使としてシステムにより実行される。  
+    * **LBS操作:** `TASK_CREATE` 等の場合、Projectが LBS API (`POST /tasks`) をコールしてスケジュールを更新する。  
+    * **情報統合:** `REPORT` 等の場合、その要約がProjectのチャットコンテキストに注入され、全体計画の調整材料として使用される。
 
 ## **Command List (実装コマンド一覧)**
 
@@ -775,8 +775,8 @@ Frontendの状態（State）を操作するコマンド。サーバー通信を�
 
 | Command | Alias | Args | Description | Implementation Details |
 | ----- | ----- | ----- | ----- | ----- |
-| `/switch` | `/sw`, `/go` | `<node_name>` | 指定したNode（Spoke/Hub）へタブを切り替える。 | 入力された `node_name` に対してFuzzy Searchを行い、最も近い `node_id` をアクティブにする。 |
-| `/hub` | \- | \- | Hub (PM Agent) へ移動する。 | `/switch hub` のエイリアス。ホームポジションへの復帰用。 |
+| `/switch` | `/sw`, `/go` | `<node_name>` | 指定したNode（Project/Member）へタブを切り替える。 | 入力された `node_name` に対してFuzzy Searchを行い、最も近い `node_id` をアクティブにする。 |
+| `/project` | \- | \- | Project Node へ移動する。 | `/switch project` のエイリアス。ホームポジションへの復帰用。 |
 | `/inbox` | \- | \- | Inbox画面（タブ）へ移動する。 | View Modeを `Chat` から `Inbox` へ切り替える。 |
 | `/clear` | `/cls` | \- | 画面上のチャットログを一時的に消去する。 | React Stateの `messages` 配列を空にする（DB削除は行わない）。リロードで復元可能。 |
 
@@ -787,8 +787,8 @@ Backend APIをコールし、データやエージェントの状態を変更す
 | Command | Args | Description | Context / Constraint |
 | ----- | ----- | ----- | ----- |
 | `/archive` | \- | 現在のセッションを強制的に要約・終了し、ログローテーションを実行する。 | フェーズの区切り等で、ユーザーが明示的にコンテキストをリフレッシュしたい場合に使用。実行後、UIは自動リロードされる。 |
-| `/task` | `<title>` | LBSにタスクをクイック登録する。 | **Hubでのみ有効**。会話の流れを止めずにタスクを放り込むための機能。日付等は「今日」または「指定なし」として登録される。 |
-| `/report` | `[text]` | 現在のSpokeからHubへ、`REPORT` アクションとしてInboxへメッセージを送信する。 | **Spokeでのみ有効**。引数が空の場合、直近の会話内容を要約して送信する。 |
+| `/task` | `<title>` | LBSにタスクをクイック登録する。 | **Projectでのみ有効**。会話の流れを止めずにタスクを放り込むための機能。日付等は「今日」または「指定なし」として登録される。 |
+| `/report` | `[text]` | 現在のMemberからProjectへ、`REPORT` アクションとしてInboxへメッセージを送信する。 | **Memberでのみ有効**。引数が空の場合、直近の会話内容を要約して送信する。 |
 
 * ####  **System Commands (Debug/Maintenance)**
 
@@ -817,11 +817,11 @@ Server-Sideコマンドを実行する際のJSONペイロード定義。
 ### **Error Handling**
 
 * Unknown Command: 「コマンドが見つかりません: /foo」とシステムメッセージ（赤字）で表示し、チャット履歴には残さない。  
-* Permission Denied: Spokeで `/task` を実行した場合などは、「このコマンドはHubでのみ実行可能です」と警告し、Inboxへの `/report` を促す。
+* Permission Denied: Memberで `/task` を実行した場合などは、「このコマンドはProjectでのみ実行可能です」と警告し、Inboxへの `/report` を促す。
 
 ## **Core System API Specification**
 
-Core System (Hub) が提供するRESTful APIの仕様を定義する。  
+Core System (Project Node) が提供するRESTful APIの仕様を定義する。  
 本APIは主に \*\*Frontend (Next.js)\*\* からの呼び出しと、\*\*LBS Sync Worker\*\* からのWebhook受信に使用される。
 
 ### **Common Specifications (共通仕様)**
@@ -845,7 +845,7 @@ Core System (Hub) が提供するRESTful APIの仕様を定義する。
 | `POST` | `/chat/sessions` | 新しいチャットセッション（またはコンテキスト切り替え）を開始いたします。 | `{ "node_id": "uuid", "title": "New Topic" }` |
 | `POST` | `/chat/sessions/{id}/archive` | 指定されたセッションを強制的に終了させ、要約を生成した上でアーカイブいたします（ログローテーション）。 | \- |
 
-####  **B. Inbox Management (Triage)**
+#### **B. Inbox Management (Triage)**
 
 Inbox UIでの表示と、ユーザーによる承認・却下操作を受け付ける。
 
@@ -854,7 +854,7 @@ Inbox UIでの表示と、ユーザーによる承認・却下操作を受け付
 | `GET` | `/inbox` | 未処理（Pending）のInboxアイテム一覧を取得いたします。 | `?status=PENDING` |
 | `POST` | `/inbox/external` | **\[Internal\]** LBS Sync Worker等の外部プロセスより、Inboxへの新規アイテム登録を受領いたします（Webhook）。 | `{ "source": "LBS_WORKER", "action_type": "TASK_CREATE", "payload": {...} }` |
 | `POST` | `/inbox/{id}/approve` | 指定されたアイテムを承認し、LBS/KCへの書き込みを実行いたします。修正承認の場合、payloadに上書き内容を含めます。 | `{ "override_payload": {...} }` |
-| `POST` | `/inbox/{id}/reject` | 指定されたアイテムを却下し、アーカイブまたは削除いたします。Spokeへのフィードバックコメントを付与することが可能です。 | `{ "reason": "予算不足のため" }` |
+| `POST` | `/inbox/{id}/reject` | 指定されたアイテムを却下し、アーカイブまたは削除いたします。Memberへのフィードバックコメントを付与することが可能です。 | `{ "reason": "予算不足のため" }` |
 
 #### **1. Files & Storage (ファイル管理)**
 
@@ -870,11 +870,11 @@ Inbox UIでの表示と、ユーザーによる承認・却下操作を受け付
 
 | Method | Endpoint | Description | Auth |
 | :--- | :--- | :--- | :--- |
-| **GET** | `/api/agents/spoke/list` | Spokeノードの一覧表示 | JWT |
-| **POST** | `/api/agents/hub/chat` | Hubとの対話・指示実行 | JWT |
-| **POST** | `/api/agents/spoke/chat` | 特定Spokeとの専門対話 | JWT |
-| **POST** | `/api/agents/create-spoke` | 新規Spoke（Node）の作成 | JWT |
-| `GET` | `/nodes` | ユーザーがアクセス可能な全てのプロジェクト（Hub/Spoke）の定義リストを取得します。サイドバー描画に利用します。 | \- |
+| **GET** | `/api/agents/project/list` | Project一覧表示 | JWT |
+| **POST** | `/api/agents/project/{id}/chat` | Projectとの対話・指示実行 | JWT |
+| **POST** | `/api/agents/node/{id}/chat` | 特定Memberとの専門対話 | JWT |
+| **POST** | `/api/agents/project/create` | 新規Project（Node）の作成 | JWT |
+| `GET` | `/nodes` | ユーザーがアクセス可能な全てのプロジェクト（Project/Member）の定義リストを取得します。サイドバー描画に利用します。 | \- |
 | `GET` | `/system/status` | **\[FR-ARCH1-3\]** 各マイクロサービス（LBS, KC）の接続状況および同期ラグ情報を取得します。ステータスバー表示に利用します。 | \- |
 
 ### **Data Types (主要モデル)**
@@ -995,7 +995,7 @@ LBSのタスク (`tasks` Table) とMS ToDoのプロパティの対応関係。
   * **Update:** タスク名や期限が変更された場合、PATCHリクエストで反映する。負荷スコア（LBS固有値）は本文（Body）の末尾に `[LBS: 3.0]` のように記載するか、無視する。  
 * **Inbound (ToDo \-\> App):**  
   * **Completion:** スマホでチェック完了すると、次回のSyncでLBS側のタスクも `completed` に更新される。  
-  * **Inbox Capture:** ToDoの「Tasks（既定のリスト）」に追加されたタスクは、「未分類の新規タスク」としてLBSのInboxに取り込み、Hubに割り振りを依頼する。これにより、移動中に思いついたタスクをスマホから放り込める。  
+  * **Inbox Capture:** ToDoの「Tasks（既定のリスト）」に追加されたタスクは、「未分類の新規タスク」としてLBSのInboxに取り込み、Projectに割り振りを依頼する。これにより、移動中に思いついたタスクをスマホから放り込める。  
   * **Deletion Handling:**  
     * ToDo側でタスクが削除された場合、LBS側では物理削除せず、`active=FALSE` (アーカイブ) にする。  
     * LBS側で削除された場合、ToDo側も削除（または完了扱い）にする。
@@ -1035,17 +1035,17 @@ Hubエージェントがスケジュールを提案する際、Outlookの空き�
 
 * **🏠 Home:**  
   * システムのランディングページ。当日の重要なお知らせや、未処理のInboxアイテムのサマリを表示する。  
-* **👑 Hub Chat:**  
-  * 統合司令塔（Hub Agent）との対話専用画面。  
+* **👑 Project Chat:**  
+  * 統合司令塔（Project Node）との対話専用画面。  
 * **✅ Tasks:**  
   * 全タスクをリスト形式で管理し、フィルタリング（Context, Status）、CSVインポート、新規作成を行うマスター管理画面。  
   * 各タスク行には `Load Score`, `Task Name`, `Context Tag`, `Due Date` を表示する。  
 * **📊 LBS Dashboard:**  
   * 負荷状況を可視化する専用アナリティクスビュー（後述）。  
 * **📥 Inbox:**  
-  * Spokeからの報告や外部同期タスクが集まる承認ゲート。  
-* **💎 Projects (Spokes Explorer):**  
-  * `Research`, `Finance` などの各プロジェクト（Spoke）へのアクセス。  
+  * Memberからの報告や外部同期タスクが集まる承認ゲート。  
+* **💎 Projects (Nodes Explorer):**  
+  * `Research`, `Finance` などの各プロジェクト（Project/Member）へのアクセス。  
 * **⚙️ Settings:**  
   * APIキー設定、DB接続設定に加え、System Promptエディタへのショートカット。
 

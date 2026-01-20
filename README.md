@@ -5,17 +5,20 @@
 > Not production-ready. UX is optimized for the author.  
 > Architecture may change without notice.
 
-An AI-powered personal task management system built on a Hub-Spoke architecture. VisionArk combines LBS (Load Balancing System) workload management with multi-agent AI orchestration powered by Google Gemini.
+An AI-powered personal task management system built on a Project-Node architecture. VisionArk combines LBS (Load Balancing System) workload management with multi-agent AI orchestration powered by Google Gemini.
 
 ---
 
 ## ✨ Core Features
 
 ### 🤖 AI Agent System
-- **Hub Agent**: Central coordinator for strategic planning, cross-project oversight, and global task management
-- **Spoke Agents**: Project-specific AI assistants with isolated contexts, custom prompts, and dedicated workspaces
-- **Agent-to-Agent Communication**: Spokes can collaborate via `ask_spoke` tool with recursion depth limiting
-- **Artifacts System**: Agents create and manage artifacts (documents, notes, plans) in their workspace
+- **Project Structure**: Work is organized into Projects, each containing one or more AI Nodes.
+- **Node-based Agents**: 
+  - **Project Node**: The primary orchestrator for a project workspace.
+  - **Member Nodes**: Specialized sub-agents or assistants within a project.
+- **Agent-to-Agent Communication**: Nodes can collaborate via `ask_node` tools with recursion depth limiting.
+- **Asynchronous Processing**: Chat requests are enqueued and processed by background workers, supporting long-running tool executions.
+- **Artifacts System**: Agents create and manage artifacts (documents, notes, plans) in their workspace.
 
 ### 🧠 Agent Capabilities (Native Tools)
 | Category | Tools |
@@ -25,18 +28,18 @@ An AI-powered personal task management system built on a Hub-Spoke architecture.
 | **Knowledge** | `search_knowledge`, `ingest_knowledge` |
 | **Files** | `save_artifact`, `read_artifact`, `list_files`, `upload_file_to_ai` |
 | **Creation** | `generate_image`, `execute_code` |
-| **Coordination** | `ask_spoke`, `request_coordination`, `check_inbox` |
+| **Coordination** | `ask_node`, `request_coordination`, `check_inbox` |
 
 ### 📊 LBS (Load Balancing System)
-- Cognitive load calculation with non-linear scaling
-- Daily/weekly workload forecasting and heatmaps
-- Task scheduling with multiple recurrence patterns (daily, weekly, monthly, interval)
-- Per-task execution tracking and history
+- Cognitive load calculation with non-linear scaling.
+- Daily/weekly workload forecasting and heatmaps.
+- Task scheduling with multiple recurrence patterns (daily, weekly, monthly, interval).
+- Per-task execution tracking and history.
 
 ### 📁 Knowledge Core
-- Semantic search and retrieval across agent memory
-- Automatic ingestion of conversation context
-- Per-agent scoped knowledge with global fallback
+- Semantic search and retrieval across agent memory.
+- Automatic ingestion of conversation context.
+- Per-agent scoped knowledge with global fallback.
 
 ---
 
@@ -45,14 +48,14 @@ An AI-powered personal task management system built on a Hub-Spoke architecture.
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                       Frontend (Next.js)                        │
-│  Dashboard │ Hub Chat │ Spoke Chat │ Tasks │ Settings           │
+│  Dashboard │ Projects │ Tasks │ Settings                        │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
 ┌──────────────────────────┴──────────────────────────────────────┐
 │                       Backend (FastAPI)                         │
 │  ┌────────┐  ┌────────────┐  ┌─────────────┐  ┌──────────────┐  │
 │  │  Auth  │  │   Agents   │  │     LBS     │  │  Knowledge   │  │
-│  │        │  │ Hub/Spokes │  │   Proxy     │  │    Core      │  │
+│  │        │  │ Project/Node│  │   Proxy     │  │    Core      │  │
 │  └────────┘  └────────────┘  └─────────────┘  └──────────────┘  │
 │                    │                 │                          │
 │              ┌─────┴─────┐    ┌──────┴──────┐                   │
@@ -63,8 +66,7 @@ An AI-powered personal task management system built on a Hub-Spoke architecture.
 
 Data Structure:
 data/users/{user_id}/
-├── hub_data/          # Hub agent's database, inbox, artifacts
-├── spokes/{name}/     # Per-spoke files, artifacts, refs
+├── {project_id}/      # Per-project files, artifacts, refs
 └── global_assets/
 ```
 
@@ -116,24 +118,24 @@ npm run dev
 
 ### Authentication
 JWT-based session auth. Register and sign in via the frontend UI.
-- Dev mode: Falls back to default user if no token provided
-- Prod mode: Set `ATMOS_ENV=prod` and `ATMOS_REQUIRE_API_KEY=true`
+- Dev mode: Falls back to default user if no token provided.
+- Prod mode: Set `ATMOS_ENV=prod` and `ATMOS_REQUIRE_API_KEY=true`.
 
 ### Key Endpoints
 
 | Module | Endpoint | Description |
 |--------|----------|-------------|
-| **Agents** | `POST /api/agents/hub/chat` | Chat with Hub agent |
-| | `POST /api/agents/spoke/{name}/chat` | Chat with a Spoke |
-| | `POST /api/agents/spoke/create` | Create new Spoke |
-| | `GET /api/agents/spoke` | List all Spokes |
+| **Agents** | `POST /api/agents/project/{id}/chat` | Chat with a Project agent (async) |
+| | `GET /api/agents/tasks/{task_id}` | Poll for chat result status |
+| | `POST /api/agents/project/create` | Create new Project |
+| | `GET /api/agents/project/list` | List all Projects |
 | **LBS** | `GET /api/lbs/dashboard` | Workload overview |
 | | `GET /api/lbs/tasks` | List tasks |
 | | `POST /api/lbs/tasks` | Create task |
 | | `POST /api/lbs/tasks/{id}/complete` | Mark task done |
-| **Inbox** | `GET /api/inbox/pending` | Spoke→Hub messages |
+| **Inbox** | `GET /api/inbox/pending` | Member→Project reports |
 | **Files** | `POST /api/files/upload` | Upload file |
-| | `GET /api/agents/{node}/artifacts` | List agent artifacts |
+| | `GET /api/agents/project/{id}/artifacts` | List project artifacts |
 
 ---
 
@@ -155,16 +157,16 @@ JWT-based session auth. Register and sign in via the frontend UI.
 VisionArk/
 ├── core/
 │   ├── backend/           # FastAPI + AI agents
-│   │   ├── agents/        # Hub, Spoke, Base agent classes
+│   │   ├── agents/        # Project and Node logic
 │   │   ├── api/           # REST endpoints
-│   │   ├── services/      # LBS client, Knowledge Core, etc.
+│   │   ├── services/      # LBS, Knowledge Core, File services
 │   │   ├── tools/         # Agent tool implementations
 │   │   └── llm/           # Gemini provider
 │   └── frontend/          # Next.js application
-│       ├── app/           # Pages (dashboard, hub, spokes, tasks)
+│       ├── app/           # Pages (dashboard, projects, tasks)
 │       └── components/    # UI components
 ├── data/                  # User data (gitignored)
-├── docs/                  # Design docs, blueprints
+├── docs/                  # System design and blueprints
 ├── infra/                 # Docker configs
 └── start_service.bat      # Main entry point
 ```
@@ -173,19 +175,16 @@ VisionArk/
 
 ## 📖 Documentation
 
-- `docs/BLUEPRINT.md` - Full architectural specification
-- `docs/Vision Ark System Design.md` - Detailed system design
-- `docs/lbs_system_design.md` - LBS formula and logic
-- `docs/quickstart.md` - Quick start guide
+- `docs/Vision Ark System Design.md` - Comprehensive architectural specification and system design.
 
 ---
 
 ## ⚠️ Disclaimer
 
 This is an experimental personal project:
-- **Not production-ready** - May contain bugs and incomplete features
-- **UX optimized for author** - Design choices reflect personal workflow
-- **Architecture may change** - Breaking changes possible without deprecation
+- **Not production-ready** - May contain bugs and incomplete features.
+- **UX optimized for author** - Design choices reflect personal workflow.
+- **Architecture may change** - Breaking changes possible without deprecation.
 
 ---
 
@@ -195,4 +194,4 @@ This project is licensed under the [Apache License 2.0](LICENSE).
 
 ---
 
-**Version**: 0.2.0 (Phase 2)
+**Version**: 0.3.0 (Phase 3)

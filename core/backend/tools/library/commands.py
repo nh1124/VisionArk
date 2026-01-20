@@ -333,10 +333,10 @@ class SendMessageTool(BaseTool):
             node = res.scalars().first()
             if not node: return {"success": False, "message": f"Project '{project}' not found"}
 
-            res = await session.execute(select(ChatSession).filter(ChatSession.node_id == node.id, ChatSession.is_archived == False).order_by(ChatSession.created_at.desc()))
+            res = await session.execute(select(ChatSession).filter(ChatSession.project_id == project, ChatSession.is_archived == False).order_by(ChatSession.created_at.desc()))
             chat_session = res.scalars().first()
             if not chat_session:
-                chat_session = ChatSession(id=str(uuid.uuid4()), node_id=node.id, title="New Session via Message", is_archived=False)
+                chat_session = ChatSession(id=str(uuid.uuid4()), project_id=project, title="New Session via Message", is_archived=False)
                 session.add(chat_session)
                 await session.flush()
 

@@ -46,10 +46,47 @@ export default function ProjectChatPage({
     const [statusText, setStatusText] = useState("");
     const commandRef = useRef<CommandAutocompleteHandle>(null);
 
+    // Polling and task state
+    const searchParams = useSearchParams();
+    const taskIdFromUrl = searchParams.get('task_id');
+    const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const isPollingActiveRef = useRef(false);
+    const currentPollingTaskRef = useRef<string | null>(null);
+    const historyFetchId = useRef(0);
+
     // Auto-scroll to bottom when messages change
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages]);
+
+    const fetchHistory = useCallback(async () => {
+        const requestId = ++historyFetchId.current;
+        try {
+            const response = await apiFetch(`/api/agents/project/${projectId}/history`);
+            const data = await response.json();
+
+            // If a newer request has started, ignore this result
+            if (requestId !== historyFetchId.current) return;
+
+            if (data.history && Array.isArray(data.history)) {
+                // RACE CONDITION FIX: If history is empty but we are polling or have a task_id, 
+                // don't overwrite optimistic messages (like the pending prompt).
+                if (data.history.length === 0 && (isPollingActiveRef.current || taskIdFromUrl)) {
+                    return;
+                }
+
+                setMessages(data.history.map((m: any) => ({
+                    role: m.role,
+                    content: m.content,
+                    attached_files: m.meta_payload?.attached_files || [],
+                    tool_calls: m.meta_payload?.tool_calls || []
+                })));
+            }
+        } catch (error) {
+            console.error("Failed to load history:", error);
+        }
+    }, [projectId, taskIdFromUrl]);
 
     // Load metadata and history on mount
     useEffect(() => {
@@ -64,90 +101,130 @@ export default function ProjectChatPage({
             }
         };
 
-        const loadHistory = async () => {
-            try {
-                const response = await apiFetch(`/api/agents/project/${projectId}/history`);
-                const data = await response.json();
-                if (data.history && Array.isArray(data.history)) {
-                    setMessages(data.history.map((m: any) => ({
-                        role: m.role,
-                        content: m.content,
-                        attached_files: m.meta_payload?.attached_files || [],
-                        tool_calls: m.meta_payload?.tool_calls || []
-                    })));
+        loadMetadata();
+        fetchHistory();
+    }, [projectId, fetchHistory]);
+
+    // Cleanup function - only clears intervals if this component started them
+    useEffect(() => {
+        return () => {
+            // Only cleanup if we own the polling
+            if (isPollingActiveRef.current && currentPollingTaskRef.current === taskIdFromUrl) {
+                console.log("[Cleanup] Clearing intervals for:", currentPollingTaskRef.current);
+                if (timerIntervalRef.current) {
+                    clearInterval(timerIntervalRef.current);
+                    timerIntervalRef.current = null;
                 }
-            } catch (error) {
-                console.error("Failed to load history:", error);
+                if (pollIntervalRef.current) {
+                    clearInterval(pollIntervalRef.current);
+                    pollIntervalRef.current = null;
+                }
+                isPollingActiveRef.current = false;
+                currentPollingTaskRef.current = null;
             }
         };
+    }, [taskIdFromUrl]);
 
-        loadMetadata();
-        loadHistory();
-    }, [projectId]);
-
-    // Handle task_id from query params (for initial prompt polling)
-    const searchParams = useSearchParams();
-    const pendingTaskIdRef = useRef<string | null>(null);
-
+    // Effect: Start polling when taskId appears
     useEffect(() => {
-        const taskId = searchParams.get('task_id');
+        // Skip if no taskId
+        if (!taskIdFromUrl) return;
 
-        // Only start polling if this is a new task_id we haven't processed
-        if (!taskId || pendingTaskIdRef.current === taskId) return;
+        // Skip if already polling this task
+        if (isPollingActiveRef.current && currentPollingTaskRef.current === taskIdFromUrl) {
+            return;
+        }
 
-        // Store the task_id to prevent re-processing
-        pendingTaskIdRef.current = taskId;
+        // Mark as polling and store the taskId
+        isPollingActiveRef.current = true;
+        currentPollingTaskRef.current = taskIdFromUrl;
+
+        // Clear any existing intervals before starting new ones
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+
+        // Check for pending prompt in sessionStorage and display it immediately
+        const storageKey = `pending_prompt_${projectId}`;
+        const pendingPrompt = sessionStorage.getItem(storageKey);
+        if (pendingPrompt) {
+            setMessages([{ role: "user", content: pendingPrompt }]);
+            sessionStorage.removeItem(storageKey); // Clean up
+        }
 
         // Start polling for this task
         setLoading(true);
         setStatusText("Processing your request...");
         const startTime = Date.now();
+        const currentTaskId = taskIdFromUrl; // Capture for closure
 
-        const timerInterval = setInterval(() => {
-            setElapsedTime(Math.floor((Date.now() - startTime) / 1000));
+        timerIntervalRef.current = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            setElapsedTime(elapsed);
         }, 1000);
 
         const pollTask = async (): Promise<boolean> => {
             try {
-                const statusRes = await apiFetch(`/api/agents/tasks/${taskId}`);
+                const statusRes = await apiFetch(`/api/agents/tasks/${currentTaskId}`);
                 if (!statusRes.ok) return false;
 
                 const statusData = await statusRes.json();
                 const status = statusData.status;
 
                 if (status === "completed") {
-                    clearInterval(timerInterval);
+                    if (timerIntervalRef.current) {
+                        clearInterval(timerIntervalRef.current);
+                        timerIntervalRef.current = null;
+                    }
+                    if (pollIntervalRef.current) {
+                        clearInterval(pollIntervalRef.current);
+                        pollIntervalRef.current = null;
+                    }
                     setLoading(false);
                     setStatusText("");
 
                     // Re-fetch history to get complete messages
-                    const historyRes = await apiFetch(`/api/agents/project/${projectId}/history`);
-                    const historyData = await historyRes.json();
-                    if (historyData.history && Array.isArray(historyData.history)) {
-                        setMessages(historyData.history.map((m: any) => ({
-                            role: m.role,
-                            content: m.content,
-                            attached_files: m.meta_payload?.attached_files || [],
-                            tool_calls: m.meta_payload?.tool_calls || []
-                        })));
+                    const requestId = ++historyFetchId.current;
+                    try {
+                        const historyRes = await apiFetch(`/api/agents/project/${projectId}/history`);
+                        const historyData = await historyRes.json();
+                        if (requestId === historyFetchId.current && historyData.history && Array.isArray(historyData.history)) {
+                            const newMessages = historyData.history.map((m: any) => ({
+                                role: m.role,
+                                content: m.content,
+                                attached_files: m.meta_payload?.attached_files || [],
+                                tool_calls: m.meta_payload?.tool_calls || []
+                            }));
+                            setMessages(newMessages);
+                        }
+                    } catch (e) {
+                        console.error("Failed to refresh history:", e);
                     }
 
                     // Clear URL AFTER task completes
                     router.replace(`/projects/${projectId}`, { scroll: false });
-                    pendingTaskIdRef.current = null;
+                    isPollingActiveRef.current = false;
+                    currentPollingTaskRef.current = null;
                     return true;
                 } else if (status === "failed") {
-                    clearInterval(timerInterval);
+                    if (timerIntervalRef.current) {
+                        clearInterval(timerIntervalRef.current);
+                        timerIntervalRef.current = null;
+                    }
+                    if (pollIntervalRef.current) {
+                        clearInterval(pollIntervalRef.current);
+                        pollIntervalRef.current = null;
+                    }
                     setLoading(false);
                     setStatusText("");
-                    setMessages([{
+                    setMessages((prev) => [...prev, {
                         role: "assistant",
                         content: `❌ Error: ${statusData.result || "Task failed"}`
                     }]);
 
                     // Clear URL on failure too
                     router.replace(`/projects/${projectId}`, { scroll: false });
-                    pendingTaskIdRef.current = null;
+                    isPollingActiveRef.current = false;
+                    currentPollingTaskRef.current = null;
                     return true;
                 } else {
                     setStatusText(status === "queued" ? "Queued..." : "Processing...");
@@ -159,19 +236,20 @@ export default function ProjectChatPage({
             }
         };
 
-        const pollInterval = setInterval(async () => {
+        pollIntervalRef.current = setInterval(async () => {
             const done = await pollTask();
-            if (done) clearInterval(pollInterval);
+            if (done && pollIntervalRef.current) {
+                clearInterval(pollIntervalRef.current);
+                pollIntervalRef.current = null;
+            }
         }, 1000);
 
         // Initial poll
         pollTask();
 
-        return () => {
-            clearInterval(timerInterval);
-            clearInterval(pollInterval);
-        };
-    }, [searchParams, projectId, router]);
+        // NO cleanup here - Effect 1 handles unmount cleanup
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [taskIdFromUrl, projectId]);
 
 
     const sendMessage = async (content: string, files: File[]) => {
@@ -493,8 +571,8 @@ export default function ProjectChatPage({
 
                 {/* Messages - Scrollable area */}
                 <div className="flex-1 overflow-y-auto px-4 py-8">
-                    <div className="max-w-4xl mx-auto space-y-6">
-                        {messages.length === 0 && (
+                    <div className="max-w-4xl mx-auto space-y-6" key={`messages-${messages.length}`}>
+                        {messages.length === 0 && !loading && (
                             <div className="text-center text-gray-500 py-20">
                                 <div className="w-16 h-16 bg-cyan-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6">
                                     <span className="text-3xl">💼</span>

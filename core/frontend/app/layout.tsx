@@ -5,6 +5,8 @@ import { AuthProvider } from "@/lib/AuthContext";
 import { ModelProvider } from "@/lib/ModelContext";
 import AuthGuard from "@/components/AuthGuard";
 import Navbar from "@/components/Navbar";
+import { NotificationProvider } from "@/lib/NotificationContext";
+import { NotificationDialog, ToastNotification } from "@/components/NotificationDialog";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const outfit = Outfit({ subsets: ["latin"], variable: "--font-outfit" });
@@ -30,11 +32,15 @@ export default function RootLayout({
     <html lang="en" className="dark" suppressHydrationWarning={true}>
       <body className={`${inter.variable} ${outfit.variable} font-sans bg-gray-950 text-gray-100 min-h-screen flex flex-col`}>
         <AuthProvider>
-          <ModelProvider>
-            <AuthGuard>
-              {children}
-            </AuthGuard>
-          </ModelProvider>
+          <NotificationProvider>
+            <ModelProvider>
+              <AuthGuard>
+                {children}
+              </AuthGuard>
+            </ModelProvider>
+            <NotificationDialog />
+            <ToastNotification />
+          </NotificationProvider>
         </AuthProvider>
       </body>
     </html>

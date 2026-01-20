@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { apiFetch, getFileToken } from "@/lib/api";
 import { Search, MoreVertical, Edit2, Trash2, X, Check, ExternalLink, Copy, FileDown, Send, Loader2 } from "lucide-react";
+import { useNotification } from "@/lib/NotificationContext";
 
 interface Project {
     id: string;
@@ -39,6 +40,8 @@ export default function ProjectsPage() {
 
     // For navigation after creation
     const router = useRouter();
+
+    const { showConfirm, showToast } = useNotification();
 
     useEffect(() => {
         loadProjects();
@@ -87,6 +90,10 @@ export default function ProjectsPage() {
             }
 
             const data = await response.json();
+
+            // Store the initial prompt so it can be displayed immediately on the project page
+            sessionStorage.setItem(`pending_prompt_${data.project_id}`, newProjectPrompt);
+
             // Redirect to new project with task_id
             router.push(`/projects/${data.project_id}?task_id=${data.task_id}`);
         } catch (error) {
@@ -130,18 +137,22 @@ export default function ProjectsPage() {
                 setActiveMenu(null);
             } else {
                 const err = await response.json();
-                alert(`Failed to clone project: ${err.detail || 'Unknown error'}`);
+                showToast(`Failed to clone project: ${err.detail || 'Unknown error'}`, "error");
             }
         } catch (error) {
             console.error("Error cloning project:", error);
-            alert("Error cloning project");
+            showToast("Error cloning project", "error");
         }
     };
 
     const deleteProject = async (projectId: string, displayName: string) => {
-        if (!confirm(`Delete project '${displayName}'? This action cannot be undone.`)) {
-            return;
-        }
+        const confirmed = await showConfirm(`Delete project '${displayName}'? This action cannot be undone.`, {
+            title: "Delete Project",
+            confirmText: "Delete",
+            variant: "danger"
+        });
+
+        if (!confirmed) return;
 
         try {
             await apiFetch(`/api/agents/project/${projectId}`, { method: "DELETE" });
@@ -149,16 +160,20 @@ export default function ProjectsPage() {
             setActiveMenu(null);
         } catch (error) {
             console.error("Error deleting project:", error);
-            alert("Failed to delete project");
+            showToast("Failed to delete project", "error");
         }
     };
 
     const bulkDelete = async () => {
         if (selectedProjects.size === 0) return;
 
-        if (!confirm(`Delete ${selectedProjects.size} project(s)? This action cannot be undone.`)) {
-            return;
-        }
+        const confirmed = await showConfirm(`Delete ${selectedProjects.size} project(s)? This action cannot be undone.`, {
+            title: "Bulk Delete",
+            confirmText: "Delete All",
+            variant: "danger"
+        });
+
+        if (!confirmed) return;
 
         try {
             await Promise.all(
@@ -170,7 +185,7 @@ export default function ProjectsPage() {
             await loadProjects();
         } catch (error) {
             console.error("Error deleting projects:", error);
-            alert("Failed to delete some projects");
+            showToast("Failed to delete some projects", "error");
         }
     };
 
@@ -193,11 +208,11 @@ export default function ProjectsPage() {
                 setRenamingProject(null);
                 await loadProjects();
             } else {
-                alert("Failed to rename project");
+                showToast("Failed to rename project", "error");
             }
         } catch (error) {
             console.error("Rename error:", error);
-            alert("Error renaming project");
+            showToast("Error renaming project", "error");
         } finally {
             setSavingRename(false);
         }
@@ -218,7 +233,7 @@ export default function ProjectsPage() {
             setActiveMenu(null);
         } catch (error) {
             console.error("Export failed:", error);
-            alert("Failed to export chat history.");
+            showToast("Failed to export chat history.", "error");
         }
     };
 

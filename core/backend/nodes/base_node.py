@@ -50,21 +50,18 @@ class BaseNode(ABC):
                 try:
                     # Find node_id from context/project_id if possible
                     p_id = self.context.get("project_id")
-                    node_result = await db.execute(select(Node).filter(Node.id == p_id, Node.user_id == self.user_id))
-                    node = node_result.scalars().first()
-                    
-                    if node:
-                        profile_result = await db.execute(
-                            select(Node).filter(
-                                Node.id == node.id,
-                                Node.role_name == role_name,
-                                Node.is_active == True
-                            )
+                    profile_result = await db.execute(
+                        select(Node).filter(
+                            Node.project_id == p_id,
+                            Node.role_name == role_name,
+                            Node.status == "active"
                         )
-                        profile = profile_result.scalars().first()
-                        if profile and profile.system_prompt:
-                            print(f"[BaseNode] Using DB profile for {role_name} in {p_id}")
-                            role_text = profile.system_prompt
+                    )
+                    profile = profile_result.scalars().first()
+                    
+                    if profile and profile.system_prompt:
+                        print(f"[BaseNode] Using DB profile for {role_name} in {p_id}")
+                        role_text = profile.system_prompt
                 except Exception as e:
                     print(f"[BaseNode] DB error fetching role prompt: {e}")
 

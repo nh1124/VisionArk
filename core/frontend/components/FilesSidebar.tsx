@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { apiFetch, getFileToken } from "@/lib/api";
 import { Download, FileText, Image, ExternalLink, X, Folder, File, RefreshCw, Trash2, Loader2, Eye } from "lucide-react";
 import MarkdownRenderer from "./MarkdownRenderer";
+import { useNotification } from "@/lib/NotificationContext";
 
 interface FileInfo {
     id: string;
@@ -106,6 +107,8 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
     const toggleDir = (path: string) => {
         setCollapsedDirs(prev => ({ ...prev, [path]: !prev[path] }));
     };
+
+    const { showConfirm, showToast } = useNotification();
 
     const downloadFile = async (url: string, filename: string) => {
         try {
@@ -210,7 +213,7 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
                     <button
                         onClick={(e) => {
                             e.stopPropagation();
-                            openArtifact(node.path);
+                            downloadFile(`/api/files/project/${nodeName}/artifacts/${node.path}`, node.name);
                         }}
                         className="p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-white transition-colors"
                         title="Download"
@@ -387,7 +390,13 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
 
     // Delete file
     const deleteFile = async (fileId: string, filename: string) => {
-        if (!confirm(`Delete ${filename}?`)) return;
+        const confirmed = await showConfirm(`Delete ${filename}?`, {
+            title: "Delete File",
+            confirmText: "Delete",
+            variant: "danger"
+        });
+
+        if (!confirmed) return;
 
         try {
             const response = await apiFetch(`/api/files/${fileId}`, {

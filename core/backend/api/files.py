@@ -12,7 +12,7 @@ import mimetypes
 from uuid import uuid4
 
 from services.auth import resolve_identity, Identity, resolve_identity_for_download
-from models.database import UploadedFile, Node, get_async_db, UserSettings
+from models.database import UploadedFile, Node, Project, get_async_db, UserSettings
 from services.file_service import FileService
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -96,7 +96,7 @@ async def list_node_files(
     return {"files": files, "count": len(files)}
 
 
-@files_router.get("/{project_id}/{directory}/{file_path:path}")
+@files_router.get("/project/{project_id}/{directory}/{file_path:path}")
 async def get_node_file(
     project_id: str,
     directory: str,
@@ -117,9 +117,9 @@ async def get_node_file(
         from utils.paths import get_project_dir
         
         # Verify Project Exists
-        result = await db.execute(select(Node.id).filter(
-            Node.user_id == user_id,
-            Node.id == project_id
+        result = await db.execute(select(Project.id).filter(
+            Project.user_id == user_id,
+            Project.id == project_id
         ))
         if not result.scalars().first():
             raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")

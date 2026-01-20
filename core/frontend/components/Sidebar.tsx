@@ -6,6 +6,7 @@ import { useState, useEffect, useRef } from "react";
 import { apiFetch, getFileToken } from "@/lib/api";
 
 import { useProjects } from "@/hooks/useProjects";
+import { useNotification } from "@/lib/NotificationContext";
 
 interface SidebarProps {
     isCollapsed: boolean;
@@ -19,6 +20,8 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
     const [hoveredProject, setHoveredProject] = useState<string | null>(null);
     const [menuOpen, setMenuOpen] = useState<string | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
+
+    const { showConfirm, showToast } = useNotification();
 
     // Close menu when clicking outside
     useEffect(() => {
@@ -47,7 +50,7 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
             setMenuOpen(null);
         } catch (error) {
             console.error("Export failed:", error);
-            alert("Failed to export chat history.");
+            showToast("Failed to export chat history.", "error");
         }
     };
 
@@ -64,16 +67,22 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                 window.location.reload(); // Refresh to show cloned project
             } else {
                 const err = await response.json();
-                alert(`Failed to clone project: ${err.detail || 'Unknown error'}`);
+                showToast(`Failed to clone project: ${err.detail || 'Unknown error'}`, "error");
             }
         } catch (error) {
             console.error("Clone failed:", error);
-            alert("Failed to clone project.");
+            showToast("Failed to clone project.", "error");
         }
     };
 
     const handleDeleteProject = async (projectId: string, displayName: string) => {
-        if (!confirm(`Delete project '${displayName}'? This action cannot be undone.`)) {
+        const confirmed = await showConfirm(`Delete project '${displayName}'? This action cannot be undone.`, {
+            title: "Delete Project",
+            confirmText: "Delete",
+            variant: "danger"
+        });
+
+        if (!confirmed) {
             return;
         }
 
@@ -83,7 +92,7 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
             window.location.href = "/projects"; // Redirect after deletion
         } catch (error) {
             console.error("Delete failed:", error);
-            alert("Failed to delete project.");
+            showToast("Failed to delete project.", "error");
         }
     };
 

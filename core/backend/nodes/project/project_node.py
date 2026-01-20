@@ -82,7 +82,8 @@ class ProjectNode(BaseNode):
                 self.context['project_id'] = self.project_id
             else:
                 raise ValueError(f"Project '{project_id}' not found for user {self.user_id}") 
-                
+            print(f"[ProjectNode] Project ID: {self.project_id}")
+
             # 2. Get/Create Session
             # Map self.project_id to the Orchestrator Node ID (V6: and PROJECT type)
             result = await session.execute(select(Node).filter(
@@ -218,7 +219,7 @@ class ProjectNode(BaseNode):
                 'session': self.context.get('db_session'),  # For tools that need DB access
                 'session_id': self.session_id,
                 'node_id': self.node_id,
-                'project_id': self.node_id,
+                'project_id': self.project_id,
                 'context_data': self.context_data,  # Pass full context data if needed
                 'members': self.members
             }
