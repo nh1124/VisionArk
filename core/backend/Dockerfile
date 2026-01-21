@@ -3,9 +3,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies for psycopg2
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     libpq-dev \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies

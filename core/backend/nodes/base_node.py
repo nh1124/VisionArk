@@ -254,7 +254,8 @@ class BaseNode(ABC):
             # Old history files are not re-sent - they were processed in their original request
             current_attached_files = None
             for msg in reversed(message_history):
-                if msg.role.value == "user":
+                msg_role = msg.role.value if hasattr(msg.role, 'value') else msg.role
+                if msg_role == "user":
                     if msg.attached_files and msg.attached_files != []:
                         current_attached_files = msg.attached_files
                     break
