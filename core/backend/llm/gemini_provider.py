@@ -303,7 +303,7 @@ class GeminiProvider(BaseLLMProvider):
             history.append(types.Content(role="tool", parts=tool_response_parts))
             
         return CompletionResponse(
-            content="(Reached maximum reasoning turns)" if turn_count >= max_turns else "",
+            content="(Reached maximum reasoning turns)" if (max_turns and turn_count >= max_turns) else "",
             model=model_name,
             usage={"total_turns": turn_count},
             tool_calls=accumulated_tool_results if accumulated_tool_results else None
@@ -559,7 +559,7 @@ class GeminiProvider(BaseLLMProvider):
             
         # If we exit loop due to turn count
         final_content = ""
-        if turn_count >= max_turns:
+        if max_turns and turn_count >= max_turns:
             final_content = "(Reached maximum reasoning turns)"
             
         return CompletionResponse(
