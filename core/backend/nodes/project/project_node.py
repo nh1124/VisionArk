@@ -11,21 +11,25 @@ from uuid import uuid4
 
 class ProjectNode(BaseNode):
     """
-    The Orchestrator (formerly HubAgent).
+    The Orchestrator.
     Manages the project lifecycle, chat with user, and delegation to members.
     """
     
     def __init__(self, context: Dict[str, Any], status_callback: Optional[Any] = None):
         super().__init__(context, status_callback)
-        # Members will be initialized dynamically in pre_process
+        # Members will be initialized dynamically in on_enter
         self.members = {}
         self.memory = MemoryNode(context)
         self.session_id = None
         self.node_id = None
         
         # New Class-Based Tools
-        from tools.library.system import AskNodeTool, DelegateTaskTool
-        from tools.library.lbs import ListTasksTool, CreateTaskTool, UpdateTaskTool, CompleteLBSTaskTool
+        from tools.library.system import AskNodeTool, ListNodesTool, GetNodeProfileTool
+        from tools.library.lbs import (
+            ListTasksTool, CompleteLBSTaskTool, DeleteTaskTool,
+            GetLBSScheduleTool, GetLoadOnDayTool, GetLoadInPeriodTool,
+            GetTaskHistoryTool
+        )
         from tools.library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool
         from tools.library.knowledge import SearchKnowledgeTool, IngestKnowledgeTool
         from tools.library.search import GoogleSearchTool
@@ -35,15 +39,20 @@ class ProjectNode(BaseNode):
         
         self.tools = [
             AskNodeTool(),
-            DelegateTaskTool(),
+            ListNodesTool(),
+            GetNodeProfileTool(),
             ListMembersTool(),
             ManageMemberTool(),
             UpdateNodeDescriptionTool(),
 
             ListTasksTool(),
-            CreateTaskTool(),
-            UpdateTaskTool(),
             CompleteLBSTaskTool(),
+            DeleteTaskTool(),
+            GetLBSScheduleTool(),
+            GetLoadOnDayTool(),
+            GetLoadInPeriodTool(),
+            GetTaskHistoryTool(),
+
             SaveArtifactTool(),
             ReadReferenceTool(),
             ListFilesTool(),
@@ -55,7 +64,7 @@ class ProjectNode(BaseNode):
             UpdateUserConditionTool()
         ]
 
-    async def pre_process(self):
+    async def on_enter(self):
         # 1. Ensure Project Node exists & Get Session
         from models.database import get_async_engine, get_async_session_maker
         from sqlalchemy import select
@@ -170,7 +179,7 @@ class ProjectNode(BaseNode):
         self.members = dynamic_members
 
 
-    async def process(self, message: str) -> Any:
+    async def on_execute(self, message: str) -> Any:
         print(f"[ProjectNode] Processing: {message}")
         
         # 1. Command/Delegate Check (Simple Routing)
@@ -197,7 +206,7 @@ class ProjectNode(BaseNode):
         # Load System Prompt (Project Role)
         system_prompt = await self.load_system_prompt("project")
         
-        # Inject Profile from Context (if loaded in pre_process)
+        # Inject Profile from Context (if loaded in on_enter)
         if hasattr(self, "context_data") and self.context_data:
             profile_text = self.context_data.get("profile", "")
             if profile_text:
@@ -240,25 +249,25 @@ class ProjectNode(BaseNode):
             peer_projects = project_res.scalars().all()
             
             if system_nodes or member_nodes or peer_projects:
-                roster_text = "\n\n## Active Team Roster\nYou can delegate tasks or ask for information from these specialist nodes:\n"
+                roster_text = "\n\n## Active Team Roster\nYou can communicate with these nodes using the 'ask_node' tool and their Target ID (UUID):\n"
                 
                 if system_nodes:
                     roster_text += "\n### System Nodes (Infrastructure)\n"
                     for m in system_nodes:
                         desc = m.description or "Provides core system capabilities."
-                        roster_text += f"- **{m.display_name}** ({m.role_name}): {desc}\n"
+                        roster_text += f"- **{m.display_name}** ({m.role_name})\n  - Target ID: `{m.id}`\n  - {desc}\n"
                 
                 if member_nodes:
-                    roster_text += "\n### Project Specialists (Direct Delegation)\n"
+                    roster_text += "\n### Project Specialists (Internal Delegation)\n"
                     for m in member_nodes:
                         desc = m.description or "Specialist for " + m.role_name
-                        roster_text += f"- **{m.display_name}** ({m.role_name}): {desc}\n"
+                        roster_text += f"- **{m.display_name}** ({m.role_name})\n  - Target ID: `{m.id}`\n  - {desc}\n"
                         
                 if peer_projects:
                     roster_text += "\n### Peer Projects (Cross-Project Collaboration)\n"
                     for m in peer_projects:
                         desc = m.description or "Collaborative project node."
-                        roster_text += f"- **{m.display_name}** (Project ID: {m.project_id}): {desc}\n"
+                        roster_text += f"- **{m.display_name}**\n  - Target ID: `{m.id}`\n  - {desc}\n"
         
         if roster_text:
             system_prompt += roster_text
@@ -295,7 +304,7 @@ class ProjectNode(BaseNode):
         
         return response_text
 
-    async def post_process(self, result: Any):
+    async def on_exit(self, result: Any):
         # 1. Advocate: Check for tasks in the last exchange
         # Fetch last 2 messages (User + AI)
         history = await self.memory.get_history(self.session_id)

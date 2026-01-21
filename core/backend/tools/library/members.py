@@ -31,6 +31,7 @@ class ListMembersTool(BaseTool):
             members_list = []
             for n in member_nodes:
                 members_list.append({
+                    "id": n.id,
                     "role_name": n.role_name,
                     "display_name": n.display_name,
                     "tools": n.tools or [],
@@ -135,18 +136,18 @@ class ManageMemberTool(BaseTool):
 
 class UpdateNodeDescriptionArgs(BaseModel):
     description: str = Field(..., description="The new 1-2 sentence description for this node")
-    target_role: Optional[str] = Field(None, description="The role name of the member to update. Pass None (null) to update your own description.")
+    target_id: Optional[str] = Field(None, description="The UUID of the node to update. Pass None (null) to update your own description.")
 
 class UpdateNodeDescriptionTool(BaseTool):
     name = "update_node_description"
     description = (
         "Update the 'Short Description' for a node. "
-        "Use this to refine your own expertise summary (pass target_role=None) or update another member's description "
+        "Use this to refine your own expertise summary (pass target_id=None) or update another node's description "
         "to help the Project Node delegate more effectively."
     )
     args_schema = UpdateNodeDescriptionArgs
 
-    async def run(self, description: str, target_role: Optional[str] = None, **kwargs) -> Any:
+    async def run(self, description: str, target_id: Optional[str] = None, **kwargs) -> Any:
         session: AsyncSession = kwargs.get("session")
         project_id: str = kwargs.get("project_id")
         current_node_id: str = kwargs.get("node_id")
@@ -155,17 +156,12 @@ class UpdateNodeDescriptionTool(BaseTool):
             return {"success": False, "message": "Missing context (session or project_id)"}
 
         try:
-            if target_role:
-                # Update another member
-                role_name = target_role.lower().strip()
-                res = await session.execute(select(Node).where(
-                    Node.project_id == project_id,
-                    Node.role_name == role_name,
-                    Node.node_type == "MEMBER"
-                ))
+            if target_id:
+                # Update target node by ID
+                res = await session.execute(select(Node).where(Node.id == target_id))
                 node = res.scalars().first()
                 if not node:
-                    return {"success": False, "message": f"Member '{role_name}' not found."}
+                    return {"success": False, "message": f"Node with ID '{target_id}' not found."}
             else:
                 # Update self
                 if not current_node_id:
@@ -177,7 +173,7 @@ class UpdateNodeDescriptionTool(BaseTool):
 
             node.description = description
             await session.commit()
-            return {"success": True, "message": f"✅ Updated description for {node.role_name or 'current node'}."}
+            return {"success": True, "message": f"✅ Updated description for {node.display_name or node.role_name or 'unnamed node'}."}
 
         except Exception as e:
             if session: await session.rollback()

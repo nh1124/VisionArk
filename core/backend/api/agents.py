@@ -504,7 +504,6 @@ async def create_project_from_prompt(
         
         # 2. Initialize and run ProjectCreatorNode to create the project
         creator = ProjectCreatorNode(context)
-        await creator.pre_process()
         result = await creator.process(data.prompt)
         
         if not result.get("success"):

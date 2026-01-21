@@ -60,10 +60,10 @@ class SchedulerNode(BaseNode):
             print(f"[SchedulerNode] Error fetching LBS context: {e}")
             return {"tasks": [], "exceptions": [], "fatigue": 0}
 
-    async def pre_process(self):
+    async def on_enter(self):
         pass
 
-    async def process(self, message: str) -> Dict[str, Any]:
+    async def on_execute(self, message: str) -> Dict[str, Any]:
         """
         Process explicit scheduling requests.
         """
@@ -170,7 +170,7 @@ class SchedulerNode(BaseNode):
                 print(f"[SchedulerNode] Error proposing task: {e}")
                 return {"status": "error", "message": str(e)}
 
-    async def post_process(self, result: Any):
+    async def on_exit(self, result: Any):
         pass
     
     async def run_maintenance(self):

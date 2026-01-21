@@ -19,7 +19,7 @@ class ProjectCreatorNode(BaseNode):
         super().__init__(context, status_callback)
         self.tools = []  # No tools needed for this node
     
-    async def pre_process(self):
+    async def on_enter(self):
         """Load API key for LLM access."""
         from models.database import get_async_engine, get_async_session_maker, UserSettings
         from sqlalchemy import select
@@ -237,7 +237,7 @@ User: "Plan my thesis research on machine learning"
         finally:
             await session.close()
     
-    async def process(self, message: str) -> Dict[str, Any]:
+    async def on_execute(self, message: str) -> Dict[str, Any]:
         """
         Main processing: generate name + system prompt, create project.
         The initial prompt will be processed by the queue/worker after redirect.
@@ -257,5 +257,5 @@ User: "Plan my thesis research on machine learning"
         
         return result
     
-    async def post_process(self, result: Any):
+    async def on_exit(self, result: Any):
         pass

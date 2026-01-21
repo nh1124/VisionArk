@@ -90,18 +90,28 @@ class BaseNode(ABC):
         parts = [p for p in [global_text, role_text, tool_text] if p]
         return "\n\n".join(parts) if parts else "You are a helpful AI assistant."
     
-    async def pre_process(self):
+    async def on_enter(self):
         """Hook for loading data, files, or LBS status."""
         pass
 
     @abstractmethod
-    async def process(self, message: str) -> Any:
+    async def on_execute(self, message: str) -> Any:
         """Main logic (LLM or Command). Must be overridden."""
         raise NotImplementedError
 
-    async def post_process(self, result: Any):
+    async def on_exit(self, result: Any):
         """Hook for side effects (Advocate, saving logs)."""
         pass
+
+    async def process(self, message: str) -> Any:
+        """
+        Public entry point that enforces the lifecycle hooks:
+        on_enter -> on_execute -> on_exit.
+        """
+        await self.on_enter()
+        result = await self.on_execute(message)
+        await self.on_exit(result)
+        return result
 
     async def _execute_tool(self, tool, **kwargs):
         """

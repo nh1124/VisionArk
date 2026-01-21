@@ -148,26 +148,15 @@ class Worker:
                 if await self._command_detection(message, context):
                     return
 
-                # 2. Target Node Lifecycle
+                # 2. Target Node Lifecycle (Enforces on_enter -> on_execute -> on_exit)
                 target_node = ProjectNode(context)
                 
-                # Pre-process target (e.g. Memory Context loading)
-                await target_node.pre_process()
-                
-                # Process
+                # Process (Internal hooks: on_enter, on_execute, on_exit)
                 result = await target_node.process(message)
                 
                 # IMMEDIATE RESPONSE: Update status to completed so UI gets it
                 self.manager.update_status(task_id, "completed", result)
                 print(f"Worker: Task {task_id} completed. Result type: {type(result)}.")
-            
-                # Post-process (Background tasks: Advocate, Scheduler, etc.)
-                try:
-                    print(f"Worker: Starting post-process for {task_id}")
-                    await target_node.post_process(result)
-                    print(f"Worker: Finished post-process for {task_id}")
-                except Exception as e:
-                    print(f"Worker: Post-process warning (non-fatal): {e}")
             
         except Exception as e:
             print(f"❌ Task {task_id} failed: {e}")

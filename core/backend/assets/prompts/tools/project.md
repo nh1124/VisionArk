@@ -1,8 +1,7 @@
 ## 🛠 Project Orchestrator Tool Usage
 
 ### Coordination & Delegation
-- **`delegate_to_member`**: Your primary way to scale. Use it to send complex tasks to specialized agents (Planner, Researcher, etc.).
-- **`ask_node`**: Direct peer-to-peer communication between different project nodes.
+- **`ask_node`**: Direct peer-to-peer communication between different project nodes or members.
 
 ### Task & Execution
 - **`create_task`**: Use this to persist user requests into the LBS. Always estimate `workload` (1-10).

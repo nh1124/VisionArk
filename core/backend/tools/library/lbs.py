@@ -244,3 +244,26 @@ class GetLoadInPeriodTool(BaseTool):
             return {"success": True, "message": f"Heatmap: {len(hm)} days", "data": {"heatmap": hm}}
         except Exception as e:
             return {"success": False, "message": f"Failed to get heatmap: {e}"}
+            
+class GetTaskHistoryArgs(BaseModel):
+    task_id: str = Field(..., description="ID of the task")
+    start_date: str = Field(..., description="YYYY-MM-DD")
+    end_date: str = Field(..., description="YYYY-MM-DD")
+
+class GetTaskHistoryTool(BaseTool):
+    name = "get_task_execution_history"
+    description = "Get the historical execution records for a specific task over a date range."
+    args_schema = GetTaskHistoryArgs
+
+    async def run(self, task_id: str, start_date: str, end_date: str, **kwargs) -> Any:
+        session: AsyncSession = kwargs.get("session")
+        user_id: str = kwargs.get("user_id")
+        if not session or not user_id:
+            return {"success": False, "message": "Context error"}
+        
+        try:
+            client = await get_lbs_client(user_id, session)
+            history = await client.get_task_history(task_id, date.fromisoformat(start_date), date.fromisoformat(end_date))
+            return {"success": True, "message": f"Found {len(history)} records.", "data": {"history": history}}
+        except Exception as e:
+            return {"success": False, "message": f"Failed to get history: {e}"}

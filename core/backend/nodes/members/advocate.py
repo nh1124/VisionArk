@@ -30,10 +30,10 @@ class AdvocateNode(BaseNode):
             UpdateNodeDescriptionTool()
         ]
 
-    async def pre_process(self):
+    async def on_enter(self):
         pass
 
-    async def process(self, message: str) -> Any:
+    async def on_execute(self, message: str) -> Any:
         # Fallback for direct calls
         print(f"[Advocate] Extracting tasks from: {message}")
         return "Advocate: No new tasks detected."

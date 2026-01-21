@@ -25,10 +25,10 @@ class RulerNode(BaseNode):
             ListFilesTool()
         ]
 
-    async def pre_process(self):
+    async def on_enter(self):
         pass
 
-    async def process(self, message: str) -> Any:
+    async def on_execute(self, message: str) -> Any:
         # 1. Load Prompt
         system_prompt = await self.load_system_prompt("ruler")
         
@@ -41,5 +41,5 @@ class RulerNode(BaseNode):
         
         return llm_response.content or ""
 
-    async def post_process(self, result: Any):
+    async def on_exit(self, result: Any):
         pass

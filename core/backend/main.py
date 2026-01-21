@@ -25,14 +25,19 @@ async def lifespan(app: FastAPI):
     
     init_database()  # Use automatic path detection
     print("Database initialized")
+    
+    # Sync System Nodes
+    from services.system_node_registry import sync_system_nodes
+    await sync_system_nodes()
+    
     yield
     print("Shutting down...")
 
 
 # Create FastAPI app
 app = FastAPI(
-    title="AI TaskManagement OS API",
-    description="Hub-Spoke architecture task management with LBS + RAG + Context Management",
+    title="Vision Ark API",
+    description="Orchestrator-Member architecture task management with LBS + RAG + Context Management",
     version="0.2.0 (Phase 2)",
     lifespan=lifespan
 )

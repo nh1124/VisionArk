@@ -1,6 +1,6 @@
 # New Class-Based Tool Architecture
 from .base import BaseTool
-from .library.system import AskNodeTool, DelegateTaskTool
+from .library.system import AskNodeTool, ListNodesTool, GetNodeProfileTool, BroadcastSystemMessageTool
 from .library.lbs import ListTasksTool, CreateTaskTool, UpdateTaskTool, DeleteTaskTool, CompleteLBSTaskTool, GetLBSScheduleTool, GetLoadOnDayTool, GetLoadInPeriodTool
 from .library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool, DeleteArtifactTool
 from .library.knowledge import SearchKnowledgeTool, IngestKnowledgeTool
@@ -17,7 +17,9 @@ from .library.members import ListMembersTool, ManageMemberTool
 __all__ = [
     "BaseTool",
     "AskNodeTool",
-    "DelegateTaskTool",
+    "ListNodesTool",
+    "GetNodeProfileTool",
+    "BroadcastSystemMessageTool",
     "ListTasksTool",
     "CreateTaskTool",
     "UpdateTaskTool",

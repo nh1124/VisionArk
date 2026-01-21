@@ -1,88 +1,230 @@
-from typing import Any, Optional, Dict
+from __future__ import annotations
+from typing import Any, Optional, Dict, List
 from pydantic import BaseModel, Field
-from tools.base import BaseTool
+from tools.base import BaseTool, NoArgs
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime
+from datetime import datetime, date
+
+class ListNodesTool(BaseTool):
+    name = "list_nodes"
+    description = (
+        "List all available nodes for communication. "
+        "Returns a roster of IDs and descriptions for System Nodes, project specialists, and peer projects."
+    )
+    args_schema = NoArgs
+
+    async def run(self, **kwargs) -> Any:
+        session: AsyncSession = kwargs.get("session")
+        user_id: str = kwargs.get("user_id")
+        project_id: str = kwargs.get("project_id")
+        current_node_id: str = kwargs.get("node_id")
+
+        if not session or not user_id:
+            return {"success": False, "message": "Context error"}
+
+        try:
+            from models.database import Node, Project
+            from sqlalchemy import select
+
+            # 1. System Nodes
+            res_s = await session.execute(select(Node).filter(Node.node_type == "SYSTEM", Node.status == "active"))
+            systems = res_s.scalars().all()
+
+            # 2. Project Members
+            res_m = await session.execute(select(Node).filter(Node.project_id == project_id, Node.node_type == "MEMBER", Node.status == "active"))
+            members = res_m.scalars().all()
+
+            # 3. Peer Projects
+            res_p = await session.execute(
+                select(Node).join(Project, Node.project_id == Project.id).filter(
+                    Project.user_id == user_id,
+                    Node.node_type == "PROJECT",
+                    Node.id != current_node_id,
+                    Node.status == "active"
+                )
+            )
+            peers = res_p.scalars().all()
+
+            nodes = []
+            for n in systems + members + peers:
+                nodes.append({
+                    "id": n.id,
+                    "type": n.node_type,
+                    "role": n.role_name,
+                    "display_name": n.display_name,
+                    "description": n.description or "No description available."
+                })
+
+            return {"success": True, "message": f"Found {len(nodes)} available nodes.", "data": {"nodes": nodes}}
+        except Exception as e:
+            return {"success": False, "message": f"Failed to list nodes: {e}"}
+
+class GetNodeProfileArgs(BaseModel):
+    node_id: str = Field(..., description="The UUID of the node to inspect")
+
+class GetNodeProfileTool(BaseTool):
+    name = "get_node_profile"
+    description = "Retrieve detailed profile and capabilities for a specific node ID."
+    args_schema = GetNodeProfileArgs
+
+    async def run(self, node_id: str, **kwargs) -> Any:
+        session: AsyncSession = kwargs.get("session")
+        if not session:
+            return {"success": False, "message": "Context error"}
+        
+        try:
+            from models.database import Node
+            from sqlalchemy import select
+            
+            res = await session.execute(select(Node).filter(Node.id == node_id))
+            node = res.scalars().first()
+            if not node:
+                return {"success": False, "message": f"Node {node_id} not found."}
+            
+            return {
+                "success": True,
+                "data": {
+                    "id": node.id,
+                    "type": node.node_type,
+                    "role": node.role_name,
+                    "display_name": node.display_name,
+                    "description": node.description,
+                    "tools": node.tools or [],
+                    "status": node.status
+                }
+            }
+        except Exception as e:
+            return {"success": False, "message": f"Failed to get profile: {e}"}
 
 class AskNodeArgs(BaseModel):
-    target: str = Field(..., description="The ID of the target project/node (e.g., a UUID)")
+    target_id: str = Field(..., description="The UUID (node_id) of the target node. Obtained via 'list_nodes' or active roster.")
     message: str = Field(..., description="The content of the message to send")
 
 class AskNodeTool(BaseTool):
     name = "ask_node"
     description = (
-        "Send a message or a sub-task to another project node. "
-        "ATTENTION: Use this for cross-project coordination. Always use project_id (UUID) as the target."
-        "HOW TO USE: 'ask_node(target=\"hub\", message=\"What are the findings for phase 1?\")'."
+        "Send a message or a sub-task to another node. "
+        "ONLY accepts UUID target_id. Use 'list_nodes' to find target IDs."
     )
     args_schema = AskNodeArgs
 
-    async def run(self, target: str, message: str, **kwargs) -> Any:
+    async def run(self, target_id: str, message: str, **kwargs) -> Any:
         session: AsyncSession = kwargs.get("session")
         user_id: str = kwargs.get("user_id")
         if not session or not user_id:
             return {"success": False, "message": "Context error: session or user_id missing"}
         
         try:
-            from nodes.project.project_node import ProjectNode
-            ctx = {'user_id': user_id, 'db_session': session, 'project_id': target}
-            node = ProjectNode(ctx)
-            resp = await node.process(message)
-            return {"success": True, "message": f"Response from {target}: {resp}", "data": {"response": resp}}
-        except Exception as e:
-            return {"success": False, "message": f"Failed to ask node {target}: {e}"}
-
-class DelegateTaskArgs(BaseModel):
-    role: str = Field(..., description="The role of the member to delegate to (planner, researcher, ruler, advocate)")
-    instruction: str = Field(..., description="Detailed instructions for the task")
-
-class DelegateTaskTool(BaseTool):
-    name = "delegate_to_member"
-    description = (
-        "Delegate a task to a specialized member agent (Planner, Researcher, Ruler, Advocate). "
-        "ATTENTION: Ensure the instruction is specific and actionable. This is an internal delegation within the current project. "
-        "HOW TO USE: 'delegate_to_member(role=\"researcher\", instruction=\"Search for recent papers on LLM optimization.\")'."
-    )
-    args_schema = DelegateTaskArgs
-
-    async def run(self, role: str, instruction: str, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
-        user_id: str = kwargs.get("user_id")
-        project_id: str = kwargs.get("project_id")
-        if not session or not user_id:
-            return {"success": False, "message": "Context error: session or user_id missing"}
-
-        try:
-            members = kwargs.get("members", {})
-            role_lower = role.lower()
+            from models.database import Node
+            from sqlalchemy import select
             
-            if role_lower in members:
-                node = members[role_lower]
-                resp = await node.process(instruction)
-                return {"success": True, "message": f"Result from {role}:\n{resp}"}
+            # 1. Lookup node in DB strictly by ID
+            result = await session.execute(
+                select(Node).filter(Node.id == target_id).filter(Node.status == "active")
+            )
+            node_record = result.scalars().first()
             
-            # Fallback/Legacy logic if members not in context (cross-compatibility)
-            from nodes.members.planner import PlannerNode
-            from nodes.members.researcher import ResearcherNode
-            from nodes.members.ruler import RulerNode
-            from nodes.members.advocate import AdvocateNode
-            
-            role_map = {
-                "planner": PlannerNode,
-                "researcher": ResearcherNode,
-                "ruler": RulerNode,
-                "advocate": AdvocateNode
+            if not node_record:
+                return {"success": False, "message": f"Target node ID '{target_id}' not found or inactive. Always use UUIDs from list_nodes."}
+
+            # 2. Instantiate based on node_type
+            target_node = None
+            ctx = {
+                'user_id': user_id, 
+                'db_session': session, 
+                'project_id': node_record.project_id,
+                'api_key': kwargs.get("api_key")
             }
             
-            if role_lower not in role_map:
-                return {"success": False, "message": f"Invalid role: {role}. Available: {list(members.keys()) or list(role_map.keys())}"}
+            if node_record.node_type == "SYSTEM":
+                from services.system_node_registry import SystemNodeRegistry
+                NodeClass = SystemNodeRegistry.get_node_class(node_record.role_name)
+                target_node = NodeClass(ctx, node_record)
+                    
+            elif node_record.node_type == "PROJECT":
+                from nodes.project.project_node import ProjectNode
+                target_node = ProjectNode(ctx)
+                
+            elif node_record.node_type == "MEMBER":
+                from nodes.members.dynamic_node import DynamicMemberNode
+                target_node = DynamicMemberNode(ctx, node_record)
+                
+            if not target_node:
+                return {"success": False, "message": f"Unsupported node type: {node_record.node_type}"}
+
+            # 3. Process message
+            resp = await target_node.process(message)
+            return {"success": True, "message": f"Response from {node_record.display_name}: {resp}", "data": {"response": resp}}
             
-            NodeClass = role_map[role_lower]
-            ctx = {'user_id': user_id, 'db_session': session, 'project_id': project_id}
-            node = NodeClass(ctx, status_callback=self._status_callback)
-            resp = await node.process(instruction)
-            return {"success": True, "message": f"Result from {role}:\n{resp}"}
         except Exception as e:
-            return {"success": False, "message": f"Delegation failed: {e}"}
+            return {"success": False, "message": f"Failed to call node {target_id}: {e}"}
 
 
+
+class BroadcastMessageArgs(BaseModel):
+    message: str = Field(..., description="Message content to broadcast")
+    target_project_ids: Optional[list[str]] = Field(None, description="Optional list of project IDs. If None, broadcasts to all.")
+
+class BroadcastSystemMessageTool(BaseTool):
+    name = "broadcast_system_message"
+    description = (
+        "Sends notifications or alerts to active Project Hubs. "
+        "Use this to push advice or warnings when global capacity is reached."
+    )
+    args_schema = BroadcastMessageArgs
+
+    async def run(self, message: str, target_project_ids: Optional[list[str]] = None, **kwargs) -> Any:
+        session: AsyncSession = kwargs.get("session")
+        user_id: str = kwargs.get("user_id")
+        if not session or not user_id:
+            return {"success": False, "message": "Context error"}
+        
+        try:
+            from models.database import Project, ChatSession, ChatMessage
+            from sqlalchemy import select
+            import uuid
+            
+            # 1. Determine target projects
+            if target_project_ids:
+                res = await session.execute(select(Project).filter(Project.id.in_(target_project_ids)))
+                projects = res.scalars().all()
+            else:
+                res = await session.execute(select(Project).filter(Project.user_id == user_id, Project.status == "active"))
+                projects = res.scalars().all()
+            
+            count = 0
+            for proj in projects:
+                # 2. Get/Create a system session for the project
+                # We look for a session titled "System Alerts" or similar
+                session_res = await session.execute(
+                    select(ChatSession).filter(
+                        ChatSession.project_id == proj.id,
+                        ChatSession.title == "System Alerts"
+                    )
+                )
+                chat_session = session_res.scalars().first()
+                
+                if not chat_session:
+                    chat_session = ChatSession(
+                        id=str(uuid.uuid4()),
+                        project_id=proj.id,
+                        title="System Alerts",
+                        summary="Global Scheduler automated alerts and advice."
+                    )
+                    session.add(chat_session)
+                
+                # 3. Add the message
+                alert_msg = ChatMessage(
+                    id=str(uuid.uuid4()),
+                    session_id=chat_session.id,
+                    role="system",
+                    content=f"**[Global Scheduler Alert]**: {message}",
+                    meta_payload={"sender": "GlobalScheduler", "type": "SYSTEM_ADVICE"}
+                )
+                session.add(alert_msg)
+                count += 1
+            
+            await session.commit()
+            return {"success": True, "message": f"Broadcasted alert to {count} projects via System Alerts session."}
+        except Exception as e:
+            return {"success": False, "message": f"Failed to broadcast message: {e}"}

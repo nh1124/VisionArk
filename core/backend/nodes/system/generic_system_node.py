@@ -1,12 +1,18 @@
 from typing import Any, Dict, List, Optional
-from nodes.base_node import BaseNode
+from nodes.system.system_node import SystemNode
 from models.message import Message
 from tools.tool_utils import get_tool_by_name
 
-class DynamicMemberNode(BaseNode):
+class GenericSystemNode(SystemNode):
     """
-    A generic member node that configures itself from a DB Node (MEMBER type).
+    A generic system node that configures itself from a DB Node (SYSTEM type).
+    Provides privileged cross-project access.
     """
+    # Registration Metadata
+    role_name = "GenericSystem"
+    display_name = "Generic System Node"
+    description = "A base class for system-level specialist nodes."
+    default_tools = ["ask_node"]
     
     def __init__(self, context: Dict[str, Any], node: Any, status_callback: Optional[Any] = None):
         super().__init__(context, status_callback)
@@ -22,20 +28,18 @@ class DynamicMemberNode(BaseNode):
                 if tool:
                     self.tools.append(tool)
                 else:
-                    print(f"[DynamicMemberNode] Warning: Tool '{tool_name}' not found for member '{self.role_name}'")
+                    print(f"[GenericSystemNode] Warning: Tool '{tool_name}' not found for system node '{self.role_name}'")
         
-        # Always allow self-description update
-        from tools.library.members import UpdateNodeDescriptionTool
-        self.tools.append(UpdateNodeDescriptionTool())
+        # System nodes might need specific core tools too
+        from tools.library.system import AskNodeTool
+        self.tools.append(AskNodeTool())
 
     async def load_system_prompt(self, role_name: Optional[str] = None) -> str:
         """
         Prioritize DB prompt, then fallback to asset lookup.
         """
-        # If the node has a system prompt, use it as the 'role' part
         db_prompt = self.node.system_prompt
         
-        # We still want the global prompt
         from utils.paths import get_prompts_dir
         prompts_dir = get_prompts_dir()
         global_path = prompts_dir / "system" / "global.md"
@@ -50,18 +54,12 @@ class DynamicMemberNode(BaseNode):
         
         return await super().load_system_prompt(role_name or self.role_name)
 
-    async def on_enter(self):
-        pass
-
     async def on_execute(self, message: str) -> Any:
-        # Load Prompt
         system_prompt = await self.load_system_prompt()
         
-        # Construct History (usually delegation is a single-shot or limited history)
-        # For dynamic workers, we might want to pass more history, but let's stick to the prompt-based execution.
+        # System requests are usually single-shot from other nodes
         history = [Message(role="user", content=message)]
         
-        # Call LLM with Tools
         llm_response = await self.chat_with_tools(
             system_prompt=system_prompt,
             message_history=history,
@@ -69,6 +67,3 @@ class DynamicMemberNode(BaseNode):
         )
         
         return llm_response.content or ""
-
-    async def on_exit(self, result: Any):
-        pass

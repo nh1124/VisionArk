@@ -14,7 +14,7 @@ class MemoryNode(BaseNode):
         super().__init__(context)
         self.user_dir = get_user_root_dir(self.user_id)
         
-    async def pre_process(self):
+    async def on_enter(self):
         pass
 
     async def get_history(self, session_id: str) -> List[Message]:
@@ -250,9 +250,9 @@ class MemoryNode(BaseNode):
             "plan": plan_text
         }
 
-    async def process(self, message: str) -> Any:
+    async def on_execute(self, message: str) -> Any:
         # MemoryNode is mostly passive (called by others)
         return None
 
-    async def post_process(self, result: Any):
+    async def on_exit(self, result: Any):
         pass
