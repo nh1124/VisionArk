@@ -99,17 +99,18 @@ class GetNodeProfileTool(BaseTool):
 class AskNodeArgs(BaseModel):
     target_id: str = Field(..., description="The UUID (node_id) of the target node. Obtained via 'list_nodes' or active roster.")
     message: str = Field(..., description="The content of the message to send")
+    blocking: bool = Field(True, description="If True, waits for the response. If False, returns immediately and executes in background.")
 
 class AskNodeTool(BaseTool):
     name = "ask_node"
     description = (
         "Send a message or a sub-task to another node. "
-        "ONLY accepts UUID target_id. Use 'list_nodes' to find target IDs."
+        "Returns the response from the target node if blocking=True, otherwise returns a status acknowledging the request."
     )
     args_schema = AskNodeArgs
 
-    async def run(self, target_id: str, message: str, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
+    async def run(self, target_id: str, message: str, blocking: bool = True, **kwargs) -> Any:
+        session: AsyncSession = kwargs.get("session") or kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         if not session or not user_id:
             return {"success": False, "message": "Context error: session or user_id missing"}
@@ -127,7 +128,30 @@ class AskNodeTool(BaseTool):
             if not node_record:
                 return {"success": False, "message": f"Target node ID '{target_id}' not found or inactive. Always use UUIDs from list_nodes."}
 
-            # 2. Instantiate based on node_type
+            # 2. Non-blocking Mode: Enqueue and return
+            if not blocking:
+                from queue_system.manager import QueueManager
+                manager = QueueManager()
+                
+                # Pass necessary context for background execution
+                clean_context = {k: v for k, v in kwargs.items() if k not in ["db_session", "session", "background_tasks"]}
+                clean_context["project_id"] = node_record.project_id
+                
+                task_id = manager.enqueue_node_task(
+                    user_id=user_id,
+                    target_node_id=target_id,
+                    message=message,
+                    context=clean_context
+                )
+                
+                return {
+                    "success": True, 
+                    "message": f"Request sent to {node_record.display_name} for background processing.",
+                    "data": {"task_id": task_id, "status": "queued"}
+                }
+
+            # 3. Blocking Mode (Original behavior)
+            # Instantiate based on node_type
             target_node = None
             ctx = {
                 'user_id': user_id, 
@@ -152,7 +176,7 @@ class AskNodeTool(BaseTool):
             if not target_node:
                 return {"success": False, "message": f"Unsupported node type: {node_record.node_type}"}
 
-            # 3. Process message
+            # 4. Process message
             resp = await target_node.process(message)
             return {"success": True, "message": f"Response from {node_record.display_name}: {resp}", "data": {"response": resp}}
             

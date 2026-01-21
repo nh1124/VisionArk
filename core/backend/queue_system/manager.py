@@ -18,13 +18,14 @@ class QueueManager:
             )
         return cls._instance
 
-    def enqueue(self, user_id: str, message: str, context: Optional[Dict] = None) -> str:
+    def enqueue(self, user_id: str, message: str, context: Optional[Dict] = None, task_type: str = "user_message") -> str:
         """Add a task to the queue"""
         task_id = str(uuid.uuid4())
         payload = {
             "task_id": task_id,
             "user_id": user_id,
             "message": message,
+            "task_type": task_type,
             "context": context or {},
             "status": "queued"
         }
@@ -36,10 +37,16 @@ class QueueManager:
         self.client.setex(
             f"task:{task_id}", 
             3600, # 1 hour TTL
-            json.dumps({"status": "queued", "result": None})
+            json.dumps({"status": "queued", "result": None, "task_type": task_type})
         )
         
         return task_id
+
+    def enqueue_node_task(self, user_id: str, target_node_id: str, message: str, context: Optional[Dict] = None) -> str:
+        """New specialized method for async node-to-node communication"""
+        ctx = context or {}
+        ctx["target_node_id"] = target_node_id
+        return self.enqueue(user_id, message, ctx, task_type="node_execution")
 
     def dequeue(self) -> Dict[str, Any]:
         """Blocking pop from the queue"""

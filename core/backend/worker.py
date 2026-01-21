@@ -120,13 +120,15 @@ class Worker:
         task_id = task_data.get("task_id")
         user_id = task_data.get("user_id")
         message = task_data.get("message")
+        task_type = task_data.get("task_type", "user_message")
         context = task_data.get("context") or {}
         
         # Inject user_id/task_id into context for Node usage
         context["user_id"] = user_id
         context["task_id"] = task_id
+        context["task_type"] = task_type
         
-        print(f"📦 Processing task {task_id} from {user_id}")
+        print(f"📦 Processing task {task_id} ({task_type}) from {user_id}")
         self.manager.update_status(task_id, "processing")
         
         try:
@@ -138,17 +140,84 @@ class Worker:
             async with async_session_cls() as db_session:
                 context["db_session"] = db_session
                 
+                # 1. SPECIAL HANDLING: Node Execution (Async ask_node)
+                if task_type == "node_execution":
+                    target_node_id = context.get("target_node_id")
+                    from models.database import Node
+                    from sqlalchemy import select
+                    
+                    # Resolve target node
+                    stmt = select(Node).filter(Node.id == target_node_id)
+                    res = await db_session.execute(stmt)
+                    node_record = res.scalars().first()
+                    
+                    if not node_record:
+                        raise ValueError(f"Target node {target_node_id} not found in background worker.")
+
+                    # Instantiate target node
+                    target_node = None
+                    if node_record.node_type == "SYSTEM":
+                        from services.system_node_registry import SystemNodeRegistry
+                        NodeClass = SystemNodeRegistry.get_node_class(node_record.role_name)
+                        target_node = NodeClass(context, node_record)
+                    elif node_record.node_type == "PROJECT":
+                        from nodes.project.project_node import ProjectNode
+                        target_node = ProjectNode(context)
+                    elif node_record.node_type == "MEMBER":
+                        from nodes.members.dynamic_node import DynamicMemberNode
+                        target_node = DynamicMemberNode(context, node_record)
+
+                    if not target_node:
+                        raise ValueError(f"Could not instantiate node {target_node_id}")
+
+                    # Execute
+                    print(f"Worker: Executing async node call to {node_record.display_name}")
+                    result = await target_node.process(message)
+                    
+                    # CALLBACK: If project_id/session_id is available, notify the chat
+                    session_id = context.get("session_id")
+                    if not session_id and node_record.project_id:
+                        from models.database import ChatSession
+                        stmt = select(ChatSession).filter(ChatSession.project_id == node_record.project_id).order_by(ChatSession.created_at.desc())
+                        res = await db_session.execute(stmt)
+                        last_session = res.scalars().first()
+                        if last_session:
+                            session_id = last_session.id
+                    
+                    if session_id:
+                        from services.callback_service import CallbackService
+                        await CallbackService.notify_node_completion(
+                            db_session, 
+                            session_id, 
+                            node_record.display_name, 
+                            result,
+                            task_id=task_id
+                        )
+                    
+                    self.manager.update_status(task_id, "completed", result)
+                    return
+
+                # 2. DEFAULT HANDLING: User Message
                 # Process Attachments (BEFORE Routing)
                 if context.get("files"):
                     context["attached_files"] = await self._process_attachments(context, db_session)
                 
-                print(f"Worker: Processing task {task_id}")
+                print(f"Worker: Processing user message {task_id}")
+
+                # ROUTER DISPATCH: Check for hooks/multicast patterns
+                try:
+                    from services.router import Router
+                    router = Router()
+                    # We pass a copy of context to avoid session mutation issues if dispatch were async-heavy
+                    await router.dispatch(message, context)
+                except Exception as re:
+                    print(f"⚠️ Router dispatch error: {re}")
                 
-                # 1. Command Detection
+                # Command Detection
                 if await self._command_detection(message, context):
                     return
 
-                # 2. Target Node Lifecycle (Enforces on_enter -> on_execute -> on_exit)
+                # 3. Target Node Lifecycle (Enforces on_enter -> on_execute -> on_exit)
                 target_node = ProjectNode(context)
                 
                 # Process (Internal hooks: on_enter, on_execute, on_exit)
@@ -156,7 +225,7 @@ class Worker:
                 
                 # IMMEDIATE RESPONSE: Update status to completed so UI gets it
                 self.manager.update_status(task_id, "completed", result)
-                print(f"Worker: Task {task_id} completed. Result type: {type(result)}.")
+                print(f"Worker: Task {task_id} completed.")
             
         except Exception as e:
             print(f"❌ Task {task_id} failed: {e}")
@@ -165,7 +234,16 @@ class Worker:
             self.manager.update_status(task_id, "failed", str(e))
 
     async def run(self):
-        print("Worker started. Waiting for tasks... (V3 Router Enabled)")
+        print("Worker starting... (V3 Router Enabled)")
+        # Initialize Router Hooks
+        try:
+            from services.router import Router
+            await Router.initialize_default_hooks()
+            print("Router: Default hooks initialized.")
+        except Exception as re:
+            print(f"⚠️ Router initialization failed: {re}")
+            
+        print("Worker started. Waiting for tasks...")
         while True:
             try:
                 # Poll Redis (Blocking) in executor to stay async-friendly
