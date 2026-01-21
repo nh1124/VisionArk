@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 from nodes.base_node import BaseNode
 from models.message import Message, MessageRole
 from datetime import datetime
+from services.member_node_registry import sync_member_nodes_for_project
 
 
 class ProjectCreatorNode(BaseNode):
@@ -221,6 +222,9 @@ User: "Plan my thesis research on machine learning"
             (project_dir / "files").mkdir(exist_ok=True)
             (project_dir / "artifacts").mkdir(exist_ok=True)
             (project_dir / "refs").mkdir(exist_ok=True)
+            
+            # 3.5 Initialize Member Nodes
+            await sync_member_nodes_for_project(project_id)
             
             await session.commit()
             

@@ -171,8 +171,8 @@ class AskNodeTool(BaseTool):
                 target_node = ProjectNode(ctx)
                 
             elif node_record.node_type == "MEMBER":
-                from nodes.members.dynamic_node import DynamicMemberNode
-                target_node = DynamicMemberNode(ctx, node_record)
+                from nodes.members.generic_member_node import GenericMemberNode
+                target_node = GenericMemberNode(ctx, node_record)
                 
             if not target_node:
                 return {"success": False, "message": f"Unsupported node type: {node_record.node_type}"}

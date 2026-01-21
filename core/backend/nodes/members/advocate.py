@@ -1,44 +1,32 @@
-from typing import Any, List
-from nodes.base_node import BaseNode
-from nodes.system.scheduler_node import SchedulerNode
-from models.message import Message
+from typing import Any, List, Dict, Optional
+from nodes.members.generic_member_node import GenericMemberNode
 
-class AdvocateNode(BaseNode):
+class AdvocateNode(GenericMemberNode):
     """
     The Taskmaster.
     Focus: Task extraction and LBS Proposal.
     """
+    role_name = "advocate"
+    display_name = "Advocate"
+    description = "Task extraction, prioritization, and scheduling advocacy."
+    default_tools = [
+        "get_current_condition",
+        "update_user_condition",
+        "save_artifact",
+        "read_reference",
+        "list_files",
+        "search_knowledge",
+        "ingest_knowledge",
+        "update_node_description"
+    ]
     
-    def __init__(self, context):
-        super().__init__(context)
+    def __init__(self, context: Dict[str, Any], node: Any, status_callback: Optional[Any] = None):
+        super().__init__(context, node, status_callback)
         # We need a reference to Scheduler to propose tasks
+        from nodes.system.scheduler_node import SchedulerNode
         self.scheduler = SchedulerNode(context)
-        
-        from tools.library.condition import GetCurrentConditionTool, UpdateUserConditionTool
-        from tools.library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool
-        from tools.library.knowledge import SearchKnowledgeTool, IngestKnowledgeTool
-        from tools.library.members import UpdateNodeDescriptionTool
-        
-        self.tools = [
-            GetCurrentConditionTool(),
-            UpdateUserConditionTool(),
-            SaveArtifactTool(),
-            ReadReferenceTool(),
-            ListFilesTool(),
-            SearchKnowledgeTool(),
-            IngestKnowledgeTool(),
-            UpdateNodeDescriptionTool()
-        ]
 
-    async def on_enter(self):
-        pass
-
-    async def on_execute(self, message: str) -> Any:
-        # Fallback for direct calls
-        print(f"[Advocate] Extracting tasks from: {message}")
-        return "Advocate: No new tasks detected."
-        
-    async def process_messages(self, messages: List[Message]):
+    async def process_messages(self, messages: List[Any]):
         """
         Analyze recent chat history for actionable tasks.
         """

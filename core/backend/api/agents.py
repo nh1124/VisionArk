@@ -21,6 +21,7 @@ from models.database import Node, Project, ChatSession, ChatMessage, UploadedFil
 from utils.paths import get_project_dir, get_user_projects_dir, validate_name, secure_path_join, update_project_name_cache as update_cache
 from uuid import uuid4
 from datetime import datetime
+from services.member_node_registry import sync_member_nodes_for_project
 
 router = APIRouter(prefix="/api/agents", tags=["Agents"])
 
@@ -453,9 +454,10 @@ async def create_project(
         # 5. Create project directory on disk
         project_dir = get_project_dir(identity.user_id, project_id)
         project_dir.mkdir(parents=True, exist_ok=True)
-        (project_dir / "files").mkdir(exist_ok=True)
-        (project_dir / "artifacts").mkdir(exist_ok=True)
         (project_dir / "refs").mkdir(exist_ok=True)
+        
+        # 6. Initialize Member Nodes for this project
+        await sync_member_nodes_for_project(project_id)
         
         await db.commit()
         

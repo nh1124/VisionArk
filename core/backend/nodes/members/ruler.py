@@ -1,45 +1,28 @@
-from typing import Any
-from nodes.base_node import BaseNode
-from models.message import Message
+from typing import Any, Dict, Optional
+from nodes.members.generic_member_node import GenericMemberNode
 
-class RulerNode(BaseNode):
+class RulerNode(GenericMemberNode):
     """
     The Organizer.
     Focus: File organization and Indexing.
     """
+    role_name = "ruler"
+    display_name = "Ruler"
+    description = "Task management, scheduling, and file orchestration."
+    default_tools = [
+        "list_tasks",
+        "create_task",
+        "update_task",
+        "complete_lbs_task",
+        "get_lbs_schedule",
+        "get_load_on_day",
+        "save_artifact",
+        "read_reference",
+        "list_files"
+    ]
     
-    def __init__(self, context: Any):
-        super().__init__(context)
-        from tools.library.lbs import ListTasksTool, CreateTaskTool, UpdateTaskTool, CompleteLBSTaskTool, GetLBSScheduleTool, GetLoadOnDayTool
-        from tools.library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool
-        
-        self.tools = [
-            ListTasksTool(),
-            CreateTaskTool(),
-            UpdateTaskTool(),
-            CompleteLBSTaskTool(),
-            GetLBSScheduleTool(),
-            GetLoadOnDayTool(),
-            SaveArtifactTool(),
-            ReadReferenceTool(),
-            ListFilesTool()
-        ]
-
-    async def on_enter(self):
-        pass
-
-    async def on_execute(self, message: str) -> Any:
-        # 1. Load Prompt
-        system_prompt = await self.load_system_prompt("ruler")
-        
-        # 2. Call LLM with Tools
-        llm_response = await self.chat_with_tools(
-            system_prompt=system_prompt,
-            message_history=[Message(role="user", content=message)],
-            tool_context=self.context
-        )
-        
-        return llm_response.content or ""
+    def __init__(self, context: Dict[str, Any], node: Any, status_callback: Optional[Any] = None):
+        super().__init__(context, node, status_callback)
 
     async def on_exit(self, result: Any):
         pass

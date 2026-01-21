@@ -89,17 +89,11 @@ function MessageWithAttachmentsBase({
 
     return (
         <div
-            className={`flex gap-3 mb-4 ${role === "user" ? "justify-end" : "justify-start"
+            className={`flex gap-3 mb-4 ${role === "user" ? "justify-end" : "justify-center"
                 }`}
         >
-            {role === "assistant" && (
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0 mt-1 ${type === "system" ? "bg-blue-600" : "bg-purple-600"
-                    }`}>
-                    {type === "system" ? "⚙️" : "AI"}
-                </div>
-            )}
 
-            <div className={`max-w-[85%] min-w-0 flex flex-col group ${role === "user" ? "items-end" : "items-start"}`}>
+            <div className={`max-w-[85%] min-w-0 flex flex-col group ${role === "user" ? "items-end" : "items-center"}`}>
                 <div
                     className={`relative w-full ${role === "user"
                         ? "bg-gradient-to-br from-purple-600 to-purple-800 text-white rounded-2xl rounded-tr-sm shadow-lg shadow-purple-900/20 p-5"
@@ -248,7 +242,7 @@ function MessageWithAttachmentsBase({
 
                 {/* Assistant Action Bar - Adding Delete here too */}
                 {role === "assistant" && (
-                    <div className="flex items-center gap-1 mt-1.5 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center justify-center gap-1 mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-full">
                         <button
                             onClick={handleCopy}
                             className="p-1.5 rounded-lg hover:bg-white/5 text-gray-500 hover:text-gray-300 transition-all relative group/btn"
@@ -321,13 +315,6 @@ function MessageWithAttachmentsBase({
                 )}
             </div>
 
-            {
-                role === "user" && (
-                    <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-cyan-600 to-cyan-400 flex items-center justify-center text-white font-black flex-shrink-0 shadow-lg shadow-cyan-900/20 text-xs tracking-tighter">
-                        YOU
-                    </div>
-                )
-            }
         </div >
     );
 }

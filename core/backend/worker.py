@@ -163,8 +163,8 @@ class Worker:
                     elif node_record.node_type == "PROJECT":
                         target_node = ProjectNode(context)
                     elif node_record.node_type == "MEMBER":
-                        from nodes.members.dynamic_node import DynamicMemberNode
-                        target_node = DynamicMemberNode(context, node_record)
+                        from nodes.members.generic_member_node import GenericMemberNode
+                        target_node = GenericMemberNode(context, node_record)
 
                     if not target_node:
                         raise ValueError(f"Could not instantiate node {target_node_id}")

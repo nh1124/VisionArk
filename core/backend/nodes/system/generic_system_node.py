@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional
 from nodes.system.system_node import SystemNode
-from models.message import Message
+from models.message import Message, MessageRole
 from tools.tool_utils import get_tool_by_name
 
 class GenericSystemNode(SystemNode):
@@ -58,7 +58,7 @@ class GenericSystemNode(SystemNode):
         system_prompt = await self.load_system_prompt()
         
         # System requests are usually single-shot from other nodes
-        history = [Message(role="user", content=message)]
+        history = [Message(role=MessageRole.USER, content=message)]
         
         llm_response = await self.chat_with_tools(
             system_prompt=system_prompt,

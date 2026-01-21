@@ -1,8 +1,5 @@
 from typing import Any, Dict, List, Optional
 from nodes.base_node import BaseNode
-from nodes.members.planner import PlannerNode
-from nodes.members.researcher import ResearcherNode
-from nodes.members.advocate import AdvocateNode
 from nodes.system.memory_node import MemoryNode
 from models.database import get_async_db
 from models.message import Message, MessageRole, AttachedFile
@@ -17,8 +14,6 @@ class ProjectNode(BaseNode):
     
     def __init__(self, context: Dict[str, Any], status_callback: Optional[Any] = None):
         super().__init__(context, status_callback)
-        # Members will be initialized dynamically in on_enter
-        self.members = {}
         self.memory = MemoryNode(context)
         self.session_id = None
         self.node_id = None
@@ -108,53 +103,10 @@ class ProjectNode(BaseNode):
             # 4. Load Context (Profile, etc.)
             self.context_data = await self.memory.get_context()
             
-            # 5. Load Members Dynamic
-            await self._init_dynamic_members(session)
-            
         except Exception as e:
             print(f"[ProjectNode] Error in on_enter: {e}")
             raise
 
-    async def _init_dynamic_members(self, session):
-        """Load member agents from database or fall back to defaults."""
-        from nodes.members.dynamic_node import DynamicMemberNode
-        from models.database import Node
-        from sqlalchemy import select
-        
-        # Fetch all member nodes for this project
-        result = await session.execute(select(Node).where(
-            Node.project_id == self.project_id,
-            Node.node_type == "MEMBER",
-            Node.status == "active"
-        ))
-        member_nodes = result.scalars().all()
-        
-        dynamic_members = {}
-        for node in member_nodes:
-            if node.role_name:
-                dynamic_members[node.role_name] = DynamicMemberNode(
-                    self.context, 
-                    node, 
-                    status_callback=self.status_callback
-                )
-        
-        # Hardcoded Fallbacks (Planner, Researcher, Advocate)
-        # These will be used if no DB profile overrides them
-        from nodes.members.planner import PlannerNode
-        from nodes.members.researcher import ResearcherNode
-        from nodes.members.advocate import AdvocateNode
-        
-        fallbacks = {
-            "planner": PlannerNode(self.context),
-            "researcher": ResearcherNode(self.context),
-            "advocate": AdvocateNode(self.context)
-        }
-        
-        for role, node in fallbacks.items():
-            if role not in dynamic_members:
-                dynamic_members[role] = node
-                
-        self.members = dynamic_members
 
 
     async def on_execute(self, message: str) -> Any:
@@ -263,8 +215,7 @@ class ProjectNode(BaseNode):
                 'session_id': self.session_id,
                 'node_id': self.node_id,
                 'project_id': self.project_id,
-                'context_data': self.context_data,  # Pass full context data if needed
-                'members': self.members
+                'context_data': self.context_data  # Pass full context data if needed
             }
         )
         
@@ -283,13 +234,37 @@ class ProjectNode(BaseNode):
         return response_text
 
     async def on_exit(self, result: Any):
-        # 1. Advocate: Check for tasks in the last exchange
-        # Fetch last 2 messages (User + AI)
-        history = await self.memory.get_history(self.session_id)
-        recent = history[-2:] if len(history) >= 2 else history
-        
-        # Fire & Forget Advocate
-        # Advocate will analyze and call Scheduler if needed
+        # Fire & Forget Advocate for post-turn task analysis
         import asyncio
-        asyncio.create_task(self.members["advocate"].process_messages(recent))
+        asyncio.create_task(self._delegate_to_advocate())
+
+    async def _delegate_to_advocate(self):
+        """Instantiate and run the Advocate node to process recent messages."""
+        try:
+            from models.database import Node, AsyncSessionLocal
+            from sqlalchemy import select
+            
+            async with AsyncSessionLocal() as session:
+                # 1. Fetch Advocate Node from DB
+                res = await session.execute(select(Node).filter(
+                    Node.project_id == self.project_id,
+                    Node.role_name == "advocate",
+                    Node.node_type == "MEMBER"
+                ))
+                node_record = res.scalars().first()
+                if not node_record:
+                    print("[ProjectNode] Advocate node not found for post-turn analysis.")
+                    return
+
+                # 2. Extract recent history
+                history = await self.memory.get_history(self.session_id)
+                recent = history[-2:] if len(history) >= 2 else history
+                
+                # 3. Instantiate and process
+                from nodes.members.advocate import AdvocateNode
+                advocate = AdvocateNode(self.context, node_record, status_callback=self.status_callback)
+                await advocate.process_messages(recent)
+                
+        except Exception as e:
+            print(f"[ProjectNode] Error delegating to advocate: {e}")
 

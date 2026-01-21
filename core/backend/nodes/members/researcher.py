@@ -1,48 +1,30 @@
-from typing import Any
-from nodes.base_node import BaseNode
-from models.message import Message, MessageRole
+from typing import Any, Dict, Optional
+from nodes.members.generic_member_node import GenericMemberNode
 
-class ResearcherNode(BaseNode):
+class ResearcherNode(GenericMemberNode):
     """
     The Investigator.
     Focus: External knowledge and Search.
     """
+    role_name = "researcher"
+    display_name = "Researcher"
+    description = "External information gathering and deep investigation."
+    default_tools = [
+        "google_search",
+        "deep_research",
+        "research_url",
+        "search_places",
+        "save_artifact",
+        "read_reference",
+        "list_files",
+        "import_github_repo",
+        "search_knowledge",
+        "ingest_knowledge",
+        "update_node_description"
+    ]
     
-    def __init__(self, context: Any):
-        super().__init__(context)
-        from tools.library.search import GoogleSearchTool, ResearchURLTool, SearchPlacesTool
-        from tools.library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool, ImportGitHubRepoTool
-        from tools.library.knowledge import SearchKnowledgeTool, IngestKnowledgeTool
-        from tools.library.members import UpdateNodeDescriptionTool
-        
-        self.tools = [
-            GoogleSearchTool(),
-            ResearchURLTool(),
-            SearchPlacesTool(),
-            SaveArtifactTool(),
-            ReadReferenceTool(),
-            ListFilesTool(),
-            ImportGitHubRepoTool(),
-            SearchKnowledgeTool(),
-            IngestKnowledgeTool(),
-            UpdateNodeDescriptionTool()
-        ]
-
-    async def on_enter(self):
-        pass
-
-    async def on_execute(self, message: str) -> Any:
-        # 1. Load Prompt
-        system_prompt = await self.load_system_prompt("researcher")
-        
-        # 2. Call LLM with Tools
-        llm_response = await self.chat_with_tools(
-            system_prompt=system_prompt,
-            message_history=[Message(role=MessageRole.USER, content=message)],
-            tool_context=self.context
-        )
-        
-        return llm_response.content or ""
+    def __init__(self, context: Dict[str, Any], node: Any, status_callback: Optional[Any] = None):
+        super().__init__(context, node, status_callback)
 
     async def on_exit(self, result: Any):
         pass

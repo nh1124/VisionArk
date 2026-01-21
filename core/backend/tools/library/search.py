@@ -1,9 +1,11 @@
 from typing import Any, Optional, Dict, List
 from pydantic import BaseModel, Field
 from tools.base import BaseTool
-from tools.utils import get_gemini_client
+from tools.utils import get_gemini_client, resolve_project_artifacts_dir
+from utils.paths import secure_path_join, get_project_dir
 from google.genai import types
 from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime
 
 class GoogleSearchArgs(BaseModel):
     query: str = Field(..., description="The search query")
@@ -104,3 +106,62 @@ class SearchPlacesTool(BaseTool):
             return {"success": True, "message": resp.text or "No result from Google Maps"}
         except Exception as e:
             return {"success": False, "message": f"Search places failed: {e}"}
+
+class DeepResearchArgs(BaseModel):
+    query: str = Field(..., description="The complex research query or topic to investigate deeply")
+
+class DeepResearchTool(BaseTool):
+    name = "deep_research"
+    description = (
+        "Perform extensive, multi-step research on a complex topic using Gemini's native Deep Research agent. "
+        "This tool autonomously plans, searches, and synthesizes a comprehensive report. "
+        "USE THIS for complex investigations that require more than a simple search. "
+        "HOW TO USE: 'deep_research(query=\"Research the impact of 6G on IoT security by 2030.\")'."
+    )
+    args_schema = DeepResearchArgs
+
+    async def run(self, query: str, **kwargs) -> Any:
+        user_id: str = kwargs.get("user_id")
+        session: AsyncSession = kwargs.get("session")
+        project_id: str = kwargs.get("project_id")
+        if not user_id or not session: return {"success": False, "message": "Context error"}
+        
+        try:
+            client = await get_gemini_client(user_id, session)
+            
+            if self.status_callback:
+                await self.status_callback("Initiating Deep Research (this may take several minutes)...", "processing")
+
+            # Interactions API for Deep Research
+            interaction = client.interactions.create(
+                model="gemini-3-pro",
+                agent="deep-research-pro-preview-12-2025",
+                contents=query,
+                config={"background": False}
+            )
+            
+            report_content = interaction.text or "Deep Research completed with no output."
+            
+            # Save to Artifact
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"research/report_{timestamp}.md"
+            
+            artifacts_dir = await resolve_project_artifacts_dir(user_id, project_id, session)
+            p = secure_path_join(artifacts_dir, filename)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(report_content, encoding='utf-8')
+            
+            # Get relative path from project root
+            root_dir = get_project_dir(user_id, project_id)
+            actual_rel = p.relative_to(root_dir).as_posix()
+            
+            return {
+                "success": True, 
+                "message": f"Deep Research completed. Report saved to {actual_rel}", 
+                "data": {
+                    "path": actual_rel,
+                    "content": report_content
+                }
+            }
+        except Exception as e:
+            return {"success": False, "message": f"Deep Research failed: {e}"}

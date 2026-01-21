@@ -1,11 +1,11 @@
 from typing import Any, Dict, List, Optional
 from nodes.base_node import BaseNode
 from models.message import Message, MessageRole
-from tools.tool_utils import get_tool_by_name
 
-class DynamicMemberNode(BaseNode):
+class GenericMemberNode(BaseNode):
     """
     A generic member node that configures itself from a DB Node (MEMBER type).
+    Scoped to a specific project_id.
     """
     
     def __init__(self, context: Dict[str, Any], node: Any, status_callback: Optional[Any] = None):
@@ -15,6 +15,7 @@ class DynamicMemberNode(BaseNode):
         self.display_name = node.display_name or self.role_name.title()
         
         # Load tools from profile
+        from tools.tool_utils import get_tool_by_name
         self.tools = []
         if node.tools:
             for tool_name in node.tools:
@@ -22,20 +23,14 @@ class DynamicMemberNode(BaseNode):
                 if tool:
                     self.tools.append(tool)
                 else:
-                    print(f"[DynamicMemberNode] Warning: Tool '{tool_name}' not found for member '{self.role_name}'")
-        
-        # Always allow self-description update
-        from tools.library.members import UpdateNodeDescriptionTool
-        self.tools.append(UpdateNodeDescriptionTool())
+                    print(f"[GenericMemberNode] Warning: Tool '{tool_name}' not found for member node '{self.role_name}'")
 
     async def load_system_prompt(self, role_name: Optional[str] = None) -> str:
         """
         Prioritize DB prompt, then fallback to asset lookup.
         """
-        # If the node has a system prompt, use it as the 'role' part
         db_prompt = self.node.system_prompt
         
-        # We still want the global prompt
         from utils.paths import get_prompts_dir
         prompts_dir = get_prompts_dir()
         global_path = prompts_dir / "system" / "global.md"
@@ -50,18 +45,11 @@ class DynamicMemberNode(BaseNode):
         
         return await super().load_system_prompt(role_name or self.role_name)
 
-    async def on_enter(self):
-        pass
-
     async def on_execute(self, message: str) -> Any:
-        # Load Prompt
         system_prompt = await self.load_system_prompt()
         
-        # Construct History (usually delegation is a single-shot or limited history)
-        # For dynamic workers, we might want to pass more history, but let's stick to the prompt-based execution.
         history = [Message(role=MessageRole.USER, content=message)]
         
-        # Call LLM with Tools
         llm_response = await self.chat_with_tools(
             system_prompt=system_prompt,
             message_history=history,
@@ -69,6 +57,3 @@ class DynamicMemberNode(BaseNode):
         )
         
         return llm_response.content or ""
-
-    async def on_exit(self, result: Any):
-        pass
