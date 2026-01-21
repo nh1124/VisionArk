@@ -32,7 +32,7 @@ async def _get_user_api_key(db: AsyncSession, user_id: str) -> Optional[str]:
 
 
 # --- Specific Routes (IDs or fixed paths) First to avoid shadowing ---
-@files_router.post("/{project_id}/upload")
+@files_router.post("/project/{project_id}/upload")
 async def upload_node_file(
     project_id: str,
     file: UploadFile = File(...),
@@ -41,9 +41,9 @@ async def upload_node_file(
 ):
     """Upload a file to Project storage"""
     # Verify Project Exists
-    result = await db.execute(select(Node.id).filter(
-        Node.user_id == identity.user_id,
-        Node.id == project_id
+    result = await db.execute(select(Project.id).filter(
+        Project.user_id == identity.user_id,
+        Project.id == project_id
     ))
     if not result.scalars().first():
         raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
@@ -74,7 +74,7 @@ async def upload_node_file(
     }
 
 
-@files_router.get("/{project_id}")
+@files_router.get("/project/{project_id}")
 async def list_node_files(
     project_id: str,
     identity: Identity = Depends(resolve_identity),
@@ -82,9 +82,9 @@ async def list_node_files(
 ):
     """List all files for a Project"""
     # Verify Project Exists
-    result = await db.execute(select(Node.id).filter(
-        Node.user_id == identity.user_id,
-        Node.id == project_id
+    result = await db.execute(select(Project.id).filter(
+        Project.user_id == identity.user_id,
+        Project.id == project_id
     ))
     if not result.scalars().first():
         raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
