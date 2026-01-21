@@ -4,7 +4,10 @@ from tools.base import BaseTool
 from tools.utils import resolve_project_artifacts_dir
 from utils.paths import secure_path_join, get_project_dir
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from models.database import UserSettings
 import os
+from pathlib import Path
 
 class SaveArtifactArgs(BaseModel):
     file_path: str = Field(..., description="Relative path within the artifacts directory (e.g., 'plans/v1.md')")
@@ -78,7 +81,35 @@ class ReadReferenceTool(BaseTool):
                     except: pass
             
             if p.exists():
-                return {"success": True, "message": p.read_text(encoding='utf-8', errors='ignore')}
+                text_content = p.read_text(encoding='utf-8', errors='ignore')
+                
+                # --- Gemini Upload Integration ---
+                data = {}
+                try:
+                    from services.file_service import FileService
+                    
+                    # Fetch User Settings for API Key
+                    result = await session.execute(select(UserSettings).filter(UserSettings.user_id == user_id))
+                    user_settings = result.scalars().first()
+                    api_key = user_settings.gemini_api_key if user_settings else None
+                    
+                    if api_key:
+                        service = FileService(session, user_id, api_key)
+                        gemini_info = await service.ensure_gemini_upload(
+                            local_path=p,
+                            filename=p.name,
+                            project_id=project_id
+                        )
+                        if gemini_info:
+                            data.update(gemini_info)
+                except Exception as upload_err:
+                    print(f"[ReadReferenceTool] Quietly failed gemini upload: {upload_err}")
+                
+                return {
+                    "success": True, 
+                    "message": text_content,
+                    "data": data
+                }
             return {"success": False, "message": f"File {file_path} not found"}
         except Exception as e:
             return {"success": False, "message": f"Failed to read file: {e}"}
