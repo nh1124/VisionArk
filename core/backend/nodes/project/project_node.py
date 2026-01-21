@@ -27,7 +27,7 @@ class ProjectNode(BaseNode):
         )
         from tools.library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool, ImportGitHubRepoTool
         from tools.library.knowledge import SearchKnowledgeTool, IngestKnowledgeTool
-        from tools.library.search import GoogleSearchTool
+        from tools.library.search import GoogleSearchTool, DeepResearchTool
         from tools.library.ai import GenerateImageTool
         from tools.library.condition import GetCurrentConditionTool, UpdateUserConditionTool
         from tools.library.markdown import UpdateMDSectionTool
@@ -56,6 +56,7 @@ class ProjectNode(BaseNode):
             SearchKnowledgeTool(),
             IngestKnowledgeTool(),
             GoogleSearchTool(),
+            DeepResearchTool(),
             GenerateImageTool(),
             GetCurrentConditionTool(),
             UpdateUserConditionTool(),
