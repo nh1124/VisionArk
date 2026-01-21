@@ -185,36 +185,73 @@ class FileService:
     
     async def list_files(self, project_id: str) -> List[Dict[str, Any]]:
         """
-        List all files for a project.
+        List all files for a project (Hybrid: DB + Disk).
+        Includes files registered in DB and those physically in the 'refs' directory.
         """
-        node = await self._get_node(project_id)
-        if not node:
+        proj = await self._get_project(project_id)
+        if not proj:
             return []
         
+        # 1. Get DB-registered files
         result = await self.db.execute(select(UploadedFile).filter(
-            UploadedFile.node_id == node.id
+            UploadedFile.project_id == proj.id
         ).order_by(UploadedFile.uploaded_at.desc()))
-        files = result.scalars().all()
+        db_files = result.scalars().all()
         
-        return [
-            {
+        db_file_map = {Path(f.storage_path).resolve(): f for f in db_files}
+        
+        # 2. Scan Disk for additional files (e.g., GitHub imports)
+        final_list = []
+        
+        # Add DB files first
+        for f in db_files:
+            final_list.append({
                 "id": f.id,
                 "filename": f.filename,
                 "mime_type": f.mime_type,
                 "size_bytes": f.size_bytes,
                 "uploaded_at": f.uploaded_at.isoformat() if f.uploaded_at else None,
-                "has_gemini_ref": f.gemini_file_uri is not None
-            }
-            for f in files
-        ]
+                "has_gemini_ref": f.gemini_file_uri is not None,
+                "source": "database"
+            })
+            
+        # 3. Add Disk-only files from 'refs' directory
+        try:
+            refs_dir = self.get_files_dir(project_id)
+            if refs_dir.exists():
+                from mimetypes import guess_type
+                for p in refs_dir.rglob('*'):
+                    if p.is_file():
+                        resolved_p = p.resolve()
+                        if resolved_p not in db_file_map:
+                            # Relative path for display/identification
+                            rel_path = p.relative_to(refs_dir).as_posix()
+                            
+                            # Determine mime type
+                            mime_type, _ = guess_type(str(p))
+                            stat = p.stat()
+                            
+                            final_list.append({
+                                "id": f"disk:refs/{rel_path}", # Virtual ID
+                                "filename": rel_path,
+                                "mime_type": mime_type or "application/octet-stream",
+                                "size_bytes": stat.st_size,
+                                "uploaded_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                                "has_gemini_ref": False,
+                                "source": "disk"
+                            })
+        except Exception as e:
+            print(f"[FileService] Error scanning disk for files: {e}")
+            
+        return final_list
 
-    async def get_gemini_file_parts(self, node_id: str) -> List:
+    async def get_gemini_file_parts(self, project_id: str) -> List:
         """
-        Get Gemini file parts for all synced files of a node.
+        Get Gemini file parts for all synced files of a project.
         Used by agents for context.
         """
         result = await self.db.execute(select(UploadedFile).filter(
-            UploadedFile.node_id == node_id,
+            UploadedFile.project_id == project_id,
             UploadedFile.gemini_file_name.isnot(None)
         ))
         files = result.scalars().all()
