@@ -105,9 +105,14 @@ class ReadReferenceTool(BaseTool):
                 except Exception as upload_err:
                     print(f"[ReadReferenceTool] Quietly failed gemini upload: {upload_err}")
                 
+                if data.get("gemini_file_uri"):
+                    message = f"File '{p.name}' is available via Gemini File API for multimodal analysis. (Full text omitted to save context tokens)"
+                else:
+                    message = text_content
+                
                 return {
                     "success": True, 
-                    "message": text_content,
+                    "message": message,
                     "data": data
                 }
             return {"success": False, "message": f"File {file_path} not found"}

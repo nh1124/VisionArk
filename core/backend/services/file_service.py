@@ -144,10 +144,6 @@ class FileService:
         if gemini_file.state == "FAILED":
             raise RuntimeError(f"Gemini file processing failed: {file_record.filename}")
         
-        file_record.gemini_file_uri = gemini_file.uri
-        file_record.gemini_file_name = gemini_file.name
-        await self.db.commit()
-        
         return {
             "gemini_file_uri": gemini_file.uri,
             "gemini_file_name": gemini_file.name
@@ -162,7 +158,7 @@ class FileService:
     ) -> Dict[str, str]:
         """
         Ensures a file is uploaded to Gemini File API.
-        Checks DB for existing upload first. If not found, uploads and returns info.
+        Always uploads to ensure reliability as cloud files are temporary.
         """
         if not self.api_key:
             return {}
@@ -170,31 +166,6 @@ class FileService:
         abs_path = str(local_path.resolve())
         filename = filename or local_path.name
         
-        # 1. Check if this path + project is already in DB with a Gemini URI
-        query = select(UploadedFile).filter(UploadedFile.storage_path == abs_path)
-        if project_id:
-            query = query.filter(UploadedFile.project_id == project_id)
-            
-        result = await self.db.execute(query)
-        file_record = result.scalars().first()
-        
-        if file_record and file_record.gemini_file_uri and file_record.gemini_file_name:
-            try:
-                # Check if the file still exists in Gemini (they expire after 48h)
-                client = self._ensure_client()
-                gemini_file = await asyncio.to_thread(client.files.get, name=file_record.gemini_file_name)
-                
-                if gemini_file.state == "ACTIVE":
-                    return {
-                        "gemini_file_uri": file_record.gemini_file_uri,
-                        "mime_type": file_record.mime_type
-                    }
-                print(f"[FileService] Gemini file {file_record.gemini_file_name} is in state {gemini_file.state}, re-uploading.")
-            except Exception as e:
-                # If 404 or other error, we'll re-upload
-                print(f"[FileService] Gemini file {file_record.gemini_file_name} no longer available: {e}. Re-uploading.")
-
-        # 2. If not found or not available/active, perform upload
         if not mime_type:
             from mimetypes import guess_type
             mime_type, _ = guess_type(abs_path)
@@ -218,12 +189,6 @@ class FileService:
             if gemini_file.state == "FAILED":
                 return {}
 
-            # 3. Update DB record if it exists, otherwise just return URI
-            if file_record:
-                file_record.gemini_file_uri = gemini_file.uri
-                file_record.gemini_file_name = gemini_file.name
-                await self.db.commit()
-            
             return {
                 "gemini_file_uri": gemini_file.uri,
                 "mime_type": mime_type
@@ -243,14 +208,6 @@ class FileService:
         
         if not file_record:
             return False
-        
-        # Delete from Gemini if uploaded
-        if file_record.gemini_file_name and self.api_key:
-            try:
-                client = self._ensure_client()
-                await asyncio.to_thread(client.files.delete, name=file_record.gemini_file_name)
-            except Exception as e:
-                print(f"[FileService] Failed to delete from Gemini: {e}")
         
         # Delete from filesystem
         file_path = Path(file_record.storage_path)
@@ -290,7 +247,6 @@ class FileService:
                 "mime_type": f.mime_type,
                 "size_bytes": f.size_bytes,
                 "uploaded_at": f.uploaded_at.isoformat() if f.uploaded_at else None,
-                "has_gemini_ref": f.gemini_file_uri is not None,
                 "source": "database"
             })
             
@@ -328,24 +284,6 @@ class FileService:
         """
         Get Gemini file parts for all synced files of a project.
         Used by agents for context.
+        Note: With current simplified approach, this returns an empty list as we don't track persistent uploads in DB.
         """
-        result = await self.db.execute(select(UploadedFile).filter(
-            UploadedFile.project_id == project_id,
-            UploadedFile.gemini_file_name.isnot(None)
-        ))
-        files = result.scalars().all()
-        
-        parts = []
-        client = self._ensure_client()
-        if not client:
-            return []
-
-        for f in files:
-            try:
-                gemini_file = await asyncio.to_thread(client.files.get, name=f.gemini_file_name)
-                if gemini_file.state == "ACTIVE":
-                    parts.append(gemini_file)
-            except Exception as e:
-                print(f"[FileService] Failed to get Gemini file: {f.gemini_file_name} - {e}")
-        
-        return parts
+        return []
