@@ -18,13 +18,14 @@ class RouterNode(GenericSystemNode):
         3. Decide on routing targets.
         4. Multicast using ask_node(blocking=False).
         """
+        from models.message import Message, MessageRole
         system_prompt = await self.load_system_prompt()
         
         # We use chat_with_tools to allow the LLM to 'decide' which nodes to notify
         # by calling ask_node tool.
         
         history = [
-            {"role": "user", "content": f"Analyze and route the following message: '{message}'"}
+            Message(role=MessageRole.USER, content=f"Analyze and route the following message: '{message}'")
         ]
         
         print(f"[RouterNode] Analyzing routing for: {message[:50]}...")

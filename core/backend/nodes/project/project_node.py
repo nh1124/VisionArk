@@ -30,11 +30,12 @@ class ProjectNode(BaseNode):
             GetLBSScheduleTool, GetLoadOnDayTool, GetLoadInPeriodTool,
             GetTaskHistoryTool
         )
-        from tools.library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool
+        from tools.library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool, ImportGitHubRepoTool
         from tools.library.knowledge import SearchKnowledgeTool, IngestKnowledgeTool
         from tools.library.search import GoogleSearchTool
         from tools.library.ai import GenerateImageTool
         from tools.library.condition import GetCurrentConditionTool, UpdateUserConditionTool
+        from tools.library.markdown import UpdateMDSectionTool
         from tools.library.members import ListMembersTool, ManageMemberTool, UpdateNodeDescriptionTool
         
         self.tools = [
@@ -56,31 +57,26 @@ class ProjectNode(BaseNode):
             SaveArtifactTool(),
             ReadReferenceTool(),
             ListFilesTool(),
+            ImportGitHubRepoTool(),
             SearchKnowledgeTool(),
             IngestKnowledgeTool(),
             GoogleSearchTool(),
             GenerateImageTool(),
             GetCurrentConditionTool(),
-            UpdateUserConditionTool()
+            UpdateUserConditionTool(),
+            UpdateMDSectionTool()
         ]
 
     async def on_enter(self):
-        # 1. Ensure Project Node exists & Get Session
-        from models.database import get_async_engine, get_async_session_maker
-        from sqlalchemy import select
-        from models.database import Node, Project
-        
-        # Use context session if available, else create one
+        # 1. Base initialization (Session, API Key, Model)
+        await super().on_enter()
         session = self.context.get('db_session')
-        should_close = False
-        if not session:
-            engine = get_async_engine()
-            async_session_cls = get_async_session_maker(engine)
-            session = async_session_cls()
-            should_close = True
-            
+        
         try:
-            # Fetch Project
+            # 2. Fetch Project
+            from sqlalchemy import select
+            from models.database import Node, Project
+            
             project_id = self.context.get('project_id')
             result = await session.execute(select(Project).filter(
                 Project.user_id == self.user_id,
@@ -88,14 +84,13 @@ class ProjectNode(BaseNode):
             ))
             project = result.scalars().first()
             if project:
-                self.project_id = project.id # Use self.project_id instead of self.node_id for clarity
+                self.project_id = project.id 
                 self.context['project_id'] = self.project_id
             else:
                 raise ValueError(f"Project '{project_id}' not found for user {self.user_id}") 
             print(f"[ProjectNode] Project ID: {self.project_id}")
 
-            # 2. Get/Create Session
-            # Map self.project_id to the Orchestrator Node ID (V6: and PROJECT type)
+            # 3. Get Orchestrator Node ID (V6: and PROJECT type)
             result = await session.execute(select(Node).filter(
                 Node.project_id == self.project_id,
                 Node.node_type == "PROJECT"
@@ -104,38 +99,21 @@ class ProjectNode(BaseNode):
             if orchestrator_node:
                 self.node_id = orchestrator_node.id
             else:
-                # Fallback if no specific projector node exists yet (should not happen after migration)
                 self.node_id = self.project_id
 
             self.session_id = await self.memory.get_or_create_session(self.project_id, self.user_id)
             self.context['session_id'] = self.session_id
             self.context['node_id'] = self.node_id
             
-            # 3. Load Context (Profile, etc.)
+            # 4. Load Context (Profile, etc.)
             self.context_data = await self.memory.get_context()
-            
-            # 4. Get API Key
-            from models.database import UserSettings
-            # Property handles decryption and '********' check
-            result = await session.execute(select(UserSettings).filter(UserSettings.user_id == self.user_id))
-            settings = result.scalars().first()
-            
-            if settings and settings.gemini_api_key:
-                self.context['api_key'] = settings.gemini_api_key
-                # DEBUG LOG
-                k = self.context['api_key']
-                masked_key = f"{k[:4]}...{k[-4:]}" if k and len(k) > 8 else "INVALID"
-                print(f"[ProjectNode] Loaded API Key for user {self.user_id}: {masked_key}", flush=True) # Ensure flush
-            else:
-                self.context['api_key'] = None
-                print(f"[ProjectNode] No API Key found in settings for user {self.user_id}", flush=True)
             
             # 5. Load Members Dynamic
             await self._init_dynamic_members(session)
             
-        finally:
-            if should_close:
-                await session.close()
+        except Exception as e:
+            print(f"[ProjectNode] Error in on_enter: {e}")
+            raise
 
     async def _init_dynamic_members(self, session):
         """Load member agents from database or fall back to defaults."""

@@ -1,6 +1,6 @@
 from typing import Any
 from nodes.base_node import BaseNode
-from models.message import Message
+from models.message import Message, MessageRole
 
 class ResearcherNode(BaseNode):
     """
@@ -11,7 +11,7 @@ class ResearcherNode(BaseNode):
     def __init__(self, context: Any):
         super().__init__(context)
         from tools.library.search import GoogleSearchTool, ResearchURLTool, SearchPlacesTool
-        from tools.library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool
+        from tools.library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool, ImportGitHubRepoTool
         from tools.library.knowledge import SearchKnowledgeTool, IngestKnowledgeTool
         from tools.library.members import UpdateNodeDescriptionTool
         
@@ -22,6 +22,7 @@ class ResearcherNode(BaseNode):
             SaveArtifactTool(),
             ReadReferenceTool(),
             ListFilesTool(),
+            ImportGitHubRepoTool(),
             SearchKnowledgeTool(),
             IngestKnowledgeTool(),
             UpdateNodeDescriptionTool()
@@ -37,7 +38,7 @@ class ResearcherNode(BaseNode):
         # 2. Call LLM with Tools
         llm_response = await self.chat_with_tools(
             system_prompt=system_prompt,
-            message_history=[Message(role="user", content=message)],
+            message_history=[Message(role=MessageRole.USER, content=message)],
             tool_context=self.context
         )
         

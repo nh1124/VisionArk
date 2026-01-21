@@ -145,3 +145,93 @@ class DeleteArtifactTool(BaseTool):
             return {"success": False, "message": f"Artifact {file_path} not found"}
         except Exception as e:
             return {"success": False, "message": f"Failed to delete artifact: {e}"}
+
+class ImportGitHubRepoArgs(BaseModel):
+    repo_url: str = Field(..., description="The GitHub repository URL (e.g., 'https://github.com/owner/repo')")
+    branch: Optional[str] = Field(None, description="Optional branch, tag or commit to clone")
+    token: Optional[str] = Field(None, description="Optional Personal Access Token for private repositories")
+    force_update: bool = Field(True, description="Whether to pull latest changes if repo already exists")
+
+class ImportGitHubRepoTool(BaseTool):
+    name = "import_github_repo"
+    description = (
+        "Import (clone) a GitHub repository into the project's reference sources. "
+        "The code will be stored in 'refs/sources/github/[owner]/[repo]'. "
+        "Use depth=1 (shallow clone) by default for efficiency. "
+        "HOW TO USE: 'import_github_repo(repo_url=\"https://github.com/pallets/flask\")'."
+    )
+    args_schema = ImportGitHubRepoArgs
+
+    async def run(self, repo_url: str, branch: Optional[str] = None, token: Optional[str] = None, **kwargs) -> Any:
+        user_id: str = kwargs.get("user_id")
+        project_id: str = kwargs.get("project_id")
+        if not user_id: return {"success": False, "message": "Context error"}
+
+        try:
+            # 1. Clean URL and extract owner/repo
+            # e.g. https://github.com/google/benchmark.git -> google/benchmark
+            clean_url = repo_url.rstrip('/').replace('.git', '')
+            parts = clean_url.split('/')
+            if len(parts) < 2:
+                return {"success": False, "message": f"Invalid repo URL: {repo_url}"}
+            
+            owner = parts[-2]
+            repo_name = parts[-1]
+            
+            # 2. Build target path
+            root_dir = get_project_dir(user_id, project_id)
+            from pathlib import Path
+            target_rel = Path("refs") / "sources" / "github" / owner / repo_name
+            target_abs = root_dir / target_rel
+            
+            # 3. Handle existing repo
+            import subprocess
+            if target_abs.exists():
+                if not force_update:
+                    return {
+                        "success": True, 
+                        "message": f"Repository already exists at {target_rel.as_posix()}",
+                        "data": {"path": target_rel.as_posix()}
+                    }
+                
+                # Perform git pull
+                print(f"[ImportGitHubRepoTool] Updating existing repo at {target_abs}")
+                pull_cmd = ["git", "-C", str(target_abs), "pull"]
+                process = subprocess.run(pull_cmd, capture_output=True, text=True)
+                
+                if process.returncode != 0:
+                    return {"success": False, "message": f"Git pull failed: {process.stderr}"}
+                
+                return {
+                    "success": True, 
+                    "message": f"Successfully updated (pulled) {owner}/{repo_name} at {target_rel.as_posix()}",
+                    "data": {"path": target_rel.as_posix()}
+                }
+
+            # 4. Construct clone command
+            # Handle token for auth if provided
+            if token:
+                auth_url = repo_url.replace("https://", f"https://{token}@")
+            else:
+                auth_url = repo_url
+
+            target_abs.parent.mkdir(parents=True, exist_ok=True)
+            
+            cmd = ["git", "clone", "--depth", "1"]
+            if branch:
+                cmd.extend(["-b", branch])
+            cmd.extend([auth_url, str(target_abs)])
+            
+            process = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if process.returncode != 0:
+                return {"success": False, "message": f"Git clone failed: {process.stderr}"}
+            
+            return {
+                "success": True, 
+                "message": f"Successfully imported {owner}/{repo_name} to {target_rel.as_posix()}",
+                "data": {"path": target_rel.as_posix()}
+            }
+            
+        except Exception as e:
+            return {"success": False, "message": f"Import failed: {str(e)}"}

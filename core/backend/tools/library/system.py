@@ -153,6 +153,7 @@ class AskNodeTool(BaseTool):
             # 3. Blocking Mode (Original behavior)
             # Instantiate based on node_type
             target_node = None
+            
             ctx = {
                 'user_id': user_id, 
                 'db_session': session, 

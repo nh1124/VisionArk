@@ -100,4 +100,83 @@ class GetCurrentStatusTool(BaseTool):
         reader = ReadMDSectionTool()
         return await reader.run(file_path=CURRENT_PLAN_FILE, section_title="Current Status", **kwargs)
 
+class UpdateMDSectionArgs(BaseModel):
+    file_path: str = Field(..., description="Path to the markdown file")
+    section_title: str = Field(..., description="Title of the section to update")
+    content: str = Field(..., description="The new content for this section")
+    mode: str = Field("overwrite", description="Update mode: 'overwrite' (default) or 'append'")
+
+class UpdateMDSectionTool(BaseTool):
+    name = "update_md_section"
+    description = (
+        "Updates or appends content to a specific section in a markdown file. "
+        "The section is identified by its # Heading. "
+        "HOW TO USE: 'update_md_section(file_path=\"PLAN.md\", section_title=\"Current Status\", content=\"Working on UI.\", mode=\"overwrite\")'."
+    )
+    args_schema = UpdateMDSectionArgs
+
+    async def run(self, file_path: str, section_title: str, content: str, mode: str = "overwrite", **kwargs) -> Any:
+        reader = ReadReferenceTool()
+        res = await reader.run(file_path=file_path, **kwargs)
+        
+        full_content = ""
+        if res.get("success"):
+            full_content = res.get("message", "")
+        
+        lines = full_content.splitlines() if full_content else []
+        new_lines = []
+        section_found = False
+        in_section = False
+        section_title_lower = section_title.lower()
+        
+        # 1. Parse and reconstruct content
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if line.startswith("#") and section_title_lower in line.lower():
+                section_found = True
+                in_section = True
+                new_lines.append(line) # Keep the heading
+                
+                if mode == "append":
+                    # We'll skip existing content and append at the end of section
+                    pass 
+                else:
+                    # Overwrite: we skip lines until next heading
+                    i += 1
+                    while i < len(lines) and not lines[i].startswith("#"):
+                        i += 1
+                    
+                    # Insert new content
+                    new_lines.append(content)
+                    in_section = False # Finished overwriting
+                    continue # Re-evaluate current line (which is next heading or end)
+            
+            elif in_section and line.startswith("#"):
+                # Hit next section
+                if mode == "append":
+                    new_lines.append(content)
+                in_section = False
+                new_lines.append(line)
+            else:
+                if not in_section:
+                    new_lines.append(line)
+            i += 1
+            
+        # 2. Append if section finished at EOF in append mode
+        if in_section and mode == "append":
+            new_lines.append(content)
+            
+        # 3. Create section if not found
+        if not section_found:
+            if new_lines and not new_lines[-1].strip() == "":
+                new_lines.append("")
+            new_lines.append(f"# {section_title}")
+            new_lines.append(content)
+            
+        final_content = "\n".join(new_lines)
+        
+        saver = SaveArtifactTool()
+        return await saver.run(file_path=file_path, content=final_content, overwrite=True, **kwargs)
+
 # Other MD tools can be added here as needed (QueryMDElements, UpsertMDTable, etc.)

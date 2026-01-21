@@ -48,11 +48,26 @@ class SystemNodeRegistry:
                 existing = res.scalars().first()
                 
                 if existing:
-                    print(f"[SystemNodeRegistry] Updating {role_name}...")
-                    existing.display_name = display_name
-                    existing.description = description
-                    existing.tools = tools
-                    existing.status = "active"
+                    # Check if anything changed to avoid redundant updates
+                    changed = False
+                    if existing.display_name != display_name:
+                        existing.display_name = display_name
+                        changed = True
+                    if existing.description != description:
+                        existing.description = description
+                        changed = True
+                    if existing.tools != tools:
+                        existing.tools = tools
+                        changed = True
+                    if existing.status != "active":
+                        existing.status = "active"
+                        changed = True
+                    
+                    if changed:
+                        print(f"[SystemNodeRegistry] Updating {role_name}...")
+                    else:
+                        # No changes, skip update
+                        pass
                 else:
                     print(f"[SystemNodeRegistry] Creating {role_name}...")
                     new_node = Node(

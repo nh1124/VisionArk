@@ -1,7 +1,7 @@
 from typing import Any
 from nodes.base_node import BaseNode
 
-from models.message import Message
+from models.message import Message, MessageRole
 
 class PlannerNode(BaseNode):
     """
@@ -11,7 +11,7 @@ class PlannerNode(BaseNode):
     
     def __init__(self, context: Any):
         super().__init__(context)
-        from tools.library.markdown import InitPlanTool, UpdatePlanProgressTool, GetCurrentStatusTool
+        from tools.library.markdown import InitPlanTool, UpdatePlanProgressTool, GetCurrentStatusTool, UpdateMDSectionTool
         from tools.library.ai import MermaidVisualizerTool
         from tools.library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool
         from tools.library.members import UpdateNodeDescriptionTool
@@ -20,6 +20,7 @@ class PlannerNode(BaseNode):
             InitPlanTool(),
             UpdatePlanProgressTool(),
             GetCurrentStatusTool(),
+            UpdateMDSectionTool(),
             MermaidVisualizerTool(),
             SaveArtifactTool(),
             ReadReferenceTool(),
@@ -37,7 +38,7 @@ class PlannerNode(BaseNode):
         # 2. Call LLM with Tools
         llm_response = await self.chat_with_tools(
             system_prompt=system_prompt,
-            message_history=[Message(role="user", content=message)],
+            message_history=[Message(role=MessageRole.USER, content=message)],
             tool_context=self.context
         )
         

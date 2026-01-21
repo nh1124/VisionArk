@@ -227,6 +227,11 @@ class Node(Base):
     project = relationship("Project", back_populates="nodes")
     parent = relationship("Node", remote_side=[id], backref="children")
 
+    from sqlalchemy import UniqueConstraint
+    __table_args__ = (
+        UniqueConstraint('project_id', 'role_name', name='uix_project_role'),
+    )
+
 
 
 class ChatSession(Base):
@@ -432,7 +437,19 @@ def _run_migrations(engine):
                         conn.commit()
                         print(f"✅ Migration: Renamed {old_col} to {new_col} in {table}")
                     except Exception as e:
-                        print(f"⚠️ Migration failed for {table}: {e}")
+                        print(f"❌ Migration: Failed to rename {old_col} to {new_col} in {table}: {str(e)}")
+    # Migration: Add unique constraint uix_project_role to nodes if missing
+    if 'nodes' in inspector.get_table_names():
+        constraints = inspector.get_unique_constraints('nodes')
+        if not any(c['name'] == 'uix_project_role' for c in constraints):
+            with engine.connect() as conn:
+                try:
+                    # Note: This might fail if duplicates already exist
+                    conn.execute(text("CREATE UNIQUE INDEX uix_project_role ON nodes (COALESCE(project_id, 'SYSTEM'), role_name)"))
+                    conn.commit()
+                    print("✅ Migration: Added unique index uix_project_role to nodes")
+                except Exception as e:
+                    print(f"⚠️ Migration failed for uix_project_role: {e}")
 
 
 def get_session(engine):

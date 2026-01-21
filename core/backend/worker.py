@@ -161,7 +161,6 @@ class Worker:
                         NodeClass = SystemNodeRegistry.get_node_class(node_record.role_name)
                         target_node = NodeClass(context, node_record)
                     elif node_record.node_type == "PROJECT":
-                        from nodes.project.project_node import ProjectNode
                         target_node = ProjectNode(context)
                     elif node_record.node_type == "MEMBER":
                         from nodes.members.dynamic_node import DynamicMemberNode

@@ -91,8 +91,39 @@ class BaseNode(ABC):
         return "\n\n".join(parts) if parts else "You are a helpful AI assistant."
     
     async def on_enter(self):
-        """Hook for loading data, files, or LBS status."""
-        pass
+        """
+        Standardized context hydration:
+        1. Ensure DB session.
+        2. Resolve User API Key & Settings.
+        3. Load Project Metadata if project_id is present.
+        """
+        from models.database import get_async_engine, get_async_session_maker
+        from sqlalchemy import select
+        
+        # 1. Ensure Session
+        self._owns_session = False
+        if not self.context.get("db_session"):
+            engine = get_async_engine()
+            session_maker = get_async_session_maker(engine)
+            self.context["db_session"] = session_maker()
+            self._owns_session = True
+        
+        session = self.context["db_session"]
+        
+        # 2. Resolve API Key & Preferred Model
+        if not self.context.get("api_key"):
+            from tools.utils import get_user_api_key
+            self.context["api_key"] = await get_user_api_key(self.user_id, session)
+            
+        if not self.context.get("preferred_model"):
+            from models.database import UserSettings
+            res = await session.execute(select(UserSettings).filter(UserSettings.user_id == self.user_id))
+            settings = res.scalars().first()
+            if settings and settings.ai_config:
+                self.context["preferred_model"] = settings.ai_config.get("default_model")
+
+        # 3. Load Node Identity (for display_name/description if missing)
+        # Often provided by registry, but good to have a backup for project-less nodes
 
     @abstractmethod
     async def on_execute(self, message: str) -> Any:
@@ -108,10 +139,18 @@ class BaseNode(ABC):
         Public entry point that enforces the lifecycle hooks:
         on_enter -> on_execute -> on_exit.
         """
-        await self.on_enter()
-        result = await self.on_execute(message)
-        await self.on_exit(result)
-        return result
+        try:
+            await self.on_enter()
+            result = await self.on_execute(message)
+            await self.on_exit(result)
+            return result
+        finally:
+            # Cleanup session if we created it
+            if getattr(self, "_owns_session", False):
+                session = self.context.get("db_session")
+                if session:
+                    await session.close()
+                    self.context["db_session"] = None
 
     async def _execute_tool(self, tool, **kwargs):
         """

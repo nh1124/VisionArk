@@ -10,6 +10,19 @@ from services.lbs_client import LBSClient
 from services.knowledge_core_service import KnowledgeCoreService
 from utils.paths import get_project_dir
 
+async def get_user_api_key(user_id: str, session: AsyncSession) -> Optional[str]:
+    """Helper to fetch Gemini API key for a user from the database."""
+    if not user_id or not session:
+        return None
+    try:
+        from models.database import UserSettings
+        res = await session.execute(select(UserSettings).filter(UserSettings.user_id == user_id))
+        settings = res.scalars().first()
+        return settings.gemini_api_key if settings else None
+    except Exception as e:
+        print(f"Error fetching API key for user {user_id}: {e}")
+        return None
+
 async def get_lbs_client(user_id: str, session: AsyncSession) -> LBSClient:
     from utils.encryption import decrypt_string
     lbs_api_key = None

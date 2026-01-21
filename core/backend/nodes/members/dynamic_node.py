@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional
 from nodes.base_node import BaseNode
-from models.message import Message
+from models.message import Message, MessageRole
 from tools.tool_utils import get_tool_by_name
 
 class DynamicMemberNode(BaseNode):
@@ -59,7 +59,7 @@ class DynamicMemberNode(BaseNode):
         
         # Construct History (usually delegation is a single-shot or limited history)
         # For dynamic workers, we might want to pass more history, but let's stick to the prompt-based execution.
-        history = [Message(role="user", content=message)]
+        history = [Message(role=MessageRole.USER, content=message)]
         
         # Call LLM with Tools
         llm_response = await self.chat_with_tools(
