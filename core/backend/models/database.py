@@ -218,6 +218,7 @@ class Node(Base):
     description = Column(String(500), nullable=True)  # Short summary of expertise
     system_prompt = Column(Text, nullable=True)  # Agent prompt
     tools = Column(JSON, default=list)  # List of tool names
+    meta_payload = Column(JSON, default=dict)  # Metadata for dynamic behavior (e.g. trigger_patterns)
     status = Column(String(20), default="active")  # active/paused/archived
     version = Column(Integer, default=1)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -400,7 +401,7 @@ def _run_migrations(engine):
                 conn.execute(text("ALTER TABLE agent_profiles ADD COLUMN display_name VARCHAR(200)"))
                 conn.execute(text("ALTER TABLE agent_profiles ADD COLUMN tools JSON"))
                 conn.commit()
-                print("✅ Migration: Added role_name, display_name, and tools columns to agent_profiles")
+                print("[INFO] Migration: Added role_name, display_name, and tools columns to agent_profiles")
 
     # Migration: Add description to nodes if missing
     if 'nodes' in inspector.get_table_names():
@@ -409,7 +410,16 @@ def _run_migrations(engine):
             with engine.connect() as conn:
                 conn.execute(text("ALTER TABLE nodes ADD COLUMN description VARCHAR(500)"))
                 conn.commit()
-                print("✅ Migration: Added description column to nodes")
+                print("[INFO] Migration: Added description column to nodes")
+    
+    # Migration: Add meta_payload to nodes if missing
+    if 'nodes' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('nodes')]
+        if 'meta_payload' not in columns:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE nodes ADD COLUMN meta_payload JSON"))
+                conn.commit()
+                print("[INFO] Migration: Added meta_payload column to nodes")
     # Migration: Rename project_name/source_project to project_id in multiple tables
     for table, old_col, new_col in [
         ('rag_metadata', 'project_name', 'project_id'),
@@ -423,21 +433,21 @@ def _run_migrations(engine):
                     try:
                         conn.execute(text(f"ALTER TABLE {table} RENAME COLUMN {old_col} TO {new_col}"))
                         conn.commit()
-                        print(f"✅ Migration: Renamed {old_col} to {new_col} in {table}")
+                        print(f"[INFO] Migration: Renamed {old_col} to {new_col} in {table}")
                     except Exception as e:
-                        print(f"❌ Migration: Failed to rename {old_col} to {new_col} in {table}: {str(e)}")
+                        print(f"[ERROR] Migration: Failed to rename {old_col} to {new_col} in {table}: {str(e)}")
     # Migration: Add unique constraint uix_project_role to nodes if missing
     if 'nodes' in inspector.get_table_names():
         constraints = inspector.get_unique_constraints('nodes')
         if not any(c['name'] == 'uix_project_role' for c in constraints):
             with engine.connect() as conn:
                 try:
-                    # Note: This might fail if duplicates already exist
-                    conn.execute(text("CREATE UNIQUE INDEX uix_project_role ON nodes (COALESCE(project_id, 'SYSTEM'), role_name)"))
+                    # Note: Using IF NOT EXISTS for extra safety
+                    conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uix_project_role ON nodes (COALESCE(project_id, 'SYSTEM'), role_name)"))
                     conn.commit()
-                    print("✅ Migration: Added unique index uix_project_role to nodes")
+                    print("[INFO] Migration: Added unique index uix_project_role to nodes")
                 except Exception as e:
-                    print(f"⚠️ Migration failed for uix_project_role: {e}")
+                    print(f"[WARN] Migration failed for uix_project_role: {str(e)}")
 
 
 def get_session(engine):

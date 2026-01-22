@@ -7,6 +7,7 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 interface ChatInputProps {
     value?: string;
     initialValue?: string;
+    onChange?: (value: string) => void;
     onCommandModeChange?: (isCommandMode: boolean, value: string) => void;  // Only fires when command mode changes
     onSend: (message: string, files: File[]) => void;
     onKeyDown?: (e: React.KeyboardEvent) => void;
@@ -25,6 +26,7 @@ import { MODEL_OPTIONS, getModelDisplayName } from "@/lib/ModelContext";
 function ChatInputComponent({
     value,
     initialValue = "",
+    onChange,
     onCommandModeChange,
     onSend,
     placeholder,
@@ -69,7 +71,7 @@ function ChatInputComponent({
         if (textarea) {
             textarea.style.height = "auto";
             const minHeight = isMobile ? 40 : (isExpanded ? 200 : 48);
-            const maxHeight = isExpanded ? 600 : 200;
+            const maxHeight = isExpanded ? 800 : (isMobile ? 150 : 300); // Match CSS max-height
             const newHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight);
             textarea.style.height = `${newHeight}px`;
         }
@@ -81,6 +83,7 @@ function ChatInputComponent({
         const newIsCommand = newValue.trim().startsWith('/');
 
         setInternalValue(newValue);
+        onChange?.(newValue);
 
         // Always notify parent if it's a command (for autocomplete filtering) 
         // OR if the command mode just changed (to open/close dropdown)
@@ -129,6 +132,13 @@ function ChatInputComponent({
         if (onKeyDown) {
             onKeyDown(e);
             if (e.defaultPrevented) return;
+        }
+
+        if (e.key === "Escape" && isExpanded) {
+            e.preventDefault();
+            setIsExpanded(false);
+            setTimeout(adjustTextareaHeight, 0);
+            return;
         }
 
         if (e.key === "Enter" && !e.shiftKey) {
@@ -278,14 +288,19 @@ function ChatInputComponent({
 
             {/* Gemini-style Input Container */}
             <div
-                className={`relative rounded-3xl border transition-all duration-500 ease-in-out flex flex-col shadow-2xl ${isDragging
-                    ? "border-purple-500 bg-purple-500/10"
-                    : "border-gray-700 bg-gray-900/80 backdrop-blur-sm"
-                    } ${isExpanded ? "flex-1 min-h-[300px]" : ""}`}
+                className={`transition-all duration-500 ease-in-out flex flex-col shadow-2xl
+                    ${isExpanded
+                        ? "absolute inset-4 z-[50] bg-gray-900 border border-gray-700 rounded-3xl"
+                        : `relative rounded-3xl border ${isDragging ? "border-purple-500 bg-purple-500/10" : "border-gray-700 bg-gray-900/80 backdrop-blur-sm"}`
+                    }`}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
             >
+                {/* Backdrop for proper focus mode isolation if needed, though 'fixed inset-4' covers most. 
+                    If we wanted true full screen overlay we might use a Portal, but this works for "pop out". 
+                    Actually, let's make it a modal overlay if expanded. */}
+
                 <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden">
                     <textarea
                         ref={textareaRef}
@@ -294,11 +309,12 @@ function ChatInputComponent({
                         onKeyDown={handleKeyDown}
                         onPaste={handlePaste}
                         placeholder={isDragging ? "Drop files here..." : placeholder}
-                        className={`w-full bg-transparent border-none focus:outline-none resize-none px-4 text-gray-100 placeholder-gray-600 ${isExpanded ? "flex-1 text-lg mb-4" : ""} ${isMobile ? "py-2.5 text-sm" : "py-4"}`}
+                        className={`w-full bg-transparent border-none focus:outline-none resize-none px-4 text-gray-100 placeholder-gray-600 
+                            ${isExpanded ? "flex-1 text-lg p-6" : isMobile ? "py-2.5 text-sm" : "py-4"}`}
                         disabled={disabled}
                         style={{
-                            minHeight: isMobile ? "40px" : (isExpanded ? "200px" : "48px"),
-                            maxHeight: isExpanded ? "none" : (isMobile ? "100px" : "120px"),
+                            minHeight: isMobile ? "40px" : (isExpanded ? "100%" : "48px"),
+                            maxHeight: isExpanded ? "none" : (isMobile ? "150px" : "300px"), // Increased max-height for normal mode
                             overflowY: "auto"
                         }}
                     />
@@ -306,15 +322,20 @@ function ChatInputComponent({
                     {/* Expansion Toggle Button */}
                     <button
                         onClick={() => {
-                            setIsExpanded(!isExpanded);
+                            const willExpand = !isExpanded;
+                            setIsExpanded(willExpand);
+                            // If collapsing, force reset height immediately so adjustTextareaHeight calculates correctly
+                            if (!willExpand && textareaRef.current) {
+                                textareaRef.current.style.height = "auto";
+                            }
                             setTimeout(adjustTextareaHeight, 0);
                         }}
-                        className="absolute top-2 right-4 p-2 text-gray-500 hover:text-white hover:bg-gray-800 rounded-xl transition-all group scale-90 hover:scale-100"
-                        title={isExpanded ? "Normal View" : "Focus Mode"}
+                        className={`absolute top-2 right-4 p-2 text-gray-500 hover:text-white hover:bg-gray-800 rounded-xl transition-all group scale-90 hover:scale-100 ${isExpanded ? "bg-gray-800/50" : ""}`}
+                        title={isExpanded ? "Exit Focus Mode" : "Enter Focus Mode"}
                     >
                         {isExpanded ? (
-                            <svg className="w-5 h-5 transition-transform group-hover:scale-95" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
+                            <svg className="w-5 h-5 transition-transform group-hover:scale-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                             </svg>
                         ) : (
                             <svg className="w-5 h-5 transition-transform group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -322,6 +343,13 @@ function ChatInputComponent({
                             </svg>
                         )}
                     </button>
+
+                    {/* Character/Word Count in Expanded Mode */}
+                    {isExpanded && (
+                        <div className="absolute bottom-4 right-6 text-xs text-gray-500 font-mono pointer-events-none">
+                            {internalValue.length} chars | {internalValue.split(/\s+/).filter(w => w.length > 0).length} words
+                        </div>
+                    )}
                 </div>
 
                 {/* Bottom Row: Controls */}
@@ -355,7 +383,7 @@ function ChatInputComponent({
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                                 </svg>
-                                <span className="text-sm font-medium hidden xs:inline whitespace-nowrap">ツール</span>
+                                <span className="text-sm font-medium hidden xs:inline whitespace-nowrap">Tools</span>
                             </button>
 
                             {/* Tools Dropdown */}

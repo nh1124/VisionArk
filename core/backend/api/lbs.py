@@ -69,6 +69,9 @@ class TaskCreate(BaseModel):
     end_date: Optional[date] = None
     notes: Optional[str] = None
     external_sync_id: Optional[str] = None
+    is_locked: bool = False
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
 
 
 class TaskUpdate(BaseModel):
@@ -94,6 +97,9 @@ class TaskUpdate(BaseModel):
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     external_sync_id: Optional[str] = None
+    is_locked: Optional[bool] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
 
 
 class ExceptionCreate(BaseModel):

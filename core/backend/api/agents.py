@@ -648,6 +648,19 @@ async def get_project_metadata(
         "updated_at": proj.updated_at.isoformat() if proj.updated_at else None
     }
 
+@router.get("/project/{project_id}/active-task")
+async def get_project_active_task(
+    project_id: str,
+    identity: Identity = Depends(resolve_identity),
+):
+    """Retrieve any active task ID for this project from Redis"""
+    from queue_system.manager import QueueManager
+    
+    manager = QueueManager()
+    task_id = manager.get_active_task_for_project(project_id)
+    
+    return {"task_id": task_id}
+
 @router.delete("/project/{project_id}")
 async def delete_project(
     project_id: str,

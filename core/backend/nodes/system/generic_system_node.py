@@ -13,6 +13,7 @@ class GenericSystemNode(SystemNode):
     display_name = "Generic System Node"
     description = "A base class for system-level specialist nodes."
     default_tools = ["ask_node"]
+    trigger_patterns = [] # List of regex strings
     
     def __init__(self, context: Dict[str, Any], node: Any, status_callback: Optional[Any] = None):
         super().__init__(context, status_callback)

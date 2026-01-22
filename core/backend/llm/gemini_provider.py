@@ -246,7 +246,7 @@ class GeminiProvider(BaseLLMProvider):
                         accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
                         
                         full_args = {**function_args}
-                        for key in ['session', 'user_id', 'node_id', 'project_id', 'project_name', 'context_name', 'meta_info']:
+                        for key in ['db_session', 'session', 'user_id', 'node_id', 'project_id', 'project_name', 'context_name', 'meta_info']:
                             if key in tool_context:
                                 # Inject if explicitly accepted OR if function takes **kwargs
                                 if key in accepted_params or accepts_kwargs:
@@ -476,7 +476,7 @@ class GeminiProvider(BaseLLMProvider):
                         # Merge function args with only the injected context that the function accepts
                         full_args = {**function_args}
                         injected_keys = []
-                        for key in ['session', 'user_id', 'node_id', 'project_id', 'project_name', 'context_name', 'meta_info']:
+                        for key in ['db_session', 'session', 'user_id', 'node_id', 'project_id', 'project_name', 'context_name', 'meta_info']:
                             if key in tool_context:
                                 # Inject if explicitly accepted OR if function takes **kwargs
                                 if key in accepted_params or accepts_kwargs:
@@ -796,7 +796,7 @@ class GeminiProvider(BaseLLMProvider):
                             accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
                             
                             full_args = {**function_args}
-                            for key in ['session', 'user_id', 'node_id', 'project_id', 'project_name', 'context_name', 'meta_info']:
+                            for key in ['db_session', 'session', 'user_id', 'node_id', 'project_id', 'project_name', 'context_name', 'meta_info']:
                                 if key in tool_context:
                                     # Inject if explicitly accepted OR if function takes **kwargs
                                     if key in accepted_params or accepts_kwargs:

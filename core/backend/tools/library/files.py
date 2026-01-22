@@ -25,7 +25,7 @@ class SaveArtifactTool(BaseTool):
 
     async def run(self, file_path: str, content: str, overwrite: bool = False, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
-        session: AsyncSession = kwargs.get("session")
+        session: AsyncSession = kwargs.get("db_session")
         project_id: str = kwargs.get("project_id")
         if not user_id: return {"success": False, "message": "Context error"}
         
@@ -65,7 +65,7 @@ class ReadReferenceTool(BaseTool):
 
     async def run(self, file_path: str, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
-        session: AsyncSession = kwargs.get("session")
+        session: AsyncSession = kwargs.get("db_session")
         project_id: str = kwargs.get("project_id")
         if not user_id: return {"success": False, "message": "Context error"}
         
@@ -132,7 +132,7 @@ class ListFilesTool(BaseTool):
 
     async def run(self, sub_dir: str = "refs", **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
-        session: AsyncSession = kwargs.get("session")
+        session: AsyncSession = kwargs.get("db_session")
         project_id: str = kwargs.get("project_id")
         if not user_id: return {"success": False, "message": "Context error"}
         
@@ -162,7 +162,7 @@ class DeleteArtifactTool(BaseTool):
 
     async def run(self, file_path: str, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
-        session: AsyncSession = kwargs.get("session")
+        session: AsyncSession = kwargs.get("db_session")
         project_id: str = kwargs.get("project_id")
         if not user_id: return {"success": False, "message": "Context error"}
         
@@ -183,10 +183,10 @@ class DeleteArtifactTool(BaseTool):
             return {"success": False, "message": f"Failed to delete artifact: {e}"}
 
 class ImportGitHubRepoArgs(BaseModel):
-    repo_url: str = Field(..., description="The GitHub repository URL (e.g., 'https://github.com/owner/repo')")
-    branch: Optional[str] = Field(None, description="Optional branch, tag or commit to clone")
-    token: Optional[str] = Field(None, description="Optional Personal Access Token for private repositories")
-    force_update: bool = Field(True, description="Whether to pull latest changes if repo already exists")
+    repo_url: str = Field(..., description="The HTTPS URL of the GitHub repository to clone")
+    branch: Optional[str] = Field(None, description="Specific branch to clone (e.g., 'main', 'develop')")
+    token: Optional[str] = Field(None, description="GitHub Personal Access Token for private repos")
+    force_update: Optional[bool] = Field(False, description="If True, pulls latest changes if repo exists")
 
 class ImportGitHubRepoTool(BaseTool):
     name = "import_github_repo"
@@ -194,13 +194,14 @@ class ImportGitHubRepoTool(BaseTool):
         "Import (clone) a GitHub repository into the project's reference sources. "
         "The code will be stored in 'refs/sources/github/[owner]/[repo]'. "
         "Use depth=1 (shallow clone) by default for efficiency. "
-        "HOW TO USE: 'import_github_repo(repo_url=\"https://github.com/pallets/flask\")'."
+        "HOW TO USE: 'import_github_repo(repo_url=\"https://github.com/pallets/flask\", force_update=True)'."
     )
     args_schema = ImportGitHubRepoArgs
 
     async def run(self, repo_url: str, branch: Optional[str] = None, token: Optional[str] = None, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
         project_id: str = kwargs.get("project_id")
+        force_update: bool = kwargs.get("force_update", False)
         if not user_id: return {"success": False, "message": "Context error"}
 
         try:

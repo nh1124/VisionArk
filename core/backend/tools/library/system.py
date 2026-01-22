@@ -14,7 +14,7 @@ class ListNodesTool(BaseTool):
     args_schema = NoArgs
 
     async def run(self, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
+        session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         project_id: str = kwargs.get("project_id")
         current_node_id: str = kwargs.get("node_id")
@@ -68,7 +68,7 @@ class GetNodeProfileTool(BaseTool):
     args_schema = GetNodeProfileArgs
 
     async def run(self, node_id: str, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
+        session: AsyncSession = kwargs.get("db_session")
         if not session:
             return {"success": False, "message": "Context error"}
         
@@ -100,18 +100,23 @@ class AskNodeArgs(BaseModel):
     target_id: str = Field(..., description="The UUID (node_id) of the target node. Obtained via 'list_nodes' or active roster.")
     message: str = Field(..., description="The content of the message to send")
     blocking: bool = Field(True, description="If True, waits for the response. If False, returns immediately and executes in background.")
+    include_history: bool = Field(False, description="If True, propagates recent conversation history to the target node.")
 
 class AskNodeTool(BaseTool):
     name = "ask_node"
     description = (
         "Send a message or a sub-task to another node. "
+        "Allows for sub-delegation or looking up information from other projects/system nodes. "
         "Returns the response from the target node if blocking=True, otherwise returns a status acknowledging the request."
     )
     args_schema = AskNodeArgs
 
-    async def run(self, target_id: str, message: str, blocking: bool = True, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session") or kwargs.get("db_session")
+    async def run(self, target_id: str, message: str, blocking: bool = True, include_history: bool = False, **kwargs) -> Any:
+        session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
+        project_id: str = kwargs.get("project_id")
+        session_id: str = kwargs.get("session_id")
+
         if not session or not user_id:
             return {"success": False, "message": "Context error: session or user_id missing"}
         
@@ -128,19 +133,32 @@ class AskNodeTool(BaseTool):
             if not node_record:
                 return {"success": False, "message": f"Target node ID '{target_id}' not found or inactive. Always use UUIDs from list_nodes."}
 
+            # 1.5. Prepare message with history if requested
+            final_message = message
+            if include_history and session_id:
+                from nodes.system.memory_node import MemoryNode
+                memory = MemoryNode(kwargs)
+                history = await memory.get_history(session_id)
+                # Format last 5 messages as context
+                recent = history[-5:] if len(history) > 5 else history
+                history_text = "\n".join([f"{m.role}: {m.content}" for m in recent])
+                final_message = f"## Conversation History\n{history_text}\n\n## Current Task\n{message}"
+
             # 2. Non-blocking Mode: Enqueue and return
             if not blocking:
                 from queue_system.manager import QueueManager
                 manager = QueueManager()
                 
                 # Pass necessary context for background execution
+                # Explicitly include session_id and project_id to avoid ambiguity in worker
                 clean_context = {k: v for k, v in kwargs.items() if k not in ["db_session", "session", "background_tasks"]}
-                clean_context["project_id"] = node_record.project_id
+                clean_context["project_id"] = node_record.project_id or project_id
+                clean_context["session_id"] = session_id
                 
                 task_id = manager.enqueue_node_task(
                     user_id=user_id,
                     target_node_id=target_id,
-                    message=message,
+                    message=final_message,
                     context=clean_context
                 )
                 
@@ -150,35 +168,24 @@ class AskNodeTool(BaseTool):
                     "data": {"task_id": task_id, "status": "queued"}
                 }
 
-            # 3. Blocking Mode (Original behavior)
-            # Instantiate based on node_type
-            target_node = None
+            # 3. Blocking Mode (Use NodeFactory)
+            from services.node_factory import NodeFactory
             
             ctx = {
                 'user_id': user_id, 
                 'db_session': session, 
-                'project_id': node_record.project_id,
+                'project_id': node_record.project_id or project_id,
+                'session_id': session_id,
                 'api_key': kwargs.get("api_key")
             }
             
-            if node_record.node_type == "SYSTEM":
-                from services.system_node_registry import SystemNodeRegistry
-                NodeClass = SystemNodeRegistry.get_node_class(node_record.role_name)
-                target_node = NodeClass(ctx, node_record)
-                    
-            elif node_record.node_type == "PROJECT":
-                from nodes.project.project_node import ProjectNode
-                target_node = ProjectNode(ctx)
-                
-            elif node_record.node_type == "MEMBER":
-                from nodes.members.generic_member_node import GenericMemberNode
-                target_node = GenericMemberNode(ctx, node_record)
-                
+            target_node = NodeFactory.get_node(node_record, ctx)
+            
             if not target_node:
-                return {"success": False, "message": f"Unsupported node type: {node_record.node_type}"}
+                return {"success": False, "message": f"Failed to instantiate node: {node_record.display_name}"}
 
             # 4. Process message
-            resp = await target_node.process(message)
+            resp = await target_node.process(final_message)
             return {"success": True, "message": f"Response from {node_record.display_name}: {resp}", "data": {"response": resp}}
             
         except Exception as e:
@@ -199,7 +206,7 @@ class BroadcastSystemMessageTool(BaseTool):
     args_schema = BroadcastMessageArgs
 
     async def run(self, message: str, target_project_ids: Optional[list[str]] = None, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
+        session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         if not session or not user_id:
             return {"success": False, "message": "Context error"}

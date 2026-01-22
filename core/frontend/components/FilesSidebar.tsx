@@ -37,11 +37,21 @@ interface TreeNode {
     modified?: number;
 }
 
-const buildFileTree = (artifacts: ArtifactInfo[]): TreeNode[] => {
+interface TreeItemData {
+    id?: string;
+    name: string;
+    path: string;
+    size?: number;
+    modified?: string | number;
+    mime_type?: string;
+    source?: 'disk' | 'database';
+}
+
+const buildFileTree = (items: TreeItemData[]): TreeNode[] => {
     const root: TreeNode[] = [];
 
-    artifacts.forEach((artifact) => {
-        const parts = artifact.path.split(/[/\\]/);
+    items.forEach((item) => {
+        const parts = item.path.split(/[/\\]/);
         let currentLevel = root;
         let currentPath = "";
 
@@ -57,10 +67,18 @@ const buildFileTree = (artifacts: ArtifactInfo[]): TreeNode[] => {
                     path: currentPath,
                     type: isLast ? "file" : "folder",
                     children: [],
-                    size: isLast ? artifact.size : undefined,
-                    modified: isLast ? artifact.modified : undefined,
+                    size: isLast ? item.size : undefined,
+                    modified: isLast ? (typeof item.modified === 'string' ? Date.parse(item.modified) / 1000 : item.modified) : undefined,
                 };
+                // Store additional data for files
+                if (isLast) {
+                    (existingNode as any).id = item.id;
+                    (existingNode as any).mime_type = item.mime_type;
+                }
                 currentLevel.push(existingNode);
+            } else if (isLast && existingNode.type === "folder") {
+                // Handle edge case where a file and folder have same name (rare)
+                // We'll just treat it as a file for now or leave as is
             }
 
             currentLevel = existingNode.children;
@@ -140,6 +158,15 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
         }
     };
 
+    const refTree = useMemo(() => buildFileTree(files.map(f => ({
+        id: f.id,
+        name: f.filename.split(/[/\\]/).pop() || f.filename,
+        path: f.filename,
+        size: f.size_bytes,
+        modified: f.uploaded_at,
+        mime_type: f.mime_type
+    }))), [files]);
+
     const artifactTree = useMemo(() => buildFileTree(artifacts), [artifacts]);
 
     // Internal component for authenticated image preview
@@ -171,7 +198,7 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
     };
 
     // Recursive component to render tree nodes
-    const TreeItem = ({ node }: { node: TreeNode }) => {
+    const TreeItem = ({ node, isArtifact = false }: { node: TreeNode, isArtifact?: boolean }) => {
         const isCollapsed = collapsedDirs[node.path];
 
         if (node.type === "folder") {
@@ -187,7 +214,7 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
                     {!isCollapsed && (
                         <div className="ml-2 border-l border-gray-700/50">
                             {node.children.map((child) => (
-                                <TreeItem key={child.path} node={child} />
+                                <TreeItem key={child.path} node={child} isArtifact={isArtifact} />
                             ))}
                         </div>
                     )}
@@ -195,13 +222,51 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
             );
         }
 
+        const fileId = (node as any).id;
+        const isImage = (node as any).mime_type?.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(node.name);
+
+        const handleDownload = (e: React.MouseEvent) => {
+            e.stopPropagation();
+            if (isArtifact) {
+                downloadFile(`/api/files/project/${nodeName}/artifacts/${node.path}`, node.name);
+            } else {
+                // If ID is disk-based, use different endpoint if needed, but download_file_by_id usually handles records.
+                // For direct disk files from refs, we might need a path-based download.
+                if (fileId?.startsWith('disk:')) {
+                    const relativePath = fileId.replace('disk:refs/', '');
+                    downloadFile(`/api/files/project/${nodeName}/refs/${relativePath}`, node.name);
+                } else {
+                    downloadFile(`/api/files/download/${fileId}`, node.name);
+                }
+            }
+        };
+
+        const handleClick = () => {
+            if (isArtifact) {
+                viewArtifact(node.path, node.name);
+            } else {
+                // References view modal is currently merged with artifacts? 
+                // Let's reuse viewArtifact or similar if we want to preview refs too.
+                // For now, let's just allow downloading/deleting as before.
+                if (isImage) {
+                    setSelectedArtifact({
+                        name: node.name,
+                        path: node.path,
+                        type: 'image',
+                        // Map refs path
+                        content: isArtifact ? undefined : `refs`
+                    });
+                }
+            }
+        };
+
         return (
             <div
                 className="flex items-center justify-between ml-4 p-1.5 hover:bg-gray-800 rounded cursor-pointer text-sm group"
-                onClick={() => viewArtifact(node.path, node.name)}
+                onClick={handleClick}
             >
                 <div className="flex items-center gap-2 min-w-0">
-                    <File size={14} className={nodeType === "hub" ? "text-purple-400" : "text-cyan-400"} />
+                    <File size={14} className={isArtifact ? (nodeType === "hub" ? "text-purple-400" : "text-cyan-400") : "text-blue-400"} />
                     <span className="truncate text-gray-200" title={node.path}>{node.name}</span>
                 </div>
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -211,15 +276,21 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
                         </span>
                     )}
                     <button
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            downloadFile(`/api/files/project/${nodeName}/artifacts/${node.path}`, node.name);
-                        }}
+                        onClick={handleDownload}
                         className="p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-white transition-colors"
                         title="Download"
                     >
                         <Download size={12} />
                     </button>
+                    {!isArtifact && !fileId?.startsWith('disk:') && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); deleteFile(fileId, node.name); }}
+                            className="p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-red-400 transition-colors"
+                            title="Delete"
+                        >
+                            <Trash2 size={12} />
+                        </button>
+                    )}
                 </div>
             </div>
         );
@@ -495,35 +566,11 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
                         </div>
                     )}
 
-                    {/* Files List */}
+                    {/* Files List - Hierarchical Tree */}
                     <div className="flex-1 overflow-y-auto">
-                        <div className="space-y-2">
-                            {files.map((file) => (
-                                <div key={file.id} className="flex items-center justify-between bg-gray-800/50 border border-gray-700/50 p-2.5 rounded-lg text-sm group hover:bg-gray-800 transition-colors">
-                                    <div className="flex items-center gap-2 flex-1 min-w-0">
-                                        <div className="w-2 h-2 rounded-full bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.4)]" />
-                                        <span className="truncate text-gray-200 font-medium" title={file.filename}>{file.filename}</span>
-                                    </div>
-                                    <div className="flex items-center gap-1.5">
-                                        <span className="text-gray-500 text-[10px] mr-1">{formatSize(file.size_bytes)}</span>
-                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button
-                                                onClick={() => downloadFile(`/api/files/download/${file.id}`, file.filename)}
-                                                className="p-1.5 hover:bg-gray-700 rounded text-gray-400 hover:text-cyan-400 transition-colors"
-                                                title="Download"
-                                            >
-                                                <Download size={14} />
-                                            </button>
-                                            <button
-                                                onClick={() => deleteFile(file.id, file.filename)}
-                                                className="p-1.5 hover:bg-gray-700 rounded text-gray-400 hover:text-red-400 transition-colors"
-                                                title="Delete"
-                                            >
-                                                <Trash2 size={14} />
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
+                        <div className="space-y-1">
+                            {refTree.map((node) => (
+                                <TreeItem key={node.path} node={node} isArtifact={false} />
                             ))}
                             {files.length === 0 && !loading && (
                                 <p className="text-gray-500 text-xs text-center py-4">No files uploaded yet</p>
@@ -549,7 +596,7 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
                     <p className="text-xs text-gray-400 mb-3">Files created by AI (Hierarchical view)</p>
                     <div className="py-2">
                         {artifactTree.map((node) => (
-                            <TreeItem key={node.path} node={node} />
+                            <TreeItem key={node.path} node={node} isArtifact={true} />
                         ))}
                         {artifacts.length === 0 && (
                             <p className="text-gray-500 text-xs text-center py-4">No artifacts yet. Ask AI to create files!</p>

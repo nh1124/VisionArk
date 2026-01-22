@@ -25,6 +25,7 @@ import {
     CalendarDays
 } from "lucide-react";
 import HeatMapCalendar from "@/components/HeatMapCalendar";
+import TimelineCalendar from "@/components/TimelineCalendar";
 
 interface Task {
     task_id: string;
@@ -36,6 +37,9 @@ interface Task {
     due_date: string | null;
     notes: string | null;
     status?: "todo" | "done" | "skipped";
+    is_locked?: boolean;
+    start_time?: string | null;
+    end_time?: string | null;
     mon?: boolean;
     tue?: boolean;
     wed?: boolean;
@@ -62,7 +66,7 @@ export default function UnifiedTasksPage() {
     const [isCompletedCollapsed, setIsCompletedCollapsed] = useState(false);
 
     // View mode state
-    const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
+    const [viewMode, setViewMode] = useState<"list" | "calendar" | "timeline">("list");
     const [currentMonth, setCurrentMonth] = useState(new Date());
     const [refreshKey, setRefreshKey] = useState(0);
 
@@ -198,8 +202,9 @@ export default function UnifiedTasksPage() {
     };
 
     const changeDate = (days: number) => {
+        const shift = viewMode === 'timeline' ? days * 7 : days;
         const d = new Date(targetDate);
-        d.setDate(d.getDate() + days);
+        d.setDate(d.getDate() + shift);
         const newDate = d.toISOString().split('T')[0];
         setTargetDate(newDate);
         setQaDueDate(newDate);
@@ -223,18 +228,13 @@ export default function UnifiedTasksPage() {
 
     return (
         <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center">
-            {/* Background Gradient/Image style (MS To-Do like) */}
-            <div className="fixed inset-0 bg-gradient-to-b from-blue-900/20 to-gray-950 -z-10" />
+            {/* Background Style */}
+            <div className={`fixed inset-0 ${viewMode === 'list' ? 'bg-gradient-to-b from-blue-900/20 to-gray-950' : 'bg-gray-950'} -z-10`} />
 
-            <div className="w-full max-w-5xl px-4 sm:px-8 py-8 sm:py-12 flex-1 flex flex-col min-h-0">
+            <div className="w-full px-4 sm:px-10 py-8 sm:py-12 flex-1 flex flex-col min-h-0 transition-all duration-500">
                 {/* Header */}
                 {/* Header */}
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 sm:gap-0 mb-6 sm:mb-10">
-                    <div className={`${isMobile ? 'hidden' : 'block'}`}>
-                        <h1 className="text-3xl font-bold mb-1 text-white tracking-tight">
-                            Daily Results
-                        </h1>
-                    </div>
 
                     <div className="w-full sm:w-auto flex flex-col sm:flex-row items-center gap-3">
                         {/* Date Controls */}
@@ -266,9 +266,16 @@ export default function UnifiedTasksPage() {
                                 <button
                                     onClick={() => setViewMode("calendar")}
                                     className={`p-1.5 sm:p-2 rounded-lg transition-all ${viewMode === "calendar" ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
-                                    title="Calendar View"
+                                    title="Heat Map"
                                 >
                                     <CalendarDays className="w-4 h-4" />
+                                </button>
+                                <button
+                                    onClick={() => setViewMode("timeline")}
+                                    className={`p-1.5 sm:p-2 rounded-lg transition-all ${viewMode === "timeline" ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
+                                    title="Timeline"
+                                >
+                                    <Calendar className="w-4 h-4" />
                                 </button>
                             </div>
 
@@ -288,7 +295,7 @@ export default function UnifiedTasksPage() {
                 </div>
 
                 {/* Main Content Area */}
-                <div className={`flex-1 space-y-4 overflow-y-auto no-scrollbar ${viewMode === "list" ? 'pb-32' : 'pb-8'}`}>
+                <div className={`flex-1 space-y-4 overflow-y-auto no-scrollbar ${viewMode === "list" ? 'max-w-5xl mx-auto w-full pb-32' : 'w-full pb-8'}`}>
                     {viewMode === "list" ? (
                         // List View
                         <>
@@ -359,46 +366,59 @@ export default function UnifiedTasksPage() {
                             )}
                         </>
                     ) : (
-                        // Calendar View
                         <div className="space-y-6">
-                            {/* Month Navigation */}
-                            <div className="flex items-center justify-between">
-                                <h2 className="text-lg font-bold text-gray-300 tracking-tight">
-                                    {currentMonth.toLocaleString('en-US', { month: 'long', year: 'numeric' })}
-                                </h2>
-                                <div className="flex items-center gap-1 bg-gray-900/50 border border-gray-800 rounded-xl p-1">
-                                    <button
-                                        onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1))}
-                                        className="p-2 hover:bg-gray-800 rounded-lg transition-colors text-gray-500 hover:text-white"
-                                    >
-                                        <ChevronLeft className="w-4 h-4" />
-                                    </button>
-                                    <button
-                                        onClick={() => setCurrentMonth(new Date())}
-                                        className="px-3 py-1 text-xs font-bold text-gray-500 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
-                                    >
-                                        Today
-                                    </button>
-                                    <button
-                                        onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1))}
-                                        className="p-2 hover:bg-gray-800 rounded-lg transition-colors text-gray-500 hover:text-white"
-                                    >
-                                        <ChevronRight className="w-4 h-4" />
-                                    </button>
-                                </div>
-                            </div>
+                            {viewMode === "calendar" ? (
+                                <>
+                                    {/* Month Navigation */}
+                                    <div className="flex items-center justify-between">
+                                        <h2 className="text-lg font-bold text-gray-300 tracking-tight">
+                                            {currentMonth.toLocaleString('en-US', { month: 'long', year: 'numeric' })}
+                                        </h2>
+                                        <div className="flex items-center gap-1 bg-gray-900/50 border border-gray-800 rounded-xl p-1">
+                                            <button
+                                                onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1))}
+                                                className="p-2 hover:bg-gray-800 rounded-lg transition-colors text-gray-500 hover:text-white"
+                                            >
+                                                <ChevronLeft className="w-4 h-4" />
+                                            </button>
+                                            <button
+                                                onClick={() => setCurrentMonth(new Date())}
+                                                className="px-3 py-1 text-xs font-bold text-gray-500 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
+                                            >
+                                                Today
+                                            </button>
+                                            <button
+                                                onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1))}
+                                                className="p-2 hover:bg-gray-800 rounded-lg transition-colors text-gray-500 hover:text-white"
+                                            >
+                                                <ChevronRight className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    </div>
 
-                            {/* Calendar Component */}
-                            <HeatMapCalendar
-                                month={currentMonth}
-                                onDayClick={(date) => {
-                                    setTargetDate(date);
-                                    setQaDueDate(date);
-                                    setViewMode("list");
-                                }}
-                                refreshKey={refreshKey}
-                                includeCompleted={true}
-                            />
+                                    {/* Calendar Component */}
+                                    <HeatMapCalendar
+                                        month={currentMonth}
+                                        onDayClick={(date) => {
+                                            setTargetDate(date);
+                                            setQaDueDate(date);
+                                            setViewMode("list");
+                                        }}
+                                        refreshKey={refreshKey}
+                                        includeCompleted={true}
+                                    />
+                                </>
+                            ) : (
+                                // Timeline View
+                                <TimelineCalendar
+                                    targetDate={targetDate}
+                                    onTaskClick={(task) => {
+                                        setSelectedTask(task);
+                                        setPanelOpen(true);
+                                    }}
+                                    refreshKey={refreshKey}
+                                />
+                            )}
                         </div>
                     )}
                 </div>

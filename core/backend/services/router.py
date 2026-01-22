@@ -65,6 +65,14 @@ class Router:
                 )
 
         # 2. DEEP ROUTING: Trigger RouterNode (AI Analysis)
+        # Skip trivial messages (short or common shallow responses)
+        msg_clean = message.strip().lower()
+        is_trivial = len(msg_clean) < 5 or msg_clean in ["hi", "hello", "ok", "yes", "no", "thanks", "done", "cancel"]
+        
+        if is_trivial:
+            print(f"Router: Skipping deep analysis for trivial message.")
+            return
+
         # We find the RouterNode ID and enqueue a background execution for it
         try:
             async with AsyncSessionLocal() as session:
@@ -91,17 +99,24 @@ class Router:
 
     @classmethod
     async def initialize_default_hooks(cls):
-        """Register default system hooks (e.g., Global Scheduler for alerts)."""
-        # In a real scenario, these could be loaded from the DB nodes metadata
-        # For now, we'll manually register the GlobalScheduler to monitor everything (or specific tags)
+        """Register hooks from database nodes metadata (trigger_patterns)."""
+        cls._hooks = [] # Reset to avoid duplicates on re-init
         
-        async with AsyncSessionLocal() as session:
-            # Try to find GlobalScheduler
-            stmt = select(Node).filter(Node.role_name == "GlobalScheduler")
-            res = await session.execute(stmt)
-            gs_node = res.scalars().first()
-            
-            if gs_node:
-                # Monitor for SYSTEM_ALERT or global keywords
-                cls.register_hook(r"SYSTEM_ALERT:.*", gs_node.id, "Alert monitoring")
-                cls.register_hook(r".*burnout.*", gs_node.id, "User health monitoring")
+        try:
+            async with AsyncSessionLocal() as session:
+                # Fetch all nodes with metadata and filter in Python to avoid dialect-specific JSON query issues
+                stmt = select(Node).filter(Node.meta_payload.is_not(None))
+                res = await session.execute(stmt)
+                all_nodes = res.scalars().all()
+                
+                nodes = [n for n in all_nodes if isinstance(n.meta_payload, dict) and "trigger_patterns" in n.meta_payload]
+                
+                for node in nodes:
+                    patterns = node.meta_payload.get("trigger_patterns", [])
+                    if isinstance(patterns, list):
+                        for pattern in patterns:
+                            cls.register_hook(pattern, node.id, f"Dynamic hook for {node.display_name}")
+                
+                print(f"Router: Initialized {len(cls._hooks)} dynamic hooks from database.")
+        except Exception as e:
+            print(f"[ERROR] Router: Dynamic hook initialization failed: {e}")

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { Lock, Unlock, Clock, X } from "lucide-react";
 import TaskDecomposer from "./TaskDecomposer";
 
 interface TaskCreateModalProps {
@@ -45,6 +46,10 @@ export default function TaskCreateModal({
         // Date range
         start_date: "",
         end_date: "",
+        // LBS specific
+        is_locked: false,
+        start_time: "",
+        end_time: "",
     });
 
     if (!isOpen) return null;
@@ -78,6 +83,9 @@ export default function TaskCreateModal({
                 notes: formData.notes || null,
                 start_date: formData.start_date || null,
                 end_date: formData.end_date || null,
+                is_locked: formData.is_locked,
+                start_time: formData.start_time || null,
+                end_time: formData.end_time || null,
             };
 
             // Add rule-specific fields
@@ -132,6 +140,9 @@ export default function TaskCreateModal({
                     weekday_mon1: 1,
                     start_date: "",
                     end_date: "",
+                    is_locked: false,
+                    start_time: "",
+                    end_time: "",
                 });
                 setStatus(null);
                 setIsNewProject(false);
@@ -164,9 +175,9 @@ export default function TaskCreateModal({
                         <h2 className="text-2xl font-bold">Create New Task</h2>
                         <button
                             onClick={onClose}
-                            className="text-gray-400 hover:text-white text-2xl"
+                            className="text-gray-400 hover:text-white"
                         >
-                            ×
+                            <X className="w-8 h-8" />
                         </button>
                     </div>
 
@@ -291,6 +302,31 @@ export default function TaskCreateModal({
                                 How much effort this task requires (0 = minimal, 10 = maximum)
                             </p>
                         </div>
+
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="flex-1">
+                                <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-2">
+                                    <Lock className="w-3 h-3" /> System Protection
+                                </label>
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        setFormData({ ...formData, is_locked: !formData.is_locked })
+                                    }
+                                    className={`w-full flex items-center justify-center gap-2 px-4 py-2 bg-gray-800/50 border rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${formData.is_locked
+                                        ? "border-amber-500/50 text-amber-400 bg-amber-500/10"
+                                        : "border-gray-700 text-gray-500 hover:text-gray-400"
+                                        }`}
+                                >
+                                    {formData.is_locked ? (
+                                        <><Lock className="w-3 h-3" /> Locked</>
+                                    ) : (
+                                        <><Unlock className="w-3 h-3" /> Unlocked</>
+                                    )}
+                                </button>
+                            </div>
+                        </div>
+
 
                         {/* Rule Type */}
                         <div>
@@ -509,6 +545,33 @@ export default function TaskCreateModal({
                                 </div>
                             </div>
                         )}
+
+                        {/* Time Slot */}
+                        <div className="p-4 bg-gray-800/30 border border-gray-800 rounded-xl">
+                            <label className="block text-sm font-medium text-gray-400 mb-3 flex items-center gap-2">
+                                <Clock className="w-4 h-4" /> Recommended Time Slot
+                            </label>
+                            <div className="flex items-center gap-4">
+                                <div className="flex-1">
+                                    <label className="block text-[10px] uppercase text-gray-500 mb-1">Start</label>
+                                    <input
+                                        type="time"
+                                        value={formData.start_time}
+                                        onChange={(e) => setFormData({ ...formData, start_time: e.target.value })}
+                                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-purple-500"
+                                    />
+                                </div>
+                                <div className="flex-1">
+                                    <label className="block text-[10px] uppercase text-gray-500 mb-1">End</label>
+                                    <input
+                                        type="time"
+                                        value={formData.end_time}
+                                        onChange={(e) => setFormData({ ...formData, end_time: e.target.value })}
+                                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-purple-500"
+                                    />
+                                </div>
+                            </div>
+                        </div>
 
                         {/* Notes */}
                         <div>

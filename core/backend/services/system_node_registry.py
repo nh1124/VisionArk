@@ -42,6 +42,7 @@ class SystemNodeRegistry:
                 display_name = NodeClass.display_name
                 description = NodeClass.description
                 tools = NodeClass.default_tools
+                meta_payload = {"trigger_patterns": getattr(NodeClass, "trigger_patterns", [])}
                 
                 # Check if exists
                 res = await db.execute(select(Node).filter(Node.role_name == role_name))
@@ -58,6 +59,9 @@ class SystemNodeRegistry:
                         changed = True
                     if existing.tools != tools:
                         existing.tools = tools
+                        changed = True
+                    if existing.meta_payload != meta_payload:
+                        existing.meta_payload = meta_payload
                         changed = True
                     if existing.status != "active":
                         existing.status = "active"
@@ -77,6 +81,7 @@ class SystemNodeRegistry:
                         display_name=display_name,
                         description=description,
                         tools=tools,
+                        meta_payload=meta_payload,
                         status="active"
                     )
                     db.add(new_node)

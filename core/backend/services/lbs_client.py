@@ -143,9 +143,9 @@ class LBSClient:
         if target_date:
             t_date_str = target_date.isoformat() if isinstance(target_date, date) else target_date
             try:
-                # Fetch schedule for that specific day to get statuses
+                # Fetch schedule for that specific day to get statuses and overrides
                 schedule = await self.get_schedule(t_date_str, t_date_str)
-                status_map = {}
+                task_overlay = {}
                 scheduled_task_ids = set()
                 
                 if schedule and isinstance(schedule, list):
@@ -155,13 +155,22 @@ class LBSClient:
                                 tid = t.get("task_id")
                                 if tid:
                                     scheduled_task_ids.add(tid)
-                                    status_map[tid] = t.get("status", "todo")
+                                    task_overlay[tid] = {
+                                        "status": t.get("status", "todo"),
+                                        "load": t.get("load"),
+                                        "start_time": t.get("start_time"),
+                                        "end_time": t.get("end_time"),
+                                        "is_locked": t.get("is_locked", False),
+                                        "has_exception": t.get("has_exception", False),
+                                        "exception_type": t.get("exception_type")
+                                    }
                 
                 filtered_tasks = []
                 for task in all_tasks:
                     tid = task.get("task_id")
                     if tid in scheduled_task_ids:
-                        task["status"] = status_map.get(tid, "todo")
+                        overlay = task_overlay.get(tid, {})
+                        task.update(overlay)
                         filtered_tasks.append(task)
                 return filtered_tasks
             except Exception as e:
@@ -198,21 +207,25 @@ class LBSClient:
         """Create a new task."""
         return await self._request("POST", "tasks", json=task_data)
 
-    async def update_task(self, task_id: str, task_data: Dict) -> Dict:
+    async def update_task(self, task_id: str, task_data: Dict, force_override: bool = False) -> Dict:
         """Update a task."""
-        return await self._request("PUT", f"tasks/{task_id}", json=task_data)
+        params = {"force_override": str(force_override).lower()}
+        return await self._request("PUT", f"tasks/{task_id}", json=task_data, params=params)
 
-    async def delete_task(self, task_id: str) -> Dict:
+    async def delete_task(self, task_id: str, force_override: bool = False) -> Dict:
         """Delete a task."""
-        return await self._request("DELETE", f"tasks/{task_id}")
+        params = {"force_override": str(force_override).lower()}
+        return await self._request("DELETE", f"tasks/{task_id}", params=params)
 
-    async def bulk_delete_tasks(self, task_ids: List[str]) -> Dict:
+    async def bulk_delete_tasks(self, task_ids: List[str], force_override: bool = False) -> Dict:
         """Delete multiple tasks."""
-        return await self._request("POST", "tasks/bulk-delete", json={"task_ids": task_ids})
+        params = {"force_override": str(force_override).lower()}
+        return await self._request("POST", "tasks/bulk-delete", json={"task_ids": task_ids}, params=params)
 
-    async def bulk_update_active(self, task_ids: List[str], active: bool) -> Dict:
+    async def bulk_update_active(self, task_ids: List[str], active: bool, force_override: bool = False) -> Dict:
         """Update active status for multiple tasks."""
-        return await self._request("POST", "tasks/bulk-update-active", json={"task_ids": task_ids, "active": active})
+        params = {"force_override": str(force_override).lower()}
+        return await self._request("POST", "tasks/bulk-update-active", json={"task_ids": task_ids, "active": active}, params=params)
 
     async def toggle_task_completion(self, task_id: str, target_date: Union[date, str], status: Union[bool, TaskStatus] = TaskStatus.DONE) -> Dict:
         """Toggle task completion for a date."""
@@ -313,9 +326,27 @@ class LBSClient:
         }
         return await self._request("POST", "expand", params=params)
 
-    async def create_exception(self, exception_data: Dict) -> Dict:
+    async def get_resolved_task(self, task_id: str, target_date: Union[date, str]) -> Dict:
+        """Get task details with exception overrides for a specific date."""
+        params = {
+            "target_date": target_date.isoformat() if isinstance(target_date, date) else target_date
+        }
+        return await self._request("GET", f"tasks/{task_id}/resolved", params=params)
+
+    async def create_exception(self, exception_data: Dict, force_override: bool = False) -> Dict:
         """Register a task exception."""
-        return await self._request("POST", "exceptions", json=exception_data)
+        params = {"force_override": str(force_override).lower()}
+        return await self._request("POST", "exceptions", json=exception_data, params=params)
+
+    async def update_exception(self, exception_id: int, exception_data: Dict, force_override: bool = False) -> Dict:
+        """Update a task exception."""
+        params = {"force_override": str(force_override).lower()}
+        return await self._request("PUT", f"exceptions/{exception_id}", json=exception_data, params=params)
+
+    async def delete_exception(self, exception_id: int, force_override: bool = False) -> Dict:
+        """Delete a task exception."""
+        params = {"force_override": str(force_override).lower()}
+        return await self._request("DELETE", f"exceptions/{exception_id}", params=params)
 
     async def get_exceptions(self, start_date: Union[date, str], end_date: Union[date, str]) -> List[Dict]:
         """Get exceptions for a date range."""

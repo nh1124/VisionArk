@@ -18,7 +18,7 @@ class SearchKnowledgeTool(BaseTool):
 
     async def run(self, query: str, limit: int = 5, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
-        session: AsyncSession = kwargs.get("session")
+        session: AsyncSession = kwargs.get("db_session")
         context_name: str = kwargs.get("context_name", "general")
         if not user_id or not session: return {"success": False, "message": "Context error"}
         
@@ -46,7 +46,7 @@ class IngestKnowledgeTool(BaseTool):
 
     async def run(self, content: str, label: Optional[str] = None, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
-        session: AsyncSession = kwargs.get("session")
+        session: AsyncSession = kwargs.get("db_session")
         context_name: str = kwargs.get("context_name", "general")
         if not user_id or not session: return {"success": False, "message": "Context error"}
         

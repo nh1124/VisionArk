@@ -70,25 +70,44 @@ export default function ProjectChatPage({
             if (requestId !== historyFetchId.current) return;
 
             if (data.history && Array.isArray(data.history)) {
-                // RACE CONDITION FIX: If history is empty but we are polling or have a task_id, 
-                // don't overwrite optimistic messages (like the pending prompt).
-                if (data.history.length === 0 && (isPollingActiveRef.current || taskIdFromUrl)) {
-                    return;
-                }
-
-                setMessages(data.history.map((m: any) => ({
+                const newMessages = data.history.map((m: any) => ({
                     role: m.role,
                     content: m.content,
                     attached_files: m.meta_payload?.attached_files || [],
                     tool_calls: m.meta_payload?.tool_calls || []
-                })));
+                }));
+
+                setMessages((prev) => {
+                    const storageKey = `pending_prompt_${projectId}`;
+                    const pendingPrompt = sessionStorage.getItem(storageKey);
+
+                    // If server history is missing, but we have a pending prompt and are polling,
+                    // ensure we don't wipe out the UI.
+                    if (newMessages.length === 0 && pendingPrompt && (isPollingActiveRef.current || taskIdFromUrl)) {
+                        // If we already have the optimistic message in state, keep it
+                        if (prev.some((m: Message) => m.role === "user" && m.content === pendingPrompt)) return prev;
+                        return [{ role: "user", content: pendingPrompt }];
+                    }
+
+                    // Merging logic: if server returns fewer messages than we have (including optimistic),
+                    // be careful not to overwrite the optimistic turn.
+                    if (pendingPrompt && (isPollingActiveRef.current || taskIdFromUrl)) {
+                        const alreadyInServer = newMessages.some((m: Message) => m.role === "user" && m.content === pendingPrompt);
+                        if (!alreadyInServer) {
+                            // Append optimistic message to server history
+                            return [...newMessages, { role: "user", content: pendingPrompt }];
+                        }
+                    }
+
+                    return newMessages;
+                });
             }
         } catch (error) {
             console.error("Failed to load history:", error);
         }
     }, [projectId, taskIdFromUrl]);
 
-    // Load metadata and history on mount
+    // Load metadata and history on mount + Recover active task
     useEffect(() => {
         const loadMetadata = async () => {
             try {
@@ -101,9 +120,34 @@ export default function ProjectChatPage({
             }
         };
 
+        const recoverActiveTask = async () => {
+            try {
+                const response = await apiFetch(`/api/agents/project/${projectId}/active-task`);
+                const data = await response.json();
+                if (data.task_id && !taskIdFromUrl) {
+                    console.log("Recovered active task:", data.task_id);
+                    router.replace(`/projects/${projectId}?task_id=${data.task_id}`, { scroll: false });
+                }
+            } catch (error) {
+                console.error("Failed to recover active task:", error);
+            }
+        };
+
         loadMetadata();
+
+        // Immediate recovery from sessionStorage for smooth UI
+        const storageKey = `pending_prompt_${projectId}`;
+        const pendingPrompt = sessionStorage.getItem(storageKey);
+        if (pendingPrompt) {
+            setMessages((prev) => {
+                if (prev.length === 0) return [{ role: "user", content: pendingPrompt }];
+                return prev;
+            });
+        }
+
         fetchHistory();
-    }, [projectId, fetchHistory]);
+        recoverActiveTask();
+    }, [projectId, fetchHistory, taskIdFromUrl, router]);
 
     // Cleanup function - only clears intervals if this component started them
     useEffect(() => {
@@ -125,6 +169,18 @@ export default function ProjectChatPage({
         };
     }, [taskIdFromUrl]);
 
+    // Load draft from localStorage on mount
+    useEffect(() => {
+        try {
+            const savedDraft = localStorage.getItem(`chat_draft_${projectId}`);
+            if (savedDraft) {
+                setCommandInputValue(savedDraft);
+            }
+        } catch (e) {
+            console.error("Failed to load draft:", e);
+        }
+    }, [projectId]);
+
     // Effect: Start polling when taskId appears
     useEffect(() => {
         // Skip if no taskId
@@ -138,18 +194,6 @@ export default function ProjectChatPage({
         // Mark as polling and store the taskId
         isPollingActiveRef.current = true;
         currentPollingTaskRef.current = taskIdFromUrl;
-
-        // Clear any existing intervals before starting new ones
-        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-
-        // Check for pending prompt in sessionStorage and display it immediately
-        const storageKey = `pending_prompt_${projectId}`;
-        const pendingPrompt = sessionStorage.getItem(storageKey);
-        if (pendingPrompt) {
-            setMessages([{ role: "user", content: pendingPrompt }]);
-            sessionStorage.removeItem(storageKey); // Clean up
-        }
 
         // Start polling for this task
         setLoading(true);
@@ -181,6 +225,8 @@ export default function ProjectChatPage({
                     }
                     setLoading(false);
                     setStatusText("");
+                    // Cleanup optimistic storage
+                    sessionStorage.removeItem(`pending_prompt_${projectId}`);
 
                     // Re-fetch history to get complete messages
                     const requestId = ++historyFetchId.current;
@@ -216,6 +262,9 @@ export default function ProjectChatPage({
                     }
                     setLoading(false);
                     setStatusText("");
+                    // Cleanup optimistic storage
+                    sessionStorage.removeItem(`pending_prompt_${projectId}`);
+
                     setMessages((prev) => [...prev, {
                         role: "assistant",
                         content: `❌ Error: ${statusData.result || "Task failed"}`
@@ -256,6 +305,14 @@ export default function ProjectChatPage({
         if (!content.trim() && files.length === 0) return;
         setShowCommandHelp(false);
 
+        // Clear draft from localStorage
+        try {
+            localStorage.removeItem(`chat_draft_${projectId}`);
+            setCommandInputValue("");
+        } catch (e) {
+            // ignore
+        }
+
         const userMessage: Message = {
             role: "user",
             content: content,
@@ -266,6 +323,14 @@ export default function ProjectChatPage({
             }))
         };
         setMessages((prev) => [...prev, userMessage]);
+
+        // Store prompt for recovery after refresh
+        try {
+            sessionStorage.setItem(`pending_prompt_${projectId}`, content);
+        } catch (e) {
+            // ignore
+        }
+
         setLoading(true);
         setStatusText("Thinking...");
         setElapsedTime(0);
@@ -316,67 +381,10 @@ export default function ProjectChatPage({
                 throw new Error("No task ID returned");
             }
 
-            // Start Polling
-            const pollInterval = setInterval(async () => {
-                try {
-                    const statusRes = await apiFetch(`/api/agents/tasks/${taskId}`);
-                    if (!statusRes.ok) return;
-
-                    const statusData = await statusRes.json();
-                    const status = statusData.status;
-
-                    if (status === "completed") {
-                        clearInterval(pollInterval);
-                        clearInterval(timerInterval);
-                        setLoading(false);
-                        setStatusText("");
-
-                        // Re-fetch history to get complete message with tool_calls
-                        try {
-                            const historyRes = await apiFetch(`/api/agents/project/${projectId}/history`);
-                            const historyData = await historyRes.json();
-                            if (historyData.history && Array.isArray(historyData.history)) {
-                                setMessages(historyData.history.map((m: any) => ({
-                                    role: m.role,
-                                    content: m.content,
-                                    attached_files: m.meta_payload?.attached_files || [],
-                                    tool_calls: m.meta_payload?.tool_calls || []
-                                })));
-                            }
-                        } catch (e) {
-                            console.error("Failed to refresh history:", e);
-                            // Fallback: just update content
-                            setMessages((prev) => {
-                                const next = [...prev];
-                                const lastIdx = next.length - 1;
-                                if (lastIdx >= 0) {
-                                    next[lastIdx] = {
-                                        ...next[lastIdx],
-                                        content: statusData.result || "Task completed."
-                                    };
-                                }
-                                return next;
-                            });
-                        }
-                    } else if (status === "failed") {
-                        clearInterval(pollInterval);
-                        clearInterval(timerInterval);
-                        setLoading(false);
-                        setMessages((prev) => {
-                            const next = [...prev];
-                            next[next.length - 1] = {
-                                role: "assistant",
-                                content: `❌ Error: ${statusData.result || "Task failed"}`
-                            };
-                            return next;
-                        });
-                    } else {
-                        setStatusText(status === "queued" ? "Queued..." : "Processing...");
-                    }
-                } catch (err) {
-                    console.error("Polling error:", err);
-                }
-            }, 1000);
+            // Sync Task ID to URL - this will trigger the URL-based polling useEffect
+            router.replace(`/projects/${projectId}?task_id=${taskId}`, { scroll: false });
+            // Handle timer separately as the URL effect starts its own timer
+            clearInterval(timerInterval);
 
         } catch (error: any) {
             console.error("Error:", error);
@@ -386,7 +394,7 @@ export default function ProjectChatPage({
                 { role: "assistant", content: `❌ Error: ${errorMsg}` }
             ]);
             setLoading(false);
-            clearInterval(timerInterval);
+            // timerInterval is handled by clearInterval in try block or here if it exists
         }
     };
 
@@ -544,7 +552,7 @@ export default function ProjectChatPage({
 
     return (
         <div className="flex h-full">
-            <div className="flex-1 flex flex-col h-full overflow-hidden">
+            <div className="flex-1 flex flex-col h-full overflow-hidden relative">
                 {/* Header - Minimal Gemini-style - Hide on mobile since the global header handles it */}
                 {!isMobile && (
                     <div className="bg-gray-900/50 border-b border-gray-800/50 px-4 py-2.5 flex items-center justify-between flex-shrink-0">
@@ -673,6 +681,14 @@ export default function ProjectChatPage({
                         )}
                         <ChatInput
                             value={commandInputValue}
+                            onChange={(val) => {
+                                setCommandInputValue(val);
+                                try {
+                                    localStorage.setItem(`chat_draft_${projectId}`, val);
+                                } catch (e) {
+                                    // ignore quota errors etc
+                                }
+                            }}
                             onCommandModeChange={(isCommand, value) => {
                                 setShowCommandHelp(isCommand);
                                 setCommandInputValue(value);

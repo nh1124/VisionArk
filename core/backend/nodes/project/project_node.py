@@ -23,15 +23,16 @@ class ProjectNode(BaseNode):
         from tools.library.lbs import (
             ListTasksTool, CompleteLBSTaskTool, DeleteTaskTool,
             GetLBSScheduleTool, GetLoadOnDayTool, GetLoadInPeriodTool,
-            GetTaskHistoryTool
+            GetTaskHistoryTool, ManageTaskExceptionTool, ListExceptionsTool
         )
-        from tools.library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool, ImportGitHubRepoTool
+        from tools.library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool, DeleteArtifactTool, ImportGitHubRepoTool
         from tools.library.knowledge import SearchKnowledgeTool, IngestKnowledgeTool
         from tools.library.search import GoogleSearchTool, DeepResearchTool
         from tools.library.ai import GenerateImageTool
         from tools.library.condition import GetCurrentConditionTool, UpdateUserConditionTool
         from tools.library.markdown import UpdateMDSectionTool
         from tools.library.members import ListMembersTool, ManageMemberTool, UpdateNodeDescriptionTool
+        from tools.library.writer import RecursiveWriterTool
         
         self.tools = [
             AskNodeTool(),
@@ -40,6 +41,8 @@ class ProjectNode(BaseNode):
             ListMembersTool(),
             ManageMemberTool(),
             UpdateNodeDescriptionTool(),
+            
+            RecursiveWriterTool(),
 
             ListTasksTool(),
             CompleteLBSTaskTool(),
@@ -48,8 +51,11 @@ class ProjectNode(BaseNode):
             GetLoadOnDayTool(),
             GetLoadInPeriodTool(),
             GetTaskHistoryTool(),
+            ManageTaskExceptionTool(),
+            ListExceptionsTool(),
 
             SaveArtifactTool(),
+            DeleteArtifactTool(),
             ReadReferenceTool(),
             ListFilesTool(),
             ImportGitHubRepoTool(),
@@ -147,6 +153,53 @@ class ProjectNode(BaseNode):
         knowledge_context = await self.memory.get_knowledge_context(message)
         if knowledge_context:
             system_prompt += f"\n\n## Relevant Knowledge\n{knowledge_context}"
+
+        # --- AUTO-ARCHIVING CHECK ---
+        # Limit context to ~30 messages to prevent "infinite context" crash
+        # (This is a safety threshold, can be adjusted)
+        ARCHIVE_THRESHOLD = 30
+        if len(history) >= ARCHIVE_THRESHOLD:
+            print(f"[ProjectNode] Context size ({len(history)}) exceeded limit ({ARCHIVE_THRESHOLD}). Archiving...")
+            
+            from services.context_manager import ContextManager
+            
+            # 1. Initialize Context Manager
+            cm = ContextManager(
+                user_id=self.user_id,
+                context_type="project", 
+                project_id=self.project_id,
+                session=self.context.get('db_session')
+            )
+            
+            # 2. Archive & Summarize
+            result = await cm.archive_context(force=True)
+            
+            if result.get("archived"):
+                summary = result.get("summary", "Context archived.")
+                
+                # 3. Create NEW Session
+                # The archive_context call already marked old session as archived in DB.
+                # ProjectNode.on_enter logic would normally create a new one if missing,
+                # but we are mid-execution. So we manually create/refresh the session here.
+                new_session_id = await self.memory.get_or_create_session(self.project_id, self.user_id)
+                self.session_id = new_session_id
+                self.context['session_id'] = new_session_id
+                
+                # 4. Inject Summary into new history as System Message
+                # This ensures the LLM knows what happened previously
+                summary_msg = Message(
+                    role=MessageRole.SYSTEM,
+                    content=f"**PREVIOUS CONTEXT SUMMARY**:\n{summary}\n\nThe previous session was archived to maintain performance. Continue from here.",
+                    timestamp=datetime.now()
+                )
+                await self.memory.save_messages(self.session_id, [summary_msg])
+                
+                # 5. Reset local history for this turn
+                history = [summary_msg, current_msg]
+                
+                # Notify User (Add a prefix to their current message processing or just log it)
+                # We'll rely on the LLM seeing the summary message to acknowledge it if needed.
+                print(f"[ProjectNode] Context archived successfully. New Session: {new_session_id}")
             
         # Inject Active Team Roster (Meta-Cognition)
         roster_text = ""
@@ -212,7 +265,7 @@ class ProjectNode(BaseNode):
             message_history=history,
             tool_context={
                 'user_id': self.user_id,
-                'session': self.context.get('db_session'),  # For tools that need DB access
+                'db_session': self.context.get('db_session'),  # For tools that need DB access
                 'session_id': self.session_id,
                 'node_id': self.node_id,
                 'project_id': self.project_id,
@@ -223,6 +276,17 @@ class ProjectNode(BaseNode):
         # Extract content and tool_calls from response
         response_text = llm_response.content or ""
         tool_calls = llm_response.tool_calls if hasattr(llm_response, 'tool_calls') else None
+        
+        # Fallback for empty responses to avoid UI "No response" error
+        if not response_text.strip() and not tool_calls:
+             response_text = "I have processed your request."
+        elif not response_text.strip() and tool_calls:
+             pass 
+        
+        # Final safety net
+        if not response_text.strip():
+             response_text = "Task completed."
+
         # 5. Save History (User + Assistant) with tool_calls metadata
         assistant_msg = Message(
             role=MessageRole.ASSISTANT,

@@ -1,10 +1,10 @@
 # New Class-Based Tool Architecture
 from .base import BaseTool
 from .library.system import AskNodeTool, ListNodesTool, GetNodeProfileTool, BroadcastSystemMessageTool
-from .library.lbs import ListTasksTool, CreateTaskTool, UpdateTaskTool, DeleteTaskTool, CompleteLBSTaskTool, GetLBSScheduleTool, GetLoadOnDayTool, GetLoadInPeriodTool
-from .library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool, DeleteArtifactTool
+from .library.lbs import ListTasksTool, CreateTaskTool, UpdateTaskTool, DeleteTaskTool, CompleteLBSTaskTool, GetLBSScheduleTool, GetLoadOnDayTool, GetLoadInPeriodTool, ManageTaskExceptionTool, ListExceptionsTool
+from .library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool, DeleteArtifactTool, ImportGitHubRepoTool
 from .library.knowledge import SearchKnowledgeTool, IngestKnowledgeTool
-from .library.search import GoogleSearchTool, ResearchURLTool, SearchPlacesTool
+from .library.search import GoogleSearchTool, ResearchURLTool, SearchPlacesTool, DeepResearchTool
 from .library.markdown import InitPlanTool, UpdatePlanProgressTool, GetCurrentStatusTool, ReadMDSectionTool
 from .library.ai import GenerateImageTool, MermaidVisualizerTool, ExecuteCodeTool
 from .library.commands import (
@@ -12,7 +12,9 @@ from .library.commands import (
     CheckInboxTool, SendMessageTool, ReportTool, ProcessInboxTool
 )
 from .library.condition import GetCurrentConditionTool, UpdateUserConditionTool
-from .library.members import ListMembersTool, ManageMemberTool
+from .library.members import ListMembersTool, ManageMemberTool, UpdateNodeDescriptionTool
+from .library.writer import RecursiveWriterTool
+from .library.routing import MulticastMessageTool, RegisterRoutingHookTool
 
 __all__ = [
     "BaseTool",
@@ -32,6 +34,7 @@ __all__ = [
     "ReadReferenceTool",
     "ListFilesTool",
     "DeleteArtifactTool",
+    "ImportGitHubRepoTool",
     "SearchKnowledgeTool",
     "IngestKnowledgeTool",
     "GoogleSearchTool",
@@ -56,5 +59,12 @@ __all__ = [
     "GetCurrentConditionTool",
     "UpdateUserConditionTool",
     "ListMembersTool",
-    "ManageMemberTool"
+    "ManageMemberTool",
+    "UpdateNodeDescriptionTool",
+    "DeepResearchTool",
+    "RecursiveWriterTool",
+    "ManageTaskExceptionTool",
+    "ListExceptionsTool",
+    "MulticastMessageTool",
+    "RegisterRoutingHookTool"
 ]

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, memo } from "react";
-import { Copy, Check, ThumbsUp, ThumbsDown, RotateCcw, Share2, MoreHorizontal, MessageSquarePlus, Volume2, Pencil, Trash2 } from "lucide-react";
+import { Copy, Check, ThumbsUp, ThumbsDown, RotateCcw, Share2, MoreHorizontal, MessageSquarePlus, Volume2, Pencil, Trash2, Bot } from "lucide-react";
 import { getFileToken } from "@/lib/api";
 import MarkdownRenderer from "./MarkdownRenderer";
 
@@ -93,7 +93,7 @@ function MessageWithAttachmentsBase({
                 }`}
         >
 
-            <div className={`max-w-[85%] min-w-0 flex flex-col group ${role === "user" ? "items-end" : "items-center"}`}>
+            <div className={`max-w-[85%] min-w-0 flex flex-col group ${role === "user" ? "items-end" : "items-start"}`}>
                 <div
                     className={`relative w-full ${role === "user"
                         ? "bg-gradient-to-br from-purple-600 to-purple-800 text-white rounded-2xl rounded-tr-sm shadow-lg shadow-purple-900/20 p-5"
@@ -106,7 +106,48 @@ function MessageWithAttachmentsBase({
                     <div className="prose prose-invert max-w-none overflow-hidden break-words">
                         {role === "assistant" ? (
                             content ? (
-                                <MarkdownRenderer content={content} nodeType={nodeType} nodeName={nodeName} />
+                                // Check for Async Report Pattern
+                                content.match(/^(?:🤖|SYSTEM|Node)? ?(.+) has completed background work:/i) ? (
+                                    (() => {
+                                        const match = content.match(/^(?:🤖|SYSTEM|Node)? ?(.+) has completed background work:/i);
+                                        // Clean up header text (remove markdown bolding)
+                                        const rawHeader = match ? match[0] : "System Report";
+                                        const headerText = rawHeader.replace(/\*\*/g, "").replace(/^🤖\s*/, "");
+                                        const bodyText = content.replace(match ? match[0] : "", "").trim();
+                                        const [isReportExpanded, setIsReportExpanded] = useState(false);
+
+                                        return (
+                                            <div className="my-2 w-full min-w-full sm:min-w-[600px] rounded-xl border border-gray-700/50 bg-gray-950/50 overflow-hidden shadow-inner">
+                                                <button
+                                                    onClick={() => setIsReportExpanded(!isReportExpanded)}
+                                                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-900/50 transition-colors text-left group"
+                                                >
+                                                    <div className="w-6 h-6 rounded-md bg-blue-500/20 border border-blue-500/30 flex items-center justify-center shrink-0">
+                                                        <Bot size={14} className="text-blue-400" />
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <h4 className="text-sm font-semibold text-gray-200 truncate group-hover:text-blue-400 transition-colors">{headerText}</h4>
+                                                    </div>
+                                                    <div className={`text-gray-500 transition-transform duration-200 ${isReportExpanded ? "rotate-180" : ""}`}>
+                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                            <path d="M6 9l6 6 6-6" />
+                                                        </svg>
+                                                    </div>
+                                                </button>
+
+                                                {isReportExpanded && (
+                                                    <div className="px-4 pb-4 border-t border-gray-800/50 pt-4 bg-black/20 w-full overflow-x-auto">
+                                                        <div className="max-w-full">
+                                                            <MarkdownRenderer content={bodyText} nodeType={nodeType} nodeName={nodeName} />
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })()
+                                ) : (
+                                    <MarkdownRenderer content={content} nodeType={nodeType} nodeName={nodeName} />
+                                )
                             ) : tool_calls.length === 0 ? (
                                 <span className="text-gray-400 italic">(No response)</span>
                             ) : null
@@ -242,7 +283,7 @@ function MessageWithAttachmentsBase({
 
                 {/* Assistant Action Bar - Adding Delete here too */}
                 {role === "assistant" && (
-                    <div className="flex items-center justify-center gap-1 mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-full">
+                    <div className="flex items-center justify-start gap-1 mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-full">
                         <button
                             onClick={handleCopy}
                             className="p-1.5 rounded-lg hover:bg-white/5 text-gray-500 hover:text-gray-300 transition-all relative group/btn"

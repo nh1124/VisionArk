@@ -110,6 +110,10 @@ class BaseNode(ABC):
         
         session = self.context["db_session"]
         
+        # 0. Set Node Identity in context for tools
+        if hasattr(self, "node") and self.node:
+            self.context["node_id"] = self.node.id
+        
         # 2. Resolve API Key & Preferred Model
         if not self.context.get("api_key"):
             from tools.utils import get_user_api_key

@@ -24,6 +24,10 @@ class GenericMemberNode(BaseNode):
                     self.tools.append(tool)
                 else:
                     print(f"[GenericMemberNode] Warning: Tool '{tool_name}' not found for member node '{self.role_name}'")
+        
+        # Always allow agents to register routing hooks
+        from tools import RegisterRoutingHookTool
+        self.tools.append(RegisterRoutingHookTool())
 
     async def load_system_prompt(self, role_name: Optional[str] = None) -> str:
         """

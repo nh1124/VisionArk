@@ -35,10 +35,28 @@ class CallbackService:
         result_summary: str,
         task_id: str = None
     ):
-        """Formated notification for node work completion."""
+        """Formatted notification for node work completion."""
         content = f"🤖 **{node_display_name}** has completed background work:\n\n{result_summary}"
         meta_payload = {
             "type": "node_callback",
+            "node_name": node_display_name,
+            "task_id": task_id,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        return await CallbackService.append_message(db_session, session_id, content, meta_payload=meta_payload)
+
+    @staticmethod
+    async def notify_node_failure(
+        db_session: AsyncSession,
+        session_id: str,
+        node_display_name: str,
+        error_message: str,
+        task_id: str = None
+    ):
+        """Formatted notification for node work failure."""
+        content = f"❌ **{node_display_name}** failed to complete background work:\n\n{error_message}"
+        meta_payload = {
+            "type": "node_callback_failure",
             "node_name": node_display_name,
             "task_id": task_id,
             "timestamp": datetime.utcnow().isoformat()

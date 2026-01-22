@@ -21,7 +21,7 @@ class GenerateImageTool(BaseTool):
 
     async def run(self, prompt: str, filename: Optional[str] = None, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
-        session: AsyncSession = kwargs.get("session")
+        session: AsyncSession = kwargs.get("db_session")
         project_id: str = kwargs.get("project_id")
         if not user_id or not session: return {"success": False, "message": "Context error"}
         
@@ -105,7 +105,7 @@ class ExecuteCodeTool(BaseTool):
 
     async def run(self, prompt: str, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
-        session: AsyncSession = kwargs.get("session")
+        session: AsyncSession = kwargs.get("db_session")
         if not user_id or not session: return {"success": False, "message": "Context error"}
         
         try:

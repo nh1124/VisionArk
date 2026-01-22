@@ -234,7 +234,8 @@ class FileService:
         ).order_by(UploadedFile.uploaded_at.desc()))
         db_files = result.scalars().all()
         
-        db_file_map = {Path(f.storage_path).resolve(): f for f in db_files}
+        # Use filename as key since that's what we show/compare
+        db_file_names = {f.filename for f in db_files}
         
         # 2. Scan Disk for additional files (e.g., GitHub imports)
         final_list = []
@@ -250,31 +251,54 @@ class FileService:
                 "source": "database"
             })
             
-        # 3. Add Disk-only files from 'refs' directory
+        # 3. Add Disk-only files from 'refs' directory using an optimized scan
         try:
             refs_dir = self.get_files_dir(project_id)
             if refs_dir.exists():
                 from mimetypes import guess_type
-                for p in refs_dir.rglob('*'):
-                    if p.is_file():
-                        resolved_p = p.resolve()
-                        if resolved_p not in db_file_map:
-                            # Relative path for display/identification
-                            rel_path = p.relative_to(refs_dir).as_posix()
-                            
-                            # Determine mime type
-                            mime_type, _ = guess_type(str(p))
-                            stat = p.stat()
-                            
-                            final_list.append({
-                                "id": f"disk:refs/{rel_path}", # Virtual ID
-                                "filename": rel_path,
-                                "mime_type": mime_type or "application/octet-stream",
-                                "size_bytes": stat.st_size,
-                                "uploaded_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                                "has_gemini_ref": False,
-                                "source": "disk"
-                            })
+                
+                # Directories to skip entirely
+                IGNORED_DIRS = {
+                    '.git', '.github', 'node_modules', '__pycache__', 
+                    '.venv', 'venv', 'env', '.pytest_cache', '.next',
+                    '.antigravity', '.gemini', 'dist', 'build', '.vscode'
+                }
+
+                def scan_recursive(current_dir: Path):
+                    results = []
+                    try:
+                        for item in os.scandir(current_dir):
+                            if item.is_dir():
+                                if item.name in IGNORED_DIRS:
+                                    continue
+                                results.extend(scan_recursive(Path(item.path)))
+                            elif item.is_file():
+                                p = Path(item.path)
+                                rel_path = p.relative_to(refs_dir).as_posix()
+                                
+                                # Skip if already in DB (to avoid duplicates)
+                                if rel_path in db_file_names or item.name in db_file_names:
+                                    continue
+                                    
+                                mime_type, _ = guess_type(item.name)
+                                stat = item.stat()
+                                
+                                results.append({
+                                    "id": f"disk:refs/{rel_path}", 
+                                    "filename": rel_path,
+                                    "mime_type": mime_type or "application/octet-stream",
+                                    "size_bytes": stat.st_size,
+                                    "uploaded_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                                    "has_gemini_ref": False,
+                                    "source": "disk"
+                                })
+                    except Exception as scan_err:
+                        print(f"Error scanning {current_dir}: {scan_err}")
+                    return results
+
+                disk_files = await asyncio.to_thread(scan_recursive, refs_dir)
+                final_list.extend(disk_files)
+                
         except Exception as e:
             print(f"[FileService] Error scanning disk for files: {e}")
             

@@ -18,8 +18,9 @@ class GlobalScheduler(GenericSystemNode):
         "get_load_in_period", "broadcast_system_message",
         "list_tasks", "create_task", "update_task_details", 
         "delete_task_by_id", "complete_lbs_task", "get_lbs_schedule",
-        "get_load_on_day"
+        "get_load_on_day", "manage_task_exception", "list_task_exceptions"
     ]
+    trigger_patterns = [r"SYSTEM_ALERT:.*", r".*burnout.*"]
 
     def __init__(self, context: Dict[str, Any], node: Any, status_callback: Optional[Any] = None):
         super().__init__(context, node, status_callback)

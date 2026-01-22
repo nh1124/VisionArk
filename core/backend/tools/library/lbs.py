@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 class ListTasksArgs(BaseModel):
     context: Optional[str] = Field(None, description="Filter by context/project name")
+    target_date: Optional[str] = Field(None, description="YYYY-MM-DD to see merged status/overrides for a specific day")
 
 class ListTasksTool(BaseTool):
     name = "list_tasks"
@@ -17,7 +18,7 @@ class ListTasksTool(BaseTool):
     args_schema = ListTasksArgs
 
     async def run(self, context: Optional[str] = None, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
+        session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         context_name: str = kwargs.get("context_name", "general")
         if not session or not user_id:
@@ -25,11 +26,21 @@ class ListTasksTool(BaseTool):
         
         try:
             client = await get_lbs_client(user_id, session)
-            tasks = await client.list_tasks(context=context or context_name)
+            target_date = kwargs.get("target_date")
+            tasks = await client.list_tasks(
+                context=context or context_name,
+                target_date=target_date
+            )
             if not tasks:
                 return {"success": True, "message": f"No tasks for {context or context_name}.", "data": {"tasks": []}}
             
-            lines = [f"• [{t['task_id']}] {t['task_name']} ({t.get('rule_type')})" for t in tasks]
+            lines = []
+            for t in tasks:
+                status = f" [{t.get('status', 'todo')}]" if target_date else ""
+                locked = " [LOCKED]" if t.get("is_locked") else ""
+                exc = " [OVERWRITTEN]" if t.get("has_exception") else ""
+                lines.append(f"• [{t['task_id']}] {t['task_name']} ({t.get('rule_type')}){status}{locked}{exc}")
+            
             return {"success": True, "message": "Tasks:\n" + "\n".join(lines), "data": {"tasks": tasks}}
         except Exception as e:
             return {"success": False, "message": f"Failed to list tasks: {e}"}
@@ -37,12 +48,15 @@ class ListTasksTool(BaseTool):
 class CreateTaskArgs(BaseModel):
     task_name: str = Field(..., description="Name of the task")
     workload: float = Field(..., description="Estimated load (1-10)")
-    project: Optional[str] = Field(None, description="Context/Project name")
+    context: Optional[str] = Field(None, description="Context/Project name")
     rule_type: str = Field("ONCE", description="Recurrence type: ONCE, WEEKLY, EVERY_N_DAYS, MONTHLY_DAY")
     due_date: Optional[str] = Field(None, description="YYYY-MM-DD for ONCE tasks")
     days: Optional[str] = Field(None, description="Comma-separated days for WEEKLY (mon,tue,...)")
     interval_days: Optional[int] = Field(None, description="Interval in days for EVERY_N_DAYS")
     month_day: Optional[int] = Field(None, description="Day of month for MONTHLY_DAY")
+    start_time: Optional[str] = Field(None, description="Start time (HH:MM)")
+    end_time: Optional[str] = Field(None, description="End time (HH:MM)")
+    is_locked: bool = Field(False, description="Lock this task from AI modifications")
     notes: Optional[str] = Field(None, description="Additional notes")
 
 class CreateTaskTool(BaseTool):
@@ -55,7 +69,7 @@ class CreateTaskTool(BaseTool):
     args_schema = CreateTaskArgs
 
     async def run(self, **args) -> Any:
-        session: AsyncSession = args.pop("session", None)
+        session: AsyncSession = args.pop("db_session", None)
         user_id: str = args.pop("user_id", None)
         context_name: str = args.pop("context_name", "general")
         if not session or not user_id:
@@ -64,18 +78,22 @@ class CreateTaskTool(BaseTool):
         try:
             client = await get_lbs_client(user_id, session)
             task_name = args.get("task_name")
-            project = args.get("project")
+            context = args.get("context")
             workload = args.get("workload")
             rule_type = args.get("rule_type", "ONCE").upper()
             
             data = {
                 "task_name": task_name,
-                "context": project or context_name,
+                "context": context or context_name,
                 "base_load_score": float(workload),
                 "rule_type": rule_type,
                 "active": True,
+                "is_locked": args.get("is_locked", False),
                 "notes": args.get("notes")
             }
+            
+            if args.get("start_time"): data["start_time"] = args.get("start_time")
+            if args.get("end_time"): data["end_time"] = args.get("end_time")
             
             if rule_type == "ONCE" and args.get("due_date"):
                 data["due_date"] = args.get("due_date")
@@ -96,19 +114,22 @@ class UpdateTaskArgs(BaseModel):
     task_id: str = Field(..., description="ID of the task to update")
     task_name: Optional[str] = None
     workload: Optional[float] = None
-    project: Optional[str] = None
+    context: Optional[str] = None
+    start_time: Optional[str] = Field(None, description="Start time (HH:MM)")
+    end_time: Optional[str] = Field(None, description="End time (HH:MM)")
+    is_locked: Optional[bool] = Field(None, description="Lock/Unlock this task")
     notes: Optional[str] = None
 
 class UpdateTaskTool(BaseTool):
     name = "update_task_details"
     description = (
-        "Update the metadata (name, workload, project, notes) of an existing task. "
+        "Update the metadata (name, workload, context, notes) of an existing task. "
         "HOW TO USE: 'update_task_details(task_id=\"...\", workload=5.0)'."
     )
     args_schema = UpdateTaskArgs
 
     async def run(self, task_id: str, **args) -> Any:
-        session: AsyncSession = args.pop("session", None)
+        session: AsyncSession = args.pop("db_session", None)
         user_id: str = args.pop("user_id", None)
         if not session or not user_id:
             return {"success": False, "message": "Context error"}
@@ -117,7 +138,7 @@ class UpdateTaskTool(BaseTool):
             client = await get_lbs_client(user_id, session)
             upd = {k: v for k,v in args.items() if v is not None}
             if 'workload' in upd: upd['base_load_score'] = float(upd.pop('workload'))
-            if 'project' in upd: upd['context'] = upd.pop('project')
+            if 'context' in upd: upd['context'] = upd.pop('context')
             
             if not upd:
                 return {"success": False, "message": "No changes provided"}
@@ -140,7 +161,7 @@ class DeleteTaskTool(BaseTool):
     args_schema = DeleteTaskArgs
 
     async def run(self, task_id: str, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
+        session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         if not session or not user_id:
             return {"success": False, "message": "Context error"}
@@ -167,7 +188,7 @@ class CompleteLBSTaskTool(BaseTool):
     args_schema = CompleteLBSTaskArgs
 
     async def run(self, task_id: str, target_date: str, status: str = "done", **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
+        session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         if not session or not user_id:
             return {"success": False, "message": "Context error"}
@@ -190,7 +211,7 @@ class GetLBSScheduleTool(BaseTool):
     args_schema = GetLBSScheduleArgs
 
     async def run(self, start_date: str, end_date: str, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
+        session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         if not session or not user_id:
             return {"success": False, "message": "Context error"}
@@ -211,7 +232,7 @@ class GetLoadOnDayTool(BaseTool):
     args_schema = GetLoadOnDayArgs
 
     async def run(self, target_date: str, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
+        session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         if not session or not user_id:
             return {"success": False, "message": "Context error"}
@@ -233,7 +254,7 @@ class GetLoadInPeriodTool(BaseTool):
     args_schema = GetLoadInPeriodArgs
 
     async def run(self, start_date: str, end_date: str, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
+        session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         if not session or not user_id:
             return {"success": False, "message": "Context error"}
@@ -256,7 +277,7 @@ class GetTaskHistoryTool(BaseTool):
     args_schema = GetTaskHistoryArgs
 
     async def run(self, task_id: str, start_date: str, end_date: str, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
+        session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         if not session or not user_id:
             return {"success": False, "message": "Context error"}
@@ -267,3 +288,88 @@ class GetTaskHistoryTool(BaseTool):
             return {"success": True, "message": f"Found {len(history)} records.", "data": {"history": history}}
         except Exception as e:
             return {"success": False, "message": f"Failed to get history: {e}"}
+
+class ManageTaskExceptionArgs(BaseModel):
+    task_id: str = Field(..., description="ID of the task")
+    target_date: str = Field(..., description="YYYY-MM-DD")
+    action: str = Field("create", description="Action: create, update, delete")
+    exception_type: Optional[str] = Field(None, description="SKIP, OVERRIDE_LOAD, FORCE_DO, MANUAL_LOCK")
+    override_load_value: Optional[float] = Field(None, description="New load value for this day")
+    start_time: Optional[str] = Field(None, description="Start time override (HH:MM)")
+    end_time: Optional[str] = Field(None, description="End time override (HH:MM)")
+    is_locked: bool = Field(False, description="Lock this daily occurrence")
+    notes: Optional[str] = None
+
+class ManageTaskExceptionTool(BaseTool):
+    name = "manage_task_exception"
+    description = (
+        "Create, update, or delete a task exception for a specific date (Daily Override). "
+        "HOW TO USE: 'manage_task_exception(task_id=\"...\", target_date=\"2025-01-20\", action=\"create\", exception_type=\"FORCE_DO\")'."
+    )
+    args_schema = ManageTaskExceptionArgs
+
+    async def run(self, **args) -> Any:
+        session: AsyncSession = args.pop("db_session", None)
+        user_id: str = args.pop("user_id", None)
+        if not session or not user_id:
+            return {"success": False, "message": "Context error"}
+        
+        try:
+            client = await get_lbs_client(user_id, session)
+            action = args.pop("action").lower()
+            task_id = args.get("task_id")
+            target_date = args.get("target_date")
+            
+            if action == "create":
+                data = {k: v for k, v in args.items() if v is not None}
+                res = await client.create_exception(data)
+                return {"success": True, "message": f"Created exception for {task_id} on {target_date}", "data": res}
+            
+            # For update/delete, we need to find the exception ID first
+            # LBS API requires exception_id for update/delete
+            excs = await client.get_exceptions(target_date, target_date)
+            exc = next((e for e in excs if e.get("task_id") == task_id), None)
+            
+            if not exc:
+                return {"success": False, "message": f"No exception found for {task_id} on {target_date}"}
+            
+            exc_id = exc["id"]
+            
+            if action == "update":
+                data = {k: v for k, v in args.items() if v is not None}
+                await client.update_exception(exc_id, data)
+                return {"success": True, "message": f"Updated exception {exc_id} for {task_id}"}
+            elif action == "delete":
+                await client.delete_exception(exc_id)
+                return {"success": True, "message": f"Deleted exception {exc_id} for {task_id}"}
+            else:
+                return {"success": False, "message": f"Unknown action: {action}"}
+                
+        except Exception as e:
+            return {"success": False, "message": f"Failed to manage exception: {e}"}
+
+class ListExceptionsArgs(BaseModel):
+    start_date: str = Field(..., description="YYYY-MM-DD")
+    end_date: str = Field(..., description="YYYY-MM-DD")
+    task_id: Optional[str] = Field(None, description="Filter by task ID")
+
+class ListExceptionsTool(BaseTool):
+    name = "list_task_exceptions"
+    description = "List all task exceptions (daily overrides) for a given date range."
+    args_schema = ListExceptionsArgs
+
+    async def run(self, start_date: str, end_date: str, task_id: Optional[str] = None, **kwargs) -> Any:
+        session: AsyncSession = kwargs.get("db_session")
+        user_id: str = kwargs.get("user_id")
+        if not session or not user_id:
+            return {"success": False, "message": "Context error"}
+        
+        try:
+            client = await get_lbs_client(user_id, session)
+            excs = await client.get_exceptions(date.fromisoformat(start_date), date.fromisoformat(end_date))
+            if task_id:
+                excs = [e for e in excs if e.get("task_id") == task_id]
+            
+            return {"success": True, "message": f"Found {len(excs)} exceptions.", "data": {"exceptions": excs}}
+        except Exception as e:
+            return {"success": False, "message": f"Failed to list exceptions: {e}"}

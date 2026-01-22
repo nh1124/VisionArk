@@ -143,6 +143,7 @@ class Worker:
                 # 1. SPECIAL HANDLING: Node Execution (Async ask_node)
                 if task_type == "node_execution":
                     target_node_id = context.get("target_node_id")
+                    session_id = context.get("session_id")
                     from models.database import Node
                     from sqlalchemy import select
                     
@@ -154,46 +155,43 @@ class Worker:
                     if not node_record:
                         raise ValueError(f"Target node {target_node_id} not found in background worker.")
 
-                    # Instantiate target node
-                    target_node = None
-                    if node_record.node_type == "SYSTEM":
-                        from services.system_node_registry import SystemNodeRegistry
-                        NodeClass = SystemNodeRegistry.get_node_class(node_record.role_name)
-                        target_node = NodeClass(context, node_record)
-                    elif node_record.node_type == "PROJECT":
-                        target_node = ProjectNode(context)
-                    elif node_record.node_type == "MEMBER":
-                        from nodes.members.generic_member_node import GenericMemberNode
-                        target_node = GenericMemberNode(context, node_record)
+                    # Instantiate target node using NodeFactory
+                    from services.node_factory import NodeFactory
+                    target_node = NodeFactory.get_node(node_record, context)
 
                     if not target_node:
                         raise ValueError(f"Could not instantiate node {target_node_id}")
 
-                    # Execute
+                    # Execute with error handling and callback
                     print(f"Worker: Executing async node call to {node_record.display_name}")
-                    result = await target_node.process(message)
+                    try:
+                        result = await target_node.process(message)
+                        
+                        # CALLBACK: Notify the chat on success
+                        if session_id:
+                            from services.callback_service import CallbackService
+                            await CallbackService.notify_node_completion(
+                                db_session, 
+                                session_id, 
+                                node_record.display_name, 
+                                result,
+                                task_id=task_id
+                            )
+                        
+                        self.manager.update_status(task_id, "completed", result)
+                    except Exception as exc:
+                        print(f"Worker: Async node call failed: {exc}")
+                        if session_id:
+                            from services.callback_service import CallbackService
+                            await CallbackService.notify_node_failure(
+                                db_session,
+                                session_id,
+                                node_record.display_name,
+                                str(exc),
+                                task_id=task_id
+                            )
+                        self.manager.update_status(task_id, "failed", str(exc))
                     
-                    # CALLBACK: If project_id/session_id is available, notify the chat
-                    session_id = context.get("session_id")
-                    if not session_id and node_record.project_id:
-                        from models.database import ChatSession
-                        stmt = select(ChatSession).filter(ChatSession.project_id == node_record.project_id).order_by(ChatSession.created_at.desc())
-                        res = await db_session.execute(stmt)
-                        last_session = res.scalars().first()
-                        if last_session:
-                            session_id = last_session.id
-                    
-                    if session_id:
-                        from services.callback_service import CallbackService
-                        await CallbackService.notify_node_completion(
-                            db_session, 
-                            session_id, 
-                            node_record.display_name, 
-                            result,
-                            task_id=task_id
-                        )
-                    
-                    self.manager.update_status(task_id, "completed", result)
                     return
 
                 # 2. DEFAULT HANDLING: User Message
