@@ -235,6 +235,9 @@ class GeminiProvider(BaseLLMProvider):
                 logger.info(f"[Gemini] Executing function (async flow): {function_name}")
                 
                 tool_result = None
+                injected_file_uri = None
+                injected_mime_type = None
+
                 if function_name in active_tool_functions:
                     try:
                         import inspect
@@ -242,31 +245,33 @@ class GeminiProvider(BaseLLMProvider):
                         func = active_tool_functions[function_name]
                         sig = inspect.signature(func)
                         accepted_params = set(sig.parameters.keys())
-                        # Check if function accepts **kwargs (VAR_KEYWORD)
                         accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
                         
                         full_args = {**function_args}
                         for key in ['db_session', 'session', 'user_id', 'node_id', 'project_id', 'project_name', 'context_name', 'meta_info']:
                             if key in tool_context:
-                                # Inject if explicitly accepted OR if function takes **kwargs
                                 if key in accepted_params or accepts_kwargs:
                                     full_args[key] = tool_context[key]
                         
-                        # Check if function is async
                         if inspect.iscoroutinefunction(func):
                             result = await func(**full_args)
                         else:
-                            # Run sync function in thread to avoid blocking loop
                             result = await asyncio.to_thread(func, **full_args)
                         
-                        # Fix: If result is an awaitable (e.g. from a lambda returning a coroutine), await it
                         if inspect.isawaitable(result):
                             result = await result
                         
+                        # Extract tool result string
                         if hasattr(result, 'to_dict'):
                             tool_result = result.message
                         else:
                             tool_result = str(result)
+                        
+                        # Extract optional injected file
+                        if hasattr(result, 'data') and isinstance(result.data, dict):
+                            injected_file_uri = result.data.get('gemini_file_uri')
+                            injected_mime_type = result.data.get('mime_type')
+
                     except Exception as e:
                         import traceback
                         traceback.print_exc()
@@ -275,30 +280,29 @@ class GeminiProvider(BaseLLMProvider):
                 if tool_result is None:
                     tool_result = f"Function {function_name} not found"
                 
+                # 1. Store in internal history
                 accumulated_tool_results.append({
                     "name": function_name,
                     "result": tool_result,
                     "success": not (tool_result.startswith("Error") or tool_result.startswith("Failed"))
                 })
                 
+                # 2. Build Gemini function response part
                 tool_response_parts.append(types.Part.from_function_response(
                     name=function_name,
                     response={'result': tool_result}
                 ))
 
-                if hasattr(result, 'data') and isinstance(result.data, dict):
-                    file_uri = result.data.get('gemini_file_uri')
-                    if file_uri:
-                        mime_type = result.data.get('mime_type')
-                        # Gemini DOES NOT support application/octet-stream for multimodal parts
-                        if mime_type and mime_type != "application/octet-stream":
-                            logger.info(f"[Gemini] Injecting tool-discovered file (async): {file_uri} ({mime_type})")
-                            tool_response_parts.append(types.Part.from_uri(
-                                file_uri=file_uri,
-                                mime_type=mime_type
-                            ))
-                        else:
-                            logger.warning(f"[Gemini] Skipping unsupported tool file type: {mime_type} for {file_uri}")
+                # 3. Build Gemini multimodal part (if tool injected a file)
+                if injected_file_uri and injected_mime_type:
+                    if injected_mime_type != "application/octet-stream":
+                        logger.info(f"[Gemini] Injecting tool-discovered file (async): {injected_file_uri} ({injected_mime_type})")
+                        tool_response_parts.append(types.Part.from_uri(
+                            file_uri=injected_file_uri,
+                            mime_type=injected_mime_type
+                        ))
+                    else:
+                        logger.warning(f"[Gemini] Skipping unsupported tool file type: {injected_mime_type} for {injected_file_uri}")
             
             history.append(types.Content(role="tool", parts=tool_response_parts))
             
@@ -457,6 +461,8 @@ class GeminiProvider(BaseLLMProvider):
                 
                 # Find and execute the matching tool function
                 tool_result = None
+                injected_file_uri = None
+                injected_mime_type = None
                 
                 # Use passed tool functions (from agent), fallback to stored ones
                 if function_name in active_tool_functions:
@@ -475,24 +481,11 @@ class GeminiProvider(BaseLLMProvider):
                         
                         # Merge function args with only the injected context that the function accepts
                         full_args = {**function_args}
-                        injected_keys = []
                         for key in ['db_session', 'session', 'user_id', 'node_id', 'project_id', 'project_name', 'context_name', 'meta_info']:
                             if key in tool_context:
                                 # Inject if explicitly accepted OR if function takes **kwargs
                                 if key in accepted_params or accepts_kwargs:
                                     full_args[key] = tool_context[key]
-                                injected_keys.append(key)
-                        
-                        if injected_keys:
-                            print(f"[Gemini] Injected context keys: {', '.join(injected_keys)}")
-                        
-                        # Safety check: log if mandatory params (from sig) are missing in full_args
-                        missing_from_call = [p for p, param in sig.parameters.items() 
-                                           if param.default == inspect.Parameter.empty 
-                                           and p not in full_args 
-                                           and p not in ['kwargs', 'args']]
-                        if missing_from_call:
-                            print(f"[Gemini] WARNING: Missing mandatory params for {function_name}: {missing_from_call}")
                         
                         result = func(**full_args)
                         
@@ -511,11 +504,16 @@ class GeminiProvider(BaseLLMProvider):
                             except:
                                 result = f"Error: Failed to await tool {function_name} in sync context."
 
-                        # Handle ToolResult objects
+                        # Extract tool result string
                         if hasattr(result, 'to_dict'):
                             tool_result = result.message
                         else:
                             tool_result = str(result)
+                            
+                        # Extract optional injected file
+                        if hasattr(result, 'data') and isinstance(result.data, dict):
+                            injected_file_uri = result.data.get('gemini_file_uri')
+                            injected_mime_type = result.data.get('mime_type')
                     except Exception as e:
                         import traceback
                         traceback.print_exc()
@@ -524,7 +522,7 @@ class GeminiProvider(BaseLLMProvider):
                 if tool_result is None:
                     tool_result = f"Function {function_name} not found"
                 
-                # Accumulate structured tool result
+                # 1. Store in internal history
                 is_success = not (tool_result.startswith("Error") or tool_result.startswith("Failed"))
                 accumulated_tool_results.append({
                     "name": function_name,
@@ -532,24 +530,22 @@ class GeminiProvider(BaseLLMProvider):
                     "success": is_success
                 })
                 
-                # Add to response parts for Gemini (New SDK format)
+                # 2. Build Gemini function response part
                 tool_response_parts.append(types.Part.from_function_response(
                     name=function_name,
                     response={'result': tool_result}
                 ))
                 
-                if hasattr(result, 'data') and isinstance(result.data, dict):
-                    file_uri = result.data.get('gemini_file_uri')
-                    if file_uri:
-                        mime_type = result.data.get('mime_type')
-                        if mime_type and mime_type != "application/octet-stream":
-                            print(f"[Gemini] Injecting tool-discovered file: {file_uri} ({mime_type})")
-                            tool_response_parts.append(types.Part.from_uri(
-                                file_uri=file_uri,
-                                mime_type=mime_type
-                            ))
-                        else:
-                            print(f"[Gemini] Skipping unsupported tool file type: {mime_type} for {file_uri}")
+                # 3. Build Gemini multimodal part (if tool injected a file)
+                if injected_file_uri and injected_mime_type:
+                    if injected_mime_type != "application/octet-stream":
+                        print(f"[Gemini] Injecting tool-discovered file: {injected_file_uri} ({injected_mime_type})")
+                        tool_response_parts.append(types.Part.from_uri(
+                            file_uri=injected_file_uri,
+                            mime_type=injected_mime_type
+                        ))
+                    else:
+                        print(f"[Gemini] Skipping unsupported tool file type: {injected_mime_type} for {injected_file_uri}")
             
             # Add tool responses to history (role is 'tool' in new SDK)
             history.append(types.Content(
@@ -786,6 +782,9 @@ class GeminiProvider(BaseLLMProvider):
                     yield {"type": "status", "data": status_msg}
                     
                     tool_result = None
+                    injected_file_uri = None
+                    injected_mime_type = None
+
                     if function_name in active_tool_functions:
                         try:
                             tool_context = kwargs.get('tool_context') or {}
@@ -811,10 +810,17 @@ class GeminiProvider(BaseLLMProvider):
                             if inspect.isawaitable(result):
                                 result = await result
                                 
+                            # Extract tool result string
                             if hasattr(result, 'to_dict'):
                                 tool_result = result.message
                             else:
                                 tool_result = str(result)
+                                
+                            # Extract optional injected file
+                            if hasattr(result, 'data') and isinstance(result.data, dict):
+                                injected_file_uri = result.data.get('gemini_file_uri')
+                                injected_mime_type = result.data.get('mime_type')
+
                         except Exception as e:
                             import traceback
                             traceback.print_exc()
@@ -823,29 +829,29 @@ class GeminiProvider(BaseLLMProvider):
                     if tool_result is None:
                         tool_result = f"Function {function_name} not found"
                     
+                    # 1. Store in internal history
                     accumulated_tool_results.append({
                         "name": function_name,
                         "result": tool_result,
                         "success": not (tool_result.startswith("Error") or tool_result.startswith("Failed"))
                     })
                     
+                    # 2. Build Gemini function response part
                     tool_response_parts.append(types.Part.from_function_response(
                         name=function_name,
                         response={'result': tool_result}
                     ))
 
-                    if hasattr(result, 'data') and isinstance(result.data, dict):
-                        file_uri = result.data.get('gemini_file_uri')
-                        if file_uri:
-                            mime_type = result.data.get('mime_type')
-                            if mime_type and mime_type != "application/octet-stream":
-                                print(f"[Gemini] Injecting tool-discovered file (stream async): {file_uri} ({mime_type})")
-                                tool_response_parts.append(types.Part.from_uri(
-                                    file_uri=file_uri,
-                                    mime_type=mime_type
-                                ))
-                            else:
-                                print(f"[Gemini] Skipping unsupported tool file type: {mime_type} for {file_uri}")
+                    # 3. Build Gemini multimodal part (if tool injected a file)
+                    if injected_file_uri and injected_mime_type:
+                        if injected_mime_type != "application/octet-stream":
+                            print(f"[Gemini] Injecting tool-discovered file (stream async): {injected_file_uri} ({injected_mime_type})")
+                            tool_response_parts.append(types.Part.from_uri(
+                                file_uri=injected_file_uri,
+                                mime_type=injected_mime_type
+                            ))
+                        else:
+                            print(f"[Gemini] Skipping unsupported tool file type: {injected_mime_type} for {injected_file_uri}")
                 
                 
                 history.append(types.Content(role="tool", parts=tool_response_parts))

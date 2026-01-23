@@ -19,7 +19,7 @@ class MulticastMessageTool(BaseTool):
     )
     args_schema = MulticastMessageArgs
 
-    async def run(self, target_ids: List[str], message: str) -> str:
+    async def run(self, target_ids: List[str], message: str, **kwargs) -> str:
         if not target_ids:
             return "Error: No target IDs provided."
 
@@ -63,7 +63,7 @@ class RegisterRoutingHookTool(BaseTool):
     )
     args_schema = RegisterRoutingHookArgs
 
-    async def run(self, pattern: Optional[str] = None, intent_description: Optional[str] = None, description: Optional[str] = None) -> str:
+    async def run(self, pattern: Optional[str] = None, intent_description: Optional[str] = None, description: Optional[str] = None, **kwargs) -> str:
         db_session = self.context.get("db_session")
         node_id = self.context.get("node_id")
         

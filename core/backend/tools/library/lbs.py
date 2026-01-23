@@ -68,19 +68,19 @@ class CreateTaskTool(BaseTool):
     )
     args_schema = CreateTaskArgs
 
-    async def run(self, **args) -> Any:
-        session: AsyncSession = args.pop("db_session", None)
-        user_id: str = args.pop("user_id", None)
-        context_name: str = args.pop("context_name", "general")
+    async def run(self, **kwargs) -> Any:
+        session: AsyncSession = kwargs.pop("db_session", None)
+        user_id: str = kwargs.pop("user_id", None)
+        context_name: str = kwargs.pop("context_name", "general")
         if not session or not user_id:
             return {"success": False, "message": "Context error"}
         
         try:
             client = await get_lbs_client(user_id, session)
-            task_name = args.get("task_name")
-            context = args.get("context")
-            workload = args.get("workload")
-            rule_type = args.get("rule_type", "ONCE").upper()
+            task_name = kwargs.get("task_name")
+            context = kwargs.get("context")
+            workload = kwargs.get("workload")
+            rule_type = kwargs.get("rule_type", "ONCE").upper()
             
             data = {
                 "task_name": task_name,
@@ -88,22 +88,22 @@ class CreateTaskTool(BaseTool):
                 "base_load_score": float(workload),
                 "rule_type": rule_type,
                 "active": True,
-                "is_locked": args.get("is_locked", False),
-                "notes": args.get("notes")
+                "is_locked": kwargs.get("is_locked", False),
+                "notes": kwargs.get("notes")
             }
             
-            if args.get("start_time"): data["start_time"] = args.get("start_time")
-            if args.get("end_time"): data["end_time"] = args.get("end_time")
+            if kwargs.get("start_time"): data["start_time"] = kwargs.get("start_time")
+            if kwargs.get("end_time"): data["end_time"] = kwargs.get("end_time")
             
-            if rule_type == "ONCE" and args.get("due_date"):
-                data["due_date"] = args.get("due_date")
-            elif rule_type == "WEEKLY" and args.get("days"):
-                dm = {d.strip().lower(): True for d in args.get("days").split(",")}
+            if rule_type == "ONCE" and kwargs.get("due_date"):
+                data["due_date"] = kwargs.get("due_date")
+            elif rule_type == "WEEKLY" and kwargs.get("days"):
+                dm = {d.strip().lower(): True for d in kwargs.get("days").split(",")}
                 data.update({k: dm.get(k, False) for k in ["mon","tue","wed","thu","fri","sat","sun"]})
             elif rule_type == "EVERY_N_DAYS":
-                data["interval_days"] = args.get("interval_days")
+                data["interval_days"] = kwargs.get("interval_days")
             elif rule_type == "MONTHLY_DAY":
-                data["month_day"] = args.get("month_day")
+                data["month_day"] = kwargs.get("month_day")
                 
             res = await client.create_task(data)
             return {"success": True, "message": f"✅ Created task {task_name}", "data": res}
@@ -128,15 +128,15 @@ class UpdateTaskTool(BaseTool):
     )
     args_schema = UpdateTaskArgs
 
-    async def run(self, task_id: str, **args) -> Any:
-        session: AsyncSession = args.pop("db_session", None)
-        user_id: str = args.pop("user_id", None)
+    async def run(self, task_id: str, **kwargs) -> Any:
+        session: AsyncSession = kwargs.pop("db_session", None)
+        user_id: str = kwargs.pop("user_id", None)
         if not session or not user_id:
             return {"success": False, "message": "Context error"}
         
         try:
             client = await get_lbs_client(user_id, session)
-            upd = {k: v for k,v in args.items() if v is not None}
+            upd = {k: v for k,v in kwargs.items() if v is not None}
             if 'workload' in upd: upd['base_load_score'] = float(upd.pop('workload'))
             if 'context' in upd: upd['context'] = upd.pop('context')
             
@@ -308,20 +308,20 @@ class ManageTaskExceptionTool(BaseTool):
     )
     args_schema = ManageTaskExceptionArgs
 
-    async def run(self, **args) -> Any:
-        session: AsyncSession = args.pop("db_session", None)
-        user_id: str = args.pop("user_id", None)
+    async def run(self, **kwargs) -> Any:
+        session: AsyncSession = kwargs.pop("db_session", None)
+        user_id: str = kwargs.pop("user_id", None)
         if not session or not user_id:
             return {"success": False, "message": "Context error"}
         
         try:
             client = await get_lbs_client(user_id, session)
-            action = args.pop("action").lower()
-            task_id = args.get("task_id")
-            target_date = args.get("target_date")
+            action = kwargs.pop("action").lower()
+            task_id = kwargs.get("task_id")
+            target_date = kwargs.get("target_date")
             
             if action == "create":
-                data = {k: v for k, v in args.items() if v is not None}
+                data = {k: v for k, v in kwargs.items() if v is not None}
                 res = await client.create_exception(data)
                 return {"success": True, "message": f"Created exception for {task_id} on {target_date}", "data": res}
             
