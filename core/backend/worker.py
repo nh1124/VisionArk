@@ -11,7 +11,8 @@ from queue_system.manager import QueueManager
 from nodes.project.project_node import ProjectNode
 from nodes.system.scheduler_node import SchedulerNode
 from services.command_parser import parse_command, execute_command
-from models.database import AsyncSessionLocal
+from models.database import AsyncSessionLocal, ScheduledTask, ScheduledTaskStatus
+from services.aes_dispatcher import AESDispatcher
 
 class Worker:
     def __init__(self):
@@ -194,7 +195,53 @@ class Worker:
                     
                     return
 
-                # 2. DEFAULT HANDLING: User Message
+                # 2. AES System Task Handling (timer callbacks)
+                elif task_type == "aes_system_task":
+                    from services.aes_system_handlers import AESSystemHandlers
+                    st_id = context.get("scheduled_task_id")
+                    
+                    try:
+                        # Instantiate handler
+                        handler = AESSystemHandlers(db_session, user_id)
+                        
+                        # Find the task record to verify
+                        from sqlalchemy import select
+                        stmt = select(ScheduledTask).filter(ScheduledTask.id == st_id)
+                        res = await db_session.execute(stmt)
+                        task_record = res.scalars().first()
+                        
+                        if not task_record:
+                            print(f"[Worker] AES Task {st_id} record not found in DB.")
+                            return
+
+                        print(f"[Worker] Running AES system task: {task_record.task_type}")
+                        await handler.execute(task_record.task_type, context)
+                        
+                        # Update DB status
+                        task_record.status = ScheduledTaskStatus.COMPLETED
+                        await db_session.commit()
+                        self.manager.update_status(task_id, "completed", f"AES Task {task_record.task_type} done.")
+                    except Exception as aes_err:
+                        print(f"❌ AES Task {st_id} failed: {aes_err}")
+                        import traceback
+                        traceback.print_exc()
+                        # Error handling: mark as failed in DB
+                        try:
+                            # Use a separate session to be safe
+                            from models.database import AsyncSessionLocal as fail_sess_maker
+                            async with fail_sess_maker() as db_fail:
+                                stmt = select(ScheduledTask).filter(ScheduledTask.id == st_id)
+                                res = await db_fail.execute(stmt)
+                                task_record_fail = res.scalars().first()
+                                if task_record_fail:
+                                    task_record_fail.status = ScheduledTaskStatus.FAILED
+                                    task_record_fail.error_log = str(aes_err)
+                                    await db_fail.commit()
+                        except: pass
+                        self.manager.update_status(task_id, "failed", str(aes_err))
+                    return
+
+                # 3. DEFAULT HANDLING: User Message
                 # Process Attachments (BEFORE Routing)
                 if context.get("files"):
                     context["attached_files"] = await self._process_attachments(context, db_session)
@@ -214,7 +261,7 @@ class Worker:
                 if await self._command_detection(message, context):
                     return
 
-                # 3. Target Node Lifecycle (Enforces on_enter -> on_execute -> on_exit)
+                # 4. Target Node Lifecycle (Enforces on_enter -> on_execute -> on_exit)
                 target_node = ProjectNode(context)
                 
                 # Process (Internal hooks: on_enter, on_execute, on_exit)
@@ -241,6 +288,11 @@ class Worker:
             print(f"⚠️ Router initialization failed: {re}")
             
         print("Worker started. Waiting for tasks...")
+        
+        # Start AES Dispatcher as a background task
+        dispatcher = AESDispatcher(AsyncSessionLocal)
+        asyncio.create_task(dispatcher.run_forever())
+        
         while True:
             try:
                 # Poll Redis (Blocking) in executor to stay async-friendly

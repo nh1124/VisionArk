@@ -1,9 +1,9 @@
 from typing import Any, Optional, Dict, List
 import uuid
 import shutil
-from datetime import datetime
+from datetime import datetime, timedelta
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tools.base import BaseTool, NoArgs
@@ -125,6 +125,19 @@ class CreateProjectTool(BaseTool):
             if existing_proj:
                 if existing_proj.status == "archived":
                     existing_proj.status = "active"
+                    
+                    # 🚀 AES: Cancel pending hard delete tasks
+                    from models.database import ScheduledTask, ScheduledTaskStatus
+                    await session.execute(
+                        update(ScheduledTask)
+                        .filter(
+                            ScheduledTask.project_id == existing_proj.id,
+                            ScheduledTask.task_type == "HARD_DELETE",
+                            ScheduledTask.status == ScheduledTaskStatus.PENDING
+                        )
+                        .values(status=ScheduledTaskStatus.CANCELLED)
+                    )
+                    
                     await session.commit()
                     return {"success": True, "message": f"✅ Restored archived project: {name}"}
                 return {"success": False, "message": f"Project '{name}' already exists"}
@@ -186,6 +199,19 @@ class DeleteProjectTool(BaseTool):
  
             proj_id = proj.id
             proj.status = "archived"
+            
+            # 🚀 AES: Schedule HARD_DELETE in 30 days
+            from services.aes_dispatcher import AESDispatcher
+            from models.database import AsyncSessionLocal
+            dispatcher = AESDispatcher(AsyncSessionLocal)
+            scheduled_at = datetime.utcnow() + timedelta(days=30)
+            await dispatcher.schedule_task(
+                user_id=user_id,
+                task_type="HARD_DELETE",
+                scheduled_at=scheduled_at,
+                project_id=proj_id,
+                payload={"project_id": proj_id}
+            )
             
             # Legacy LBS cleanup (optional)
             try:

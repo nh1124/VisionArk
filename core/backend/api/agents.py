@@ -20,7 +20,7 @@ from services.auth import resolve_identity, Identity, resolve_identity_for_downl
 from models.database import Node, Project, ChatSession, ChatMessage, UploadedFile, get_async_db
 from utils.paths import get_project_dir, get_user_projects_dir, validate_name, secure_path_join, update_project_name_cache as update_cache
 from uuid import uuid4
-from datetime import datetime
+from datetime import datetime, timedelta
 from services.member_node_registry import sync_member_nodes_for_project
 
 router = APIRouter(prefix="/api/agents", tags=["Agents"])
@@ -685,6 +685,25 @@ async def delete_project(
     try:
         # Soft delete: mark as archived
         proj.status = "archived"
+        
+        # Schedule HARD_DELETE in 30 days
+        from services.aes_dispatcher import AESDispatcher
+        from datetime import datetime, timedelta
+        dispatcher = AESDispatcher(lambda: db) # We pass current session in a lambda if needed, but AESDispatcher usually wants a maker. 
+        # Actually, AESDispatcher.schedule_task uses its own session.
+        from models.database import AsyncSessionLocal
+        dispatcher = AESDispatcher(AsyncSessionLocal)
+        
+        # 30 days later
+        scheduled_at = datetime.utcnow() + timedelta(days=30)
+        await dispatcher.schedule_task(
+            user_id=identity.user_id,
+            task_type="HARD_DELETE",
+            scheduled_at=scheduled_at,
+            project_id=proj_id,
+            payload={"project_id": proj_id}
+        )
+
         await db.commit()
         
         # Clear from cache

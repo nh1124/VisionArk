@@ -50,6 +50,37 @@ class ProjectStatus(str, Enum):
     ARCHIVED = "archived"
 
 
+class ScheduledTaskStatus(str, Enum):
+    """Status for automated system tasks"""
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class ScheduledTask(Base):
+    """Automated Execution System (AES) tasks (timers, recurring, etc.)"""
+    __tablename__ = "scheduled_tasks"
+    
+    id = Column(String(36), primary_key=True)               # UUID
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
+    task_type = Column(String(50), nullable=False)          # e.g., "HARD_DELETE", "AUTO_RESEARCH"
+    payload = Column(JSON, default=dict)                    # Arguments for the task
+    scheduled_at = Column(DateTime, nullable=False, index=True)
+    recurring_rule = Column(String(100), nullable=True)     # Cron format or similar
+    status = Column(String(20), default="pending", index=True)
+    last_run_at = Column(DateTime, nullable=True)
+    error_log = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    user = relationship("User")
+    project = relationship("Project")
+
+
 class InboxQueue(Base):
     """Async message buffer from Projects to Hub (per-user)"""
     __tablename__ = "inbox_queue"
