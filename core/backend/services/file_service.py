@@ -10,7 +10,7 @@ from google.genai import Client, types
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from models.database import UploadedFile, Project
+from models.database import UploadedFile, Project, AsyncSessionLocal
 from utils.paths import get_project_dir
 
 # File size limit: 100MB
@@ -226,12 +226,20 @@ class FileService:
         await self.db.commit()
         return True
     
-    async def sync_project_directory(self, project_id: str, deep: bool = False) -> Dict[str, int]:
+    async def sync_project_directory(self, project_id: str, deep: bool = False, db_override: AsyncSession = None) -> Dict[str, int]:
         """
         Synchronize filesystem with database records.
         Lightweight delta sync using size and mtime.
         """
-        proj = await self._get_project(project_id)
+        # Use provided session or stick with self.db
+        db = db_override or self.db
+        
+        proj = await db.execute(select(Project).filter(
+            Project.user_id == self.user_id,
+            Project.id == project_id
+        ))
+        proj = proj.scalars().first()
+        
         if not proj:
             return {"added": 0, "removed": 0, "updated": 0}
 
@@ -240,7 +248,7 @@ class FileService:
             return {"added": 0, "removed": 0, "updated": 0}
 
         # 1. Get current DB records
-        result = await self.db.execute(select(UploadedFile).filter(UploadedFile.project_id == proj.id))
+        result = await db.execute(select(UploadedFile).filter(UploadedFile.project_id == proj.id))
         db_files = {f.filename: f for f in result.scalars().all()}
         
         from mimetypes import guess_type
@@ -283,7 +291,7 @@ class FileService:
                             size_bytes=file_stat.st_size,
                             uploaded_at=datetime.fromtimestamp(file_stat.st_mtime)
                         )
-                        self.db.add(new_file)
+                        db.add(new_file)
                         stats["added"] += 1
 
         await asyncio.to_thread(scan_disk, refs_dir)
@@ -293,14 +301,24 @@ class FileService:
             if rel_path not in found_on_disk:
                 # Extra check: Does it physically exist at storage_path?
                 if not Path(db_f.storage_path).exists():
-                    await self.db.delete(db_f)
+                    await db.delete(db_f)
                     stats["removed"] += 1
         
         if stats["added"] > 0 or stats["removed"] > 0 or stats["updated"] > 0:
-            await self.db.commit()
+            await db.commit()
             print(f"[FileService] Sync completed for {project_id}: {stats}")
 
         return stats
+
+    async def sync_project_directory_background(self, project_id: str):
+        """
+        Background wrapper that uses a fresh database session to avoid concurrency collisions.
+        """
+        try:
+            async with AsyncSessionLocal() as session:
+                await self.sync_project_directory(project_id, db_override=session)
+        except Exception as e:
+            print(f"[FileService] Background sync failed for {project_id}: {e}")
 
     async def list_files(self, project_id: str) -> List[Dict[str, Any]]:
         """
@@ -319,7 +337,7 @@ class FileService:
         
         # Trigger background sync (Lazy Sync)
         # We don't await it to keep list_files fast
-        asyncio.create_task(self.sync_project_directory(project_id))
+        asyncio.create_task(self.sync_project_directory_background(project_id))
 
         # Use filename as key since that's what we show/compare
         db_file_names = {f.filename for f in db_files}
