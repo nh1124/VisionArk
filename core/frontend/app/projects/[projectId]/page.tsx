@@ -55,6 +55,24 @@ export default function ProjectChatPage({
     const currentPollingTaskRef = useRef<string | null>(null);
     const historyFetchId = useRef(0);
 
+    // Approval handler
+    const handleApprove = async (requestId: string, approved: boolean) => {
+        try {
+            const endpoint = approved
+                ? `/api/approvals/${requestId}/approve`
+                : `/api/approvals/${requestId}/reject`;
+
+            await apiFetch(endpoint, { method: "POST" });
+
+            // Refresh history to reflect executing/rejected state
+            await fetchHistory();
+
+        } catch (error) {
+            console.error("Failed to process approval:", error);
+            alert("Failed to process approval request.");
+        }
+    };
+
     // Auto-scroll to bottom when messages change
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -614,6 +632,8 @@ export default function ProjectChatPage({
                                     onBranch={messageCallbacks[idx]?.onBranch}
                                     onEdit={messageCallbacks[idx]?.onEdit}
                                     onDelete={messageCallbacks[idx]?.onDelete}
+                                    onSend={(content) => sendMessage(content, [])}
+                                    onApprove={handleApprove}
                                 />
                             );
                         })}

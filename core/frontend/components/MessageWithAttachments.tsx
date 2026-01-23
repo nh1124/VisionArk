@@ -26,6 +26,8 @@ interface MessageWithAttachmentsProps {
     tool_calls?: ToolCall[];  // Received from API
     nodeType?: string;
     nodeName?: string;
+    onSend?: (content: string) => void;
+    onApprove?: (requestId: string, approved: boolean) => void;
     onRegenerate?: () => void;
     onBranch?: () => void;
     onEdit?: () => void;
@@ -40,6 +42,8 @@ function MessageWithAttachmentsBase({
     tool_calls = [], // Use API-provided tool_calls
     nodeType = "hub",
     nodeName = "hub",
+    onSend,
+    onApprove,
     onRegenerate,
     onBranch,
     onEdit,
@@ -227,22 +231,58 @@ function MessageWithAttachmentsBase({
 
                                 {toolsExpanded && (
                                     <div className="px-4 pb-4 space-y-3 pt-1 border-t border-gray-800/50">
-                                        {tool_calls.map((tool, idx) => (
-                                            <div key={idx} className="flex flex-col gap-1">
-                                                <div className="flex items-center gap-2 text-[11px] font-mono">
-                                                    <span className="text-purple-500/60 font-bold">EXEC</span>
-                                                    <span className="text-cyan-400 font-semibold">{tool.name}</span>
-                                                    <span className={`ml-auto px-1.5 py-0.5 rounded text-[9px] uppercase font-bold ${tool.success ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"}`}>
-                                                        {tool.success ? "Success" : "Failed"}
-                                                    </span>
-                                                </div>
-                                                <div className="pl-4 border-l border-gray-800 ml-1 mt-1">
-                                                    <div className="text-[12px] text-gray-500 font-mono line-clamp-2 hover:line-clamp-none transition-all cursor-pointer bg-gray-900/50 p-2 rounded-lg border border-gray-800/30">
-                                                        {tool.result}
+                                        {tool_calls.map((tool, idx) => {
+                                            let isPendingApproval = false;
+                                            let requestId = "";
+                                            let commandToApprove = "";
+
+                                            if (tool.name === "run_safe_shell") {
+                                                try {
+                                                    const parsed = JSON.parse(tool.result);
+                                                    if (parsed.status === "pending_approval") {
+                                                        isPendingApproval = true;
+                                                        commandToApprove = parsed.command;
+                                                        requestId = parsed.request_id;
+                                                    }
+                                                } catch (e) {
+                                                    // Fallback for non-JSON results (Legacy or Error)
+                                                }
+                                            }
+
+                                            return (
+                                                <div key={idx} className="flex flex-col gap-1">
+                                                    <div className="flex items-center gap-2 text-[11px] font-mono">
+                                                        <span className="text-purple-500/60 font-bold">EXEC</span>
+                                                        <span className="text-cyan-400 font-semibold">{tool.name}</span>
+                                                        <span className={`ml-auto px-1.5 py-0.5 rounded text-[9px] uppercase font-bold ${tool.success ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"}`}>
+                                                            {isPendingApproval ? "Approval Required" : tool.success ? "Success" : "Failed"}
+                                                        </span>
+                                                    </div>
+                                                    <div className="pl-4 border-l border-gray-800 ml-1 mt-1">
+                                                        <div className="text-[12px] text-gray-500 font-mono line-clamp-2 hover:line-clamp-none transition-all cursor-pointer bg-gray-900/50 p-2 rounded-lg border border-gray-800/30">
+                                                            {tool.result}
+                                                        </div>
+
+                                                        {isPendingApproval && requestId && onApprove && (
+                                                            <div className="mt-3 flex gap-2">
+                                                                <button
+                                                                    onClick={() => onApprove(requestId, true)}
+                                                                    className="px-4 py-1.5 bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/30 rounded-lg text-xs font-bold transition-all flex items-center gap-2"
+                                                                >
+                                                                    <span>✅ Approve</span>
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => onApprove(requestId, false)}
+                                                                    className="px-4 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 rounded-lg text-xs font-bold transition-all flex items-center gap-2"
+                                                                >
+                                                                    <span>❌ Reject</span>
+                                                                </button>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 </div>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 )}
                             </div>
@@ -363,4 +403,3 @@ function MessageWithAttachmentsBase({
 // Memoize to prevent re-renders when parent state changes
 const MessageWithAttachments = memo(MessageWithAttachmentsBase);
 export default MessageWithAttachments;
-

@@ -6,6 +6,7 @@ from google.genai import Client, types
 from typing import List, Optional, Any, Dict
 import asyncio
 import inspect
+import json
 from .base_provider import BaseLLMProvider, Message, CompletionResponse
 from config import settings
 
@@ -265,7 +266,10 @@ class GeminiProvider(BaseLLMProvider):
                         if hasattr(result, 'to_dict'):
                             tool_result = result.message
                         else:
-                            tool_result = str(result)
+                            if isinstance(result, dict):
+                                tool_result = json.dumps(result)
+                            else:
+                                tool_result = str(result)
                         
                         # Extract optional injected file
                         if hasattr(result, 'data') and isinstance(result.data, dict):
@@ -508,7 +512,10 @@ class GeminiProvider(BaseLLMProvider):
                         if hasattr(result, 'to_dict'):
                             tool_result = result.message
                         else:
-                            tool_result = str(result)
+                            if isinstance(result, dict):
+                                tool_result = json.dumps(result)
+                            else:
+                                tool_result = str(result)
                             
                         # Extract optional injected file
                         if hasattr(result, 'data') and isinstance(result.data, dict):
@@ -814,7 +821,10 @@ class GeminiProvider(BaseLLMProvider):
                             if hasattr(result, 'to_dict'):
                                 tool_result = result.message
                             else:
-                                tool_result = str(result)
+                                if isinstance(result, dict):
+                                    tool_result = json.dumps(result)
+                                else:
+                                    tool_result = str(result)
                                 
                             # Extract optional injected file
                             if hasattr(result, 'data') and isinstance(result.data, dict):

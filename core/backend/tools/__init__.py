@@ -15,6 +15,7 @@ from .library.condition import GetCurrentConditionTool, UpdateUserConditionTool
 from .library.members import ListMembersTool, ManageMemberTool, UpdateNodeDescriptionTool
 from .library.writer import RecursiveWriterTool
 from .library.routing import MulticastMessageTool, RegisterRoutingHookTool
+from .library.shell import RunSafeShellTool
 
 __all__ = [
     "BaseTool",
@@ -63,5 +64,6 @@ __all__ = [
     "ManageTaskExceptionTool",
     "ListExceptionsTool",
     "MulticastMessageTool",
-    "RegisterRoutingHookTool"
+    "RegisterRoutingHookTool",
+    "RunSafeShellTool"
 ]

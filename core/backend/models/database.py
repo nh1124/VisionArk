@@ -59,6 +59,15 @@ class ScheduledTaskStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class ApprovalStatus(str, Enum):
+    """Status for HITL approval requests"""
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXECUTED = "executed"
+    FAILED = "failed"
+
+
 class ScheduledTask(Base):
     """Automated Execution System (AES) tasks (timers, recurring, etc.)"""
     __tablename__ = "scheduled_tasks"
@@ -79,6 +88,26 @@ class ScheduledTask(Base):
     # Relationships
     user = relationship("User")
     project = relationship("Project")
+
+
+class ApprovalRequest(Base):
+    """Pending actions requiring Human-in-the-Loop approval"""
+    __tablename__ = "approval_requests"
+
+    id = Column(String(36), primary_key=True)               # UUID
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    tool_name = Column(String(100), nullable=False)         # e.g. "run_safe_shell"
+    payload = Column(JSON, nullable=False)                  # Arguments like {"command": "dir"}
+    status = Column(String(20), default="pending", index=True)
+    response = Column(JSON, nullable=True)                  # Execution result
+    error_log = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    project = relationship("Project")
+    user = relationship("User")
 
 
 
@@ -404,6 +433,10 @@ def _run_migrations(engine):
     
     # Migration: Add Gemini File API columns to uploaded_files if missing
     # Remove as columns are removed from model
+    pass
+
+    # Migration: Create approval_requests table is handled by create_all, but check if we need to manually add it?
+    # No, Base.metadata.create_all handles new tables.
     pass
 
     # Migration: Add role_name, display_name, tools to agent_profiles if missing

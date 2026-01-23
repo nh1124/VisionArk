@@ -33,6 +33,7 @@ class ProjectNode(BaseNode):
         from tools.library.markdown import UpdateMDSectionTool
         from tools.library.members import ListMembersTool, ManageMemberTool, UpdateNodeDescriptionTool
         from tools.library.writer import RecursiveWriterTool
+        from tools.library.shell import RunSafeShellTool
         
         self.tools = [
             AskNodeTool(),
@@ -59,6 +60,7 @@ class ProjectNode(BaseNode):
             ReadReferenceTool(),
             ListFilesTool(),
             ImportGitHubRepoTool(),
+            RunSafeShellTool(),
             SearchKnowledgeTool(),
             IngestKnowledgeTool(),
             GoogleSearchTool(),
