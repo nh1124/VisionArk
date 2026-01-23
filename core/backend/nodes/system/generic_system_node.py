@@ -35,25 +35,21 @@ class GenericSystemNode(SystemNode):
         from tools.library.system import AskNodeTool
         self.tools.append(AskNodeTool())
 
-    async def load_system_prompt(self, role_name: Optional[str] = None) -> str:
+    async def load_system_prompt(self, role_name: Optional[str] = None, components: Optional[List[str]] = None) -> str:
         """
         Prioritize DB prompt, then fallback to asset lookup.
         """
+        if components is None:
+            # Default for system nodes: less philosophy, more tool logic
+            components = ["identity", "protocol_tool_usage", "formatting"]
+            
         db_prompt = self.node.system_prompt
         
-        from utils.paths import get_prompts_dir
-        prompts_dir = get_prompts_dir()
-        global_path = prompts_dir / "system" / "global.md"
-        global_text = ""
-        try:
-            if global_path.exists():
-                global_text = global_path.read_text(encoding='utf-8')
-        except: pass
-        
         if db_prompt:
-            return f"{global_text}\n\n## Your Role: {self.display_name}\n{db_prompt}"
+            base_prompt = await super().load_system_prompt(role_name=None, components=components)
+            return f"{base_prompt}\n\n## Your Role: {self.display_name}\n{db_prompt}"
         
-        return await super().load_system_prompt(role_name or self.role_name)
+        return await super().load_system_prompt(role_name or self.role_name, components=components)
 
     async def on_execute(self, message: str) -> Any:
         system_prompt = await self.load_system_prompt()

@@ -18,7 +18,16 @@ class GenericMemberNode(BaseNode):
         from tools.tool_utils import get_tool_by_name
         self.tools = []
         if node.tools:
-            for tool_name in node.tools:
+            import json
+            tools_list = node.tools
+            if isinstance(tools_list, str):
+                try:
+                    tools_list = json.loads(tools_list)
+                except Exception as e:
+                    print(f"[GenericMemberNode] Error parsing tools for {self.role_name}: {e}")
+                    tools_list = []
+            
+            for tool_name in tools_list:
                 tool = get_tool_by_name(tool_name)
                 if tool:
                     self.tools.append(tool)
@@ -26,28 +35,28 @@ class GenericMemberNode(BaseNode):
                     print(f"[GenericMemberNode] Warning: Tool '{tool_name}' not found for member node '{self.role_name}'")
         
         # Always allow agents to register routing hooks
-        from tools import RegisterRoutingHookTool
-        self.tools.append(RegisterRoutingHookTool())
+        from tools import SubscribeIntentTool
+        self.tools.append(SubscribeIntentTool())
 
-    async def load_system_prompt(self, role_name: Optional[str] = None) -> str:
+    async def load_system_prompt(self, role_name: Optional[str] = None, components: Optional[List[str]] = None) -> str:
         """
         Prioritize DB prompt, then fallback to asset lookup.
+        Uses modular components for consistency.
         """
+        if components is None:
+            # Default components for Member Nodes
+            components = ["identity", "protocol_grounding", "protocol_tool_usage", "formatting"]
+            
         db_prompt = self.node.system_prompt
         
-        from utils.paths import get_prompts_dir
-        prompts_dir = get_prompts_dir()
-        global_path = prompts_dir / "system" / "global.md"
-        global_text = ""
-        try:
-            if global_path.exists():
-                global_text = global_path.read_text(encoding='utf-8')
-        except: pass
-        
         if db_prompt:
-            return f"{global_text}\n\n## Your Role: {self.display_name}\n{db_prompt}"
+            # Still load components even if DB prompt exists to ensure protocols are enforced
+            base_prompt = await super().load_system_prompt(role_name=None, components=components)
+            # Remove the "Available Tools" section from super if we want to customize, 
+            # but super() handles it well. We just append the specific role prompt.
+            return f"{base_prompt}\n\n## Your Specific Role: {self.display_name}\n{db_prompt}"
         
-        return await super().load_system_prompt(role_name or self.role_name)
+        return await super().load_system_prompt(role_name or self.role_name, components=components)
 
     async def on_execute(self, message: str) -> Any:
         system_prompt = await self.load_system_prompt()

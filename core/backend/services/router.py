@@ -40,9 +40,11 @@ class Router:
 
         # 1. FAST ROUTING: Regex Hooks
         matches = []
+        triggered_node_ids = []
         for hook in self._hooks:
             if hook["regex"].search(message):
                 matches.append(hook)
+                triggered_node_ids.append(hook["target_node_id"])
 
         from queue_system.manager import QueueManager
         manager = QueueManager()
@@ -90,8 +92,8 @@ class Router:
                             "deep_analysis": True,
                             "session_id": context.get("session_id"),
                             "project_id": context.get("project_id"),
-                            # Pass relevant context for the LLM
-                            "original_message": message
+                            "original_message": message,
+                            "already_triggered_node_ids": list(set(triggered_node_ids)) # Pass de-duplicated IDs
                         }
                     )
         except Exception as e:
@@ -114,8 +116,9 @@ class Router:
                 for node in nodes:
                     patterns = node.meta_payload.get("trigger_patterns", [])
                     if isinstance(patterns, list):
-                        for pattern in patterns:
-                            cls.register_hook(pattern, node.id, f"Dynamic hook for {node.display_name}")
+                        for item in patterns:
+                            if isinstance(item, dict) and (pattern := item.get("value")):
+                                cls.register_hook(pattern, node.id, item.get("description") or f"Dynamic hook for {node.display_name}")
                 
                 print(f"Router: Initialized {len(cls._hooks)} dynamic hooks from database.")
         except Exception as e:

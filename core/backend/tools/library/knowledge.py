@@ -18,12 +18,12 @@ class SearchKnowledgeTool(BaseTool):
 
     async def run(self, query: str, limit: int = 5, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
-        session: AsyncSession = kwargs.get("db_session")
+        db_session: AsyncSession = kwargs.get("db_session")
         context_name: str = kwargs.get("context_name", "general")
-        if not user_id or not session: return {"success": False, "message": "Context error"}
+        if not user_id or not db_session: return {"success": False, "message": "Context error"}
         
         try:
-            service = get_kc_service(user_id, session)
+            service = get_kc_service(user_id, db_session)
             ctx = await service.get_context(query=query, agent_id=context_name)
             if not ctx:
                 return {"success": True, "message": "No knowledge found for the query."}
@@ -46,12 +46,12 @@ class IngestKnowledgeTool(BaseTool):
 
     async def run(self, content: str, label: Optional[str] = None, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
-        session: AsyncSession = kwargs.get("db_session")
+        db_session: AsyncSession = kwargs.get("db_session")
         context_name: str = kwargs.get("context_name", "general")
-        if not user_id or not session: return {"success": False, "message": "Context error"}
+        if not user_id or not db_session: return {"success": False, "message": "Context error"}
         
         try:
-            service = get_kc_service(user_id, session)
+            service = get_kc_service(user_id, db_session)
             txt = f"[{label}] {content}" if label else content
             record_id = await service.ingest_message(txt, "assistant", "global", context_name)
             return {"success": True, "message": f"Successfully ingested knowledge with ID: {record_id}"}

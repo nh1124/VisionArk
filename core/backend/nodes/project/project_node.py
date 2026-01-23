@@ -34,6 +34,7 @@ class ProjectNode(BaseNode):
         from tools.library.members import ListMembersTool, ManageMemberTool, UpdateNodeDescriptionTool
         from tools.library.writer import RecursiveWriterTool
         from tools.library.shell import RunSafeShellTool
+        from tools.library.routing import SubscribeIntentTool
         
         self.tools = [
             AskNodeTool(),
@@ -42,7 +43,7 @@ class ProjectNode(BaseNode):
             ListMembersTool(),
             ManageMemberTool(),
             UpdateNodeDescriptionTool(),
-            
+            SubscribeIntentTool(),
             RecursiveWriterTool(),
 
             ListTasksTool(),
@@ -143,7 +144,10 @@ class ProjectNode(BaseNode):
         
         # 4. Chat with Tools (LLM)
         # Load System Prompt (Project Role)
-        system_prompt = await self.load_system_prompt("project")
+        system_prompt = await self.load_system_prompt(
+            role_name="project",
+            components=["identity", "protocol_grounding", "protocol_tool_usage", "formatting"]
+        )
         
         # Inject Profile from Context (if loaded in on_enter)
         if hasattr(self, "context_data") and self.context_data:
@@ -157,9 +161,13 @@ class ProjectNode(BaseNode):
             system_prompt += f"\n\n## Relevant Knowledge\n{knowledge_context}"
 
         # --- AUTO-ARCHIVING CHECK ---
-        # Limit context to ~30 messages to prevent "infinite context" crash
-        # (This is a safety threshold, can be adjusted)
-        ARCHIVE_THRESHOLD = 30
+        # Limit context to prevent "infinite context" crash
+        # ARCHIVE_THRESHOLD: Hard limit where archiving is forced
+        # SOFT_THRESHOLD: Warning limit where system is notified to wrap up
+        ARCHIVE_THRESHOLD = 50
+        SOFT_THRESHOLD = 40
+        OVERLAP_COUNT = 8
+
         if len(history) >= ARCHIVE_THRESHOLD:
             print(f"[ProjectNode] Context size ({len(history)}) exceeded limit ({ARCHIVE_THRESHOLD}). Archiving...")
             
@@ -170,38 +178,57 @@ class ProjectNode(BaseNode):
                 user_id=self.user_id,
                 context_type="project", 
                 project_id=self.project_id,
-                session=self.context.get('db_session')
+                db_session=self.context.get('db_session')
             )
             
-            # 2. Archive & Summarize
-            result = await cm.archive_context(force=True)
+            # 2. Archive & Summarize (with overlap)
+            result = await cm.archive_context(force=True, overlap_count=OVERLAP_COUNT)
             
             if result.get("archived"):
                 summary = result.get("summary", "Context archived.")
+                overlap_messages = result.get("overlap_messages", [])
                 
                 # 3. Create NEW Session
-                # The archive_context call already marked old session as archived in DB.
-                # ProjectNode.on_enter logic would normally create a new one if missing,
-                # but we are mid-execution. So we manually create/refresh the session here.
                 new_session_id = await self.memory.get_or_create_session(self.project_id, self.user_id)
                 self.session_id = new_session_id
                 self.context['session_id'] = new_session_id
                 
                 # 4. Inject Summary into new history as System Message
-                # This ensures the LLM knows what happened previously
                 summary_msg = Message(
                     role=MessageRole.SYSTEM,
-                    content=f"**PREVIOUS CONTEXT SUMMARY**:\n{summary}\n\nThe previous session was archived to maintain performance. Continue from here.",
+                    content=f"**PREVIOUS CONTEXT SUMMARY**:\n{summary}\n\nThe previous session was archived to maintain performance. Below are the last {len(overlap_messages)} messages for continuity.",
                     timestamp=datetime.now()
                 )
-                await self.memory.save_messages(self.session_id, [summary_msg])
+                
+                # Convert overlap dicts back to Message objects if needed
+                from models.message import MessageRole as MR
+                carry_over_msgs = []
+                for m_dict in overlap_messages:
+                    carry_over_msgs.append(Message(
+                        role=MR(m_dict['role']),
+                        content=m_dict['content'],
+                        timestamp=datetime.now()
+                    ))
+                
+                all_initial_msgs = [summary_msg] + carry_over_msgs
+                await self.memory.save_messages(self.session_id, all_initial_msgs)
                 
                 # 5. Reset local history for this turn
-                history = [summary_msg, current_msg]
+                history = all_initial_msgs + [current_msg]
                 
-                # Notify User (Add a prefix to their current message processing or just log it)
-                # We'll rely on the LLM seeing the summary message to acknowledge it if needed.
                 print(f"[ProjectNode] Context archived successfully. New Session: {new_session_id}")
+        
+        elif len(history) >= SOFT_THRESHOLD:
+            # Inject a silent system warning to the LLM
+            warning_msg = Message(
+                role=MessageRole.SYSTEM,
+                content=f"[SYSTEM WARNING]: Conversation memory is at {len(history)}/{ARCHIVE_THRESHOLD} messages. "
+                        "Archiving will occur soon. Please ensure any critical information or pending tasks are clearly stated or summarized.",
+                timestamp=datetime.now()
+            )
+            # We don't save this to DB yet, just inject into prompt for this turn
+            history.insert(-1, warning_msg)
+            print(f"[ProjectNode] Soft threshold ({SOFT_THRESHOLD}) reached. Warning injected.")
             
         # Inject Active Team Roster (Meta-Cognition)
         roster_text = ""
@@ -301,37 +328,7 @@ class ProjectNode(BaseNode):
         return response_text
 
     async def on_exit(self, result: Any):
-        # Fire & Forget Advocate for post-turn task analysis
-        import asyncio
-        asyncio.create_task(self._delegate_to_advocate())
-
-    async def _delegate_to_advocate(self):
-        """Instantiate and run the Advocate node to process recent messages."""
-        try:
-            from models.database import Node, AsyncSessionLocal
-            from sqlalchemy import select
-            
-            async with AsyncSessionLocal() as session:
-                # 1. Fetch Advocate Node from DB
-                res = await session.execute(select(Node).filter(
-                    Node.project_id == self.project_id,
-                    Node.role_name == "advocate",
-                    Node.node_type == "MEMBER"
-                ))
-                node_record = res.scalars().first()
-                if not node_record:
-                    print("[ProjectNode] Advocate node not found for post-turn analysis.")
-                    return
-
-                # 2. Extract recent history
-                history = await self.memory.get_history(self.session_id)
-                recent = history[-2:] if len(history) >= 2 else history
-                
-                # 3. Instantiate and process
-                from nodes.members.advocate import AdvocateNode
-                advocate = AdvocateNode(self.context, node_record, status_callback=self.status_callback)
-                await advocate.process_messages(recent)
-                
-        except Exception as e:
-            print(f"[ProjectNode] Error delegating to advocate: {e}")
+        # Advocate is now handled by System AI Router for deep analysis.
+        # Direct trigger removed to prevent duplicate analysis.
+        pass
 

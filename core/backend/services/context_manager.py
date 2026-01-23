@@ -19,7 +19,7 @@ from utils.paths import get_project_dir, get_prompts_dir
 class ContextManager:
     """Manages conversation context rotation and archiving (per-user)"""
     
-    def __init__(self, user_id: str, context_type: str, project_id: str, session: Optional[AsyncSession] = None):
+    def __init__(self, user_id: str, context_type: str, project_id: str, db_session: Optional[AsyncSession] = None):
         """
         Initialize context manager
         
@@ -27,12 +27,12 @@ class ContextManager:
             user_id: User ID for scoped paths
             context_type: "project" (formerly hub/spoke)
             project_id: Project UUID or identifier
-            session: Database session for tracking
+            db_session: Database session for tracking
         """
         self.user_id = user_id
         self.context_type = context_type
         self.project_id = project_id
-        self.session = session
+        self.db_session = db_session
         
         # V5: ID-based Unified Project Paths
         # Hub is treated as a project with ID 'hub'
@@ -53,13 +53,13 @@ class ContextManager:
         """
         Load conversation history from database (preferred) or chat log (fallback)
         """
-        if self.session:
+        if self.db_session:
             from models.database import Project, ChatSession, ChatMessage
             from sqlalchemy import select
             
             try:
                 # 1. Find the Project by ID
-                proj_result = await self.session.execute(select(Project).filter(
+                proj_result = await self.db_session.execute(select(Project).filter(
                     Project.user_id == self.user_id,
                     Project.id == self.project_id
                 ))
@@ -68,7 +68,7 @@ class ContextManager:
                     return []
                 
                 # 2. Get active session
-                session_result = await self.session.execute(select(ChatSession).filter(
+                session_result = await self.db_session.execute(select(ChatSession).filter(
                     ChatSession.project_id == proj.id,
                     ChatSession.is_archived == False
                 ).order_by(ChatSession.created_at.desc()))
@@ -77,7 +77,7 @@ class ContextManager:
                     return []
                 
                 # 3. Get messages
-                msg_result = await self.session.execute(select(ChatMessage).filter(
+                msg_result = await self.db_session.execute(select(ChatMessage).filter(
                     ChatMessage.session_id == chat_session.id
                 ).order_by(ChatMessage.created_at.asc()))
                 db_messages = msg_result.scalars().all()
@@ -102,7 +102,7 @@ class ContextManager:
         from models.database import UserSettings
         from sqlalchemy import select
         
-        result = await self.session.execute(select(UserSettings).filter(UserSettings.user_id == self.user_id))
+        result = await self.db_session.execute(select(UserSettings).filter(UserSettings.user_id == self.user_id))
         settings = result.scalars().first()
         api_key = settings.gemini_api_key if settings else None
         
@@ -174,9 +174,13 @@ Conversation to summarize:
             lines.append("")
         return "\n".join(lines)
     
-    async def archive_context(self, force: bool = False) -> Dict:
+    async def archive_context(self, force: bool = False, overlap_count: int = 10) -> Dict:
         """
         Archive current context asynchronously. 
+        
+        Args:
+            force: Whether to force archiving even if conversation is empty.
+            overlap_count: Number of latest messages to keep for context overlap.
         """
         conversation = await self.get_conversation_history()
         
@@ -206,10 +210,24 @@ Conversation to summarize:
             await asyncio.to_thread(self.chat_log_path.touch)
         
         # 4. Save to database & Archive Session
-        if self.session:
+        if self.db_session:
             await self._save_archive_record(summary_path, archived_log_path, len(conversation))
+            
+            # V5: Cleanup session-bound subscriptions before archiving the session
+            from models.database import ChatSession
+            from sqlalchemy import select
+            session_result = await self.db_session.execute(
+                select(ChatSession).filter(ChatSession.project_id == self.project_id, ChatSession.is_archived == False)
+            )
+            active_session = session_result.scalars().first()
+            if active_session:
+                await self._cleanup_session_subscriptions(active_session.id)
+            
             await self._mark_session_archived()
         
+        # Extract overlapping messages
+        overlap_msgs = conversation[-overlap_count:] if len(conversation) > overlap_count else conversation
+
         return {
             "archived": True,
             "timestamp": timestamp,
@@ -217,12 +235,13 @@ Conversation to summarize:
             "log_path": str(archived_log_path),
             "message_count": len(conversation),
             "summary": summary,
+            "overlap_messages": overlap_msgs,
             "message": f"✅ Archived {len(conversation)} messages. Context refreshed."
         }
 
     async def _mark_session_archived(self):
         """Mark the active session as archived in DB"""
-        if not self.session:
+        if not self.db_session:
             return
             
         from models.database import Project, ChatSession
@@ -230,7 +249,7 @@ Conversation to summarize:
         
         try:
             # Find the project
-            proj_result = await self.session.execute(select(Project).filter(
+            proj_result = await self.db_session.execute(select(Project).filter(
                 Project.user_id == self.user_id,
                 Project.id == self.project_id
             ))
@@ -241,16 +260,16 @@ Conversation to summarize:
 
             # Mark all non-archived sessions for this project as archived
             # (Usually there's only one active session)
-            await self.session.execute(
+            await self.db_session.execute(
                 update(ChatSession)
                 .where(ChatSession.project_id == proj_id, ChatSession.is_archived == False)
                 .values(is_archived=True, updated_at=datetime.utcnow())
             )
-            await self.session.commit()
+            await self.db_session.commit()
             print(f"[ContextManager] Session archived in DB for project {proj_name}")
         except Exception as e:
             print(f"[ContextManager] Failed to mark session archived: {e}")
-            await self.session.rollback()
+            await self.db_session.rollback()
     
     async def get_latest_summary(self) -> Optional[str]:
         """Get the most recent archived summary asynchronously"""
@@ -279,12 +298,12 @@ Conversation to summarize:
     
     async def get_archive_history(self) -> List[Dict]:
         """Get list of all archived contexts asynchronously"""
-        if self.session:
+        if self.db_session:
             from models.database import ArchivedContext
             from sqlalchemy import select
             
             try:
-                result = await self.session.execute(
+                result = await self.db_session.execute(
                     select(ArchivedContext).filter(
                         ArchivedContext.project_id == self.project_id,
                         ArchivedContext.user_id == self.user_id
@@ -318,7 +337,7 @@ Conversation to summarize:
     
     async def _save_archive_record(self, summary_path: Path, log_path: Path, message_count: int):
         """Save archive metadata to database asynchronously using ORM"""
-        if not self.session:
+        if not self.db_session:
             return
         
         from models.database import ArchivedContext, Project
@@ -326,7 +345,7 @@ Conversation to summarize:
         
         try:
             # Try to find project
-            result = await self.session.execute(
+            result = await self.db_session.execute(
                 select(Project).filter(
                     Project.user_id == self.user_id,
                     Project.id == self.project_id
@@ -345,9 +364,49 @@ Conversation to summarize:
                 token_count=message_count
             )
             
-            self.session.add(new_record)
-            await self.session.commit()
+            self.db_session.add(new_record)
+            await self.db_session.commit()
             print(f"[ContextManager] Archived context record saved for project {proj.name}")
         except Exception as e:
             print(f"Failed to save archive record: {e}")
-            await self.session.rollback()
+            await self.db_session.rollback()
+
+    async def _cleanup_session_subscriptions(self, session_id: str):
+        """Find and remove all subscriptions in the project's nodes bound to this session_id"""
+        from models.database import Node
+        from sqlalchemy import select
+        from sqlalchemy.orm.attributes import flag_modified
+
+        try:
+            # Fetch all nodes for this project
+            stmt = select(Node).filter(Node.project_id == self.project_id)
+            res = await self.db_session.execute(stmt)
+            nodes = res.scalars().all()
+
+            for node in nodes:
+                meta = node.meta_payload or {}
+                updated = False
+
+                for key in ["trigger_patterns", "semantic_interests"]:
+                    lst = meta.get(key, [])
+                    if not lst: continue
+                    
+                    new_lst = []
+                    for item in lst:
+                        if isinstance(item, dict) and item.get("session_id") == session_id:
+                            updated = True
+                            continue
+                        new_lst.append(item)
+                    
+                    if updated:
+                        meta[key] = new_lst
+                
+                if updated:
+                    node.meta_payload = meta
+                    flag_modified(node, "meta_payload")
+                    print(f"[ContextManager] Removed session-bound subscriptions from node {node.display_name}")
+
+            await self.db_session.commit()
+        except Exception as e:
+            print(f"[ContextManager] Subscription cleanup failed: {e}")
+            await self.db_session.rollback()

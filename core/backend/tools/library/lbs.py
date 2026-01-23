@@ -18,14 +18,14 @@ class ListTasksTool(BaseTool):
     args_schema = ListTasksArgs
 
     async def run(self, context: Optional[str] = None, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("db_session")
+        db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         context_name: str = kwargs.get("context_name", "general")
-        if not session or not user_id:
+        if not db_session or not user_id:
             return {"success": False, "message": "Context error"}
         
         try:
-            client = await get_lbs_client(user_id, session)
+            client = await get_lbs_client(user_id, db_session)
             target_date = kwargs.get("target_date")
             tasks = await client.list_tasks(
                 context=context or context_name,
@@ -69,14 +69,14 @@ class CreateTaskTool(BaseTool):
     args_schema = CreateTaskArgs
 
     async def run(self, **kwargs) -> Any:
-        session: AsyncSession = kwargs.pop("db_session", None)
+        db_session: AsyncSession = kwargs.pop("db_session", None)
         user_id: str = kwargs.pop("user_id", None)
         context_name: str = kwargs.pop("context_name", "general")
-        if not session or not user_id:
+        if not db_session or not user_id:
             return {"success": False, "message": "Context error"}
         
         try:
-            client = await get_lbs_client(user_id, session)
+            client = await get_lbs_client(user_id, db_session)
             task_name = kwargs.get("task_name")
             context = kwargs.get("context")
             workload = kwargs.get("workload")
@@ -129,13 +129,13 @@ class UpdateTaskTool(BaseTool):
     args_schema = UpdateTaskArgs
 
     async def run(self, task_id: str, **kwargs) -> Any:
-        session: AsyncSession = kwargs.pop("db_session", None)
+        db_session: AsyncSession = kwargs.pop("db_session", None)
         user_id: str = kwargs.pop("user_id", None)
-        if not session or not user_id:
+        if not db_session or not user_id:
             return {"success": False, "message": "Context error"}
         
         try:
-            client = await get_lbs_client(user_id, session)
+            client = await get_lbs_client(user_id, db_session)
             upd = {k: v for k,v in kwargs.items() if v is not None}
             if 'workload' in upd: upd['base_load_score'] = float(upd.pop('workload'))
             if 'context' in upd: upd['context'] = upd.pop('context')
@@ -161,13 +161,13 @@ class DeleteTaskTool(BaseTool):
     args_schema = DeleteTaskArgs
 
     async def run(self, task_id: str, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("db_session")
+        db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
-        if not session or not user_id:
+        if not db_session or not user_id:
             return {"success": False, "message": "Context error"}
         
         try:
-            client = await get_lbs_client(user_id, session)
+            client = await get_lbs_client(user_id, db_session)
             await client.delete_task(task_id)
             return {"success": True, "message": f"Deleted task {task_id}"}
         except Exception as e:
@@ -188,14 +188,14 @@ class CompleteLBSTaskTool(BaseTool):
     args_schema = CompleteLBSTaskArgs
 
     async def run(self, task_id: str, target_date: str, status: str = "done", **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("db_session")
+        db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
-        if not session or not user_id:
+        if not db_session or not user_id:
             return {"success": False, "message": "Context error"}
         
         try:
             from services.lbs_client import TaskStatus
-            client = await get_lbs_client(user_id, session)
+            client = await get_lbs_client(user_id, db_session)
             await client.toggle_task_completion(task_id, date.fromisoformat(target_date), TaskStatus(status))
             return {"success": True, "message": f"Marked {task_id} as {status} for {target_date}"}
         except Exception as e:
@@ -211,13 +211,13 @@ class GetLBSScheduleTool(BaseTool):
     args_schema = GetLBSScheduleArgs
 
     async def run(self, start_date: str, end_date: str, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("db_session")
+        db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
-        if not session or not user_id:
+        if not db_session or not user_id:
             return {"success": False, "message": "Context error"}
         
         try:
-            client = await get_lbs_client(user_id, session)
+            client = await get_lbs_client(user_id, db_session)
             sch = await client.get_schedule(date.fromisoformat(start_date), date.fromisoformat(end_date))
             return {"success": True, "message": f"Schedule found ({len(sch)} days)", "data": {"schedule": sch}}
         except Exception as e:
@@ -232,13 +232,13 @@ class GetLoadOnDayTool(BaseTool):
     args_schema = GetLoadOnDayArgs
 
     async def run(self, target_date: str, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("db_session")
+        db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
-        if not session or not user_id:
+        if not db_session or not user_id:
             return {"success": False, "message": "Context error"}
         
         try:
-            client = await get_lbs_client(user_id, session)
+            client = await get_lbs_client(user_id, db_session)
             res = await client.calculate_load(date.fromisoformat(target_date))
             return {"success": True, "message": f"Load: {res.get('adjusted_load')}", "data": res}
         except Exception as e:
@@ -254,13 +254,13 @@ class GetLoadInPeriodTool(BaseTool):
     args_schema = GetLoadInPeriodArgs
 
     async def run(self, start_date: str, end_date: str, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("db_session")
+        db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
-        if not session or not user_id:
+        if not db_session or not user_id:
             return {"success": False, "message": "Context error"}
         
         try:
-            client = await get_lbs_client(user_id, session)
+            client = await get_lbs_client(user_id, db_session)
             hm = await client.get_heatmap(date.fromisoformat(start_date), date.fromisoformat(end_date))
             return {"success": True, "message": f"Heatmap: {len(hm)} days", "data": {"heatmap": hm}}
         except Exception as e:
@@ -277,13 +277,13 @@ class GetTaskHistoryTool(BaseTool):
     args_schema = GetTaskHistoryArgs
 
     async def run(self, task_id: str, start_date: str, end_date: str, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("db_session")
+        db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
-        if not session or not user_id:
+        if not db_session or not user_id:
             return {"success": False, "message": "Context error"}
         
         try:
-            client = await get_lbs_client(user_id, session)
+            client = await get_lbs_client(user_id, db_session)
             history = await client.get_task_history(task_id, date.fromisoformat(start_date), date.fromisoformat(end_date))
             return {"success": True, "message": f"Found {len(history)} records.", "data": {"history": history}}
         except Exception as e:
@@ -309,13 +309,13 @@ class ManageTaskExceptionTool(BaseTool):
     args_schema = ManageTaskExceptionArgs
 
     async def run(self, **kwargs) -> Any:
-        session: AsyncSession = kwargs.pop("db_session", None)
+        db_session: AsyncSession = kwargs.pop("db_session", None)
         user_id: str = kwargs.pop("user_id", None)
-        if not session or not user_id:
+        if not db_session or not user_id:
             return {"success": False, "message": "Context error"}
         
         try:
-            client = await get_lbs_client(user_id, session)
+            client = await get_lbs_client(user_id, db_session)
             action = kwargs.pop("action").lower()
             task_id = kwargs.get("task_id")
             target_date = kwargs.get("target_date")
@@ -359,13 +359,13 @@ class ListExceptionsTool(BaseTool):
     args_schema = ListExceptionsArgs
 
     async def run(self, start_date: str, end_date: str, task_id: Optional[str] = None, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("db_session")
+        db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
-        if not session or not user_id:
+        if not db_session or not user_id:
             return {"success": False, "message": "Context error"}
         
         try:
-            client = await get_lbs_client(user_id, session)
+            client = await get_lbs_client(user_id, db_session)
             excs = await client.get_exceptions(date.fromisoformat(start_date), date.fromisoformat(end_date))
             if task_id:
                 excs = [e for e in excs if e.get("task_id") == task_id]

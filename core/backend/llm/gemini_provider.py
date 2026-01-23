@@ -163,6 +163,7 @@ class GeminiProvider(BaseLLMProvider):
             tools_for_model = []
         
         tool_count = len(tools_for_model[0].function_declarations) if tools_for_model and hasattr(tools_for_model[0], 'function_declarations') else 0
+        print(f"🛠️ [Gemini] Model initialized with {tool_count} tools.")
         logger.info(f"[Gemini] Tools passed to model: {tool_count}")
         
         generation_config = types.GenerateContentConfig(
@@ -183,6 +184,8 @@ class GeminiProvider(BaseLLMProvider):
         
         while max_turns is None or turn_count < max_turns:
             turn_count += 1
+            turn_start_time = asyncio.get_event_loop().time()
+            print(f"🔄 [Gemini] Entering Turn {turn_count} (Max: {max_turns})...")
             try:
                 # USE AWAIT and aio client!
                 response = await self.client.aio.models.generate_content(
@@ -190,6 +193,8 @@ class GeminiProvider(BaseLLMProvider):
                     contents=history,
                     config=generation_config
                 )
+                turn_elapsed = asyncio.get_event_loop().time() - turn_start_time
+                print(f"⏱️ [Gemini] Turn {turn_count} LLM response received in {turn_elapsed:.2f}s")
             except Exception as e:
                 logger.error(f"[Gemini] Async Generation error: {e}")
                 if accumulated_tool_results:
@@ -208,6 +213,7 @@ class GeminiProvider(BaseLLMProvider):
             history.append(model_content)
             
             function_calls = [p.function_call for p in model_content.parts if p.function_call]
+            print(f"🔍 [Gemini] Turn {turn_count}: LLM requested {len(function_calls)} tool calls.")
             logger.info(f"[Gemini] Turn {turn_count}: Found {len(function_calls)} function calls in response. Parts: {[type(p).__name__ for p in model_content.parts]}")
             
             if not function_calls:
@@ -233,7 +239,10 @@ class GeminiProvider(BaseLLMProvider):
             for fc in function_calls:
                 function_name = fc.name
                 function_args = fc.args
+                print(f"🔧 [Gemini] Tool Start: {function_name} | Args: {json.dumps(function_args, ensure_ascii=False)}")
                 logger.info(f"[Gemini] Executing function (async flow): {function_name}")
+                
+                tool_t0 = asyncio.get_event_loop().time()
                 
                 tool_result = None
                 injected_file_uri = None
@@ -249,7 +258,7 @@ class GeminiProvider(BaseLLMProvider):
                         accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
                         
                         full_args = {**function_args}
-                        for key in ['db_session', 'session', 'user_id', 'node_id', 'project_id', 'project_name', 'context_name', 'meta_info']:
+                        for key in ['db_session', 'user_id', 'node_id', 'project_id', 'session_id', 'project_name', 'context_name', 'meta_info']:
                             if key in tool_context:
                                 if key in accepted_params or accepts_kwargs:
                                     full_args[key] = tool_context[key]
@@ -280,6 +289,9 @@ class GeminiProvider(BaseLLMProvider):
                         import traceback
                         traceback.print_exc()
                         tool_result = f"Error executing {function_name}: {str(e)}"
+                
+                tool_elapsed = asyncio.get_event_loop().time() - tool_t0
+                print(f"📦 [Gemini] Tool Done: {function_name} | Time: {tool_elapsed:.2f}s")
                 
                 if tool_result is None:
                     tool_result = f"Function {function_name} not found"
@@ -485,7 +497,7 @@ class GeminiProvider(BaseLLMProvider):
                         
                         # Merge function args with only the injected context that the function accepts
                         full_args = {**function_args}
-                        for key in ['db_session', 'session', 'user_id', 'node_id', 'project_id', 'project_name', 'context_name', 'meta_info']:
+                        for key in ['db_session', 'user_id', 'node_id', 'project_id', 'session_id', 'project_name', 'context_name', 'meta_info']:
                             if key in tool_context:
                                 # Inject if explicitly accepted OR if function takes **kwargs
                                 if key in accepted_params or accepts_kwargs:
@@ -802,7 +814,7 @@ class GeminiProvider(BaseLLMProvider):
                             accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
                             
                             full_args = {**function_args}
-                            for key in ['db_session', 'session', 'user_id', 'node_id', 'project_id', 'project_name', 'context_name', 'meta_info']:
+                            for key in ['db_session', 'user_id', 'node_id', 'project_id', 'session_id', 'project_name', 'context_name', 'meta_info']:
                                 if key in tool_context:
                                     # Inject if explicitly accepted OR if function takes **kwargs
                                     if key in accepted_params or accepts_kwargs:
@@ -1028,9 +1040,11 @@ class GeminiProvider(BaseLLMProvider):
                             accepted_params = set(sig.parameters.keys())
                             
                             full_args = {**function_args}
-                            for key in ['session', 'user_id', 'node_id', 'project_id', 'project_name', 'context_name', 'meta_info']:
-                                if key in tool_context and key in accepted_params:
-                                    full_args[key] = tool_context[key]
+                            for key in ['db_session', 'user_id', 'node_id', 'project_id', 'session_id', 'project_name', 'context_name', 'meta_info']:
+                                if key in tool_context:
+                                    # Fix: Check for both accepted_params and accepts_kwargs (consistent with other methods)
+                                    if key in accepted_params or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                                        full_args[key] = tool_context[key]
                             
                             result = func(**full_args)
                             if hasattr(result, 'to_dict'):

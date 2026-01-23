@@ -20,11 +20,11 @@ class GoogleSearchTool(BaseTool):
 
     async def run(self, query: str, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
-        session: AsyncSession = kwargs.get("session")
-        if not user_id or not session: return {"success": False, "message": "Context error"}
+        db_session: AsyncSession = kwargs.get("db_session")
+        if not user_id or not db_session: return {"success": False, "message": "Context error"}
         
         try:
-            client = await get_gemini_client(user_id, session)
+            client = await get_gemini_client(user_id, db_session)
             resp = client.models.generate_content(
                 model="gemini-3-flash-preview", 
                 contents=query, 
@@ -49,11 +49,11 @@ class ResearchURLTool(BaseTool):
 
     async def run(self, urls: List[str], query: str, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
-        session: AsyncSession = kwargs.get("session")
-        if not user_id or not session: return {"success": False, "message": "Context error"}
+        db_session: AsyncSession = kwargs.get("db_session")
+        if not user_id or not db_session: return {"success": False, "message": "Context error"}
         
         try:
-            client = await get_gemini_client(user_id, session)
+            client = await get_gemini_client(user_id, db_session)
             # Combine URLs into the instruction as suggested by docs
             urls_str = " and ".join(urls)
             prompt = f"{query} from {urls_str}" if query else f"Summarize the content from {urls_str}"
@@ -93,11 +93,11 @@ class SearchPlacesTool(BaseTool):
 
     async def run(self, query: str, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
-        session: AsyncSession = kwargs.get("session")
-        if not user_id or not session: return {"success": False, "message": "Context error"}
+        db_session: AsyncSession = kwargs.get("db_session")
+        if not user_id or not db_session: return {"success": False, "message": "Context error"}
         
         try:
-            client = await get_gemini_client(user_id, session)
+            client = await get_gemini_client(user_id, db_session)
             resp = client.models.generate_content(
                 model="gemini-3-flash-preview", 
                 contents=query, 
@@ -122,12 +122,12 @@ class DeepResearchTool(BaseTool):
 
     async def run(self, query: str, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
-        session: AsyncSession = kwargs.get("session")
+        db_session: AsyncSession = kwargs.get("db_session")
         project_id: str = kwargs.get("project_id")
-        if not user_id or not session: return {"success": False, "message": "Context error"}
+        if not user_id or not db_session: return {"success": False, "message": "Context error"}
         
         try:
-            client = await get_gemini_client(user_id, session)
+            client = await get_gemini_client(user_id, db_session)
             
             if self.status_callback:
                 await self.status_callback("Initiating Deep Research (this may take several minutes)...", "processing")
@@ -146,7 +146,7 @@ class DeepResearchTool(BaseTool):
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"research/report_{timestamp}.md"
             
-            artifacts_dir = await resolve_project_artifacts_dir(user_id, project_id, session)
+            artifacts_dir = await resolve_project_artifacts_dir(user_id, project_id, db_session)
             p = secure_path_join(artifacts_dir, filename)
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(report_content, encoding='utf-8')

@@ -66,12 +66,13 @@ function ChatInputComponent({
     }, [value]);
 
     // Auto-resize logic
-    const adjustTextareaHeight = () => {
+    const adjustTextareaHeight = (overrideExpanded?: boolean) => {
         const textarea = textareaRef.current;
         if (textarea) {
             textarea.style.height = "auto";
-            const minHeight = isMobile ? 40 : (isExpanded ? 200 : 48);
-            const maxHeight = isExpanded ? 800 : (isMobile ? 150 : 300); // Match CSS max-height
+            const effectiveExpanded = overrideExpanded !== undefined ? overrideExpanded : isExpanded;
+            const minHeight = isMobile ? 40 : (effectiveExpanded ? 200 : 48);
+            const maxHeight = effectiveExpanded ? 800 : (isMobile ? 150 : 300); // 300px is the limit for normal mode
             const newHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight);
             textarea.style.height = `${newHeight}px`;
         }
@@ -91,8 +92,10 @@ function ChatInputComponent({
             onCommandModeChange?.(newIsCommand, newValue);
         }
 
-        // Use requestAnimationFrame for smoother resize (better than setTimeout)
-        requestAnimationFrame(adjustTextareaHeight);
+        // Only trigger resize if NOT expanded (normal input mode)
+        if (!isExpanded) {
+            requestAnimationFrame(() => adjustTextareaHeight());
+        }
     };
 
     const handleFileSelect = (files: FileList | null) => {
@@ -286,11 +289,22 @@ function ChatInputComponent({
                 </div>
             )}
 
+            {/* Backdrop for Focus Mode */}
+            {isExpanded && (
+                <div
+                    className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[990]"
+                    onClick={() => {
+                        setIsExpanded(false);
+                        requestAnimationFrame(() => adjustTextareaHeight(false));
+                    }}
+                />
+            )}
+
             {/* Gemini-style Input Container */}
             <div
-                className={`transition-all duration-500 ease-in-out flex flex-col shadow-2xl
+                className={`flex flex-col shadow-2xl transition-[inset,transform,background-color,border-color,border-radius] duration-500 ease-in-out
                     ${isExpanded
-                        ? "absolute inset-4 z-[50] bg-gray-900 border border-gray-700 rounded-3xl"
+                        ? "fixed inset-4 md:inset-x-20 md:inset-y-10 z-[1000] bg-gray-900 border border-gray-700 rounded-3xl overflow-hidden"
                         : `relative rounded-3xl border ${isDragging ? "border-purple-500 bg-purple-500/10" : "border-gray-700 bg-gray-900/80 backdrop-blur-sm"}`
                     }`}
                 onDragOver={handleDragOver}
@@ -324,11 +338,8 @@ function ChatInputComponent({
                         onClick={() => {
                             const willExpand = !isExpanded;
                             setIsExpanded(willExpand);
-                            // If collapsing, force reset height immediately so adjustTextareaHeight calculates correctly
-                            if (!willExpand && textareaRef.current) {
-                                textareaRef.current.style.height = "auto";
-                            }
-                            setTimeout(adjustTextareaHeight, 0);
+                            // Adjust height immediately with the target state
+                            requestAnimationFrame(() => adjustTextareaHeight(willExpand));
                         }}
                         className={`absolute top-2 right-4 p-2 text-gray-500 hover:text-white hover:bg-gray-800 rounded-xl transition-all group scale-90 hover:scale-100 ${isExpanded ? "bg-gray-800/50" : ""}`}
                         title={isExpanded ? "Exit Focus Mode" : "Enter Focus Mode"}

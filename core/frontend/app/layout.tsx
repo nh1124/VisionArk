@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, Outfit } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/lib/AuthContext";
@@ -15,12 +15,15 @@ export const metadata: Metadata = {
   title: "Vision Ark",
   description: "Advanced AI Task Management OS",
   manifest: "/manifest.json",
-  themeColor: "#121212",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
     title: "Vision Ark",
   },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#121212",
 };
 
 export default function RootLayout({

@@ -18,22 +18,22 @@ class ArchiveChatTool(BaseTool):
     args_schema = NoArgs
 
     async def run(self, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
+        db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         project_id: str = kwargs.get("project_id")
         
-        if not session or not user_id:
+        if not db_session or not user_id:
             return {"success": False, "message": "Missing context"}
 
         try:
             # 1. Find Project by ID
-            result = await session.execute(select(Project).filter(Project.user_id == user_id, Project.id == project_id))
+            result = await db_session.execute(select(Project).filter(Project.user_id == user_id, Project.id == project_id))
             proj = result.scalars().first()
             if not proj:
                 return {"success": False, "message": f"Project '{project_id}' not found"}
 
             # 2. Archive active session using ContextManager logic
-            manager = ContextManager(user_id=user_id, context_type="project", project_id=project_id, session=session)
+            manager = ContextManager(user_id=user_id, context_type="project", project_id=project_id, db_session=db_session)
             archive_result = await manager.archive_context(force=True)
             summary = archive_result.get("summary", "No summary available.")
 
@@ -45,7 +45,7 @@ class ArchiveChatTool(BaseTool):
                 title=f"Session started {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
                 is_archived=False
             )
-            session.add(new_session)
+            db_session.add(new_session)
             
             # 4. Inject summary as first system message
             injection_msg = ChatMessage(
@@ -54,8 +54,8 @@ class ArchiveChatTool(BaseTool):
                 role="system",
                 content=f"### Previous Conversation Summary\n\n{summary}\n\n*This summary has been injected to provide context for the new session.*"
             )
-            session.add(injection_msg)
-            await session.commit()
+            db_session.add(injection_msg)
+            await db_session.commit()
             
             return {
                 "success": True, 
@@ -67,7 +67,7 @@ class ArchiveChatTool(BaseTool):
                 }
             }
         except Exception as e:
-            if session: await session.rollback()
+            if db_session: await db_session.rollback()
             return {"success": False, "message": f"Failed to archive: {str(e)}"}
 
 class MovePageArgs(BaseModel):
@@ -79,9 +79,9 @@ class MovePageTool(BaseTool):
     args_schema = MovePageArgs
 
     async def run(self, target: str, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
+        db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
-        if not session or not user_id:
+        if not db_session or not user_id:
             return {"success": False, "message": "Missing context"}
 
         target_lower = target.lower()
@@ -89,7 +89,7 @@ class MovePageTool(BaseTool):
             return {"success": True, "message": "🚀 Moving to Hub page...", "data": {"redirect_url": "/hub"}}
 
         # Verify project exists by ID
-        result = await session.execute(select(Project).filter(
+        result = await db_session.execute(select(Project).filter(
             Project.user_id == user_id,
             Project.id == target
         ))
@@ -110,9 +110,9 @@ class CreateProjectTool(BaseTool):
     args_schema = CreateProjectArgs
 
     async def run(self, name: str, prompt: Optional[str] = None, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
+        db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
-        if not session or not user_id:
+        if not db_session or not user_id:
             return {"success": False, "message": "Missing context"}
 
         valid, error = validate_name(name, "project_name")
@@ -120,7 +120,7 @@ class CreateProjectTool(BaseTool):
             return {"success": False, "message": f"Invalid project name: {error}"}
 
         try:
-            result = await session.execute(select(Project).filter(Project.user_id == user_id, Project.name == name))
+            result = await db_session.execute(select(Project).filter(Project.user_id == user_id, Project.name == name))
             existing_proj = result.scalars().first()
             if existing_proj:
                 if existing_proj.status == "archived":
@@ -128,7 +128,7 @@ class CreateProjectTool(BaseTool):
                     
                     # 🚀 AES: Cancel pending hard delete tasks
                     from models.database import ScheduledTask, ScheduledTaskStatus
-                    await session.execute(
+                    await db_session.execute(
                         update(ScheduledTask)
                         .filter(
                             ScheduledTask.project_id == existing_proj.id,
@@ -138,14 +138,14 @@ class CreateProjectTool(BaseTool):
                         .values(status=ScheduledTaskStatus.CANCELLED)
                     )
                     
-                    await session.commit()
+                    await db_session.commit()
                     return {"success": True, "message": f"✅ Restored archived project: {name}"}
                 return {"success": False, "message": f"Project '{name}' already exists"}
  
             # 1. Create Project
             project_id = str(uuid.uuid4())
             proj = Project(id=project_id, user_id=user_id, name=name.replace('_', ' ').title(), status="active")
-            session.add(proj)
+            db_session.add(proj)
  
             # 2. Create Orchestrator Node
             node_id = str(uuid.uuid4())
@@ -164,10 +164,10 @@ class CreateProjectTool(BaseTool):
             for sub in ["files", "artifacts", "refs"]:
                 (project_dir / sub).mkdir(exist_ok=True)
  
-            await session.commit()
+            await db_session.commit()
             return {"success": True, "message": f"✅ Created Project: {name}", "data": {"project_id": project_id, "node_id": node_id}}
         except Exception as e:
-            if session: await session.rollback()
+            if db_session: await db_session.rollback()
             return {"success": False, "message": f"Failed to create Project: {str(e)}"}
 
 class DeleteProjectArgs(BaseModel):
@@ -179,9 +179,9 @@ class DeleteProjectTool(BaseTool):
     args_schema = DeleteProjectArgs
 
     async def run(self, name: str, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
+        db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
-        if not session or not user_id:
+        if not db_session or not user_id:
             return {"success": False, "message": "Missing context"}
 
         if name == "hub":
@@ -226,10 +226,10 @@ class DeleteProjectTool(BaseTool):
                 timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
                 project_dir.rename(project_dir.parent / f"{proj_id}_archived_{timestamp}")
  
-            await session.commit()
+            await db_session.commit()
             return {"success": True, "message": f"🗑️ Deleted Project: {proj.name}", "data": {"redirect_url": "/projects"}}
         except Exception as e:
-            if session: await session.rollback()
+            if db_session: await db_session.rollback()
             return {"success": False, "message": f"Failed to delete Project: {str(e)}"}
 
 class CloneProjectArgs(BaseModel):
@@ -242,9 +242,9 @@ class CloneProjectTool(BaseTool):
     args_schema = CloneProjectArgs
 
     async def run(self, source: str, target: Optional[str] = None, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
+        db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
-        if not session or not user_id:
+        if not db_session or not user_id:
             return {"success": False, "message": "Missing context"}
 
         try:
@@ -260,7 +260,7 @@ class CloneProjectTool(BaseTool):
             final_name = target or f"{source_proj.name}_copy"
             base_name = final_name
             counter = 1
-            while (await session.execute(select(Project).filter(Project.user_id == user_id, Project.name == final_name))).scalars().first():
+            while (await db_session.execute(select(Project).filter(Project.user_id == user_id, Project.name == final_name))).scalars().first():
                 final_name = f"{base_name}_{counter}"
                 counter += 1
  
@@ -272,10 +272,10 @@ class CloneProjectTool(BaseTool):
                 name=final_name,
                 status="active"
             )
-            session.add(new_proj)
+            db_session.add(new_proj)
  
             # 2. Copy Nodes
-            res_nodes = await session.execute(select(Node).filter(Node.project_id == source_proj.id, Node.status == "active"))
+            res_nodes = await db_session.execute(select(Node).filter(Node.project_id == source_proj.id, Node.status == "active"))
             source_nodes = res_nodes.scalars().all()
             for sn in source_nodes:
                 new_node = Node(
@@ -300,10 +300,10 @@ class CloneProjectTool(BaseTool):
                     if (source_dir / sub).exists():
                         shutil.copytree(source_dir / sub, new_dir / sub, dirs_exist_ok=True)
  
-            await session.commit()
+            await db_session.commit()
             return {"success": True, "message": f"✅ Project '{source_proj.name}' cloned as '{final_name}'", "data": {"new_project_id": new_project_id, "new_name": final_name}}
         except Exception as e:
-            if session: await session.rollback()
+            if db_session: await db_session.rollback()
             return {"success": False, "message": f"Cloning failed: {str(e)}"}
 
 
@@ -317,32 +317,32 @@ class SendMessageTool(BaseTool):
     args_schema = SendMessageArgs
 
     async def run(self, project: str, message: str, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
+        db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
-        if not session or not user_id:
+        if not db_session or not user_id:
             return {"success": False, "message": "Missing context"}
 
         try:
-            res = await session.execute(select(Node).filter(
+            res = await db_session.execute(select(Node).filter(
                 Node.user_id == user_id, 
                 Node.id == project
             ))
             node = res.scalars().first()
             if not node: return {"success": False, "message": f"Project '{project}' not found"}
 
-            res = await session.execute(select(ChatSession).filter(ChatSession.project_id == project, ChatSession.is_archived == False).order_by(ChatSession.created_at.desc()))
+            res = await db_session.execute(select(ChatSession).filter(ChatSession.project_id == project, ChatSession.is_archived == False).order_by(ChatSession.created_at.desc()))
             chat_session = res.scalars().first()
             if not chat_session:
                 chat_session = ChatSession(id=str(uuid.uuid4()), project_id=project, title="New Session via Message", is_archived=False)
-                session.add(chat_session)
-                await session.flush()
+                db_session.add(chat_session)
+                await db_session.flush()
 
             db_message = ChatMessage(id=str(uuid.uuid4()), session_id=chat_session.id, role="assistant", content=f"[Hub -> {node.display_name}] {message}")
-            session.add(db_message)
-            await session.commit()
+            db_session.add(db_message)
+            await db_session.commit()
             return {"success": True, "message": f"📨 Message sent to {node.display_name}"}
         except Exception as e:
-            if session: await session.rollback()
+            if db_session: await db_session.rollback()
             return {"success": False, "message": f"Failed to send message: {str(e)}"}
 
 

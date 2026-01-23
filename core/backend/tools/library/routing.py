@@ -1,11 +1,12 @@
 from typing import List, Dict, Any, Optional
-from tools.base import BaseTool
+from tools.base import BaseTool, NoArgs
 from pydantic import BaseModel, Field
 from queue_system.manager import QueueManager
 
 class MulticastMessageArgs(BaseModel):
     target_ids: List[str] = Field(..., description="List of node IDs to notify.")
     message: str = Field(..., description="The message or instruction to send to all targets.")
+    force: bool = Field(False, description="If True, bypass redundancy checks and notify nodes even if they were already triggered by Regex hooks.")
 
 class MulticastMessageTool(BaseTool):
     """
@@ -19,19 +20,62 @@ class MulticastMessageTool(BaseTool):
     )
     args_schema = MulticastMessageArgs
 
-    async def run(self, target_ids: List[str], message: str, **kwargs) -> str:
+    async def run(self, target_ids: List[str], message: str, force: bool = False, **kwargs) -> str:
         if not target_ids:
             return "Error: No target IDs provided."
 
+        db_session = self.context.get("db_session")
         user_id = self.context.get("user_id")
         project_id = self.context.get("project_id")
         session_id = self.context.get("session_id")
+        already_triggered = self.context.get("already_triggered_node_ids", [])
 
         if not user_id:
             return "Error: No user_id in context."
+        if not db_session:
+            return "Error: No db_session in context."
 
+        # 1. Validation and Filtering
+        from models.database import Node
+        from sqlalchemy import select
+        
+        # Fetch all valid node IDs in project to prevent hallucination
+        res = await db_session.execute(select(Node.id))
+        valid_node_ids = set(res.scalars().all())
+
+        filtered_targets = []
+        skipped_redundant = []
+        invalid_ids = []
+
+        for tid in target_ids:
+            if tid not in valid_node_ids:
+                invalid_ids.append(tid)
+                continue
+            
+            if not force and tid in already_triggered:
+                skipped_redundant.append(tid)
+                continue
+            
+            filtered_targets.append(tid)
+
+        if invalid_ids:
+            return f"Error: The following Target IDs do not exist: {', '.join(invalid_ids)}. Please check the PROJECT ROSTER and try again with correct IDs."
+
+        if not filtered_targets:
+            if skipped_redundant:
+                return f"Multicast cancelled: All targets ({', '.join(skipped_redundant)}) were already notified via Tier 1 hooks. Use 'force=True' if a redundant call is intentional."
+            return "Error: No valid targets identified for multicast."
+
+        # 2. Enqueue Tasks
         manager = QueueManager()
-        for target_id in target_ids:
+        current_node_id = self.context.get("node_id")
+        count = 0
+        
+        for target_id in filtered_targets:
+            if target_id == current_node_id:
+                print(f"[MulticastMessageTool] Skipping self-recursion for node {target_id}")
+                continue
+            
             manager.enqueue_node_task(
                 user_id=user_id,
                 target_node_id=target_id,
@@ -43,29 +87,38 @@ class MulticastMessageTool(BaseTool):
                     "original_message": message
                 }
             )
+            count += 1
         
-        return f"Successfully multicasted message to {len(target_ids)} agents."
+        status_msg = f"Successfully multicasted message to {count} agents."
+        if skipped_redundant:
+            status_msg += f" (Note: {len(skipped_redundant)} nodes were skipped as they were already triggered by Regex hooks)."
+        
+        return status_msg
 
-class RegisterRoutingHookArgs(BaseModel):
-    pattern: Optional[str] = Field(None, description="Regex pattern for Fast-Path monitoring (e.g., '.*urgent.*').")
-    intent_description: Optional[str] = Field(None, description="Natural language description of your interest for AI-based semantic routing (e.g., 'messages about budget concerns').")
-    description: Optional[str] = Field(None, description="User-facing label for this hook.")
+class SubscribeIntentArgs(BaseModel):
+    pattern: Optional[str] = Field(None, description="Regex pattern for immediate matching (e.g., '.*urgent.*').")
+    intent_description: Optional[str] = Field(None, description="Natural language description of your interest for AI-based semantic routing (e.g., 'messages about personal health').")
+    description: Optional[str] = Field(None, description="User-facing label for this monitor/hook.")
+    session_bound: bool = Field(True, description="If True, this subscription will be automatically removed when the current session is archived (recommended).")
 
-class RegisterRoutingHookTool(BaseTool):
+class SubscribeIntentTool(BaseTool):
     """
-    Tool for agents to dynamically register interest in specific message patterns.
-    When a message matching the pattern is detected, the Router will notify this agent.
+    Tool for agents to subscribe to specific message patterns or semantic intents.
+    When a message matches, the Router will notify this agent.
+    Use this for long-term monitoring or to become a 'Subject Matter Expert' for a topic.
     """
-    name = "register_routing_hook"
+    name = "subscribe_to_intent"
     description = (
         "Subscribe to message patterns. You can use regex patterns for exact matching "
-        "or natural language descriptions ('intent_description') for semantic AI-based matching."
+        "or natural language descriptions ('intent_description') for semantic AI-based matching. "
+        "The System Router will then notify you whenever a relevant message is detected."
     )
-    args_schema = RegisterRoutingHookArgs
+    args_schema = SubscribeIntentArgs
 
-    async def run(self, pattern: Optional[str] = None, intent_description: Optional[str] = None, description: Optional[str] = None, **kwargs) -> str:
+    async def run(self, pattern: Optional[str] = None, intent_description: Optional[str] = None, description: Optional[str] = None, session_bound: bool = True, **kwargs) -> str:
         db_session = self.context.get("db_session")
         node_id = self.context.get("node_id")
+        session_id = self.context.get("session_id") if session_bound else None
         
         if not db_session or not node_id:
             return "Error: Database session or Node ID missing from context."
@@ -90,18 +143,36 @@ class RegisterRoutingHookTool(BaseTool):
             updated = False
 
             # Handle Regex Path
+            import uuid
+            def generate_id():
+                return f"sub_{str(uuid.uuid4())[:8]}"
+
             if pattern:
                 patterns = meta.get("trigger_patterns", [])
-                if pattern not in patterns:
-                    patterns.append(pattern)
+                # Check for existing
+                if not any(p.get("value") == pattern for p in patterns if isinstance(p, dict)):
+                    sub_id = generate_id()
+                    patterns.append({
+                        "id": sub_id,
+                        "value": pattern, 
+                        "session_id": session_id, 
+                        "description": description
+                    })
                     meta["trigger_patterns"] = patterns
                     updated = True
             
             # Handle Semantic Path
             if intent_description:
                 interests = meta.get("semantic_interests", [])
-                if intent_description not in interests:
-                    interests.append(intent_description)
+                # Check for existing
+                if not any(i.get("value") == intent_description for i in interests if isinstance(i, dict)):
+                    sub_id = generate_id()
+                    interests.append({
+                        "id": sub_id,
+                        "value": intent_description, 
+                        "session_id": session_id, 
+                        "description": description
+                    })
                     meta["semantic_interests"] = interests
                     updated = True
 
@@ -114,9 +185,159 @@ class RegisterRoutingHookTool(BaseTool):
             # 2. Register regex in memory for immediate effect (if applicable)
             if pattern:
                 router = Router()
-                router.register_hook(pattern, node_id, description or f"Dynamic hook from {node.display_name}")
+                router.register_hook(pattern, node_id, description or f"Subscription from {node.display_name}")
             
-            return f"Successfully registered interest. (Pattern: {pattern}, Intent: {intent_description})"
+            # Include the ID in the response if we only added one thing
+            msg = "Successfully subscribed to intent."
+            if updated:
+                added_id = ""
+                if pattern: added_id = meta["trigger_patterns"][-1]["id"]
+                elif intent_description: added_id = meta["semantic_interests"][-1]["id"]
+                msg += f" (Subscription ID: {added_id})"
+            
+            return msg
         except Exception as e:
             await db_session.rollback()
-            return f"Error registering hook: {e}"
+            return f"Error registering subscription: {e}"
+
+class UnsubscribeIntentArgs(BaseModel):
+    subscription_id: Optional[str] = Field(None, description="The unique ID of the subscription to remove (e.g., 'sub_abcd1234'). Preferred.")
+    pattern: Optional[str] = Field(None, description="The regex pattern to remove (if ID is unknown).")
+    intent_description: Optional[str] = Field(None, description="The semantic intent description to remove (if ID is unknown).")
+
+class UnsubscribeIntentTool(BaseTool):
+    """
+    Tool for agents to unsubscribe from message patterns or semantic intents.
+    Removes a previously registered subscription by ID or value.
+    """
+    name = "unsubscribe_from_intent"
+    description = (
+        "Remove a subscription to a message pattern or semantic intent. "
+        "Use subscription_id if known, otherwise provide the exact pattern/description."
+    )
+    args_schema = UnsubscribeIntentArgs
+
+    async def run(self, subscription_id: Optional[str] = None, pattern: Optional[str] = None, intent_description: Optional[str] = None, **kwargs) -> str:
+        db_session = self.context.get("db_session")
+        node_id = self.context.get("node_id")
+        
+        if not db_session or not node_id:
+            return "Error: Database session or Node ID missing from context."
+
+        if not subscription_id and not pattern and not intent_description:
+            return "Error: Either 'subscription_id', 'pattern', or 'intent_description' must be provided."
+
+        from models.database import Node
+        from sqlalchemy import select
+
+        try:
+            stmt = select(Node).filter(Node.id == node_id)
+            res = await db_session.execute(stmt)
+            node = res.scalars().first()
+            
+            if not node:
+                return f"Error: Node record {node_id} not found."
+
+            meta = node.meta_payload or {}
+            updated = False
+
+            # Helper to remove from list
+            def remove_from_meta(key, value, by_id=False):
+                nonlocal updated
+                lst = meta.get(key, [])
+                if not lst: return lst
+                
+                new_lst = []
+                for item in lst:
+                    if not isinstance(item, dict): continue # Should not happen in new system
+                    
+                    match = False
+                    if by_id:
+                        if item.get("id") == value: match = True
+                    else:
+                        if item.get("value") == value: match = True
+                    
+                    if match:
+                        updated = True
+                        continue
+                    new_lst.append(item)
+                return new_lst
+
+            if subscription_id:
+                meta["trigger_patterns"] = remove_from_meta("trigger_patterns", subscription_id, by_id=True)
+                # If not found in patterns, try interests (checking updated flag)
+                was_updated = updated
+                meta["semantic_interests"] = remove_from_meta("semantic_interests", subscription_id, by_id=True)
+                # updated will be True if either matched
+            else:
+                if pattern:
+                    meta["trigger_patterns"] = remove_from_meta("trigger_patterns", pattern)
+                if intent_description:
+                    meta["semantic_interests"] = remove_from_meta("semantic_interests", intent_description)
+
+            if updated:
+                node.meta_payload = meta
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(node, "meta_payload")
+                await db_session.commit()
+                return "Successfully unsubscribed."
+            
+            return "No matching subscription found to remove."
+        except Exception as e:
+            await db_session.rollback()
+            return f"Error removing subscription: {e}"
+
+class ListSubscriptionsTool(BaseTool):
+    """
+    Tool for agents to list their current active message subscriptions.
+    Returns a list of IDs, patterns, interests, and their session-binding status.
+    """
+    name = "list_my_subscriptions"
+    description = "List all active subscriptions (intents and regex hooks) for your node."
+    args_schema = NoArgs
+
+    async def run(self, **kwargs) -> str:
+        db_session = self.context.get("db_session")
+        node_id = self.context.get("node_id")
+        
+        if not db_session or not node_id:
+            return "Error: Database session or Node ID missing from context."
+
+        from models.database import Node
+        from sqlalchemy import select
+
+        try:
+            stmt = select(Node).filter(Node.id == node_id)
+            res = await db_session.execute(stmt)
+            node = res.scalars().first()
+            
+            if not node: return "Error: Node not found."
+
+            meta = node.meta_payload or {}
+            patterns = meta.get("trigger_patterns", [])
+            interests = meta.get("semantic_interests", [])
+
+            if not patterns and not interests:
+                return "You have no active subscriptions."
+
+            lines = ["### Your Active Subscriptions:"]
+            
+            if patterns:
+                lines.append("\n**Regex Patterns (Tier 1):**")
+                for p in patterns:
+                    if not isinstance(p, dict): continue
+                    bound = f" (Bound to session {p['session_id'][:8]})" if p.get('session_id') else " (Permanent)"
+                    desc = f" - {p.get('description')}" if p.get('description') else ""
+                    lines.append(f"- ID: `{p.get('id')}` | Pattern: `{p.get('value')}`{bound}{desc}")
+
+            if interests:
+                lines.append("\n**Semantic Interests (Tier 2):**")
+                for i in interests:
+                    if not isinstance(i, dict): continue
+                    bound = f" (Bound to session {i['session_id'][:8]})" if i.get('session_id') else " (Permanent)"
+                    desc = f" - {i.get('description')}" if i.get('description') else ""
+                    lines.append(f"- ID: `{i.get('id')}` | Intent: `{i.get('value')}`{bound}{desc}")
+
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Error listing subscriptions: {e}"

@@ -5,7 +5,7 @@ from .library.lbs import ListTasksTool, CreateTaskTool, UpdateTaskTool, DeleteTa
 from .library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool, DeleteArtifactTool, ImportGitHubRepoTool
 from .library.knowledge import SearchKnowledgeTool, IngestKnowledgeTool
 from .library.search import GoogleSearchTool, ResearchURLTool, SearchPlacesTool, DeepResearchTool
-from .library.markdown import InitPlanTool, UpdatePlanProgressTool, GetCurrentStatusTool, ReadMDSectionTool
+from .library.markdown import InitPlanTool, UpdatePlanProgressTool, GetCurrentStatusTool, ReadMDSectionTool, UpdateMDSectionTool
 from .library.ai import GenerateImageTool, MermaidVisualizerTool, ExecuteCodeTool
 from .library.commands import(
     ArchiveChatTool, MovePageTool, CreateProjectTool, DeleteProjectTool, CloneProjectTool,
@@ -14,7 +14,7 @@ from .library.commands import(
 from .library.condition import GetCurrentConditionTool, UpdateUserConditionTool
 from .library.members import ListMembersTool, ManageMemberTool, UpdateNodeDescriptionTool
 from .library.writer import RecursiveWriterTool
-from .library.routing import MulticastMessageTool, RegisterRoutingHookTool
+from .library.routing import MulticastMessageTool, SubscribeIntentTool
 from .library.shell import RunSafeShellTool
 
 __all__ = [
@@ -64,6 +64,7 @@ __all__ = [
     "ManageTaskExceptionTool",
     "ListExceptionsTool",
     "MulticastMessageTool",
-    "RegisterRoutingHookTool",
-    "RunSafeShellTool"
+    "SubscribeIntentTool",
+    "RunSafeShellTool",
+    "UpdateMDSectionTool"
 ]

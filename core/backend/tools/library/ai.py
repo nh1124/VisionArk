@@ -21,12 +21,12 @@ class GenerateImageTool(BaseTool):
 
     async def run(self, prompt: str, filename: Optional[str] = None, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
-        session: AsyncSession = kwargs.get("db_session")
+        db_session: AsyncSession = kwargs.get("db_session")
         project_id: str = kwargs.get("project_id")
-        if not user_id or not session: return {"success": False, "message": "Context error"}
+        if not user_id or not db_session: return {"success": False, "message": "Context error"}
         
         try:
-            client = await get_gemini_client(user_id, session)
+            client = await get_gemini_client(user_id, db_session)
             response = client.models.generate_content(
                 model="gemini-3-pro-image-preview",
                 contents=[prompt],
@@ -48,7 +48,7 @@ class GenerateImageTool(BaseTool):
             if not filename.endswith(('.png', '.jpg', '.jpeg', '.webp')):
                 filename += '.png'
             
-            artifacts_dir = await resolve_project_artifacts_dir(user_id, project_id, session)
+            artifacts_dir = await resolve_project_artifacts_dir(user_id, project_id, db_session)
             file_path = artifacts_dir / filename
             
             if isinstance(image_data, str):
@@ -105,12 +105,12 @@ class ExecuteCodeTool(BaseTool):
 
     async def run(self, prompt: str, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
-        session: AsyncSession = kwargs.get("db_session")
-        if not user_id or not session: return {"success": False, "message": "Context error"}
+        db_session: AsyncSession = kwargs.get("db_session")
+        if not user_id or not db_session: return {"success": False, "message": "Context error"}
         
         try:
             from google.genai import types
-            client = await get_gemini_client(user_id, session)
+            client = await get_gemini_client(user_id, db_session)
             resp = client.models.generate_content(
                 model="gemini-3-flash-preview", 
                 contents=prompt, 

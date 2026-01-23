@@ -14,7 +14,7 @@ class PlannerNode(GenericMemberNode):
         "update_plan_progress",
         "get_current_status",
         "update_md_section",
-        "mermaid_visualizer",
+        "generate_mermaid_visualizer",
         "save_artifact",
         "read_reference",
         "list_files",

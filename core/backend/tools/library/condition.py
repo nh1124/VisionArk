@@ -13,40 +13,40 @@ class GetCurrentConditionTool(BaseTool):
     args_schema = NoArgs
 
     async def run(self, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
+        db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
-        if not session or not user_id: return {"success": False, "message": "Context error"}
+        if not db_session or not user_id: return {"success": False, "message": "Context error"}
         
         try:
             # Reusing the existing function for now as it's already well-implemented
             from tools.lbs_tools import get_current_condition as get_cond
-            res = await get_cond(session=session, user_id=user_id)
+            res = await get_cond(db_session=db_session, user_id=user_id)
             return {"success": True, "message": f"Condition: {res}", "data": res}
         except Exception as e:
             return {"success": False, "message": f"Failed to get condition: {e}"}
 
 class UpdateUserConditionArgs(BaseModel):
-    physical: Optional[int] = Field(None, description="Physical energy level (0-10)")
-    mental: Optional[int] = Field(None, description="Mental energy level (0-10)")
+    cognitive_fatigue: int = Field(..., description="Cognitive fatigue level (0-5)")
     notes: Optional[str] = Field(None, description="Notes about the user's condition")
+    target_date: Optional[str] = Field(None, description="Target date for the condition update")
 
 class UpdateUserConditionTool(BaseTool):
     name = "update_user_condition"
     description = (
-        "Update the user's reported physical and mental energy levels. "
+        "Update the user's reported cognitive fatigue level. "
         "ATTENTION: Use this when the user explicitly provides condition updates. "
-        "HOW TO USE: 'update_user_condition(physical=8, mental=9, notes=\"Feeling refreshed after sleep.\")'."
+        "HOW TO USE: 'update_user_condition(cognitive_fatigue=4, notes=\"Feeling refreshed after sleep.\", target_date=\"2025-01-01\")'."
     )
     args_schema = UpdateUserConditionArgs
 
-    async def run(self, **args) -> Any:
-        session: AsyncSession = args.pop("session", None)
-        user_id: str = args.pop("user_id", None)
-        if not session or not user_id: return {"success": False, "message": "Context error"}
+    async def run(self, cognitive_fatigue: int, **kwargs) -> Any:
+        db_session: AsyncSession = kwargs.pop("db_session", None)
+        user_id: str = kwargs.pop("user_id", None)
+        if not db_session or not user_id: return {"success": False, "message": "Context error"}
         
         try:
             from tools.lbs_tools import update_user_condition as upd_cond
-            res = await upd_cond(session=session, user_id=user_id, **args)
+            res = await upd_cond(db_session=db_session, user_id=user_id, cognitive_fatigue=cognitive_fatigue, **kwargs)
             return {"success": True, "message": "Condition updated", "data": res}
         except Exception as e:
             return {"success": False, "message": f"Failed to update condition: {e}"}

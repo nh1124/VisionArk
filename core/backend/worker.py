@@ -216,7 +216,7 @@ class Worker:
         cmd = parse_command(message.strip())
         if not cmd: return False
         
-        result_msg = await execute_command(cmd, context_type="project", project_id=context.get("project_id"), session=context.get("db_session"), user_id=context.get("user_id"))
+        result_msg = await execute_command(cmd, context_type="project", project_id=context.get("project_id"), db_session=context.get("db_session"), user_id=context.get("user_id"))
         self.manager.update_status(context.get("task_id"), "completed", result_msg.message)
         return True
 

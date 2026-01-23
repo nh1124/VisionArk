@@ -19,10 +19,10 @@ class BaseNode(ABC):
         from tools.base import BaseTool
         self.tools: List[BaseTool] = []
         
-    async def load_system_prompt(self, role_name: Optional[str] = None) -> str:
+    async def load_system_prompt(self, role_name: Optional[str] = None, components: Optional[List[str]] = None) -> str:
         """
-        Load the system prompt from database (Node) or backend assets.
-        Global + Role Specific + Dynamic Tool Descriptions.
+        Load the system prompt from components, database (Node), or backend assets.
+        Components + Role Specific + Dynamic Tool Descriptions.
         """
         from utils.paths import get_prompts_dir
         from models.database import AsyncSessionLocal, Node
@@ -30,25 +30,36 @@ class BaseNode(ABC):
         
         prompts_dir = get_prompts_dir()
         
-        # 1. Load Global
-        global_path = prompts_dir / "system" / "global.md"
-        global_text = ""
-        try:
-            if global_path.exists():
-                global_text = global_path.read_text(encoding='utf-8')
-            else:
-                print(f"[BaseNode] Warning: Global prompt not found at {global_path}")
-                global_text = "You are a helpful AI assistant."
-        except Exception as e:
-            print(f"[BaseNode] Error loading global prompt: {e}")
-            
+        # 1. Load Components (Modular)
+        component_texts = []
+        if components:
+            for comp in components:
+                comp_path = prompts_dir / "components" / f"{comp}.md"
+                try:
+                    if comp_path.exists():
+                        component_texts.append(comp_path.read_text(encoding='utf-8'))
+                    else:
+                        print(f"[BaseNode] Warning: Component {comp} not found at {comp_path}")
+                except Exception as e:
+                    print(f"[BaseNode] Error loading component {comp}: {e}")
+        
+        # Fallback to global if no components provided (Backward Compatibility)
+        if not component_texts and not components:
+            global_path = prompts_dir / "system" / "global.md"
+            try:
+                if global_path.exists():
+                    component_texts.append(global_path.read_text(encoding='utf-8'))
+                else:
+                    component_texts.append("You are a helpful AI assistant.")
+            except Exception as e:
+                print(f"[BaseNode] Error loading global prompt: {e}")
+
         # 2. Load Role Specifics (DB Profile first, then Fallback to static Markdown)
         role_text = ""
         if role_name:
             # Try DB first
             async with AsyncSessionLocal() as db:
                 try:
-                    # Find node_id from context/project_id if possible
                     p_id = self.context.get("project_id")
                     profile_result = await db.execute(
                         select(Node).filter(
@@ -60,7 +71,6 @@ class BaseNode(ABC):
                     profile = profile_result.scalars().first()
                     
                     if profile and profile.system_prompt:
-                        print(f"[BaseNode] Using DB profile for {role_name} in {p_id}")
                         role_text = profile.system_prompt
                 except Exception as e:
                     print(f"[BaseNode] DB error fetching role prompt: {e}")
@@ -71,8 +81,6 @@ class BaseNode(ABC):
                 try:
                     if role_path.exists():
                         role_text = role_path.read_text(encoding='utf-8')
-                    else:
-                        print(f"[BaseNode] Warning: Role prompt not found for {role_name}")
                 except Exception as e:
                     print(f"[BaseNode] Error loading role prompt: {e}")
         
@@ -87,7 +95,8 @@ class BaseNode(ABC):
                 tool_text += f"- `{name}`: {desc}\n"
         
         # 4. Combine
-        parts = [p for p in [global_text, role_text, tool_text] if p]
+        all_parts = component_texts + [role_text, tool_text]
+        parts = [p for p in all_parts if p]
         return "\n\n".join(parts) if parts else "You are a helpful AI assistant."
     
     async def on_enter(self):
@@ -144,9 +153,11 @@ class BaseNode(ABC):
         on_enter -> on_execute -> on_exit.
         """
         try:
+            print(f"▶️ [{self.__class__.__name__}] Starting process | Message: {message[:100]}...")
             await self.on_enter()
             result = await self.on_execute(message)
             await self.on_exit(result)
+            print(f"✅ [{self.__class__.__name__}] Finished process.")
             return result
         finally:
             # Cleanup session if we created it
@@ -161,6 +172,9 @@ class BaseNode(ABC):
         Execute a tool with callback injection and status reporting.
         """
         tool_name = tool.name
+        
+        # Inject context
+        tool.context = self.context
         
         # Inject callback
         if hasattr(tool, 'set_status_callback'):
@@ -225,6 +239,7 @@ class BaseNode(ABC):
         # Call LLM
         try:
             t0 = time.time()
+            print(f"💬 [{self.__class__.__name__}] LLM Call starting (preferred_model: {preferred_model})...")
             messages = self.llm.format_messages(effective_system_prompt, llm_messages)
             
             # --- Handle Class-Based Tools ---
@@ -272,7 +287,8 @@ class BaseNode(ABC):
                 preferred_model=preferred_model,
                 attached_files=current_attached_files if current_attached_files else None
             )
-            print(f"[{self.__class__.__name__}/Timing] LLM complete: {time.time()-t0:.2f}s")
+            elapsed = time.time() - t0
+            print(f"🏁 [{self.__class__.__name__}/Timing] Total chat_with_tools complete in {elapsed:.2f}s")
             
             # Return full response to include tool_calls metadata
             return response

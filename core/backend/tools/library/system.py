@@ -14,12 +14,12 @@ class ListNodesTool(BaseTool):
     args_schema = NoArgs
 
     async def run(self, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("db_session")
+        db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         project_id: str = kwargs.get("project_id")
         current_node_id: str = kwargs.get("node_id")
 
-        if not session or not user_id:
+        if not db_session or not user_id:
             return {"success": False, "message": "Context error"}
 
         try:
@@ -27,15 +27,15 @@ class ListNodesTool(BaseTool):
             from sqlalchemy import select
 
             # 1. System Nodes
-            res_s = await session.execute(select(Node).filter(Node.node_type == "SYSTEM", Node.status == "active"))
+            res_s = await db_session.execute(select(Node).filter(Node.node_type == "SYSTEM", Node.status == "active"))
             systems = res_s.scalars().all()
 
             # 2. Project Members
-            res_m = await session.execute(select(Node).filter(Node.project_id == project_id, Node.node_type == "MEMBER", Node.status == "active"))
+            res_m = await db_session.execute(select(Node).filter(Node.project_id == project_id, Node.node_type == "MEMBER", Node.status == "active"))
             members = res_m.scalars().all()
 
             # 3. Peer Projects
-            res_p = await session.execute(
+            res_p = await db_session.execute(
                 select(Node).join(Project, Node.project_id == Project.id).filter(
                     Project.user_id == user_id,
                     Node.node_type == "PROJECT",
@@ -68,15 +68,15 @@ class GetNodeProfileTool(BaseTool):
     args_schema = GetNodeProfileArgs
 
     async def run(self, node_id: str, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("db_session")
-        if not session:
+        db_session: AsyncSession = kwargs.get("db_session")
+        if not db_session:
             return {"success": False, "message": "Context error"}
         
         try:
             from models.database import Node
             from sqlalchemy import select
             
-            res = await session.execute(select(Node).filter(Node.id == node_id))
+            res = await db_session.execute(select(Node).filter(Node.id == node_id))
             node = res.scalars().first()
             if not node:
                 return {"success": False, "message": f"Node {node_id} not found."}
@@ -112,20 +112,25 @@ class AskNodeTool(BaseTool):
     args_schema = AskNodeArgs
 
     async def run(self, target_id: str, message: str, blocking: bool = True, include_history: bool = False, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("db_session")
+        db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         project_id: str = kwargs.get("project_id")
         session_id: str = kwargs.get("session_id")
 
-        if not session or not user_id:
+        if not db_session or not user_id:
             return {"success": False, "message": "Context error: session or user_id missing"}
+        
+        # Prevent self-recursion
+        current_node_id = kwargs.get("node_id")
+        if target_id == current_node_id:
+            return {"success": False, "message": "Error: You cannot call 'ask_node' on yourself to prevent infinite loops."}
         
         try:
             from models.database import Node
             from sqlalchemy import select
             
             # 1. Lookup node in DB strictly by ID
-            result = await session.execute(
+            result = await db_session.execute(
                 select(Node).filter(Node.id == target_id).filter(Node.status == "active")
             )
             node_record = result.scalars().first()
@@ -173,7 +178,7 @@ class AskNodeTool(BaseTool):
             
             ctx = {
                 'user_id': user_id, 
-                'db_session': session, 
+                'db_session': db_session, 
                 'project_id': node_record.project_id or project_id,
                 'session_id': session_id,
                 'api_key': kwargs.get("api_key")
@@ -206,9 +211,9 @@ class BroadcastSystemMessageTool(BaseTool):
     args_schema = BroadcastMessageArgs
 
     async def run(self, message: str, target_project_ids: Optional[list[str]] = None, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("db_session")
+        db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
-        if not session or not user_id:
+        if not db_session or not user_id:
             return {"success": False, "message": "Context error"}
         
         try:
@@ -218,17 +223,17 @@ class BroadcastSystemMessageTool(BaseTool):
             
             # 1. Determine target projects
             if target_project_ids:
-                res = await session.execute(select(Project).filter(Project.id.in_(target_project_ids)))
+                res = await db_session.execute(select(Project).filter(Project.id.in_(target_project_ids)))
                 projects = res.scalars().all()
             else:
-                res = await session.execute(select(Project).filter(Project.user_id == user_id, Project.status == "active"))
+                res = await db_session.execute(select(Project).filter(Project.user_id == user_id, Project.status == "active"))
                 projects = res.scalars().all()
             
             count = 0
             for proj in projects:
                 # 2. Get/Create a system session for the project
                 # We look for a session titled "System Alerts" or similar
-                session_res = await session.execute(
+                session_res = await db_session.execute(
                     select(ChatSession).filter(
                         ChatSession.project_id == proj.id,
                         ChatSession.title == "System Alerts"
@@ -243,7 +248,7 @@ class BroadcastSystemMessageTool(BaseTool):
                         title="System Alerts",
                         summary="Global Scheduler automated alerts and advice."
                     )
-                    session.add(chat_session)
+                    db_session.add(chat_session)
                 
                 # 3. Add the message
                 alert_msg = ChatMessage(
@@ -253,10 +258,10 @@ class BroadcastSystemMessageTool(BaseTool):
                     content=f"**[Global Scheduler Alert]**: {message}",
                     meta_payload={"sender": "GlobalScheduler", "type": "SYSTEM_ADVICE"}
                 )
-                session.add(alert_msg)
+                db_session.add(alert_msg)
                 count += 1
             
-            await session.commit()
+            await db_session.commit()
             return {"success": True, "message": f"Broadcasted alert to {count} projects via System Alerts session."}
         except Exception as e:
             return {"success": False, "message": f"Failed to broadcast message: {e}"}

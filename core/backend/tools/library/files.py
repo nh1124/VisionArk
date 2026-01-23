@@ -25,7 +25,7 @@ class SaveArtifactTool(BaseTool):
 
     async def run(self, file_path: str, content: str, overwrite: bool = False, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
-        session: AsyncSession = kwargs.get("db_session")
+        db_session: AsyncSession = kwargs.get("db_session")
         project_id: str = kwargs.get("project_id")
         if not user_id: return {"success": False, "message": "Context error"}
         
@@ -35,7 +35,7 @@ class SaveArtifactTool(BaseTool):
             if file_path.startswith("artifacts/"):
                 p = secure_path_join(root_dir, file_path)
             else:
-                artifacts_dir = await resolve_project_artifacts_dir(user_id, project_id, session)
+                artifacts_dir = await resolve_project_artifacts_dir(user_id, project_id, db_session)
                 p = secure_path_join(artifacts_dir, file_path)
             
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -51,7 +51,7 @@ class SaveArtifactTool(BaseTool):
             # --- Trigger Sync ---
             try:
                 from services.file_service import FileService
-                file_svc = FileService(session, user_id)
+                file_svc = FileService(db_session, user_id)
                 await file_svc.sync_project_directory(project_id)
             except Exception as se:
                 print(f"[SaveArtifactTool] Sync trigger failed: {se}")
@@ -73,7 +73,7 @@ class ReadReferenceTool(BaseTool):
 
     async def run(self, file_path: str, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
-        session: AsyncSession = kwargs.get("db_session")
+        db_session: AsyncSession = kwargs.get("db_session")
         project_id: str = kwargs.get("project_id")
         if not user_id: return {"success": False, "message": "Context error"}
         
@@ -97,12 +97,12 @@ class ReadReferenceTool(BaseTool):
                     from services.file_service import FileService
                     
                     # Fetch User Settings for API Key
-                    result = await session.execute(select(UserSettings).filter(UserSettings.user_id == user_id))
+                    result = await db_session.execute(select(UserSettings).filter(UserSettings.user_id == user_id))
                     user_settings = result.scalars().first()
                     api_key = user_settings.gemini_api_key if user_settings else None
                     
                     if api_key:
-                        service = FileService(session, user_id, api_key)
+                        service = FileService(db_session, user_id, api_key)
                         gemini_info = await service.ensure_gemini_upload(
                             local_path=p,
                             filename=p.name,
@@ -140,7 +140,7 @@ class ListFilesTool(BaseTool):
 
     async def run(self, sub_dir: str = "refs", **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
-        session: AsyncSession = kwargs.get("db_session")
+        db_session: AsyncSession = kwargs.get("db_session")
         project_id: str = kwargs.get("project_id")
         if not user_id: return {"success": False, "message": "Context error"}
         
@@ -170,7 +170,7 @@ class DeleteArtifactTool(BaseTool):
 
     async def run(self, file_path: str, **kwargs) -> Any:
         user_id: str = kwargs.get("user_id")
-        session: AsyncSession = kwargs.get("db_session")
+        db_session: AsyncSession = kwargs.get("db_session")
         project_id: str = kwargs.get("project_id")
         if not user_id: return {"success": False, "message": "Context error"}
         
@@ -179,7 +179,7 @@ class DeleteArtifactTool(BaseTool):
             if file_path.startswith("artifacts/"):
                 p = secure_path_join(root_dir, file_path)
             else:
-                artifacts_dir = await resolve_project_artifacts_dir(user_id, project_id, session)
+                artifacts_dir = await resolve_project_artifacts_dir(user_id, project_id, db_session)
                 p = secure_path_join(artifacts_dir, file_path)
                 
             if p.exists():
@@ -276,9 +276,9 @@ class ImportGitHubRepoTool(BaseTool):
             try:
                 from services.file_service import FileService
                 from sqlalchemy.ext.asyncio import AsyncSession
-                session: AsyncSession = kwargs.get("db_session")
-                if session:
-                    file_svc = FileService(session, user_id)
+                db_session: AsyncSession = kwargs.get("db_session")
+                if db_session:
+                    file_svc = FileService(db_session, user_id)
                     await file_svc.sync_project_directory(project_id)
             except Exception as se:
                 print(f"[ImportGitHubRepoTool] Sync trigger failed: {se}")

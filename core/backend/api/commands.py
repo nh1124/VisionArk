@@ -58,7 +58,7 @@ async def execute_command_endpoint(
     result = await execute_command(
         command,
         context=req.context,
-        session=db,
+        db_session=db,
         project_name=req.project_name
     )
     
