@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
 from typing import Optional, List, Dict
 
-from services.inbox_handler import InboxHandler, extract_meta_actions_from_chat
+
 from services.auth import resolve_identity, Identity, resolve_identity_for_download
 from models.database import Node, Project, ChatSession, ChatMessage, UploadedFile, get_async_db
 from utils.paths import get_project_dir, get_user_projects_dir, validate_name, secure_path_join, update_project_name_cache as update_cache

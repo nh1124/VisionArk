@@ -42,7 +42,6 @@ async def get_hub_suggestions(
     - Overdue tasks
     - Inactive spokes
     - High load days
-    - Pending inbox messages
     """
     user_id = current_user.user_id
     suggestions: List[HubSuggestion] = []
@@ -65,9 +64,6 @@ async def get_hub_suggestions(
         inactive_suggestions = _check_inactive_projects(user_id, session, today)
         suggestions.extend(inactive_suggestions)
         
-        # Check for pending inbox messages
-        inbox_suggestions = _check_pending_inbox(user_id, session)
-        suggestions.extend(inbox_suggestions)
         
     except Exception as e:
         # Log but don't fail - suggestions are non-critical
@@ -213,34 +209,3 @@ def _check_inactive_projects(user_id: str, session: Session, today: date) -> Lis
 
 
 
-def _check_pending_inbox(user_id: str, session: Session) -> List[HubSuggestion]:
-    """Check for pending inbox messages"""
-    suggestions = []
-    
-    try:
-        from models.database import InboxMessage
-        
-        # Count pending messages
-        pending_count = session.query(InboxMessage).filter_by(
-            user_id=user_id,
-            status="pending"
-        ).count()
-        
-        if pending_count > 0:
-            suggestions.append(HubSuggestion(
-                id=f"inbox-{uuid.uuid4().hex[:8]}",
-                type="pending_inbox",
-                severity="info",
-                title=f"{pending_count} pending message{'s' if pending_count > 1 else ''}",
-                description=f"You have {pending_count} unprocessed message{'s' if pending_count > 1 else ''} from Spoke agents waiting in your inbox.",
-                action_label="Open Inbox",
-                action_type="navigate",
-                action_data={
-                    "route": "/hub",
-                    "view": "inbox"
-                }
-            ))
-    except Exception as e:
-        print(f"[Suggestions] Error checking pending inbox: {e}")
-    
-    return suggestions

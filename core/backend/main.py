@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from models.database import init_database
-from api import lbs, inbox, agents, commands, rag, context, files, auth, settings as settings_api, export
+from api import lbs, agents, commands, rag, context, files, auth, settings as settings_api, export
 from api import decomposer, suggestions, scheduler
 
 from config import settings
@@ -63,7 +63,6 @@ app.add_middleware(
 # Include routers
 app.include_router(auth.router)  # Auth first (no auth required for register)
 app.include_router(lbs.router)
-app.include_router(inbox.router)
 app.include_router(agents.router)
 app.include_router(commands.router)
 app.include_router(rag.router)

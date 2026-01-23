@@ -1,6 +1,6 @@
 import uuid
 from typing import List, Type, Any
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from models.database import AsyncSessionLocal, Node, Project
 from nodes.base_node import BaseNode
 

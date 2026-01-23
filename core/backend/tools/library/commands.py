@@ -10,7 +10,7 @@ from tools.base import BaseTool, NoArgs
 from models.database import Node, Project, ChatSession, ChatMessage
 from services.context_manager import ContextManager
 from utils.paths import get_project_dir, validate_name
-from services.inbox_handler import InboxHandler
+
 
 class ArchiveChatTool(BaseTool):
     name = "archive_chat"
@@ -306,35 +306,6 @@ class CloneProjectTool(BaseTool):
             if session: await session.rollback()
             return {"success": False, "message": f"Cloning failed: {str(e)}"}
 
-class CheckInboxTool(BaseTool):
-    name = "check_inbox"
-    description = "Fetch and read inbox messages from projects."
-    args_schema = NoArgs
-
-    async def run(self, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
-        user_id: str = kwargs.get("user_id")
-        if not session or not user_id:
-            return {"success": False, "message": "Missing context"}
-
-        try:
-            inbox = InboxHandler(session, user_id=user_id)
-            messages = await inbox.get_pending_messages()
-            if not messages:
-                return {"success": True, "message": "📭 Inbox is empty. No messages from Projects."}
-
-            content = [ f"📬 You have {len(messages)} messages from Projects:\n" ]
-            for msg in messages:
-                project_id = msg.source_project_id
-                summary = msg.payload.get('summary', 'No summary')
-                request = msg.payload.get('request', '')
-                text = f"\n**From {project_id}:**\n{summary}"
-                if request: text += f"\n*Request:* {request}"
-                content.append(text)
-
-            return {"success": True, "message": "\n".join(content)}
-        except Exception as e:
-            return {"success": False, "message": f"Failed to check inbox: {str(e)}"}
 
 class SendMessageArgs(BaseModel):
     project: str = Field(..., description="Target project ID or name")
@@ -374,53 +345,4 @@ class SendMessageTool(BaseTool):
             if session: await session.rollback()
             return {"success": False, "message": f"Failed to send message: {str(e)}"}
 
-class ReportArgs(BaseModel):
-    summary: str = Field(..., description="Summary of progress")
 
-class ReportTool(BaseTool):
-    name = "report"
-    description = "Send a progress report to the Hub inbox."
-    args_schema = ReportArgs
-
-    async def run(self, summary: str, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
-        user_id: str = kwargs.get("user_id")
-        project_id: str = kwargs.get("project_id") 
-        if not session or not user_id:
-            return {"success": False, "message": "Missing context"}
-
-        try:
-            inbox = InboxHandler(session, user_id=user_id)
-            meta_xml = f"""<meta-action type="share_update">
-    <target>Hub</target>
-    <timestamp>{datetime.now().isoformat()}</timestamp>
-    <summary>{summary}</summary>
-    <request></request>
-</meta-action>"""
-            await inbox.push_to_inbox(source_project_id=project_id, meta_action_xml=meta_xml)
-            return {"success": True, "message": "📤 Report sent to Hub inbox"}
-        except Exception as e:
-            return {"success": False, "message": f"Failed to send report: {str(e)}"}
-
-class ProcessInboxArgs(BaseModel):
-    message_id: int = Field(..., description="ID of the inbox message")
-    action: str = Field(..., pattern="^(accept|reject)$", description="Action to take (accept/reject)")
-
-class ProcessInboxTool(BaseTool):
-    name = "process_inbox"
-    description = "Accept or reject a message from the inbox."
-    args_schema = ProcessInboxArgs
-
-    async def run(self, message_id: int, action: str, **kwargs) -> Any:
-        session: AsyncSession = kwargs.get("session")
-        user_id: str = kwargs.get("user_id")
-        if not session or not user_id:
-            return {"success": False, "message": "Missing context"}
-
-        try:
-            inbox = InboxHandler(session, user_id=user_id)
-            success = await inbox.process_message(message_id, action.lower())
-            if success: return {"success": True, "message": f"✅ Message {message_id} {action}ed successfully."}
-            return {"success": False, "message": f"Failed to process message {message_id}."}
-        except Exception as e:
-            return {"success": False, "message": f"Failed to process inbox: {str(e)}"}

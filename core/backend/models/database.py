@@ -81,23 +81,6 @@ class ScheduledTask(Base):
     project = relationship("Project")
 
 
-class InboxQueue(Base):
-    """Async message buffer from Projects to Hub (per-user)"""
-    __tablename__ = "inbox_queue"
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
-    source_project_id = Column(String(36), ForeignKey("projects.id"), nullable=False)
-    message_type = Column(String(50), nullable=False)
-    payload = Column(JSON, nullable=False)
-    is_processed = Column(Boolean, default=False)
-    received_at = Column(DateTime, default=datetime.utcnow)
-    processed_at = Column(DateTime, nullable=True)
-    error_log = Column(Text, nullable=True)
-    
-    # Relationships
-    user = relationship("User")
-    source_project = relationship("Project")
 
 
 class User(Base):
@@ -455,7 +438,6 @@ def _run_migrations(engine):
     for table, old_col, new_col in [
         ('rag_metadata', 'project_name', 'project_id'),
         ('archived_contexts', 'project_name', 'project_id'),
-        ('inbox_queue', 'source_project', 'source_project_id')
     ]:
         if table in inspector.get_table_names():
             columns = [col['name'] for col in inspector.get_columns(table)]

@@ -16,6 +16,13 @@ from utils.paths import get_project_dir
 # File size limit: 100MB
 MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024
 
+# Sync exclusion list
+IGNORED_DIRS = {
+    '.git', '.github', 'node_modules', '__pycache__', 
+    '.venv', 'venv', 'env', '.pytest_cache', '.next',
+    '.antigravity', '.gemini', 'dist', 'build', '.vscode'
+}
+
 
 def _resolve_portable_path(stored_path: str) -> Path:
     """
@@ -219,6 +226,82 @@ class FileService:
         await self.db.commit()
         return True
     
+    async def sync_project_directory(self, project_id: str, deep: bool = False) -> Dict[str, int]:
+        """
+        Synchronize filesystem with database records.
+        Lightweight delta sync using size and mtime.
+        """
+        proj = await self._get_project(project_id)
+        if not proj:
+            return {"added": 0, "removed": 0, "updated": 0}
+
+        refs_dir = self.get_files_dir(project_id)
+        if not refs_dir.exists():
+            return {"added": 0, "removed": 0, "updated": 0}
+
+        # 1. Get current DB records
+        result = await self.db.execute(select(UploadedFile).filter(UploadedFile.project_id == proj.id))
+        db_files = {f.filename: f for f in result.scalars().all()}
+        
+        from mimetypes import guess_type
+        stats = {"added": 0, "removed": 0, "updated": 0}
+        found_on_disk = set()
+
+        # 2. Scan Disk
+        def scan_disk(current_dir: Path):
+            for item in os.scandir(current_dir):
+                if item.is_dir():
+                    if item.name in IGNORED_DIRS:
+                        continue
+                    scan_disk(Path(item.path))
+                elif item.is_file():
+                    p = Path(item.path)
+                    try:
+                        rel_path = p.relative_to(refs_dir).as_posix()
+                    except ValueError:
+                        continue # Should not happen with get_files_dir logic
+                    
+                    found_on_disk.add(rel_path)
+                    file_stat = item.stat()
+                    
+                    if rel_path in db_files:
+                        # Lightweight check
+                        db_f = db_files[rel_path]
+                        # Note: UploadedFile doesn't have mtime stored currently, 
+                        # but we can compare size as a proxy or just rely on manual updates.
+                        if db_f.size_bytes != file_stat.st_size:
+                            db_f.size_bytes = file_stat.st_size
+                            stats["updated"] += 1
+                    else:
+                        mime_type, _ = guess_type(item.name)
+                        new_file = UploadedFile(
+                            id=str(uuid4()),
+                            project_id=proj.id,
+                            filename=rel_path,
+                            storage_path=str(p),
+                            mime_type=mime_type or "application/octet-stream",
+                            size_bytes=file_stat.st_size,
+                            uploaded_at=datetime.fromtimestamp(file_stat.st_mtime)
+                        )
+                        self.db.add(new_file)
+                        stats["added"] += 1
+
+        await asyncio.to_thread(scan_disk, refs_dir)
+
+        # 3. Identify removed files
+        for rel_path, db_f in db_files.items():
+            if rel_path not in found_on_disk:
+                # Extra check: Does it physically exist at storage_path?
+                if not Path(db_f.storage_path).exists():
+                    await self.db.delete(db_f)
+                    stats["removed"] += 1
+        
+        if stats["added"] > 0 or stats["removed"] > 0 or stats["updated"] > 0:
+            await self.db.commit()
+            print(f"[FileService] Sync completed for {project_id}: {stats}")
+
+        return stats
+
     async def list_files(self, project_id: str) -> List[Dict[str, Any]]:
         """
         List all files for a project (Hybrid: DB + Disk).
@@ -234,6 +317,10 @@ class FileService:
         ).order_by(UploadedFile.uploaded_at.desc()))
         db_files = result.scalars().all()
         
+        # Trigger background sync (Lazy Sync)
+        # We don't await it to keep list_files fast
+        asyncio.create_task(self.sync_project_directory(project_id))
+
         # Use filename as key since that's what we show/compare
         db_file_names = {f.filename for f in db_files}
         
@@ -257,12 +344,7 @@ class FileService:
             if refs_dir.exists():
                 from mimetypes import guess_type
                 
-                # Directories to skip entirely
-                IGNORED_DIRS = {
-                    '.git', '.github', 'node_modules', '__pycache__', 
-                    '.venv', 'venv', 'env', '.pytest_cache', '.next',
-                    '.antigravity', '.gemini', 'dist', 'build', '.vscode'
-                }
+                # Use class constant
 
                 def scan_recursive(current_dir: Path):
                     results = []

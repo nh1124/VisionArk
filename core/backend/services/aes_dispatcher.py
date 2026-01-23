@@ -87,3 +87,42 @@ class AESDispatcher:
             await session.commit()
             print(f"[AES Dispatcher] Scheduled task {task_type} for {scheduled_at}")
             return new_task.id
+
+    @staticmethod
+    def calculate_next_run(rule: str, last_run: datetime) -> datetime:
+        """
+        Heuristic for calculating next run time. 
+        In production, this would use 'croniter' for full cron support.
+        """
+        if not rule:
+            return None
+            
+        if rule == "@daily":
+            return last_run + timedelta(days=1)
+        if rule == "@weekly":
+            return last_run + timedelta(weeks=1)
+        if rule == "@hourly":
+            return last_run + timedelta(hours=1)
+            
+        # Fallback for unknown rules: daily
+        return last_run + timedelta(days=1)
+
+    async def reschedule_task(self, original_task: ScheduledTask, next_run: datetime):
+        """
+        Creates a new task based on an existing recurring task.
+        """
+        async with self.session_maker() as session:
+            new_task = ScheduledTask(
+                id=str(uuid.uuid4()),
+                user_id=original_task.user_id,
+                project_id=original_task.project_id,
+                task_type=original_task.task_type,
+                payload=original_task.payload,
+                scheduled_at=next_run,
+                recurring_rule=original_task.recurring_rule,
+                status=ScheduledTaskStatus.PENDING
+            )
+            session.add(new_task)
+            await session.commit()
+            print(f"[AES Dispatcher] Rescheduled recurring task {original_task.task_type} for {next_run}")
+            return new_task.id

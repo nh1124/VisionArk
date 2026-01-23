@@ -48,6 +48,14 @@ class SaveArtifactTool(BaseTool):
             # Better: get actual relative path to root
             actual_rel = p.relative_to(root_dir).as_posix()
             
+            # --- Trigger Sync ---
+            try:
+                from services.file_service import FileService
+                file_svc = FileService(session, user_id)
+                await file_svc.sync_project_directory(project_id)
+            except Exception as se:
+                print(f"[SaveArtifactTool] Sync trigger failed: {se}")
+            
             return {"success": True, "message": f"Saved artifact to {actual_rel}", "data": {"path": actual_rel}}
         except Exception as e:
             return {"success": False, "message": f"Failed to save artifact: {e}"}
@@ -264,6 +272,17 @@ class ImportGitHubRepoTool(BaseTool):
             if process.returncode != 0:
                 return {"success": False, "message": f"Git clone failed: {process.stderr}"}
             
+            # --- Trigger Sync ---
+            try:
+                from services.file_service import FileService
+                from sqlalchemy.ext.asyncio import AsyncSession
+                session: AsyncSession = kwargs.get("db_session")
+                if session:
+                    file_svc = FileService(session, user_id)
+                    await file_svc.sync_project_directory(project_id)
+            except Exception as se:
+                print(f"[ImportGitHubRepoTool] Sync trigger failed: {se}")
+
             return {
                 "success": True, 
                 "message": f"Successfully imported {owner}/{repo_name} to {target_rel.as_posix()}",

@@ -40,7 +40,7 @@ async def execute_command_endpoint(
     Example:
         POST /api/commands/execute
         {
-            "text": "/check_inbox",
+            "text": "/archive",
             "context": "project",
             "project_name": "hub" 
         }

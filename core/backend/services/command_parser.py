@@ -140,9 +140,9 @@ async def execute_command(
     """
     Execute a parsed command using the new Node-native BaseTool architecture
     """
-    from tools import (
+    from .tools import (
         ArchiveChatTool, MovePageTool, CreateProjectTool, DeleteProjectTool, CloneProjectTool,
-        CheckInboxTool, SendMessageTool, ReportTool, ProcessInboxTool
+        SendMessageTool
     )
     
     # Mapping of slash commands to tool classes
@@ -155,10 +155,7 @@ async def execute_command(
         "delete_project": DeleteProjectTool,
         "kill": DeleteProjectTool,
         "clone": CloneProjectTool,
-        "check_inbox": CheckInboxTool,
         "send_message": SendMessageTool,
-        "report": ReportTool,
-        "process_inbox": ProcessInboxTool,
     }
 
     tool_cls = tool_map.get(command.name)
