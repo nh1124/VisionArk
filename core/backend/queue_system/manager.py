@@ -4,6 +4,7 @@ import json
 import uuid
 from typing import Optional, Dict, Any
 from config import settings
+from models.database import TaskType
 
 class QueueManager:
     _instance = None
@@ -18,7 +19,7 @@ class QueueManager:
             )
         return cls._instance
 
-    def enqueue(self, user_id: str, message: str, context: Optional[Dict] = None, task_type: str = "user_message") -> str:
+    def enqueue(self, user_id: str, message: str, context: Optional[Dict] = None, task_type: TaskType = TaskType.USER_MESSAGE) -> str:
         """Add a task to the queue"""
         task_id = str(uuid.uuid4())
         payload = {
@@ -57,7 +58,7 @@ class QueueManager:
         """New specialized method for async node-to-node communication"""
         ctx = context or {}
         ctx["target_node_id"] = target_node_id
-        return self.enqueue(user_id, message, ctx, task_type="node_execution")
+        return self.enqueue(user_id, message, ctx, task_type=TaskType.NODE_EXECUTION)
 
     def dequeue(self) -> Dict[str, Any]:
         """Blocking pop from the queue"""

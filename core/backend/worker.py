@@ -13,7 +13,7 @@ from nodes.project.project_node import ProjectNode
 from nodes.system.scheduler_node import SchedulerNode
 from nodes.system.router_node import RouterNode
 from services.command_parser import parse_command, execute_command
-from models.database import AsyncSessionLocal, ScheduledTask, ScheduledTaskStatus, Node
+from models.database import AsyncSessionLocal, ScheduledTask, ScheduledTaskStatus, Node, TaskType
 from services.aes_dispatcher import AESDispatcher
 from sqlalchemy import select
 
@@ -54,7 +54,7 @@ class Worker:
         task_id = task_data.get("task_id")
         user_id = task_data.get("user_id")
         message = task_data.get("message")
-        task_type = task_data.get("task_type", "user_message")
+        task_type = task_data.get("task_type", TaskType.USER_MESSAGE)
         context = task_data.get("context") or {}
         
         # Inject user_id/task_id into context for Node usage
@@ -73,11 +73,11 @@ class Worker:
             async with async_session_cls() as db_session:
                 context["db_session"] = db_session
                 
-                if task_type == "node_execution":
+                if task_type == TaskType.NODE_EXECUTION:
                     await self._handle_node_execution(message, context, db_session)
-                elif task_type == "ai_routing":
+                elif task_type == TaskType.AI_ROUTING:
                     await self._handle_ai_routing_task(message, context, db_session)
-                elif task_type == "aes_system_task":
+                elif task_type == TaskType.AES_SYSTEM_TASK:
                     await self._handle_aes_task(context, db_session)
                 else:
                     await self._handle_user_message(message, context, db_session)

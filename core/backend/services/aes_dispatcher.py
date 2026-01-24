@@ -61,11 +61,12 @@ class AESDispatcher:
                     **task.payload
                 }
                 
+                from models.database import TaskType
                 self.queue_manager.enqueue(
                     user_id=task.user_id,
                     message=f"AES System Task: {task.task_type}",
                     context=context,
-                    task_type="aes_system_task"
+                    task_type=TaskType.AES_SYSTEM_TASK
                 )
             
             await session.commit()

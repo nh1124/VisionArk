@@ -157,6 +157,7 @@ async def chat_with_project(
     # 3. Enqueue Task
     manager = QueueManager()
     
+    from models.database import TaskType
     context = {
         "user_id": identity.user_id,
         "preferred_model": x_preferred_model,
@@ -165,7 +166,7 @@ async def chat_with_project(
         "files": [uploaded_file.id for uploaded_file in uploaded_files] if uploaded_files else []
     }
     
-    task_id = manager.enqueue(identity.user_id, message, context)
+    task_id = manager.enqueue(identity.user_id, message, context, task_type=TaskType.USER_MESSAGE)
     print(f"[Project Chat] Enqueued task {task_id} for project {project_id}")
 
     # Return placeholder response compliant with ChatResponse
@@ -524,7 +525,8 @@ async def create_project_from_prompt(
             "files": []
         }
         
-        task_id = manager.enqueue(identity.user_id, data.prompt, queue_context)
+        from models.database import TaskType
+        task_id = manager.enqueue(identity.user_id, data.prompt, queue_context, task_type=TaskType.USER_MESSAGE)
         
         return {
             "project_name": project_name,

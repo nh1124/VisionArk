@@ -68,6 +68,14 @@ class ApprovalStatus(str, Enum):
     FAILED = "failed"
 
 
+class TaskType(str, Enum):
+    """Types of asynchronous tasks in the queue"""
+    USER_MESSAGE = "user_message"
+    NODE_EXECUTION = "node_execution"
+    AI_ROUTING = "ai_routing"
+    AES_SYSTEM_TASK = "aes_system_task"
+
+
 class ScheduledTask(Base):
     """Automated Execution System (AES) tasks (timers, recurring, etc.)"""
     __tablename__ = "scheduled_tasks"

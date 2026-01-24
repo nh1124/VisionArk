@@ -14,6 +14,7 @@ class SystemNodeRegistry:
     @staticmethod
     def discover_system_nodes() -> List[Type[GenericSystemNode]]:
         """Find all subclasses of GenericSystemNode in the nodes.system package."""
+        import nodes.system.global_scheduler as gs
         return [gs.GlobalScheduler]
 
     @classmethod

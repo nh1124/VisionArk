@@ -3,7 +3,7 @@ import asyncio
 from typing import List, Dict, Callable, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from models.database import Node, AsyncSessionLocal
+from models.database import Node, AsyncSessionLocal, TaskType
 
 class Router:
     """
@@ -79,7 +79,7 @@ class Router:
         manager.enqueue(
             user_id=user_id,
             message=message,
-            task_type="ai_routing",
+            task_type=TaskType.AI_ROUTING,
             context={
                 "deep_analysis": True,
                 "session_id": context.get("session_id"),
