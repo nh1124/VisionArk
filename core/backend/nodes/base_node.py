@@ -202,6 +202,8 @@ class BaseNode(ABC):
         self, 
         system_prompt: str,
         message_history: List[Message],
+        tool_definitions: List = None,
+        tool_functions: dict = None,
         api_key: Optional[str] = None,
         tool_context: dict = None,
         task_id: Optional[str] = None
