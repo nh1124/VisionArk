@@ -11,6 +11,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from queue_system.manager import QueueManager
 from nodes.project.project_node import ProjectNode
 from nodes.system.scheduler_node import SchedulerNode
+from nodes.system.router_node import RouterNode
 from services.command_parser import parse_command, execute_command
 from models.database import AsyncSessionLocal, ScheduledTask, ScheduledTaskStatus, Node
 from services.aes_dispatcher import AESDispatcher
@@ -74,6 +75,8 @@ class Worker:
                 
                 if task_type == "node_execution":
                     await self._handle_node_execution(message, context, db_session)
+                elif task_type == "ai_routing":
+                    await self._handle_ai_routing_task(message, context, db_session)
                 elif task_type == "aes_system_task":
                     await self._handle_aes_task(context, db_session)
                 else:
@@ -115,6 +118,21 @@ class Worker:
             if session_id:
                 from services.callback_service import CallbackService
                 await CallbackService.notify_node_failure(db_session, session_id, node_record.display_name, str(exc), task_id=task_id)
+            raise exc
+
+    async def _handle_ai_routing_task(self, message: str, context: dict, db_session):
+        """Logic for Infrastructure-level AI routing analysis"""
+        task_id = context.get("task_id")
+        
+        # Directly instantiate RouterNode (no DB node record needed for infra)
+        target_node = RouterNode(context=context, node=None)
+        
+        print(f"Worker: Executing infrastructure-level AI routing analysis")
+        try:
+            result = await target_node.process(message)
+            self.manager.update_status(task_id, "completed", result)
+        except Exception as exc:
+            print(f"❌ AI Routing Analysis failed: {exc}")
             raise exc
 
     async def _handle_aes_task(self, context: dict, db_session):

@@ -1,15 +1,26 @@
 from typing import Any, Dict, List, Optional
-from nodes.system.generic_system_node import GenericSystemNode
+from nodes.system.system_node import SystemNode
 
-class RouterNode(GenericSystemNode):
+class RouterNode(SystemNode):
     """
-    Intelligent System Router.
+    Intelligent System Router (Infrastructure).
     Analyzes user intent and multicasts messages to relevant nodes.
+    This node is isolated from the agent discovery system.
     """
     role_name = "Router"
     display_name = "System AI Router"
-    description = "Analyzes message patterns and multicasts tasks to specialized nodes using LLM analysis."
-    default_tools = ["ask_node", "multicast_message"]
+    description = "Infrastructure layer for intelligent message routing."
+    
+    def __init__(self, context: Dict[str, Any], node: Any = None, status_callback: Optional[Any] = None):
+        super().__init__(context, status_callback)
+        self.node = node
+        # Static ID for infrastructure identification
+        self.id = "system_router_shared_id"
+        
+        # Tools
+        from tools.library.system import AskNodeTool
+        from tools.library.routing import MulticastMessageTool
+        self.tools = [AskNodeTool(), MulticastMessageTool()]
 
     async def on_execute(self, message: str) -> Any:
         """
@@ -30,14 +41,17 @@ class RouterNode(GenericSystemNode):
         
         try:
             db_session = self.context.get("db_session")
-            # a. System Nodes
+            if not db_session:
+                raise ValueError("Database session missing from RouterNode context")
+
+            # a. System Nodes (excluding infrastructure)
             stmt_sys = select(Node).filter(Node.node_type == "SYSTEM")
             res_sys = await db_session.execute(stmt_sys)
             for n in res_sys.scalars():
                 if n.id == self.id: continue # Prevent self-recursion
                 
                 meta = n.meta_payload or {}
-                # EXCLUSION: Skip hidden nodes or the Router itself from discovery
+                # EXCLUSION: Skip hidden nodes or any identified infrastructure
                 if meta.get("hidden") or n.role_name == "identity_router":
                     continue
                 def extract_values(lst):

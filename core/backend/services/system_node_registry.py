@@ -14,11 +14,7 @@ class SystemNodeRegistry:
     @staticmethod
     def discover_system_nodes() -> List[Type[GenericSystemNode]]:
         """Find all subclasses of GenericSystemNode in the nodes.system package."""
-        import nodes.system.global_scheduler as gs
-        import nodes.system.router_node as rn
-        # In a real dynamic discovery, we would crawl the directory.
-        # For now, we explicitly include the known ones.
-        return [gs.GlobalScheduler, rn.RouterNode]
+        return [gs.GlobalScheduler]
 
     @classmethod
     def get_node_class(cls, role_name: str) -> Type[GenericSystemNode]:

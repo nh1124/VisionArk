@@ -75,29 +75,19 @@ class Router:
             print(f"Router: Skipping deep analysis for trivial message.")
             return
 
-        # We find the RouterNode ID and enqueue a background execution for it
-        try:
-            async with AsyncSessionLocal() as session:
-                stmt = select(Node).filter(Node.role_name == "Router")
-                res = await session.execute(stmt)
-                router_node = res.scalars().first()
-                
-                if router_node:
-                    print(f"Router: Triggering deep AI analysis for message.")
-                    manager.enqueue_node_task(
-                        user_id=user_id,
-                        target_node_id=router_node.id,
-                        message=message,
-                        context={
-                            "deep_analysis": True,
-                            "session_id": context.get("session_id"),
-                            "project_id": context.get("project_id"),
-                            "original_message": message,
-                            "already_triggered_node_ids": list(set(triggered_node_ids)) # Pass de-duplicated IDs
-                        }
-                    )
-        except Exception as e:
-            print(f"⚠️ Router: Deep analysis trigger failed: {e}")
+        print(f"Router: Triggering deep AI analysis for message.")
+        manager.enqueue(
+            user_id=user_id,
+            message=message,
+            task_type="ai_routing",
+            context={
+                "deep_analysis": True,
+                "session_id": context.get("session_id"),
+                "project_id": context.get("project_id"),
+                "original_message": message,
+                "already_triggered_node_ids": list(set(triggered_node_ids)) # Pass de-duplicated IDs
+            }
+        )
 
     @classmethod
     async def initialize_default_hooks(cls):
