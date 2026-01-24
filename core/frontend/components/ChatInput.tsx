@@ -14,6 +14,8 @@ interface ChatInputProps {
     placeholder: string;
     disabled?: boolean;
     allowFileAttach?: boolean;
+    selectedModel?: string;
+    onModelChange?: (model: string) => void;
     showModelSelector?: boolean;
     onClone?: () => void;
     loading?: boolean;
@@ -29,6 +31,10 @@ function ChatInputComponent({
     onCommandModeChange,
     onSend,
     placeholder,
+    disabled = false,
+    allowFileAttach = true,
+    selectedModel = "gemini-3-pro-preview",
+    onModelChange,
     showModelSelector = false,
     onClone,
     loading = false,
