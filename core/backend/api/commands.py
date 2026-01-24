@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api/commands", tags=["Commands"])
 class CommandRequest(BaseModel):
     text: str
     scope: str = "project"  # project or main
-    project_name: Optional[str] = None
+    project_id: Optional[str] = None
 
 
 class CommandResponse(BaseModel):
@@ -42,7 +42,7 @@ async def execute_command_endpoint(
         {
             "text": "/move main",
             "scope": "project",
-            "project_name": "project A" 
+            "project_id": "uuid-here" 
         }
     """
     # Parse command
@@ -59,7 +59,8 @@ async def execute_command_endpoint(
         command,
         scope=req.scope,
         db_session=db,
-        project_name=req.project_name
+        user_id=identity.user_id,
+        project_id=req.project_id
     )
     
     return CommandResponse(
@@ -92,7 +93,8 @@ async def list_commands(scope: Optional[str] = None):
         commands.append({
             "name": name,
             "description": instance.description or "No description available.",
-            "contexts": ["both"],  # Modern commands are available everywhere
+            "usage": instance.usage or f"/{name}",
+            "scopes": ["main", "project"],  # Modern commands are available everywhere
             "aliases": [n for n, t in command_map.items() if t == command_cls and n != name]
         })
         shown_classes.add(command_cls)

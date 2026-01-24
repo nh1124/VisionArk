@@ -16,6 +16,7 @@ class BaseCommand(ABC):
     """
     name: str
     description: str
+    usage: str # Human-readable usage example
     arg_names: List[str] = [] # List of expected positional argument names
 
     @abstractmethod

@@ -349,6 +349,58 @@ export default function ProjectChatPage({
             // ignore
         }
 
+        // Intercept Slash Commands
+        if (content.startsWith("/") && files.length === 0) {
+            setMessages((prev) => [...prev, { role: "user", content }]);
+            setLoading(true);
+            setStatusText("Executing command...");
+
+            try {
+                const response = await apiFetch("/api/commands/execute", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        text: content,
+                        scope: "project",
+                        project_id: projectId
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    setMessages((prev) => [...prev, {
+                        role: "assistant",
+                        content: `✅ ${result.message}`
+                    }]);
+
+                    // If command was /mv, the backend might return data for redirect
+                    if (result.command_name === "move" && result.data?.target_id) {
+                        const targetId = result.data.target_id;
+                        if (targetId === "main") {
+                            router.push("/dashboard");
+                        } else {
+                            router.push(`/projects/${targetId}`);
+                        }
+                    }
+                } else {
+                    setMessages((prev) => [...prev, {
+                        role: "assistant",
+                        content: `❌ Command Error: ${result.message}`
+                    }]);
+                }
+            } catch (error: any) {
+                setMessages((prev) => [...prev, {
+                    role: "assistant",
+                    content: `❌ Failed to execute command: ${error.message}`
+                }]);
+            } finally {
+                setLoading(false);
+                setStatusText("");
+                return;
+            }
+        }
+
         const userMessage: Message = {
             role: "user",
             content: content,

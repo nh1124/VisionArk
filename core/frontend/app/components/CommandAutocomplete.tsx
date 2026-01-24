@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
+import { apiFetch } from "@/lib/api";
 
 // ... (useDebounce remains same)
 const useDebounce = (value: string, delay: number) => {
@@ -21,7 +22,7 @@ interface CommandAutocompleteProps {
     onChange: (value: string) => void;
     onSubmit: () => void;
     placeholder: string;
-    context: "hub" | "project";
+    context: "global" | "project";
     disabled?: boolean;
     showInput?: boolean;
 }
@@ -35,11 +36,12 @@ const CommandAutocomplete = forwardRef<CommandAutocompleteHandle, CommandAutocom
     onChange,
     onSubmit,
     placeholder,
-    context,
+    context, // 'global' (dashboard) or 'project'
     disabled = false,
     showInput = true
 }, ref) => {
-    const [commands, setCommands] = useState<Command[]>([]);
+    const [availableCommands, setAvailableCommands] = useState<Command[]>([]);
+    const [filteredCommands, setFilteredCommands] = useState<Command[]>([]);
     const [showDropdown, setShowDropdown] = useState(false);
     const [selectedIndex, setSelectedIndex] = useState(0);
     const inputRef = useRef<HTMLInputElement>(null);
@@ -48,30 +50,44 @@ const CommandAutocomplete = forwardRef<CommandAutocompleteHandle, CommandAutocom
     // Debounce input value to reduce filtering frequency (50ms delay)
     const debouncedValue = useDebounce(value, 50);
 
-    // ... (hubCommands and projectCommands remain same)
-    const hubCommands: Command[] = [
-        { name: "/create_project", description: "Create a new Project", usage: "/create_project <name>" },
-        { name: "/create_task", description: "Create a new LBS task", usage: '/create_task name="Task" project="project" workload=5.0' },
-        { name: "/check_inbox", description: "Check pending inbox messages", usage: "/check_inbox" },
-        { name: "/send_message", description: "Send message to a Project", usage: "/send_message name=<project_name> message=<message>" },
-        { name: "/kill", description: "Delete a Project permanently", usage: "/kill <project_name>" },
-        { name: "/archive", description: "Archive Hub or Project conversation", usage: "/archive [project_name]" },
-        { name: "/move", description: "Move to Hub or Project page", usage: "/move [node_name]" },
-        { name: "/mv", description: "Move to Hub or Project page (alias)", usage: "/mv [node_name]" },
-    ];
+    // Fetch commands from API on mount
+    useEffect(() => {
+        const fetchCommands = async () => {
+            try {
+                // Scope map: global -> dashboard, project -> project
+                const scope = context === "global" ? "dashboard" : "project";
+                const response = await apiFetch(`/api/commands/list?scope=${scope}`);
+                if (!response.ok) throw new Error(`Failed to fetch commands: ${response.status}`);
+                const data = await response.json();
 
-    const projectCommands: Command[] = [
-        { name: "/create_task", description: "Create a new LBS task", usage: '/create_task name="Task" project="project" workload=5.0' },
-        { name: "/share", description: "Share update with Hub", usage: "/share [message]" },
-        { name: "/complete", description: "Mark task as complete", usage: "/complete <task_id> [notes]" },
-        { name: "/report", description: "Generate progress report", usage: "/report [summary]" },
-        { name: "/kill", description: "Delete this Project (self-destruct)", usage: "/kill" },
-        { name: "/archive", description: "Archive this conversation", usage: "/archive" },
-        { name: "/move", description: "Move to Hub or Project page", usage: "/move [node_name]" },
-        { name: "/mv", description: "Move to Hub or Project page (alias)", usage: "/mv [node_name]" },
-    ];
+                // Map API response to frontend Command interface
+                const cmds: Command[] = (data.commands || []).map((c: any) => ({
+                    name: `/${c.name}`,
+                    description: c.description,
+                    usage: c.usage
+                }));
 
-    const availableCommands = context === "hub" ? hubCommands : projectCommands;
+                // Add aliases if they exist in the API
+                (data.commands || []).forEach((c: any) => {
+                    if (c.aliases && c.aliases.length > 0) {
+                        c.aliases.forEach((alias: string) => {
+                            cmds.push({
+                                name: `/${alias}`,
+                                description: `Alias for ${c.name}: ${c.description}`,
+                                usage: c.usage.replace(`/${c.name}`, `/${alias}`)
+                            });
+                        });
+                    }
+                });
+
+                setAvailableCommands(cmds);
+            } catch (error) {
+                console.error("Error fetching commands:", error);
+            }
+        };
+
+        fetchCommands();
+    }, [context]);
 
     useEffect(() => {
         if (debouncedValue.startsWith("/") && debouncedValue.length > 1) {
@@ -80,17 +96,17 @@ const CommandAutocomplete = forwardRef<CommandAutocompleteHandle, CommandAutocom
                 cmd.name.toLowerCase().startsWith(query) ||
                 cmd.description.toLowerCase().includes(query.slice(1))
             );
-            setCommands(filtered);
+            setFilteredCommands(filtered);
             setShowDropdown(filtered.length > 0);
             setSelectedIndex(0);
         } else if (debouncedValue === "/") {
-            setCommands(availableCommands);
-            setShowDropdown(true);
+            setFilteredCommands(availableCommands);
+            setShowDropdown(availableCommands.length > 0);
             setSelectedIndex(0);
         } else {
             setShowDropdown(false);
         }
-    }, [debouncedValue, context]);
+    }, [debouncedValue, availableCommands]);
 
     const selectCommand = (command: Command) => {
         onChange(command.name + " ");
@@ -106,16 +122,16 @@ const CommandAutocomplete = forwardRef<CommandAutocompleteHandle, CommandAutocom
         switch (e.key) {
             case "ArrowDown":
                 e.preventDefault();
-                setSelectedIndex(prev => (prev + 1) % commands.length);
+                setSelectedIndex(prev => (prev + 1) % filteredCommands.length);
                 return true;
             case "ArrowUp":
                 e.preventDefault();
-                setSelectedIndex(prev => (prev - 1 + commands.length) % commands.length);
+                setSelectedIndex(prev => (prev - 1 + filteredCommands.length) % filteredCommands.length);
                 return true;
             case "Enter":
-                if (commands[selectedIndex]) {
+                if (filteredCommands[selectedIndex]) {
                     e.preventDefault();
-                    selectCommand(commands[selectedIndex]);
+                    selectCommand(filteredCommands[selectedIndex]);
                     return true;
                 }
                 break;
@@ -124,9 +140,9 @@ const CommandAutocomplete = forwardRef<CommandAutocompleteHandle, CommandAutocom
                 setShowDropdown(false);
                 return true;
             case "Tab":
-                if (commands[selectedIndex]) {
+                if (filteredCommands[selectedIndex]) {
                     e.preventDefault();
-                    selectCommand(commands[selectedIndex]);
+                    selectCommand(filteredCommands[selectedIndex]);
                     return true;
                 }
                 break;
@@ -161,7 +177,7 @@ const CommandAutocomplete = forwardRef<CommandAutocompleteHandle, CommandAutocom
                     ref={dropdownRef}
                     className="absolute bottom-full left-0 right-0 mb-2 bg-gray-800/95 backdrop-blur-md border border-gray-700 rounded-xl shadow-[0_-12px_40px_-12px_rgba(0,0,0,0.7)] max-h-64 overflow-y-auto z-50 animate-in fade-in slide-in-from-bottom-4 duration-300"
                 >
-                    {commands.map((cmd, idx) => (
+                    {filteredCommands.map((cmd, idx) => (
                         <div
                             key={cmd.name}
                             onClick={() => selectCommand(cmd)}

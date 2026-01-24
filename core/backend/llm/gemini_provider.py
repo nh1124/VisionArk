@@ -129,6 +129,8 @@ class GeminiProvider(BaseLLMProvider):
         messages: List[Message],
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        preferred_model: Optional[str] = None,
+        attached_files: List = None,
         tool_definitions: List = None,
         tool_functions: dict = None,
         task_id: Optional[str] = None,

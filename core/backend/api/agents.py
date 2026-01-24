@@ -1,6 +1,6 @@
 """
 Agent API endpoints
-Chat with Project agents (formerly Hub/Spoke)
+Chat with Project agents
 """
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header
 from fastapi.responses import StreamingResponse

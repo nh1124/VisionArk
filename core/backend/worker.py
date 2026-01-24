@@ -180,15 +180,17 @@ class Worker:
         if await self._command_detection(message, context):
             return
 
-        # 3. Router
+        # 3. GLOBAL ROUTER (Cross-project intent analysis)
         try:
             from services.router import Router
             router = Router()
             await router.dispatch(message, context)
         except Exception as re:
             print(f"⚠️ Router dispatch error: {re}")
-
-        # 4. Main Project Node execution
+            
+        # 4. DATA/PROJECT CONTEXT (Project-specific execution)
+        # Note: Sequential execution allows Global AI to identify cross-project needs 
+        # while the Project Node handles the immediate workspace context.
         target_node = ProjectNode(context)
         result = await target_node.process(message)
         

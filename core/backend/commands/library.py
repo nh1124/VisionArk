@@ -13,6 +13,7 @@ from utils.paths import get_project_dir, validate_name
 class ArchiveCommand(BaseCommand):
     name = "archive"
     description = "Archive the current chat session and start a fresh one for the project."
+    usage = "/archive"
     arg_names = []
 
     async def run(self, raw_args: List[str], **kwargs) -> CommandResult:
@@ -67,6 +68,7 @@ class ArchiveCommand(BaseCommand):
 class MoveCommand(BaseCommand):
     name = "move"
     description = "Navigate between the Main Project and different sub-Project pages."
+    usage = "/move <project_id>"
     arg_names = ["target"]
 
     async def run(self, raw_args: List[str], **kwargs) -> CommandResult:
@@ -81,8 +83,8 @@ class MoveCommand(BaseCommand):
             return CommandResult(success=False, message="Missing required IDs")
 
         target_lower = target.lower()
-        if target_lower == "main" or target_lower == "hub":
-            return CommandResult(success=True, message="🚀 Moving to Main project...", data={"redirect_url": "/main"})
+        if target_lower in ["dashboard", "default", "main", "hub"]:
+            return CommandResult(success=True, message="🚀 Moving to Dashboard...", data={"redirect_url": "/dashboard"})
 
         result = await db_session.execute(select(Project).filter(
             Project.user_id == user_id,
@@ -98,6 +100,7 @@ class MoveCommand(BaseCommand):
 class CreateProjectCommand(BaseCommand):
     name = "create_project"
     description = "Create a new project workspace."
+    usage = "/create_project <name> [prompt]"
     arg_names = ["name", "prompt"]
 
     async def run(self, raw_args: List[str], **kwargs) -> CommandResult:
@@ -166,6 +169,7 @@ class CreateProjectCommand(BaseCommand):
 class DeleteProjectCommand(BaseCommand):
     name = "delete_project"
     description = "Permanently delete (archive) a project."
+    usage = "/delete_project <project_id>"
     arg_names = ["name"]
 
     async def run(self, raw_args: List[str], **kwargs) -> CommandResult:
@@ -220,6 +224,7 @@ class DeleteProjectCommand(BaseCommand):
 class CloneProjectCommand(BaseCommand):
     name = "clone"
     description = "Clone an existing project."
+    usage = "/clone <source_id> [target_name]"
     arg_names = ["source", "target"]
 
     async def run(self, raw_args: List[str], **kwargs) -> CommandResult:
@@ -283,6 +288,7 @@ class CloneProjectCommand(BaseCommand):
 class SendMessageCommand(BaseCommand):
     name = "send_message"
     description = "Send a message to a project's chat history."
+    usage = "/send_message <project_id> <message>"
     arg_names = ["project", "message"]
 
     async def run(self, raw_args: List[str], **kwargs) -> CommandResult:
@@ -322,6 +328,7 @@ class SendMessageCommand(BaseCommand):
 class ResendCommand(BaseCommand):
     name = "resend"
     description = "Resend the latest user message in this project."
+    usage = "/resend"
     arg_names = []
 
     async def run(self, raw_args: List[str], **kwargs) -> CommandResult:
@@ -377,6 +384,7 @@ class ResendCommand(BaseCommand):
 class UndoCommand(BaseCommand):
     name = "undo"
     description = "Remove the last user message and the assistant's response."
+    usage = "/undo"
     arg_names = []
 
     async def run(self, raw_args: List[str], **kwargs) -> CommandResult:
