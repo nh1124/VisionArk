@@ -202,10 +202,9 @@ class BaseNode(ABC):
         self, 
         system_prompt: str,
         message_history: List[Message],
-        tool_definitions: List = None,
-        tool_functions: dict = None,
         api_key: Optional[str] = None,
-        tool_context: dict = None
+        tool_context: dict = None,
+        task_id: Optional[str] = None
     ) -> str:
         """
         Core LLM Loop - Ported from BaseAgent.
@@ -285,7 +284,8 @@ class BaseNode(ABC):
                 tool_definitions=final_tool_defs,
                 tool_functions=final_tool_funcs,
                 preferred_model=preferred_model,
-                attached_files=current_attached_files if current_attached_files else None
+                attached_files=current_attached_files if current_attached_files else None,
+                task_id=task_id or self.task_id
             )
             elapsed = time.time() - t0
             print(f"🏁 [{self.__class__.__name__}/Timing] Total chat_with_tools complete in {elapsed:.2f}s")

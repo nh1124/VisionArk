@@ -106,3 +106,24 @@ class QueueManager:
     def clear_active_task(self, project_id: str):
         """Manually clear the active task mapping"""
         self.client.delete(f"active_task:{project_id}")
+
+    def cancel_task(self, task_id: str):
+        """Set task status to cancelled"""
+        current_data = self.get_status(task_id)
+        if not current_data:
+            return
+
+        current_data["status"] = "cancelled"
+        project_id = current_data.get("project_id")
+
+        self.client.setex(
+            f"task:{task_id}",
+            3600,
+            json.dumps(current_data)
+        )
+
+        # Also clear active task mapping if it belongs to this task
+        if project_id:
+            active_task_id = self.get_active_task_for_project(project_id)
+            if active_task_id == task_id:
+                self.clear_active_task(project_id)

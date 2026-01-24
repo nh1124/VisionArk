@@ -74,6 +74,7 @@ class TaskType(str, Enum):
     NODE_EXECUTION = "node_execution"
     AI_ROUTING = "ai_routing"
     AES_SYSTEM_TASK = "aes_system_task"
+    APPROVAL_EXECUTION = "approval_execution"
 
 
 class ScheduledTask(Base):

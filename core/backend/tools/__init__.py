@@ -7,10 +7,6 @@ from .library.knowledge import SearchKnowledgeTool, IngestKnowledgeTool
 from .library.search import GoogleSearchTool, ResearchURLTool, SearchPlacesTool, DeepResearchTool
 from .library.markdown import InitPlanTool, UpdatePlanProgressTool, GetCurrentStatusTool, ReadMDSectionTool, UpdateMDSectionTool
 from .library.ai import GenerateImageTool, MermaidVisualizerTool, ExecuteCodeTool
-from .library.commands import(
-    ArchiveChatTool, MovePageTool, CreateProjectTool, DeleteProjectTool, CloneProjectTool,
-    SendMessageTool
-)
 from .library.condition import GetCurrentConditionTool, UpdateUserConditionTool
 from .library.members import ListMembersTool, ManageMemberTool, UpdateNodeDescriptionTool
 from .library.writer import RecursiveWriterTool
@@ -48,12 +44,6 @@ __all__ = [
     "GenerateImageTool",
     "MermaidVisualizerTool",
     "ExecuteCodeTool",
-    "ArchiveChatTool",
-    "MovePageTool",
-    "CreateProjectTool",
-    "DeleteProjectTool",
-    "CloneProjectTool",
-    "SendMessageTool",
     "GetCurrentConditionTool",
     "UpdateUserConditionTool",
     "ListMembersTool",

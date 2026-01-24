@@ -90,6 +90,27 @@ async def get_task_status(
         
     return status
 
+@router.post("/tasks/{task_id}/stop")
+async def stop_task(
+    task_id: str,
+    identity: Identity = Depends(resolve_identity),
+):
+    """Manually stop/cancel an async task"""
+    from queue_system.manager import QueueManager
+    
+    manager = QueueManager()
+    status = manager.get_status(task_id)
+    
+    if not status:
+        raise HTTPException(status_code=404, detail="Task not found")
+        
+    # Check if task is already in terminal state
+    if status.get("status") in ["completed", "failed", "cancelled"]:
+        return {"status": status.get("status"), "message": "Task already terminated"}
+    
+    manager.cancel_task(task_id)
+    return {"status": "cancelled", "message": "Termination signal sent to agent"}
+
 # ----------------------------------------------------------------------
 # PROJECTS (Formerly SPOKES)
 # ----------------------------------------------------------------------

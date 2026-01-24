@@ -79,6 +79,8 @@ class Worker:
                     await self._handle_ai_routing_task(message, context, db_session)
                 elif task_type == TaskType.AES_SYSTEM_TASK:
                     await self._handle_aes_task(context, db_session)
+                elif task_type == TaskType.APPROVAL_EXECUTION:
+                    await self._handle_approval_task(context, db_session)
                 else:
                     await self._handle_user_message(message, context, db_session)
             
@@ -174,17 +176,17 @@ class Worker:
         if context.get("files"):
             context["attached_files"] = await self._process_attachments(context, db_session)
         
-        # 2. Router
+        # 2. Commands (Optimized: Check before Routing)
+        if await self._command_detection(message, context):
+            return
+
+        # 3. Router
         try:
             from services.router import Router
             router = Router()
             await router.dispatch(message, context)
         except Exception as re:
             print(f"⚠️ Router dispatch error: {re}")
-        
-        # 3. Commands
-        if await self._command_detection(message, context):
-            return
 
         # 4. Main Project Node execution
         target_node = ProjectNode(context)
@@ -229,12 +231,28 @@ class Worker:
             ))
         return attached_files
 
+    async def _handle_approval_task(self, context: dict, db_session):
+        """Logic for executing an approved request in the background"""
+        from services.approval import ApprovalService
+        request_id = context.get("request_id")
+        task_id = context.get("task_id")
+        
+        print(f"[Worker] Running Approval Execution for request: {request_id}")
+        try:
+            request = await ApprovalService.execute_approved_request(db_session, request_id)
+            self.manager.update_status(task_id, "completed", request.response)
+            print(f"[Worker] Approval Execution {request_id} completed.")
+        except Exception as e:
+            print(f"❌ Approval Execution failed: {e}")
+            self.manager.update_status(task_id, "failed", str(e))
+            raise e
+
     async def _command_detection(self, message: str, context: dict) -> bool:
         if not message.strip().startswith('/'): return False
         cmd = parse_command(message.strip())
         if not cmd: return False
         
-        result_msg = await execute_command(cmd, context_type="project", project_id=context.get("project_id"), db_session=context.get("db_session"), user_id=context.get("user_id"))
+        result_msg = await execute_command(cmd, scope="project", project_id=context.get("project_id"), db_session=context.get("db_session"), user_id=context.get("user_id"))
         self.manager.update_status(context.get("task_id"), "completed", result_msg.message)
         return True
 

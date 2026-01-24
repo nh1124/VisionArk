@@ -129,10 +129,9 @@ class GeminiProvider(BaseLLMProvider):
         messages: List[Message],
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
-        preferred_model: Optional[str] = None,
-        attached_files: List = None,
         tool_definitions: List = None,
         tool_functions: dict = None,
+        task_id: Optional[str] = None,
         **kwargs
     ) -> CompletionResponse:
         """Asynchronously generate completion using Gemini with optional function calling"""
@@ -183,6 +182,21 @@ class GeminiProvider(BaseLLMProvider):
         accumulated_tool_results = []
         
         while max_turns is None or turn_count < max_turns:
+            # Check for cancellation before each turn
+            if task_id:
+                from queue_system.manager import QueueManager
+                manager = QueueManager()
+                status_data = manager.get_status(task_id)
+                if status_data and status_data.get("status") == "cancelled":
+                    print(f"🛑 [Gemini] Task {task_id} cancelled by user. Interrupting.")
+                    return CompletionResponse(
+                        content="Task stopped by user.",
+                        model=model_name,
+                        usage=None,
+                        metadata={"cancelled": True},
+                        tool_calls=accumulated_tool_results if accumulated_tool_results else None
+                    )
+
             turn_count += 1
             turn_start_time = asyncio.get_event_loop().time()
             print(f"🔄 [Gemini] Entering Turn {turn_count} (Max: {max_turns})...")
@@ -751,6 +765,25 @@ class GeminiProvider(BaseLLMProvider):
         yield {"type": "status", "data": "Thinking..."}
         
         while max_turns is None or turn_count < max_turns:
+            # Check for cancellation
+            if task_id:
+                from queue_system.manager import QueueManager
+                manager = QueueManager()
+                status_data = manager.get_status(task_id)
+                if status_data and status_data.get("status") == "cancelled":
+                    print(f"🛑 [Gemini] Task {task_id} cancelled by user. Interrupting stream.")
+                    yield {"type": "status", "data": "Stopped by user."}
+                    yield {
+                        "type": "final_response",
+                        "data": {
+                            "content": "Task stopped by user.",
+                            "tool_calls": accumulated_tool_results,
+                            "usage": None,
+                            "metadata": {"cancelled": True}
+                        }
+                    }
+                    return
+
             turn_count += 1
             yield {"type": "status", "data": f"Thinking (Turn {turn_count})..."}
             

@@ -18,7 +18,7 @@ router = APIRouter(prefix="/api/commands", tags=["Commands"])
 # Pydantic models
 class CommandRequest(BaseModel):
     text: str
-    context: str = "project"  # project or system
+    scope: str = "project"  # project or main
     project_name: Optional[str] = None
 
 
@@ -40,9 +40,9 @@ async def execute_command_endpoint(
     Example:
         POST /api/commands/execute
         {
-            "text": "/archive",
-            "context": "project",
-            "project_name": "hub" 
+            "text": "/move main",
+            "scope": "project",
+            "project_name": "project A" 
         }
     """
     # Parse command
@@ -57,7 +57,7 @@ async def execute_command_endpoint(
     # Execute command
     result = await execute_command(
         command,
-        context=req.context,
+        scope=req.scope,
         db_session=db,
         project_name=req.project_name
     )
@@ -71,24 +71,30 @@ async def execute_command_endpoint(
 
 
 @router.get("/list")
-async def list_commands(context: Optional[str] = None):
+async def list_commands(scope: Optional[str] = None):
     """
     List available commands
     
     Query params:
-        context: Filter by context (hub, spoke)
+        scope: Filter by scope (main, project)
     """
-    from services.command_parser import _registry
+    from services.command_parser import _get_command_map
     
-    commands = _registry.list_commands(context)
+    command_map = _get_command_map()
+    commands = []
+    shown_classes = set()
+
+    for name, command_cls in sorted(command_map.items()):
+        if command_cls in shown_classes:
+            continue
+            
+        instance = command_cls()
+        commands.append({
+            "name": name,
+            "description": instance.description or "No description available.",
+            "contexts": ["both"],  # Modern commands are available everywhere
+            "aliases": [n for n, t in command_map.items() if t == command_cls and n != name]
+        })
+        shown_classes.add(command_cls)
     
-    return {
-        "commands": [
-            {
-                "name": name,
-                "description": desc,
-                "contexts": _registry._contexts.get(name, ["both"])
-            }
-            for name, desc in commands.items()
-        ]
-    }
+    return {"commands": commands}

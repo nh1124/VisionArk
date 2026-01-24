@@ -55,6 +55,23 @@ export default function ProjectChatPage({
     const currentPollingTaskRef = useRef<string | null>(null);
     const historyFetchId = useRef(0);
 
+    // Stop handler
+    const handleStop = async () => {
+        if (!taskIdFromUrl) return;
+        try {
+            const response = await apiFetch(`/api/agents/tasks/${taskIdFromUrl}/stop`, {
+                method: "POST"
+            });
+            if (response.ok) {
+                setStatusText("Stopping...");
+            } else {
+                alert("Failed to stop task.");
+            }
+        } catch (error) {
+            console.error("Failed to stop task:", error);
+        }
+    };
+
     // Approval handler
     const handleApprove = async (requestId: string, approved: boolean) => {
         try {
@@ -269,7 +286,7 @@ export default function ProjectChatPage({
                     isPollingActiveRef.current = false;
                     currentPollingTaskRef.current = null;
                     return true;
-                } else if (status === "failed") {
+                } else if (status === "failed" || status === "cancelled") {
                     if (timerIntervalRef.current) {
                         clearInterval(timerIntervalRef.current);
                         timerIntervalRef.current = null;
@@ -283,9 +300,10 @@ export default function ProjectChatPage({
                     // Cleanup optimistic storage
                     sessionStorage.removeItem(`pending_prompt_${projectId}`);
 
+                    const errorMsg = status === "cancelled" ? "Task stopped by user." : (statusData.result || "Task failed");
                     setMessages((prev) => [...prev, {
                         role: "assistant",
-                        content: `❌ Error: ${statusData.result || "Task failed"}`
+                        content: `❌ ${errorMsg}`
                     }]);
 
                     // Clear URL on failure too
@@ -654,6 +672,14 @@ export default function ProjectChatPage({
                                             </span>
                                         )}
                                     </p>
+                                    <button
+                                        onClick={handleStop}
+                                        className="ml-2 p-1 text-gray-500 hover:text-red-400 hover:bg-red-500/10 rounded transition-all flex items-center gap-1 text-xs font-bold"
+                                        title="Stop Agent"
+                                    >
+                                        <X size={14} />
+                                        STOP
+                                    </button>
                                 </div>
                             </div>
                         )}
