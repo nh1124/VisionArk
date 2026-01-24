@@ -14,11 +14,10 @@ interface ChatInputProps {
     placeholder: string;
     disabled?: boolean;
     allowFileAttach?: boolean;
-    // Model selection props
-    selectedModel?: string;
-    onModelChange?: (model: string) => void;
     showModelSelector?: boolean;
     onClone?: () => void;
+    loading?: boolean;
+    onStop?: () => void;
 }
 
 import { MODEL_OPTIONS, getModelDisplayName } from "@/lib/ModelContext";
@@ -30,12 +29,10 @@ function ChatInputComponent({
     onCommandModeChange,
     onSend,
     placeholder,
-    disabled = false,
-    allowFileAttach = true,
-    selectedModel = "gemini-3-pro-preview",
-    onModelChange,
     showModelSelector = false,
     onClone,
+    loading = false,
+    onStop,
     onKeyDown
 }: ChatInputProps) {
     // Internal state for the input value - prevents parent re-renders on each keystroke
@@ -71,7 +68,7 @@ function ChatInputComponent({
         if (textarea) {
             textarea.style.height = "auto";
             const effectiveExpanded = overrideExpanded !== undefined ? overrideExpanded : isExpanded;
-            const minHeight = isMobile ? 40 : (effectiveExpanded ? 200 : 48);
+            const minHeight = isMobile ? 40 : (effectiveExpanded ? 200 : 40);
             const maxHeight = effectiveExpanded ? 800 : (isMobile ? 150 : 300); // 300px is the limit for normal mode
             const newHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight);
             textarea.style.height = `${newHeight}px`;
@@ -252,7 +249,7 @@ function ChatInputComponent({
     };
 
     return (
-        <div className={`sticky bottom-0 bg-gray-950 border-t border-gray-800 ${isMobile ? "p-2" : "p-4"}`}>
+        <div className={`sticky bottom-0 bg-transparent ${isMobile ? "p-2" : "p-4"}`}>
             {/* File Attachments Preview */}
             {attachedFiles.length > 0 && (
                 <div className="mb-3 flex flex-wrap gap-2">
@@ -324,10 +321,10 @@ function ChatInputComponent({
                         onPaste={handlePaste}
                         placeholder={isDragging ? "Drop files here..." : placeholder}
                         className={`w-full bg-transparent border-none focus:outline-none resize-none px-4 text-gray-100 placeholder-gray-600 
-                            ${isExpanded ? "flex-1 text-lg p-6" : isMobile ? "py-2.5 text-sm" : "py-4"}`}
+                            ${isExpanded ? "flex-1 text-lg p-6" : isMobile ? "py-2.5 text-sm" : "py-2.5"}`}
                         disabled={disabled}
                         style={{
-                            minHeight: isMobile ? "40px" : (isExpanded ? "100%" : "48px"),
+                            minHeight: isMobile ? "40px" : (isExpanded ? "100%" : "40px"),
                             maxHeight: isExpanded ? "none" : (isMobile ? "150px" : "300px"), // Increased max-height for normal mode
                             overflowY: "auto"
                         }}
@@ -481,17 +478,29 @@ function ChatInputComponent({
                             </svg>
                         </button>
 
-                        {/* Send Button */}
-                        <button
-                            onClick={handleSend}
-                            disabled={disabled || (!internalValue.trim() && attachedFiles.length === 0)}
-                            className="p-3 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-800 disabled:text-gray-600 rounded-full shadow-lg transition-all ml-1 min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0"
-                            title="Send message"
-                        >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                            </svg>
-                        </button>
+                        {/* Stop/Send Button */}
+                        {loading && onStop ? (
+                            <button
+                                onClick={onStop}
+                                className="p-3 bg-red-600 hover:bg-red-500 rounded-full shadow-lg transition-all ml-1 min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0"
+                                title="Stop Agent"
+                            >
+                                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                        ) : (
+                            <button
+                                onClick={handleSend}
+                                disabled={disabled || (!internalValue.trim() && attachedFiles.length === 0)}
+                                className="p-3 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-800 disabled:text-gray-600 rounded-full shadow-lg transition-all ml-1 min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0"
+                                title="Send message"
+                            >
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                                </svg>
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>

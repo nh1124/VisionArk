@@ -672,14 +672,6 @@ export default function ProjectChatPage({
                                             </span>
                                         )}
                                     </p>
-                                    <button
-                                        onClick={handleStop}
-                                        className="ml-2 p-1 text-gray-500 hover:text-red-400 hover:bg-red-500/10 rounded transition-all flex items-center gap-1 text-xs font-bold"
-                                        title="Stop Agent"
-                                    >
-                                        <X size={14} />
-                                        STOP
-                                    </button>
                                 </div>
                             </div>
                         )}
@@ -706,7 +698,7 @@ export default function ProjectChatPage({
                 )}
 
                 {/* Input - Fixed at bottom */}
-                <div className="pb-8 px-4">
+                <div className="pb-4 px-4">
                     <div className="max-w-4xl mx-auto flex flex-col min-h-0">
                         {!isMobile && (
                             <div className="flex justify-between items-center mb-2 px-4">
@@ -752,6 +744,8 @@ export default function ProjectChatPage({
                             onModelChange={setSelectedModel}
                             showModelSelector={!isMobile}
                             onClone={handleClone}
+                            loading={loading}
+                            onStop={handleStop}
                         />
                     </div>
                 </div>
