@@ -11,6 +11,7 @@ const nextConfig = {
   },
   // Server external packages for proper proxying
   serverExternalPackages: [],
+  transpilePackages: ['mermaid'],
   async rewrites() {
     // In Docker: use backend service name (http://backend:8000)
     // Local dev: use localhost:8000

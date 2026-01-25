@@ -774,8 +774,12 @@ export default function ProjectChatPage({
     const handleCanvasCommand = async (action: string) => {
         setIsCommandPaletteOpen(false);
         const contextInfo = canvasFilePath ? ` (File: ${canvasFilePath})` : "";
-        const selectionInfo = canvasSelection ? `\n\n[SELECTED TEXT]:\n${canvasSelection}` : "";
-        const prompt = `${action} the content in the canvas${contextInfo}${selectionInfo}\n\n[CANVAS_CONTEXT_START]\n[FULL CONTENT]:\n${canvasContent}`;
+        const selectionInfo = canvasSelection
+            ? `\n\n[SELECTED TEXT TO EDIT]:\n"""\n${canvasSelection}\n"""`
+            : "";
+
+        const prompt = `${action} the content in the canvas${contextInfo}${selectionInfo}\n\n[INSTRUCTIONS]: If a selection is provided above, please focus your edits on that specific part. Return the FULL updated canvas content using update_canvas tool.\n\n[CANVAS_FULL_CONTENT]:\n${canvasContent}`;
+
         sendMessage(prompt, []);
         setCanvasSelection(null); // Clear selection after use
     };

@@ -7,6 +7,7 @@ import { atomDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Copy, Check } from "lucide-react";
 import { useState, useEffect } from "react";
 import { getFileToken } from "@/lib/api";
+import Mermaid from "./Mermaid";
 
 interface MarkdownRendererProps {
     content: string;
@@ -40,6 +41,12 @@ const CodeBlock = ({ children, className, inline, ...props }: CodeBlockProps) =>
 
     // Highlighted code with language
     if (!inline && match) {
+        const lang = match[1].toLowerCase();
+        // Special case for Mermaid diagrams
+        if (lang === "mermaid") {
+            return <Mermaid chart={codeText} />;
+        }
+
         return (
             <div className={`relative ${showCopyButton ? "group" : ""} my-4`}>
                 {showCopyButton && (

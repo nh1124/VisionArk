@@ -2,10 +2,13 @@
 
 import React, { useEffect, useState, useCallback } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
+import { BubbleMenu } from "@tiptap/react/menus";
 import StarterKit from "@tiptap/starter-kit";
+import { BubbleMenu as BubbleMenuExtension } from "@tiptap/extension-bubble-menu";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import { Markdown } from "tiptap-markdown";
+import { MermaidExtension } from "./TiptapMermaid";
 import Editor from "@monaco-editor/react";
 import {
     Type,
@@ -94,7 +97,11 @@ export default function Canvas({
     // TipTap Setup
     const tiptapEditor = useEditor({
         extensions: [
-            StarterKit,
+            MermaidExtension,
+            StarterKit.configure({
+                codeBlock: false,
+            }),
+            BubbleMenuExtension,
             TaskList,
             TaskItem.configure({
                 nested: true,
@@ -149,15 +156,17 @@ export default function Canvas({
         }
     }, [content, tiptapEditor, editorMode]);
 
-    const handleCommandPaletteClick = () => {
+    const handleCommandPaletteClick = useCallback(() => {
         let selection = "";
         if (editorMode === "markdown" && tiptapEditor) {
             const { from, to } = tiptapEditor.state.selection;
-            selection = tiptapEditor.state.doc.textBetween(from, to, " ");
+            if (from !== to) {
+                selection = tiptapEditor.state.doc.textBetween(from, to, "\n");
+            }
         }
-        // Monaco selection can be handled if we keep a ref, but for now focus on TipTap
+        // Monaco selection handled if needed in future
         onCommandPalette?.(selection);
-    };
+    }, [editorMode, tiptapEditor, onCommandPalette]);
 
     useEffect(() => {
         setEditorMode(format);
@@ -269,6 +278,22 @@ export default function Canvas({
             <div className="flex-1 overflow-hidden relative group">
                 {editorMode === "markdown" ? (
                     <div className="h-full overflow-y-auto custom-scrollbar bg-gray-950/50">
+                        {tiptapEditor && (
+                            <BubbleMenu editor={tiptapEditor} tippyOptions={{ duration: 100 }}>
+                                <div className="flex bg-gray-900 border border-gray-700 rounded-lg shadow-xl p-1 overflow-hidden transform animate-in fade-in slide-in-from-bottom-2 duration-200">
+                                    <button
+                                        onClick={handleCommandPaletteClick}
+                                        className="flex items-center gap-1.5 px-2 py-1.5 hover:bg-gray-800 text-cyan-400 text-xs font-semibold rounded-md transition-colors"
+                                    >
+                                        <Wand2 size={14} />
+                                        <span>AI Edit</span>
+                                        <span className="flex items-center bg-cyan-900/40 px-1 rounded ml-1 scale-90 border border-cyan-500/20">
+                                            <CmdIcon size={10} className="mr-0.5" /> K
+                                        </span>
+                                    </button>
+                                </div>
+                            </BubbleMenu>
+                        )}
                         <EditorContent editor={tiptapEditor} />
                     </div>
                 ) : (
