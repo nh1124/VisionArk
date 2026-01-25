@@ -279,7 +279,7 @@ export default function Canvas({
                 {editorMode === "markdown" ? (
                     <div className="h-full overflow-y-auto custom-scrollbar bg-gray-950/50">
                         {tiptapEditor && (
-                            <BubbleMenu editor={tiptapEditor} tippyOptions={{ duration: 100 }}>
+                            <BubbleMenu editor={tiptapEditor}>
                                 <div className="flex bg-gray-900 border border-gray-700 rounded-lg shadow-xl p-1 overflow-hidden transform animate-in fade-in slide-in-from-bottom-2 duration-200">
                                     <button
                                         onClick={handleCommandPaletteClick}
