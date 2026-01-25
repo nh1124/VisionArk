@@ -1,5 +1,5 @@
 @import "tailwindcss";
-@plugin "@tailwindcss/typography";
+@plugin "../node_modules/@tailwindcss/typography";
 
 :root {
   --background: #ffffff;
@@ -63,8 +63,13 @@ body {
 }
 
 @keyframes toast-progress {
-  from { width: 100%; }
-  to { width: 0%; }
+  from {
+    width: 100%;
+  }
+
+  to {
+    width: 0%;
+  }
 }
 
 .animate-toast-progress {
