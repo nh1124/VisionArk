@@ -5,13 +5,16 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 from uuid import uuid4
+import tempfile
 
 from google.genai import Client, types
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from models.database import UploadedFile, Project, AsyncSessionLocal
-from utils.paths import get_project_dir
+from utils.paths import get_project_dir, secure_path_join
+import shutil
+from sqlalchemy import delete
 
 # File size limit: 100MB
 MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024
@@ -225,6 +228,91 @@ class FileService:
         await self.db.delete(file_record)
         await self.db.commit()
         return True
+
+    async def delete_path(self, project_id: str, directory_type: str, rel_path: str) -> bool:
+        """
+        Delete a file or directory from the project directory recursively.
+        directory_type: 'refs', 'artifacts', or 'files'
+        """
+        if directory_type not in ["refs", "artifacts", "files"]:
+            return False
+
+        proj_dir = get_project_dir(self.user_id, project_id)
+        full_path = secure_path_join(proj_dir / directory_type, rel_path)
+
+        if not full_path.exists():
+            return False
+
+        # 1. Database Cleanup
+        # If it's a directory, delete all files starting with that path
+        # If it's a file, delete exactly that path
+        search_pattern = rel_path
+        if full_path.is_dir():
+            if not search_pattern.endswith('/'):
+                search_pattern += '/'
+            
+            await self.db.execute(
+                delete(UploadedFile).where(
+                    UploadedFile.project_id == project_id,
+                    UploadedFile.filename.like(f"{search_pattern}%")
+                )
+            )
+        else:
+            await self.db.execute(
+                delete(UploadedFile).where(
+                    UploadedFile.project_id == project_id,
+                    UploadedFile.filename == rel_path
+                )
+            )
+
+        # 2. Physical Deletion
+        try:
+            if full_path.is_dir():
+                await asyncio.to_thread(shutil.rmtree, full_path)
+            else:
+                await asyncio.to_thread(full_path.unlink)
+            
+            await self.db.commit()
+            return True
+        except Exception as e:
+            print(f"[FileService] Delete path failed: {e}")
+            await self.db.rollback()
+            return False
+
+    async def zip_directory(self, project_id: str, directory_type: str, rel_path: str) -> Optional[Path]:
+        """
+        Create a ZIP archive of a directory and return the path to the temporary file.
+        """
+        if directory_type not in ["refs", "artifacts", "files"]:
+            return None
+
+        proj_dir = get_project_dir(self.user_id, project_id)
+        full_path = secure_path_join(proj_dir / directory_type, rel_path)
+
+        if not full_path.exists() or not full_path.is_dir():
+            return None
+
+        print(f"{__name__} Debug : {full_path}")
+
+        try:
+            # Create a temporary file
+            temp_dir = Path(tempfile.gettempdir())
+            zip_base = temp_dir / f"download_{uuid4().hex}"
+            
+
+            print(f"{__name__} Debug : {zip_base}")
+            # shutil.make_archive adds the extension (.zip) automatically
+            zip_path_str = await asyncio.to_thread(
+                shutil.make_archive, 
+                str(zip_base), 
+                'zip', 
+                root_dir=str(full_path)
+            )
+            
+            return Path(zip_path_str)
+        except Exception as e:
+            print(f"[FileService] ZIP generation failed: {e}")
+            return None
     
     async def sync_project_directory(self, project_id: str, deep: bool = False, db_override: AsyncSession = None) -> Dict[str, int]:
         """

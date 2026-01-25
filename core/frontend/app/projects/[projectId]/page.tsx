@@ -12,6 +12,10 @@ import { apiFetch } from "@/lib/api";
 import { Settings, Files, RotateCcw, X } from "lucide-react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useModel } from "@/lib/ModelContext";
+import { Panel, Group, Separator } from "react-resizable-panels";
+import Canvas from "@/components/Canvas";
+import EditCommandPalette from "@/components/EditCommandPalette";
+import { useNotification } from "@/lib/NotificationContext";
 
 interface MessageAttachment {
     name: string;
@@ -45,6 +49,19 @@ export default function ProjectChatPage({
     const [elapsedTime, setElapsedTime] = useState(0);
     const [statusText, setStatusText] = useState("");
     const commandRef = useRef<CommandAutocompleteHandle>(null);
+    const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
+    const [approvalStatuses, setApprovalStatuses] = useState<Record<string, string>>({});
+
+
+    // Canvas State
+    const [showCanvas, setShowCanvas] = useState(false);
+    const [canvasContent, setCanvasContent] = useState("");
+    const [canvasFormat, setCanvasFormat] = useState<"markdown" | "code">("markdown");
+    const [canvasFilePath, setCanvasFilePath] = useState<string | undefined>(undefined);
+    const [canvasSelection, setCanvasSelection] = useState<string | null>(null);
+    const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+    const lastProcessedCanvasUpdateRef = useRef<string | null>(null);
+    const { showToast } = useNotification();
 
     // Polling and task state
     const searchParams = useSearchParams();
@@ -79,10 +96,17 @@ export default function ProjectChatPage({
                 ? `/api/approvals/${requestId}/approve`
                 : `/api/approvals/${requestId}/reject`;
 
-            await apiFetch(endpoint, { method: "POST" });
+            const response = await apiFetch(endpoint, { method: "POST" });
+            const data = await response.json();
 
-            // Refresh history to reflect executing/rejected state
-            await fetchHistory();
+            if (data.task_id) {
+                // Update URL to trigger the existing polling mechanism
+                // This will show "Processing..." and then automatically fetch history when done
+                router.replace(`/projects/${projectId}?task_id=${data.task_id}`, { scroll: false });
+            } else {
+                // Fallback for immediate responses (e.g. rejection might not be async)
+                await fetchHistory();
+            }
 
         } catch (error) {
             console.error("Failed to process approval:", error);
@@ -98,14 +122,35 @@ export default function ProjectChatPage({
     const fetchHistory = useCallback(async () => {
         const requestId = ++historyFetchId.current;
         try {
-            const response = await apiFetch(`/api/agents/project/${projectId}/history`);
-            const data = await response.json();
+            // Fetch history AND approvals in parallel
+            const [historyRes, approvalsRes] = await Promise.all([
+                apiFetch(`/api/agents/project/${projectId}/history`),
+                apiFetch(`/api/approvals/project/${projectId}/list`)
+            ]);
+
+            const historyData = await historyRes.json();
+
+            // Allow approvals to fail without breaking history
+            let approvalMap: Record<string, string> = {};
+            try {
+                if (approvalsRes.ok) {
+                    const approvalsData = await approvalsRes.json();
+                    if (Array.isArray(approvalsData)) {
+                        approvalsData.forEach((req: any) => {
+                            approvalMap[req.id] = req.status;
+                        });
+                        setApprovalStatuses(approvalMap);
+                    }
+                }
+            } catch (e) {
+                console.error("Failed to parse approvals:", e);
+            }
 
             // If a newer request has started, ignore this result
             if (requestId !== historyFetchId.current) return;
 
-            if (data.history && Array.isArray(data.history)) {
-                const newMessages = data.history.map((m: any) => ({
+            if (historyData.history && Array.isArray(historyData.history)) {
+                const newMessages = historyData.history.map((m: any) => ({
                     role: m.role,
                     content: m.content,
                     attached_files: m.meta_payload?.attached_files || [],
@@ -135,6 +180,28 @@ export default function ProjectChatPage({
                     }
 
                     return newMessages;
+                });
+
+                // Check for update_canvas in history
+                newMessages.forEach((msg: Message) => {
+                    if (msg.tool_calls) {
+                        msg.tool_calls.forEach((tc: any) => {
+                            if (tc.name === "update_canvas") {
+                                // Only update if this is a NEW tool call we haven't processed yet
+                                const updateId = tc.id || JSON.stringify(tc.args);
+                                if (updateId !== lastProcessedCanvasUpdateRef.current) {
+                                    const args = tc.args || {};
+                                    if (args.content) {
+                                        setCanvasContent(args.content);
+                                        setCanvasFormat(args.format || "markdown");
+                                        setCanvasFilePath(args.file_path);
+                                        setShowCanvas(true);
+                                        lastProcessedCanvasUpdateRef.current = updateId;
+                                    }
+                                }
+                            }
+                        });
+                    }
                 });
             }
         } catch (error) {
@@ -276,6 +343,23 @@ export default function ProjectChatPage({
                                 tool_calls: m.meta_payload?.tool_calls || []
                             }));
                             setMessages(newMessages);
+
+                            // Check for update_canvas in tool calls
+                            newMessages.forEach((msg: Message) => {
+                                if (msg.tool_calls) {
+                                    msg.tool_calls.forEach((tc: any) => {
+                                        if (tc.name === "update_canvas") {
+                                            const args = tc.args || {};
+                                            if (args.content) {
+                                                setCanvasContent(args.content);
+                                                setCanvasFormat(args.format || "markdown");
+                                                setCanvasFilePath(args.file_path);
+                                                setShowCanvas(true);
+                                            }
+                                        }
+                                    });
+                                }
+                            });
                         }
                     } catch (e) {
                         console.error("Failed to refresh history:", e);
@@ -561,6 +645,54 @@ export default function ProjectChatPage({
         }
     }, [loading, projectId]);
 
+    const handleSave = async (content: string) => {
+        if (!canvasFilePath) return;
+        try {
+            let directory: "refs" | "artifacts" | "files" = "refs";
+            let relativePath = canvasFilePath;
+
+            if (canvasFilePath.startsWith("artifacts/")) {
+                directory = "artifacts";
+                relativePath = canvasFilePath.replace("artifacts/", "");
+            } else if (canvasFilePath.startsWith("files/")) {
+                directory = "files";
+                relativePath = canvasFilePath.replace("files/", "");
+            } else if (canvasFilePath.startsWith("refs/")) {
+                directory = "refs";
+                relativePath = canvasFilePath.replace("refs/", "");
+            }
+
+            const response = await apiFetch(`/api/files/project/${projectId}/save`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    path: relativePath,
+                    content: content,
+                    directory: directory
+                })
+            });
+
+            if (response.ok) {
+                console.log("File saved successfully");
+                // @ts-ignore - assuming showToast is available or add it
+                if (typeof showToast === 'function') {
+                    showToast("Changes saved successfully", "success");
+                }
+            } else {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || "Failed to save file");
+            }
+        } catch (error: any) {
+            console.error("Save error:", error);
+            // @ts-ignore
+            if (typeof showToast === 'function') {
+                showToast(error.message || "Failed to save changes", "error");
+            } else {
+                alert("Failed to save changes.");
+            }
+        }
+    };
+
     const handleEdit = useCallback(async (index: number) => {
         if (loading) return;
         const msg = messages[index];
@@ -624,9 +756,10 @@ export default function ProjectChatPage({
         }
 
         if (lastUserIndex !== -1) {
-            handleDelete(lastUserIndex);
+            // Use handleEdit instead of handleDelete to populate the input with the message content
+            handleEdit(lastUserIndex);
         }
-    }, [messages, loading, handleDelete]);
+    }, [messages, loading, handleEdit]);
 
     // Create stable callback refs for message actions - prevents re-renders of MessageWithAttachments
     const messageCallbacks = useMemo(() => {
@@ -638,199 +771,303 @@ export default function ProjectChatPage({
         }));
     }, [messages.length, handleRegenerate, handleBranch, handleEdit, handleDelete]);
 
-    return (
-        <div className="flex h-full">
-            <div className="flex-1 flex flex-col h-full overflow-hidden relative">
-                {/* Header - Minimal Gemini-style - Hide on mobile since the global header handles it */}
-                {!isMobile && (
-                    <div className="bg-gray-900/50 border-b border-gray-800/50 px-4 py-2.5 flex items-center justify-between flex-shrink-0">
-                        <h1 className="text-lg font-semibold text-cyan-400 truncate pr-4" title={displayName}>
-                            {displayName}
-                        </h1>
-                        <div className="flex gap-2 items-center">
-                            <Link href={`/projects/${projectId}/settings`}
-                                className="p-2 text-gray-400 hover:bg-gray-800 hover:text-white rounded-lg transition-all"
-                                title="Settings"
-                            >
-                                <Settings size={18} />
-                            </Link>
-                            <button
-                                onClick={() => setShowSidebar(!showSidebar)}
-                                className={`p-2 rounded-lg transition-all ${showSidebar
-                                    ? "bg-cyan-500/20 text-cyan-400"
-                                    : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
-                                title={showSidebar ? "Hide Files" : "Show Files"}
-                            >
-                                <Files size={18} />
-                            </button>
-                        </div>
-                    </div>
-                )}
+    const handleCanvasCommand = async (action: string) => {
+        setIsCommandPaletteOpen(false);
+        const contextInfo = canvasFilePath ? ` (File: ${canvasFilePath})` : "";
+        const selectionInfo = canvasSelection ? `\n\n[SELECTED TEXT]:\n${canvasSelection}` : "";
+        const prompt = `${action} the content in the canvas${contextInfo}${selectionInfo}\n\n[CANVAS_CONTEXT_START]\n[FULL CONTENT]:\n${canvasContent}`;
+        sendMessage(prompt, []);
+        setCanvasSelection(null); // Clear selection after use
+    };
 
-                {/* Messages - Scrollable area */}
-                <div className="flex-1 overflow-y-auto px-4 py-8">
-                    <div className="max-w-4xl mx-auto space-y-6" key={`messages-${messages.length}`}>
-                        {messages.length === 0 && !loading && (
-                            <div className="text-center text-gray-500 py-20">
-                                <div className="w-16 h-16 bg-cyan-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6">
-                                    <span className="text-3xl">💼</span>
-                                </div>
-                                <h2 className="text-3xl font-bold text-white mb-2 truncate max-w-full px-4" title={`${displayName} Workspace`}>
-                                    {displayName} Workspace
-                                </h2>
-                                <p className="text-gray-400">Deep work and specialized execution for this project.</p>
-                                <p className="text-xs text-gray-600 mt-6 tracking-widest uppercase">
-                                    Reference files auto-loaded from library
-                                </p>
-                            </div>
-                        )}
-
-                        {messages.map((msg, idx) => {
-                            // Skip rendering the last empty assistant message while loading
-                            const isLastEmptyAssistant = loading && idx === messages.length - 1 && msg.role === "assistant" && !msg.content && (!msg.tool_calls || msg.tool_calls.length === 0);
-                            if (isLastEmptyAssistant) return null;
-                            return (
-                                <MessageWithAttachments
-                                    key={idx}
-                                    role={msg.role}
-                                    content={msg.content}
-                                    attached_files={msg.attached_files}
-                                    tool_calls={msg.tool_calls}
-                                    nodeType="project"
-                                    nodeName={projectId}
-                                    onRegenerate={messageCallbacks[idx]?.onRegenerate}
-                                    onBranch={messageCallbacks[idx]?.onBranch}
-                                    onEdit={messageCallbacks[idx]?.onEdit}
-                                    onDelete={messageCallbacks[idx]?.onDelete}
-                                    onSend={(content) => sendMessage(content, [])}
-                                    onApprove={handleApprove}
-                                />
-                            );
-                        })}
-
-                        {loading && (
-                            <div className="flex justify-start">
-                                <div className="bg-gray-800/40 border border-gray-700/50 rounded-2xl px-6 py-4 animate-pulse flex items-center gap-3">
-                                    <div className="flex gap-1.5">
-                                        <div className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                                        <div className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                                        <div className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                                    </div>
-                                    <p className="text-sm text-gray-400">
-                                        {statusText || "Thinking..."}
-                                        {elapsedTime > 0 && (
-                                            <span className="ml-2 text-gray-500 font-mono text-xs">
-                                                ({elapsedTime}s)
-                                            </span>
-                                        )}
-                                    </p>
-                                </div>
-                            </div>
-                        )}
-                        <div ref={messagesEndRef} />
+    const chatView = (
+        <div className="flex-1 flex flex-col h-full overflow-hidden relative bg-gray-950">
+            {/* Header - Minimal Gemini-style - Hide on mobile since the global header handles it */}
+            {!isMobile && (
+                <div className="bg-gray-900/50 border-b border-gray-800/50 px-4 py-2.5 flex items-center justify-between flex-shrink-0">
+                    <h1 className="text-lg font-semibold text-cyan-400 truncate pr-4" title={displayName}>
+                        {displayName}
+                    </h1>
+                    <div className="flex gap-2 items-center">
+                        <Link href={`/projects/${projectId}/settings`}
+                            className="p-2 text-gray-400 hover:bg-gray-800 hover:text-white rounded-lg transition-all"
+                            title="Settings"
+                        >
+                            <Settings size={18} />
+                        </Link>
+                        <button
+                            onClick={() => setShowSidebar(!showSidebar)}
+                            className={`p-2 rounded-lg transition-all ${showSidebar
+                                ? "bg-cyan-500/20 text-cyan-400"
+                                : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
+                            title={showSidebar ? "Hide Files" : "Show Files"}
+                        >
+                            <Files size={18} />
+                        </button>
                     </div>
                 </div>
+            )}
 
-                {/* Command Help Overlay */}
-                {showCommandHelp && (
-                    <div className="px-4">
-                        <div className="max-w-4xl mx-auto">
-                            <CommandAutocomplete
-                                ref={commandRef}
-                                value={commandInputValue}
-                                onChange={setCommandInputValue}
-                                onSubmit={() => sendMessage(commandInputValue, [])}
-                                placeholder=""
-                                context="project"
-                                disabled={loading}
-                                showInput={false}
-                            />
-                        </div>
-                    </div>
-                )}
-
-                {/* Input - Fixed at bottom */}
-                <div className="pb-4 px-4">
-                    <div className="max-w-4xl mx-auto flex flex-col min-h-0">
-                        {!isMobile && (
-                            <div className="flex justify-between items-center mb-2 px-4">
-                                <div className="text-[10px] text-gray-500 font-mono uppercase tracking-widest">
-                                    Ready for input
-                                </div>
-                                {messages.length > 0 && (
-                                    <button
-                                        onClick={handleUndo}
-                                        disabled={loading}
-                                        className="flex items-center gap-1.5 text-[10px] font-bold text-gray-500 hover:text-cyan-400 uppercase tracking-wider transition-colors disabled:opacity-50"
-                                    >
-                                        <RotateCcw size={12} />
-                                        Undo Last
-                                    </button>
-                                )}
+            {/* Messages - Scrollable area */}
+            <div className="flex-1 overflow-y-auto px-4 py-8">
+                <div className="max-w-4xl mx-auto space-y-6" key={`messages-${messages.length}`}>
+                    {messages.length === 0 && !loading && (
+                        <div className="text-center text-gray-500 py-20">
+                            <div className="w-16 h-16 bg-cyan-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                                <span className="text-3xl">💼</span>
                             </div>
-                        )}
-                        <ChatInput
-                            value={commandInputValue}
-                            onChange={(val) => {
-                                setCommandInputValue(val);
-                                try {
-                                    localStorage.setItem(`chat_draft_${projectId}`, val);
-                                } catch (e) {
-                                    // ignore quota errors etc
-                                }
-                            }}
-                            onCommandModeChange={(isCommand, value) => {
-                                setShowCommandHelp(isCommand);
-                                setCommandInputValue(value);
-                            }}
-                            onKeyDown={(e) => {
-                                if (showCommandHelp && commandRef.current) {
-                                    commandRef.current.handleKeyDown(e);
-                                }
-                            }}
-                            onSend={sendMessage}
-                            placeholder="Work on tasks, upload files, or type / for commands..."
-                            disabled={loading}
-                            allowFileAttach={true}
-                            selectedModel={selectedModel}
-                            onModelChange={setSelectedModel}
-                            showModelSelector={!isMobile}
-                            onClone={handleClone}
-                            loading={loading}
-                            onStop={handleStop}
-                        />
-                    </div>
+                            <h2 className="text-3xl font-bold text-white mb-2 truncate max-w-full px-4" title={`${displayName} Workspace`}>
+                                {displayName} Workspace
+                            </h2>
+                            <p className="text-gray-400">Deep work and specialized execution for this project.</p>
+                            <p className="text-xs text-gray-600 mt-6 tracking-widest uppercase">
+                                Reference files auto-loaded from library
+                            </p>
+                        </div>
+                    )}
+
+                    {messages.map((msg, idx) => {
+                        // Skip rendering the last empty assistant message while loading
+                        const isLastEmptyAssistant = loading && idx === messages.length - 1 && msg.role === "assistant" && !msg.content && (!msg.tool_calls || msg.tool_calls.length === 0);
+                        if (isLastEmptyAssistant) return null;
+                        return (
+                            <MessageWithAttachments
+                                key={idx}
+                                role={msg.role}
+                                content={msg.content}
+                                attached_files={msg.attached_files}
+                                tool_calls={msg.tool_calls}
+                                nodeType="project"
+                                nodeName={projectId}
+                                approvalStatuses={approvalStatuses}
+                                onRegenerate={messageCallbacks[idx]?.onRegenerate}
+                                onBranch={messageCallbacks[idx]?.onBranch}
+                                onEdit={messageCallbacks[idx]?.onEdit}
+                                onDelete={messageCallbacks[idx]?.onDelete}
+                                onSend={(content) => sendMessage(content, [])}
+                                onApprove={handleApprove}
+                            />
+                        );
+                    })}
+
+                    {loading && (
+                        <div className="flex justify-start">
+                            <div className="bg-gray-800/40 border border-gray-700/50 rounded-2xl px-6 py-4 animate-pulse flex items-center gap-3">
+                                <div className="flex gap-1.5">
+                                    <div className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                                    <div className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                                    <div className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                                </div>
+                                <p className="text-sm text-gray-400">
+                                    {statusText || "Thinking..."}
+                                    {elapsedTime > 0 && (
+                                        <span className="ml-2 text-gray-500 font-mono text-xs">
+                                            ({elapsedTime}s)
+                                        </span>
+                                    )}
+                                </p>
+                            </div>
+                        </div>
+                    )}
+                    <div ref={messagesEndRef} />
                 </div>
             </div>
 
-            {/* Sidebar */}
-            {showSidebar && (
-                <>
-                    {/* Backdrop for mobile */}
-                    {isMobile && (
-                        <div
-                            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 animate-in fade-in duration-200"
-                            onClick={() => setShowSidebar(false)}
+            {/* Command Help Overlay */}
+            {showCommandHelp && (
+                <div className="px-4">
+                    <div className="max-w-4xl mx-auto border-t border-gray-800 pt-4">
+                        <CommandAutocomplete
+                            ref={commandRef}
+                            value={commandInputValue}
+                            onChange={setCommandInputValue}
+                            onSubmit={() => sendMessage(commandInputValue, [])}
+                            placeholder=""
+                            context="project"
+                            disabled={loading}
+                            showInput={false}
                         />
+                    </div>
+                </div>
+            )}
+
+            {/* Input - Fixed at bottom */}
+            <div className="pb-4 px-4">
+                <div className="max-w-4xl mx-auto flex flex-col min-h-0">
+                    {!isMobile && (
+                        <div className="flex justify-between items-center mb-2 px-4">
+                            <div className="text-[10px] text-gray-500 font-mono uppercase tracking-widest">
+                                Ready for input
+                            </div>
+                            {messages.length > 0 && (
+                                <button
+                                    onClick={handleUndo}
+                                    disabled={loading}
+                                    className="flex items-center gap-1.5 text-[10px] font-bold text-gray-500 hover:text-cyan-400 uppercase tracking-wider transition-colors disabled:opacity-50"
+                                >
+                                    <RotateCcw size={12} />
+                                    Undo Last
+                                </button>
+                            )}
+                        </div>
                     )}
-                    <div className={`fixed inset-y-0 right-0 z-50 bg-gray-900 border-l border-gray-800 p-4 flex flex-col shadow-2xl animate-in slide-in-from-right duration-300 ease-out ${isMobile ? "w-full" : "w-80"
-                        }`}>
-                        {/* Header with close button */}
-                        <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-800">
-                            <h3 className="text-sm font-semibold text-gray-300">Files & Artifacts</h3>
+                    <ChatInput
+                        value={commandInputValue}
+                        onChange={(val) => {
+                            setCommandInputValue(val);
+                            try {
+                                localStorage.setItem(`chat_draft_${projectId}`, val);
+                            } catch (e) {
+                                // ignore quota errors etc
+                            }
+                        }}
+                        onCommandModeChange={(isCommand, value) => {
+                            setShowCommandHelp(isCommand);
+                            setCommandInputValue(value);
+                        }}
+                        onKeyDown={(e) => {
+                            if (showCommandHelp && commandRef.current) {
+                                commandRef.current.handleKeyDown(e);
+                            }
+                        }}
+                        onSend={sendMessage}
+                        placeholder="Work on tasks, upload files, or type / for commands..."
+                        disabled={loading}
+                        allowFileAttach={true}
+                        selectedModel={selectedModel}
+                        onModelChange={setSelectedModel}
+                        showModelSelector={!isMobile}
+                        onClone={handleClone}
+                        loading={loading}
+                        onStop={handleStop}
+                    />
+                    <div className="mt-2 flex items-center justify-center gap-4">
+                        <div className="text-[10px] text-gray-600">
+                            Press <kbd className="bg-gray-800 px-1 rounded text-gray-400">/</kbd> to see available commands
+                        </div>
+                        {canvasContent && !showCanvas && (
+                            <button
+                                onClick={() => setShowCanvas(true)}
+                                className="text-[10px] text-cyan-500 font-bold hover:underline uppercase tracking-wider"
+                            >
+                                Open Canvas
+                            </button>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+
+    return (
+        <>
+            <div className="flex h-full w-full overflow-hidden bg-gray-950">
+                {!isMobile && showCanvas ? (
+                    <Group orientation="horizontal" className="h-full w-full">
+                        <Panel defaultSize={50} minSize={30}>
+                            {chatView}
+                        </Panel>
+                        <Separator className="w-1.5 bg-gray-950 hover:bg-cyan-500/20 transition-colors flex items-center justify-center cursor-col-resize">
+                            <div className="h-8 w-1 bg-gray-800 rounded-full" />
+                        </Separator>
+                        <Panel defaultSize={50} minSize={30}>
+                            <div className="h-full flex flex-col relative border-l border-gray-800">
+                                <Canvas
+                                    content={canvasContent}
+                                    format={canvasFormat}
+                                    filePath={canvasFilePath}
+                                    onUpdate={setCanvasContent}
+                                    onSave={handleSave}
+                                    onClose={() => setShowCanvas(false)}
+                                    onCommandPalette={(selection) => {
+                                        setCanvasSelection(selection || null);
+                                        setIsCommandPaletteOpen(true);
+                                    }}
+                                />
+                            </div>
+                        </Panel>
+                    </Group>
+                ) : (
+                    <div className="flex-1 flex flex-col h-full">
+                        {isMobile && showCanvas ? (
+                            <div className="flex-1 flex flex-col overflow-hidden">
+                                <Canvas
+                                    content={canvasContent}
+                                    format={canvasFormat}
+                                    filePath={canvasFilePath}
+                                    onUpdate={setCanvasContent}
+                                    onSave={handleSave}
+                                    onClose={() => setShowCanvas(false)}
+                                    onCommandPalette={(selection) => {
+                                        setCanvasSelection(selection || null);
+                                        setIsCommandPaletteOpen(true);
+                                    }}
+                                />
+                            </div>
+                        ) : chatView}
+                    </div>
+                )}
+
+                {showSidebar && (
+                    <div className="w-80 h-full border-l border-gray-800 bg-gray-900/50 backdrop-blur-xl absolute right-0 top-0 z-30 shadow-2xl animate-in slide-in-from-right duration-300 flex flex-col p-4">
+                        <div className="flex justify-between items-center mb-4">
+                            <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">Files & Artifacts</h2>
                             <button
                                 onClick={() => setShowSidebar(false)}
-                                className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
+                                className="p-1 hover:bg-gray-800 rounded-md text-gray-500 hover:text-white transition-colors"
                             >
                                 <X size={18} />
                             </button>
                         </div>
                         <div className="flex-1 overflow-hidden">
-                            <FilesSidebar nodeType="project" nodeName={projectId} />
+                            <FilesSidebar
+                                nodeType="project"
+                                nodeName={projectId}
+                                onOpenFile={(content, path, format) => {
+                                    setCanvasContent(content);
+                                    setCanvasFilePath(path);
+                                    setCanvasFormat(format);
+                                    setShowCanvas(true);
+                                    setShowSidebar(false);
+                                }}
+                                onPreviewImage={(url, name) => setPreviewImage({ url, name })}
+                            />
                         </div>
                     </div>
-                </>
+                )}
+            </div>
+
+            {/* Global Image Preview */}
+            {previewImage && (
+                <div
+                    className="fixed inset-0 bg-black/90 backdrop-blur-md z-[100] flex flex-col animate-in fade-in duration-300"
+                    onClick={() => setPreviewImage(null)}
+                >
+                    <div className="flex justify-between items-center p-4 bg-gray-900/50">
+                        <h3 className="text-sm font-bold text-gray-200">{previewImage.name}</h3>
+                        <button
+                            onClick={() => setPreviewImage(null)}
+                            className="p-2 hover:bg-white/10 rounded-full text-white transition-colors"
+                        >
+                            <X size={24} />
+                        </button>
+                    </div>
+                    <div className="flex-1 flex items-center justify-center p-4 md:p-12">
+                        <img
+                            src={previewImage.url}
+                            alt={previewImage.name}
+                            className="max-w-full max-h-full object-contain shadow-2xl rounded-lg animate-in zoom-in duration-300"
+                            onClick={(e) => e.stopPropagation()}
+                        />
+                    </div>
+                </div>
             )}
-        </div>
+
+            <EditCommandPalette
+                open={isCommandPaletteOpen}
+                onOpenChange={setIsCommandPaletteOpen}
+                onSelectAction={handleCanvasCommand}
+            />
+        </>
     );
 }

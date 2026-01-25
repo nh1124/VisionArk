@@ -234,11 +234,21 @@ def get_project_dir(user_id: str, project_id: str) -> Path:
         raise ValueError(error)
 
     projects_dir = get_user_projects_dir(user_id)
-    
-    # ID -> Display Name lookup for folder naming
+
+    # 1. Try by display name (cached/DB-fetched)
     folder_name = get_project_name(user_id, project_id)
-    
     project_path = secure_path_join(projects_dir, folder_name)
+    
+    if project_path.exists():
+        return project_path
+    
+    # 2. Fallback: Try by ID directly if folder name differs
+    if folder_name != project_id:
+        id_path = secure_path_join(projects_dir, project_id)
+        if id_path.exists():
+            return id_path
+
+    # 3. Create if not exists (defaulting to display name)
     project_path.mkdir(parents=True, exist_ok=True)
     return project_path
 

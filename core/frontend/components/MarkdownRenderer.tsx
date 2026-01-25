@@ -76,18 +76,17 @@ const CodeBlock = ({ children, className, inline, ...props }: CodeBlockProps) =>
 
     // Non-highlighted block code
     if (!inline) {
-        // Short single-line code (like file names) - render as simple inline-style block
         if (!showCopyButton) {
             return (
-                <pre className="inline-block px-3 py-1.5 my-1 rounded-lg bg-gray-900/60 border border-gray-800/40 font-mono text-sm text-gray-300" {...props}>
-                    <code>{children}</code>
-                </pre>
+                <code className="inline-block px-3 py-1.5 my-1 rounded-lg bg-gray-900/60 border border-gray-800/40 font-mono text-sm text-gray-300 whitespace-pre" {...props}>
+                    {children}
+                </code>
             );
         }
 
         return (
-            <div className="relative group my-4">
-                <div className="absolute right-2 top-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2">
+            <span className="block relative group my-4">
+                <span className="absolute right-2 top-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2">
                     {isCopied && (
                         <span className="text-[10px] bg-gray-950 text-gray-300 px-1.5 py-0.5 rounded border border-gray-800 shadow-xl whitespace-nowrap transition-all duration-200 opacity-100">
                             Copied!
@@ -100,11 +99,11 @@ const CodeBlock = ({ children, className, inline, ...props }: CodeBlockProps) =>
                     >
                         {isCopied ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
                     </button>
-                </div>
-                <pre className="p-4 rounded-xl bg-gray-950/80 border border-gray-800/50 font-mono text-sm text-gray-300 overflow-x-auto" {...props}>
-                    <code>{children}</code>
-                </pre>
-            </div>
+                </span>
+                <code className="block p-4 rounded-xl bg-gray-950/80 border border-gray-800/50 font-mono text-sm text-gray-300 overflow-x-auto whitespace-pre" {...props}>
+                    {children}
+                </code>
+            </span>
         );
     }
 
@@ -172,7 +171,7 @@ export default function MarkdownRenderer({
                         const shouldShowCaption = alt && !isPathAlt;
 
                         return (
-                            <div className="my-6">
+                            <span className="block my-6">
                                 <img
                                     src={processedSrc}
                                     alt={alt || "Image"}
@@ -180,11 +179,12 @@ export default function MarkdownRenderer({
                                     loading="lazy"
                                     {...props}
                                 />
-                                {shouldShowCaption && <p className="text-center text-xs text-gray-500 mt-2 italic">{alt}</p>}
-                            </div>
+                                {shouldShowCaption && <span className="block text-center text-xs text-gray-500 mt-2 italic">{alt}</span>}
+                            </span>
                         );
                     },
                     code: CodeBlock,
+                    pre: ({ children }: any) => <>{children}</>,
                     table({ children }) {
                         return (
                             <div className="overflow-x-auto my-6 rounded-xl border border-gray-800/50 bg-gray-900/20 shadow-sm">

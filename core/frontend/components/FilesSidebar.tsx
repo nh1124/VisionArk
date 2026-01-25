@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { apiFetch, getFileToken } from "@/lib/api";
-import { Download, FileText, Image, ExternalLink, X, Folder, File, RefreshCw, Trash2, Loader2, Eye } from "lucide-react";
+import { Download, FileText, Image, ExternalLink, X, Folder, File, RefreshCw, Trash2, Loader2, Eye, Plus } from "lucide-react";
 import MarkdownRenderer from "./MarkdownRenderer";
 import { useNotification } from "@/lib/NotificationContext";
 
@@ -26,6 +26,8 @@ interface FilesSidebarProps {
     nodeType: "hub" | "spoke" | "project";
     nodeName: string;
     onSyncComplete?: (files: FileInfo[]) => void;
+    onOpenFile?: (content: string, filePath: string, format: "markdown" | "code") => void;
+    onPreviewImage?: (url: string, name: string) => void;
 }
 
 interface TreeNode {
@@ -104,7 +106,7 @@ const buildFileTree = (items: TreeItemData[]): TreeNode[] => {
     return root;
 };
 
-export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: FilesSidebarProps) {
+export default function FilesSidebar({ nodeType, nodeName, onSyncComplete, onOpenFile, onPreviewImage }: FilesSidebarProps) {
     const [files, setFiles] = useState<FileInfo[]>([]);
     const [artifacts, setArtifacts] = useState<ArtifactInfo[]>([]);
     const [activeTab, setActiveTab] = useState<"refs" | "artifacts">("refs");
@@ -112,15 +114,10 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
     const [uploading, setUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(0);
     const [error, setError] = useState<string | null>(null);
-    const [dragActive, setDragActive] = useState(false);
-    const [selectedArtifact, setSelectedArtifact] = useState<{
-        name: string,
-        content?: string,
-        path: string,
-        type: 'text' | 'image' | 'binary',
-        mimeType?: string
-    } | null>(null);
     const [collapsedDirs, setCollapsedDirs] = useState<Record<string, boolean>>({});
+    const [isCreatingNewFile, setIsCreatingNewFile] = useState(false);
+    const [newFileName, setNewFileName] = useState("");
+    const [dragActive, setDragActive] = useState(false);
 
     const toggleDir = (path: string) => {
         setCollapsedDirs(prev => ({ ...prev, [path]: !prev[path] }));
@@ -146,17 +143,7 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
         }
     };
 
-    const openArtifact = async (path: string) => {
-        try {
-            const token = await getFileToken();
-            const url = nodeType === 'hub'
-                ? `/api/agents/hub/artifacts/${path}?token=${token}`
-                : `/api/agents/project/${nodeName}/artifacts/${path}?token=${token}`;
-            window.open(url, '_blank');
-        } catch (error) {
-            console.error("Failed to open artifact:", error);
-        }
-    };
+
 
     const refTree = useMemo(() => buildFileTree(files.map(f => ({
         id: f.id,
@@ -210,6 +197,22 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
                     >
                         {isCollapsed ? <Folder size={14} className="text-gray-500" /> : <Folder size={14} className="text-yellow-500/70" />}
                         <span className="truncate flex-1">{node.name}</span>
+                        <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                                onClick={(e) => { e.stopPropagation(); downloadFile(`/api/files/project/${nodeName}/${isArtifact ? 'artifacts' : 'refs'}/${node.path}/zip`, `${node.name}.zip`); }}
+                                className="p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-white transition-colors"
+                                title="Download Folder (ZIP)"
+                            >
+                                <Download size={12} />
+                            </button>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); handleDeletePath(node.path, node.name, isArtifact ? "artifacts" : "refs", true); }}
+                                className="p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-red-400 transition-colors"
+                                title="Delete Folder"
+                            >
+                                <Trash2 size={12} />
+                            </button>
+                        </div>
                     </div>
                     {!isCollapsed && (
                         <div className="ml-2 border-l border-gray-700/50">
@@ -230,8 +233,6 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
             if (isArtifact) {
                 downloadFile(`/api/files/project/${nodeName}/artifacts/${node.path}`, node.name);
             } else {
-                // If ID is disk-based, use different endpoint if needed, but download_file_by_id usually handles records.
-                // For direct disk files from refs, we might need a path-based download.
                 if (fileId?.startsWith('disk:')) {
                     const relativePath = fileId.replace('disk:refs/', '');
                     downloadFile(`/api/files/project/${nodeName}/refs/${relativePath}`, node.name);
@@ -241,22 +242,13 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
             }
         };
 
-        const handleClick = () => {
-            if (isArtifact) {
-                viewArtifact(node.path, node.name);
+        const handleClick = async () => {
+            if (isImage) {
+                const token = await getFileToken();
+                const url = `/api/files/project/${nodeName}/${isArtifact ? 'artifacts' : 'refs'}/${node.path}?token=${token}`;
+                onPreviewImage?.(url, node.name);
             } else {
-                // References view modal is currently merged with artifacts? 
-                // Let's reuse viewArtifact or similar if we want to preview refs too.
-                // For now, let's just allow downloading/deleting as before.
-                if (isImage) {
-                    setSelectedArtifact({
-                        name: node.name,
-                        path: node.path,
-                        type: 'image',
-                        // Map refs path
-                        content: isArtifact ? undefined : `refs`
-                    });
-                }
+                openFileInCanvas(node.path, node.name, isArtifact ? "artifacts" : "refs");
             }
         };
 
@@ -282,15 +274,13 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
                     >
                         <Download size={12} />
                     </button>
-                    {!isArtifact && !fileId?.startsWith('disk:') && (
-                        <button
-                            onClick={(e) => { e.stopPropagation(); deleteFile(fileId, node.name); }}
-                            className="p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-red-400 transition-colors"
-                            title="Delete"
-                        >
-                            <Trash2 size={12} />
-                        </button>
-                    )}
+                    <button
+                        onClick={(e) => { e.stopPropagation(); handleDeletePath(node.path, node.name, isArtifact ? "artifacts" : "refs"); }}
+                        className="p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-red-400 transition-colors"
+                        title="Delete"
+                    >
+                        <Trash2 size={12} />
+                    </button>
                 </div>
             </div>
         );
@@ -306,6 +296,40 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
             console.error("Failed to load files:", error);
         }
     }, [nodeType, nodeName]);
+
+    // Create a new empty file
+    const handleCreateNewFile = async () => {
+        const filename = newFileName.trim();
+        if (!filename) return;
+
+        try {
+            setLoading(true);
+            const response = await apiFetch(`/api/files/project/${nodeName}/save`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    path: filename,
+                    content: "",
+                    directory: "refs"
+                })
+            });
+
+            if (!response.ok) throw new Error("Failed to create file");
+
+            showToast(`File ${filename} created successfully`, "success");
+            await loadFiles();
+
+            // Open it automatically in canvas
+            openFileInCanvas(filename, filename.split('/').pop() || filename, "refs");
+        } catch (error) {
+            console.error("Create file error:", error);
+            showToast("Failed to create new file", "error");
+        } finally {
+            setLoading(false);
+            setIsCreatingNewFile(false);
+            setNewFileName("");
+        }
+    };
 
 
 
@@ -324,40 +348,28 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
         }
     }, [nodeType, nodeName]);
 
-    // View artifact content
-    const viewArtifact = async (path: string, name: string) => {
+    // Open file content in canvas
+    const openFileInCanvas = async (path: string, name: string, directory: "refs" | "artifacts" | "files") => {
         try {
-            const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(name);
-            const url = nodeType === "hub"
-                ? `/api/agents/hub/artifacts/${path}`
-                : `/api/agents/project/${nodeName}/artifacts/${path}`;
-
-            if (isImage) {
-                setSelectedArtifact({ name, path, type: 'image' });
-                return;
-            }
+            const url = `/api/files/project/${nodeName}/${directory}/${path}`;
 
             const response = await apiFetch(url);
+            if (!response.ok) throw new Error("Failed to fetch file");
+
             const contentType = response.headers.get('Content-Type') || '';
 
             if (contentType.includes('application/json')) {
                 const data = await response.json();
-                setSelectedArtifact({
-                    name,
-                    path,
-                    content: data.content || "Unable to read file",
-                    type: 'text'
-                });
+                onOpenFile?.(data.content || JSON.stringify(data, null, 2), `${directory}/${path}`, "markdown");
             } else if (contentType.includes('text/')) {
                 const content = await response.text();
-                setSelectedArtifact({ name, path, content, type: 'text' });
+                const isCode = /\.(js|ts|py|tsx|jsx|html|css|json|yaml|yml|c|cpp|h|hpp|rs|go|rb|php|sh|bat|ps1|sql|env|gitignore|dockerfile|makefile)$/i.test(name) || name.toLowerCase().includes('dockerfile');
+                onOpenFile?.(content, `${directory}/${path}`, isCode ? "code" : "markdown");
             } else {
-                // For other types, just show download option
-                setSelectedArtifact({ name, path, type: 'binary', mimeType: contentType });
+                console.log("Unsupported file type for canvas opening:", contentType);
             }
         } catch (error) {
-            console.error("Failed to view artifact:", error);
-            setSelectedArtifact({ name, path, content: "Error loading file", type: 'text' });
+            console.error("Failed to open file:", error);
         }
     };
 
@@ -459,7 +471,42 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
         e.target.value = '';
     };
 
-    // Delete file
+    // Delete file or directory by path
+    const handleDeletePath = async (path: string, name: string, directory: "refs" | "artifacts", isFolder: boolean = false) => {
+        const confirmed = await showConfirm(
+            `Delete ${isFolder ? "folder" : "file"} ${name}?${isFolder ? " This will delete all contents inside." : ""}`,
+            {
+                title: isFolder ? "Delete Folder" : "Delete File",
+                confirmText: "Delete",
+                variant: "danger"
+            }
+        );
+
+        if (!confirmed) return;
+
+        try {
+            setLoading(true);
+            const response = await apiFetch(`/api/files/project/${nodeName}/${directory}/${encodeURIComponent(path)}`, {
+                method: "DELETE"
+            });
+
+            if (response.ok) {
+                showToast(`${name} deleted successfully`, "success");
+                await loadFiles();
+                await loadArtifacts();
+            } else {
+                const data = await response.json();
+                showToast(data.detail || "Failed to delete", "error");
+            }
+        } catch (error) {
+            console.error("Delete error:", error);
+            showToast("Failed to delete", "error");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Delete file by ID (legacy ref - keeping for compatibility if needed, but updated UI to use path)
     const deleteFile = async (fileId: string, filename: string) => {
         const confirmed = await showConfirm(`Delete ${filename}?`, {
             title: "Delete File",
@@ -512,17 +559,58 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
             {/* References Tab Content */}
             {activeTab === "refs" && (
                 <>
+                    {/* New File Input */}
+                    {isCreatingNewFile && (
+                        <div className="mb-4 flex items-center gap-2 p-2 bg-gray-800/50 rounded-lg border border-cyan-500/30 animate-in slide-in-from-top-2 duration-200">
+                            <input
+                                autoFocus
+                                type="text"
+                                value={newFileName}
+                                onChange={(e) => setNewFileName(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter") handleCreateNewFile();
+                                    if (e.key === "Escape") setIsCreatingNewFile(false);
+                                }}
+                                placeholder="filename.md"
+                                className="flex-1 bg-transparent border-none outline-none text-sm text-gray-200"
+                            />
+                            <button
+                                onClick={handleCreateNewFile}
+                                className="text-cyan-400 hover:text-cyan-300 p-1"
+                            >
+                                <Plus size={16} />
+                            </button>
+                            <button
+                                onClick={() => setIsCreatingNewFile(false)}
+                                className="text-gray-500 hover:text-white p-1"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+                    )}
+
                     {/* Refresh button */}
                     <div className="flex items-center justify-between mb-2">
                         <span className="text-sm text-gray-400">Reference Files</span>
-                        <button
-                            onClick={loadFiles}
-                            disabled={loading}
-                            className={`flex items-center gap-1 text-xs px-2 py-1 ${nodeType === "hub" ? "bg-purple-600 hover:bg-purple-500" : "bg-cyan-600 hover:bg-cyan-500"} rounded disabled:opacity-50 transition-colors`}
-                        >
-                            {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                            <span>Refresh</span>
-                        </button>
+                        <div className="flex items-center gap-1">
+                            <button
+                                onClick={() => setIsCreatingNewFile(true)}
+                                disabled={loading || isCreatingNewFile}
+                                className={`flex items-center gap-1 text-xs px-2 py-1 ${nodeType === "hub" ? "bg-purple-600 hover:bg-purple-500" : "bg-cyan-600 hover:bg-cyan-500"} rounded disabled:opacity-50 transition-colors mr-1`}
+                                title="Create New File"
+                            >
+                                <Plus size={12} />
+                                <span>New</span>
+                            </button>
+                            <button
+                                onClick={loadFiles}
+                                disabled={loading}
+                                className={`flex items-center gap-1 text-xs px-2 py-1 ${nodeType === "hub" ? "bg-purple-600 hover:bg-purple-500" : "bg-cyan-600 hover:bg-cyan-500"} rounded disabled:opacity-50 transition-colors`}
+                            >
+                                {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                                <span>Refresh</span>
+                            </button>
+                        </div>
                     </div>
 
                     {/* Upload Zone */}
@@ -601,75 +689,6 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete }: Fil
                         {artifacts.length === 0 && (
                             <p className="text-gray-500 text-xs text-center py-4">No artifacts yet. Ask AI to create files!</p>
                         )}
-                    </div>
-                </div>
-            )}
-
-            {/* Artifact Viewer Modal */}
-            {selectedArtifact && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setSelectedArtifact(null)}>
-                    <div className="bg-gray-900 border border-gray-700 rounded-2xl max-w-4xl max-h-[90vh] w-full shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200" onClick={(e) => e.stopPropagation()}>
-                        {/* Modal Header */}
-                        <div className="flex items-center justify-between p-4 border-b border-gray-800 bg-gray-900/50">
-                            <div className="flex items-center gap-3">
-                                {selectedArtifact.type === 'image' ? <Image size={18} className="text-cyan-400" /> : <FileText size={18} className="text-cyan-400" />}
-                                <h3 className="font-bold text-gray-100 truncate max-w-md">{selectedArtifact.name}</h3>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <button
-                                    onClick={() => downloadFile(`/api/files/${nodeType}/${nodeName}/artifacts/${selectedArtifact.path}`, selectedArtifact.name)}
-                                    className="flex items-center gap-2 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm font-medium transition-colors"
-                                >
-                                    <Download size={16} />
-                                    Download
-                                </button>
-                                <button
-                                    onClick={loadFiles}
-                                    className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-all"
-                                    title="Refresh file list"
-                                    disabled={loading}
-                                >
-                                    <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-                                </button>
-                                <button
-                                    onClick={() => setSelectedArtifact(null)}
-                                    className="p-1.5 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-white transition-colors"
-                                >
-                                    <X size={20} />
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Modal Content */}
-                        <div className="flex-1 overflow-auto p-0 bg-gray-950/20">
-                            {selectedArtifact.type === 'image' ? (
-                                <ImagePreview
-                                    url={`/api/files/${nodeType}/${nodeName}/artifacts/${selectedArtifact.path}`}
-                                    name={selectedArtifact.name}
-                                />
-                            ) : selectedArtifact.type === 'text' ? (
-                                <div className="p-6">
-                                    {selectedArtifact.name.endsWith('.md') ? (
-                                        <MarkdownRenderer content={selectedArtifact.content || ''} />
-                                    ) : (
-                                        <pre className="text-sm text-gray-300 font-mono whitespace-pre-wrap leading-relaxed">
-                                            {selectedArtifact.content}
-                                        </pre>
-                                    )}
-                                </div>
-                            ) : (
-                                <div className="flex flex-col items-center justify-center p-20 gap-4">
-                                    <FileText size={64} className="text-gray-700" />
-                                    <p className="text-gray-400 italic">This file type ({selectedArtifact.mimeType || 'binary'}) cannot be previewed.</p>
-                                    <button
-                                        onClick={() => downloadFile(`/api/files/${nodeType}/${nodeName}/artifacts/${selectedArtifact.path}`, selectedArtifact.name)}
-                                        className="text-cyan-400 hover:text-cyan-300 underline underline-offset-4"
-                                    >
-                                        Download to view
-                                    </button>
-                                </div>
-                            )}
-                        </div>
                     </div>
                 </div>
             )}

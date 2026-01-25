@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List, Optional
@@ -8,8 +9,10 @@ from models.database import get_async_db, ApprovalRequest, TaskType
 from services.approval import ApprovalService
 from queue_system.manager import QueueManager
 from services.auth import resolve_identity, Identity
+ 
+logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(prefix="/api/approvals", tags=["Approvals"])
 
 class ApprovalResponse(BaseModel):
     id: str
@@ -20,7 +23,7 @@ class ApprovalResponse(BaseModel):
     error_log: Optional[str] = None
     created_at: str
 
-@router.get("/projects/{project_id}/approvals", response_model=List[ApprovalResponse])
+@router.get("/project/{project_id}/list", response_model=List[ApprovalResponse])
 async def list_approvals(project_id: str, db: AsyncSession = Depends(get_async_db), identity: Identity = Depends(resolve_identity)):
     """
     List all approval requests for a project.
@@ -45,7 +48,7 @@ async def list_approvals(project_id: str, db: AsyncSession = Depends(get_async_d
         for req in requests
     ]
 
-@router.post("/approvals/{request_id}/approve")
+@router.post("/{request_id}/approve")
 async def approve_request(request_id: str, db: AsyncSession = Depends(get_async_db), identity: Identity = Depends(resolve_identity)):
     """
     Approve and enqueue a request for execution.
@@ -56,13 +59,15 @@ async def approve_request(request_id: str, db: AsyncSession = Depends(get_async_
         
         # 2. Enqueue task for Worker
         manager = QueueManager()
-        task_id = manager.enqueue({
-            "task_type": TaskType.APPROVAL_EXECUTION,
-            "user_id": req.user_id,
-            "project_id": req.project_id,
-            "request_id": req.id,
-            "message": f"Executing approved {req.tool_name} request"
-        }, user_id=req.user_id)
+        task_id = manager.enqueue(
+            user_id=req.user_id,
+            message=f"Executing approved {req.tool_name} request",
+            context={
+                "project_id": req.project_id,
+                "request_id": req.id
+            },
+            task_type=TaskType.APPROVAL_EXECUTION
+        )
         
         return {
             "success": True, 
@@ -73,17 +78,20 @@ async def approve_request(request_id: str, db: AsyncSession = Depends(get_async_
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        logger.error(f"Failed to approve request: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/approvals/{request_id}/reject")
+@router.post("/{request_id}/reject")
 async def reject_request(request_id: str, db: AsyncSession = Depends(get_async_db), identity: Identity = Depends(resolve_identity)):
     """
     Reject a request.
     """
     try:
+        # 1. Update status to REJECTED
         req = await ApprovalService.reject_request(db, request_id)
         return {"success": True, "status": req.status}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        logger.error(f"Failed to reject request: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

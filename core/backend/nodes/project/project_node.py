@@ -35,6 +35,7 @@ class ProjectNode(BaseNode):
         from tools.library.writer import RecursiveWriterTool
         from tools.library.shell import RunSafeShellTool
         from tools.library.routing import SubscribeIntentTool
+        from tools.library.canvas import UpdateCanvasTool
         
         self.tools = [
             AskNodeTool(),
@@ -69,7 +70,8 @@ class ProjectNode(BaseNode):
             GenerateImageTool(),
             GetCurrentConditionTool(),
             UpdateUserConditionTool(),
-            UpdateMDSectionTool()
+            UpdateMDSectionTool(),
+            UpdateCanvasTool()
         ]
 
     async def on_enter(self):

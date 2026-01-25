@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, memo } from "react";
-import { Copy, Check, ThumbsUp, ThumbsDown, RotateCcw, Share2, MoreHorizontal, MessageSquarePlus, Volume2, Pencil, Trash2, Bot } from "lucide-react";
+import { Copy, Check, ThumbsUp, ThumbsDown, RotateCcw, Share2, MoreHorizontal, MessageSquarePlus, Volume2, Pencil, Trash2, Bot, Loader2 } from "lucide-react";
 import { getFileToken } from "@/lib/api";
 import MarkdownRenderer from "./MarkdownRenderer";
 
@@ -26,6 +26,7 @@ interface MessageWithAttachmentsProps {
     tool_calls?: ToolCall[];  // Received from API
     nodeType?: string;
     nodeName?: string;
+    approvalStatuses?: Record<string, string>; // Map of requestId -> status
     onSend?: (content: string) => void;
     onApprove?: (requestId: string, approved: boolean) => void;
     onRegenerate?: () => void;
@@ -42,6 +43,7 @@ function MessageWithAttachmentsBase({
     tool_calls = [], // Use API-provided tool_calls
     nodeType = "hub",
     nodeName = "hub",
+    approvalStatuses = {},
     onSend,
     onApprove,
     onRegenerate,
@@ -52,12 +54,26 @@ function MessageWithAttachmentsBase({
     const [toolsExpanded, setToolsExpanded] = useState(true);
     const [isCopied, setIsCopied] = useState(false);
     const [showMoreMenu, setShowMoreMenu] = useState(false);
+    const [processingAction, setProcessingAction] = useState<{ id: string, type: 'approve' | 'reject' | null }>({ id: '', type: null });
 
     const handleCopy = () => {
         if (!content) return;
         navigator.clipboard.writeText(content);
         setIsCopied(true);
         setTimeout(() => setIsCopied(false), 2000);
+    };
+
+    const handleAction = async (requestId: string, approved: boolean) => {
+        if (!onApprove) return;
+        setProcessingAction({ id: requestId, type: approved ? 'approve' : 'reject' });
+        try {
+            await onApprove(requestId, approved);
+            // We usually don't need to clear it here because fetchHistory will re-render
+            // but for safety if the re-render is slow:
+        } finally {
+            // Keep the loading state until the message is updated or if it fails
+            // setProcessingAction({ id: '', type: null }); 
+        }
     };
 
     const downloadFile = async (url: string, filename: string) => {
@@ -89,6 +105,20 @@ function MessageWithAttachmentsBase({
         if (type.startsWith("video/")) return "🎥";
         if (type.startsWith("audio/")) return "🎵";
         return "📎";
+    };
+
+    const getStatusBadge = (status: string) => {
+        switch (status) {
+            case "approved":
+            case "executed":
+                return <span className="text-green-400 text-xs font-bold flex items-center gap-1">✅ Approved</span>;
+            case "rejected":
+                return <span className="text-red-400 text-xs font-bold flex items-center gap-1">❌ Rejected</span>;
+            case "failed":
+                return <span className="text-orange-400 text-xs font-bold flex items-center gap-1">⚠️ Failed</span>;
+            default:
+                return null;
+        }
     };
 
     return (
@@ -156,7 +186,11 @@ function MessageWithAttachmentsBase({
                                 <span className="text-gray-400 italic">(No response)</span>
                             ) : null
                         ) : (
-                            <div className="whitespace-pre-wrap break-words leading-relaxed">{content}</div>
+                            <div className="whitespace-pre-wrap break-words leading-relaxed">
+                                {content.includes("[CANVAS_CONTEXT_START]")
+                                    ? content.split("[CANVAS_CONTEXT_START]")[0].trim()
+                                    : content}
+                            </div>
                         )}
                     </div>
 
@@ -235,12 +269,23 @@ function MessageWithAttachmentsBase({
                                             let isPendingApproval = false;
                                             let requestId = "";
                                             let commandToApprove = "";
+                                            let currentStatus = "";
 
                                             if (tool.name === "run_safe_shell") {
                                                 try {
                                                     const parsed = JSON.parse(tool.result);
-                                                    if (parsed.status === "pending_approval") {
+
+                                                    // Check live status map first (priority)
+                                                    if (parsed.request_id && approvalStatuses[parsed.request_id]) {
+                                                        const liveStatus = approvalStatuses[parsed.request_id];
+                                                        currentStatus = liveStatus;
+                                                        isPendingApproval = liveStatus === "pending";
+                                                        requestId = parsed.request_id;
+                                                    }
+                                                    // Fallback to embedded status if no live update
+                                                    else if (parsed.status === "pending_approval") {
                                                         isPendingApproval = true;
+                                                        currentStatus = "pending";
                                                         commandToApprove = parsed.command;
                                                         requestId = parsed.request_id;
                                                     }
@@ -263,21 +308,37 @@ function MessageWithAttachmentsBase({
                                                             {tool.result}
                                                         </div>
 
-                                                        {isPendingApproval && requestId && onApprove && (
+                                                        {isPendingApproval && requestId && onApprove ? (
                                                             <div className="mt-3 flex gap-2">
                                                                 <button
-                                                                    onClick={() => onApprove(requestId, true)}
-                                                                    className="px-4 py-1.5 bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/30 rounded-lg text-xs font-bold transition-all flex items-center gap-2"
+                                                                    disabled={processingAction.id === requestId}
+                                                                    onClick={() => handleAction(requestId, true)}
+                                                                    className="px-4 py-1.5 bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/30 rounded-lg text-xs font-bold transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                                                                 >
-                                                                    <span>✅ Approve</span>
+                                                                    {processingAction.id === requestId && processingAction.type === 'approve' ? (
+                                                                        <Loader2 size={14} className="animate-spin" />
+                                                                    ) : (
+                                                                        <span>✅ Approve</span>
+                                                                    )}
                                                                 </button>
                                                                 <button
-                                                                    onClick={() => onApprove(requestId, false)}
-                                                                    className="px-4 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 rounded-lg text-xs font-bold transition-all flex items-center gap-2"
+                                                                    disabled={processingAction.id === requestId}
+                                                                    onClick={() => handleAction(requestId, false)}
+                                                                    className="px-4 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 rounded-lg text-xs font-bold transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                                                                 >
-                                                                    <span>❌ Reject</span>
+                                                                    {processingAction.id === requestId && processingAction.type === 'reject' ? (
+                                                                        <Loader2 size={14} className="animate-spin" />
+                                                                    ) : (
+                                                                        <span>❌ Reject</span>
+                                                                    )}
                                                                 </button>
                                                             </div>
+                                                        ) : (
+                                                            requestId && currentStatus && getStatusBadge(currentStatus) && (
+                                                                <div className="mt-2">
+                                                                    {getStatusBadge(currentStatus)}
+                                                                </div>
+                                                            )
                                                         )}
                                                     </div>
                                                 </div>

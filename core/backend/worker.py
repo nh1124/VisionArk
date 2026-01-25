@@ -13,7 +13,7 @@ from nodes.project.project_node import ProjectNode
 from nodes.system.scheduler_node import SchedulerNode
 from nodes.system.router_node import RouterNode
 from services.command_parser import parse_command, execute_command
-from models.database import AsyncSessionLocal, ScheduledTask, ScheduledTaskStatus, Node, TaskType
+from models.database import AsyncSessionLocal, ScheduledTask, ScheduledTaskStatus, Node, TaskType, Project
 from services.aes_dispatcher import AESDispatcher
 from sqlalchemy import select
 
@@ -234,6 +234,9 @@ class Worker:
         return attached_files
 
     async def _handle_approval_task(self, context: dict, db_session):
+
+        print(f"[Worker] context args: {context}")
+
         """Logic for executing an approved request in the background"""
         from services.approval import ApprovalService
         request_id = context.get("request_id")
@@ -242,8 +245,39 @@ class Worker:
         print(f"[Worker] Running Approval Execution for request: {request_id}")
         try:
             request = await ApprovalService.execute_approved_request(db_session, request_id)
+            print(f"[Worker] Approval Execution {request_id} completed. Result: {request.response}")
+            
+            # Execute Project Node update SYNCHRONOUSLY
+            # This ensures history is updated BEFORE we mark this task as completed
+            result = await db_session.execute(select(Project).filter(Project.id == context.get("project_id")))
+            project = result.scalars().first()
+            if not project: raise Exception("Project not found")
+
+            result = await db_session.execute(select(Node).filter(Node.project_id == project.id, Node.node_type == "PROJECT"))
+            target_node_record = result.scalars().first()
+            
+            if target_node_record:
+                # Prepare context for Project Node
+                node_context = {
+                    "target_node_id": target_node_record.id,
+                    "original_message": f"Execution Result: {request.response}",
+                    "session_id": context.get("session_id"),
+                    "project_id": context.get("project_id"),
+                    "user_id": request.user_id,
+                    "task_id": task_id,
+                    "db_session": db_session
+                }
+                
+                from services.node_factory import NodeFactory
+                target_node = NodeFactory.get_node(target_node_record, node_context)
+                
+                if target_node:
+                    print(f"[Worker] Updating Project Node with execution result...")
+                    await target_node.process(f"Execution Result: {request.response}")
+            
+            # NOW mark the approval task as completed
             self.manager.update_status(task_id, "completed", request.response)
-            print(f"[Worker] Approval Execution {request_id} completed.")
+
         except Exception as e:
             print(f"❌ Approval Execution failed: {e}")
             self.manager.update_status(task_id, "failed", str(e))

@@ -73,6 +73,8 @@ class ApprovalService:
         result = await db.execute(stmt)
         request = result.scalars().first()
         
+        print(f"{__name__} Debug : {request}")
+
         if not request:
             raise ValueError(f"Request {request_id} not found")
             
@@ -80,11 +82,14 @@ class ApprovalService:
             raise ValueError(f"Request is not in APPROVED state (current status: {request.status})")
 
         # Execute based on tool name
+        print(f"{__name__} Debug : {request.tool_name}")
         if request.tool_name == "run_safe_shell":
             exec_result = await ApprovalService._execute_shell_async(request)
         else:
             exec_result = {"success": False, "error": f"Unknown tool: {request.tool_name}"}
 
+        print(f"{__name__} Debug : {exec_result}")
+        
         # Update DB
         request.response = exec_result
         if exec_result.get("success"):
@@ -96,6 +101,9 @@ class ApprovalService:
         request.updated_at = datetime.utcnow()
         await db.commit()
         await db.refresh(request)
+
+        print(f"{__name__} Debug : Finished {request}")
+
         return request
 
     @staticmethod
@@ -114,44 +122,6 @@ class ApprovalService:
         request.updated_at = datetime.utcnow()
         await db.commit()
         await db.refresh(request)
-        return request
-
-    @staticmethod
-    def approve_request(db, request_id: str) -> ApprovalRequest:
-        """
-        LEGACY: Synchronous execution. Maintained for temporary compatibility.
-        DEPRECATED: Use set_approved + worker execution instead.
-        """
-        from sqlalchemy import select
-        from models.database import ApprovalRequest, ApprovalStatus
-        
-        # If it's an AsyncSession, this will fail or need adaptation. 
-        # For now, we assume this is only called with sync Session.
-        request = db.scalar(select(ApprovalRequest).where(ApprovalRequest.id == request_id))
-        
-        if not request:
-            raise ValueError(f"Request {request_id} not found")
-            
-        if request.status != ApprovalStatus.PENDING:
-            raise ValueError(f"Request is not pending (current status: {request.status})")
-
-        # Execute based on tool name
-        if request.tool_name == "run_safe_shell":
-            result = ApprovalService._execute_shell(request)
-        else:
-            result = {"success": False, "error": f"Unknown tool: {request.tool_name}"}
-
-        # Update DB
-        request.response = result
-        if result.get("success"):
-            request.status = ApprovalStatus.EXECUTED
-        else:
-            request.status = ApprovalStatus.FAILED
-            request.error_log = result.get("error")
-            
-        request.updated_at = datetime.utcnow()
-        db.commit()
-        db.refresh(request)
         return request
 
     @staticmethod
