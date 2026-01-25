@@ -16,7 +16,7 @@ const MermaidComponent = ({ node, updateAttributes, extension }: any) => {
         return (
             <NodeViewWrapper className="code-block relative">
                 <pre>
-                    <NodeViewContent as="code" />
+                    <NodeViewContent as={"code" as any} />
                 </pre>
             </NodeViewWrapper>
         );
@@ -41,7 +41,7 @@ const MermaidComponent = ({ node, updateAttributes, extension }: any) => {
                         <span className="text-cyan-500/50">Editing</span>
                     </div>
                     <pre className="outline-none">
-                        <NodeViewContent as="code" className="block min-h-[1em] language-mermaid" />
+                        <NodeViewContent as={"code" as any} className="block min-h-[1em] language-mermaid" />
                     </pre>
                 </div>
             ) : (
