@@ -18,6 +18,7 @@ interface ChatInputProps {
     onModelChange?: (model: string) => void;
     showModelSelector?: boolean;
     onClone?: () => void;
+    onScheduleMessage?: () => void;
     loading?: boolean;
     onStop?: () => void;
 }
@@ -37,6 +38,7 @@ function ChatInputComponent({
     onModelChange,
     showModelSelector = false,
     onClone,
+    onScheduleMessage,
     loading = false,
     onStop,
     onKeyDown
@@ -411,6 +413,15 @@ function ChatInputComponent({
                                         className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-white/5 transition-all flex items-center gap-3"
                                     >
                                         <span className="text-purple-400">📋</span> Clone Spoke (Branch)
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            onScheduleMessage?.();
+                                            setShowToolsMenu(false);
+                                        }}
+                                        className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-white/5 transition-all flex items-center gap-3"
+                                    >
+                                        <span className="text-blue-400">📅</span> Schedule Message
                                     </button>
                                 </div>
                             )}

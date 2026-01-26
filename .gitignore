@@ -54,7 +54,3 @@ data
 spokes/*/chat.log
 spokes/*/artifacts/
 .gemini/
-
-# Microservices
-LBS
-KnowledgeCore

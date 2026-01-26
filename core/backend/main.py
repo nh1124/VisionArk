@@ -7,8 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from models.database import init_database
-from api import lbs, agents, commands, rag, context, files, auth, settings as settings_api, export
-from api import decomposer, suggestions, scheduler, approvals
+from api import agents, commands, rag, context, files, auth, settings as settings_api, export
+from api import decomposer, suggestions, scheduler, approvals, automation
+from integrations.lbs import lbs_router
+from integrations.webhooks import router as webhooks_router
 
 from config import settings
 
@@ -62,7 +64,8 @@ app.add_middleware(
 
 # Include routers
 app.include_router(auth.router)  # Auth first (no auth required for register)
-app.include_router(lbs.router)
+app.include_router(lbs_router)
+app.include_router(webhooks_router)
 app.include_router(agents.router)
 app.include_router(commands.router)
 app.include_router(rag.router)
@@ -74,6 +77,7 @@ app.include_router(suggestions.router)
 app.include_router(export.router)
 app.include_router(scheduler.router)
 app.include_router(approvals.router)
+app.include_router(automation.router)
 
 
 @app.get("/")

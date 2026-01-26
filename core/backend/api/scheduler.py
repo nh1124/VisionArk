@@ -13,9 +13,7 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from services.lbs_client import LBSClient
-from services.scheduler_service import calculate_schedule_v3, ScheduledItem
-from api.lbs import get_lbs_client
+from integrations.lbs import LBSClient, get_lbs_client
 from services.auth import resolve_identity, Identity
 from models.database import get_async_db, UserSettings
 from utils.encryption import decrypt_string

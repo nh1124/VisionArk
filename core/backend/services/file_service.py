@@ -124,7 +124,58 @@ class FileService:
         
         self.db.add(uploaded_file)
         await self.db.commit()
+        
+        # Trigger Watchers
+        asyncio.create_task(self._trigger_watchers(uploaded_file))
+        
         return uploaded_file
+    
+    async def _trigger_watchers(self, file_record: UploadedFile):
+        """
+        Check for any nodes or system triggers that should react to this file upload.
+        """
+        try:
+            from models.database import Node, AsyncSessionLocal
+            from sqlalchemy import select
+            
+            async with AsyncSessionLocal() as session:
+                # Find nodes in this project that have 'watcher' metadata
+                # This is a simplified implementation of trigger-based watchers.
+                stmt = select(Node).filter(
+                    Node.project_id == file_record.project_id,
+                    Node.status == "active"
+                )
+                result = await session.execute(stmt)
+                nodes = result.scalars().all()
+                
+                for node in nodes:
+                    meta = node.meta_payload or {}
+                    watchers = meta.get("watchers", [])
+                    
+                    for watcher in watchers:
+                        # e.g., watcher = {"pattern": "*.pdf", "task_type": "PDF_ANALYSIS"}
+                        import fnmatch
+                        pattern = watcher.get("pattern", "*")
+                        if fnmatch.fnmatch(file_record.filename, pattern):
+                            task_type = watcher.get("task_type")
+                            if task_type:
+                                from services.aes_dispatcher import AESDispatcher
+                                dispatcher = AESDispatcher(lambda: session)
+                                await dispatcher.schedule_task(
+                                    user_id=self.user_id,
+                                    task_type=task_type,
+                                    scheduled_at=datetime.utcnow(), # Immediate
+                                    project_id=file_record.project_id,
+                                    payload={
+                                        "file_id": file_record.id,
+                                        "filename": file_record.filename,
+                                        "project_id": file_record.project_id,
+                                        "node_id": node.id
+                                    }
+                                )
+                                print(f"[Watcher] Triggered {task_type} for {file_record.filename} via Node {node.display_name}")
+        except Exception as e:
+            print(f"[Watcher] Error in _trigger_watchers: {e}")
     
     async def upload_to_gemini(self, file_record: UploadedFile) -> Dict[str, str]:
         """

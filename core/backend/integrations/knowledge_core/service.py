@@ -3,8 +3,8 @@ from typing import Optional, List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import ServiceRegistry
 from utils.encryption import decrypt_string
-from .knowledge_core.client import KnowledgeCoreClient
-from .knowledge_core.models import IngestResponse, ContextResponse
+from .client import KnowledgeCoreClient
+from .models import IngestResponse, ContextResponse
 
 class KnowledgeCoreService:
     """

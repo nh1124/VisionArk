@@ -22,15 +22,17 @@ class BaseAESHandler(ABC):
         """Execute the task logic"""
         pass
 
-# Global registry for AES handlers
-_AES_HANDLER_REGISTRY: Dict[str, Type[BaseAESHandler]] = {}
+from va_sdk import aes_registry
+import inspect
+
+# Helper to keep cleaner syntax for class-based handlers if desired, 
+# or we can just use @aes_registry.register directly.
+# But since we need to handle the dual-type usage in execute(),
+# we just register the class itself.
 
 def register_aes_handler(task_type: str):
-    """Decorator to register an AES handler class"""
-    def decorator(cls: Type[BaseAESHandler]):
-        _AES_HANDLER_REGISTRY[task_type] = cls
-        return cls
-    return decorator
+    """Decorator to register an AES handler class via global registry"""
+    return aes_registry.register(task_type)
 
 @register_aes_handler("HARD_DELETE")
 class HardDeleteHandler(BaseAESHandler):
@@ -103,6 +105,167 @@ class FileSyncHandler(BaseAESHandler):
         stats = await file_service.sync_project_directory(project_id, deep=deep)
         print(f"[AES] Sync finished for {project_id}: {stats}")
 
+@register_aes_handler("POST_MESSAGE")
+class PostMessageHandler(BaseAESHandler):
+    """
+    Enqueues a user message to be processed by the agent.
+    Used for reserved/scheduled messages.
+    """
+    async def run(self, context: Dict[str, Any]):
+        project_id = context.get("project_id")
+        message = context.get("message")
+        
+        if not project_id or not message:
+            raise ValueError("project_id and message are required for POST_MESSAGE")
+
+        print(f"[AES] Posting scheduled message to project {project_id}")
+        
+        from queue_system.manager import QueueManager
+        from models.database import TaskType
+        
+        queue_manager = QueueManager()
+        queue_manager.enqueue(
+            user_id=self.user_id,
+            message=message,
+            context={
+                "user_id": self.user_id,
+                "project_id": project_id,
+                "env": "v4"
+            },
+            task_type=TaskType.USER_MESSAGE
+        )
+
+@register_aes_handler("PROJECT_PULSE")
+class ProjectPulseHandler(BaseAESHandler):
+    """
+    Trigger a 'Project Pulse' - a periodic summary of project state.
+    """
+    async def run(self, context: Dict[str, Any]):
+        project_id = context.get("project_id")
+        if not project_id:
+            raise ValueError("project_id is required for PROJECT_PULSE")
+
+        print(f"[AES] Triggering Project Pulse for project {project_id}")
+        
+        from queue_system.manager import QueueManager
+        from models.database import TaskType
+        
+        queue_manager = QueueManager()
+        # We send a special instruction to the agent to generate a pulse report
+        pulse_instruction = "SYSTEM INSTRUCTION: Generate a comprehensive 'Project Pulse' summary of recent activities, artifact changes, and overall project direction. Save it as a new artifact named 'project_pulse_[TIMESTAMP].md'."
+        
+        queue_manager.enqueue(
+            user_id=self.user_id,
+            message=pulse_instruction,
+            context={
+                "user_id": self.user_id,
+                "project_id": project_id,
+                "env": "v4",
+                "is_system_trigger": True
+            },
+            task_type=TaskType.USER_MESSAGE
+        )
+
+@register_aes_handler("AUTO_RESEARCH")
+class AutoResearchHandler(BaseAESHandler):
+    """
+    Background research task implementation.
+    """
+    async def run(self, context: Dict[str, Any]):
+        project_id = context.get("project_id")
+        topic = context.get("topic")
+        
+        if not project_id:
+            raise ValueError("project_id is required for AUTO_RESEARCH")
+
+        print(f"[AES] Executing AUTO_RESEARCH on '{topic}' for project {project_id}")
+        
+        from queue_system.manager import QueueManager
+        from models.database import TaskType
+        
+        research_message = f"SYSTEM INSTRUCTION: Conduct background research on the following topic: {topic or 'Latest updates relevant to this project'}. Update the Knowledge Summary or create a new research artifact with findings."
+        
+        queue_manager = QueueManager()
+        queue_manager.enqueue(
+            user_id=self.user_id,
+            message=research_message,
+            context={
+                "user_id": self.user_id,
+                "project_id": project_id,
+                "env": "v4",
+                "is_system_trigger": True
+            },
+            task_type=TaskType.USER_MESSAGE
+        )
+
+@register_aes_handler("LBS_REMINDER")
+class LBSReminderHandler(BaseAESHandler):
+    """
+    Bridge AES and LBS to provide proactive reminders.
+    """
+    async def run(self, context: Dict[str, Any]):
+        project_id = context.get("project_id")
+        message = context.get("message", "Task reminder from LBS.")
+        
+        if not project_id:
+             # If no project_id, maybe send to global or first active project?
+             # For now require project_id
+             raise ValueError("project_id is required for LBS_REMINDER")
+
+        print(f"[AES] LBS Reminder: {message}")
+        
+        from queue_system.manager import QueueManager
+        from models.database import TaskType
+        
+        queue_manager = QueueManager()
+        queue_manager.enqueue(
+            user_id=self.user_id,
+            message=f"🔔 LBS REMINDER: {message}",
+            context={
+                "user_id": self.user_id,
+                "project_id": project_id,
+                "env": "v4",
+                "is_system_trigger": True
+            },
+            task_type=TaskType.USER_MESSAGE
+        )
+
+@register_aes_handler("PROJECT_SNAPSHOT")
+class ProjectSnapshotHandler(BaseAESHandler):
+    """
+    Create a ZIP archive of the project directory.
+    """
+    async def run(self, context: Dict[str, Any]):
+        project_id = context.get("project_id")
+        if not project_id:
+            raise ValueError("project_id is required for PROJECT_SNAPSHOT")
+
+        print(f"[AES] Creating snapshot for project {project_id}")
+        
+        from utils.paths import get_project_dir, DATA_DIR
+        proj_dir = get_project_dir(self.user_id, project_id)
+        
+        if not proj_dir.exists():
+            print(f"[AES] Snapshot failed: Directory {proj_dir} does not exist")
+            return
+
+        # Snapshot location: data/users/{user_id}/snapshots/{project_id}/
+        snapshot_root = DATA_DIR / "users" / self.user_id / "snapshots" / project_id
+        snapshot_root.mkdir(parents=True, exist_ok=True)
+        
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        archive_name = f"snapshot_{timestamp}"
+        archive_path = snapshot_root / archive_name
+        
+        import shutil
+        await asyncio.to_thread(
+            shutil.make_archive,
+            str(archive_path),
+            'zip',
+            root_dir=str(proj_dir)
+        )
+        print(f"[AES] Snapshot created: {archive_path}.zip")
+
 class AESSystemHandlers:
     """
     Dispatcher for AES handlers.
@@ -114,12 +277,17 @@ class AESSystemHandlers:
 
     async def execute(self, task_type: str, context: Dict[str, Any]):
         """Route task to the appropriate handler"""
-        handler_cls = _AES_HANDLER_REGISTRY.get(task_type)
-        if not handler_cls:
-            if task_type == "AUTO_RESEARCH":
-                 print(f"[AES Handlers] AUTO_RESEARCH is not yet implemented (Placeholder).")
-                 return
+        handler_obj = aes_registry.get(task_type)
+        if not handler_obj:
             raise ValueError(f"Unknown AES task type: {task_type}")
         
-        handler = handler_cls(self.db, self.user_id)
-        await handler.run(context)
+        # Check if it's a class (Legacy/Core handlers)
+        if inspect.isclass(handler_obj) and issubclass(handler_obj, BaseAESHandler):
+            handler = handler_obj(self.db, self.user_id)
+            await handler.run(context)
+        # Check if it's a callable function (Integration handlers)
+        elif callable(handler_obj):
+            # Expect signature: func(context, db_session, user_id)
+            await handler_obj(context, self.db, self.user_id)
+        else:
+             raise ValueError(f"Invalid handler type for {task_type}: {type(handler_obj)}")

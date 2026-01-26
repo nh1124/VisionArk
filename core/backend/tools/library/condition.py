@@ -2,7 +2,7 @@ from typing import Any, Optional, Dict
 from pydantic import BaseModel, Field
 from tools.base import BaseTool, NoArgs
 from sqlalchemy.ext.asyncio import AsyncSession
-from tools.lbs_tools import update_user_condition, get_current_condition, reset_user_condition
+from integrations.lbs.agent_tools import update_user_condition, get_current_condition, reset_user_condition
 
 class GetCurrentConditionTool(BaseTool):
     name = "get_current_condition"
@@ -19,7 +19,7 @@ class GetCurrentConditionTool(BaseTool):
         
         try:
             # Reusing the existing function for now as it's already well-implemented
-            from tools.lbs_tools import get_current_condition as get_cond
+            from integrations.lbs.agent_tools import get_current_condition as get_cond
             res = await get_cond(db_session=db_session, user_id=user_id)
             return {"success": True, "message": f"Condition: {res}", "data": res}
         except Exception as e:
@@ -45,7 +45,7 @@ class UpdateUserConditionTool(BaseTool):
         if not db_session or not user_id: return {"success": False, "message": "Context error"}
         
         try:
-            from tools.lbs_tools import update_user_condition as upd_cond
+            from integrations.lbs.agent_tools import update_user_condition as upd_cond
             res = await upd_cond(db_session=db_session, user_id=user_id, cognitive_fatigue=cognitive_fatigue, **kwargs)
             return {"success": True, "message": "Condition updated", "data": res}
         except Exception as e:

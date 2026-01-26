@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { apiFetch, getFileToken } from "@/lib/api";
-import { Download, FileText, Image, ExternalLink, X, Folder, File, RefreshCw, Trash2, Loader2, Eye, Plus } from "lucide-react";
+import { Download, FileText, Image, ExternalLink, X, Folder, File as FileIcon, RefreshCw, Trash2, Loader2, Eye, Plus } from "lucide-react";
 import MarkdownRenderer from "./MarkdownRenderer";
 import { useNotification } from "@/lib/NotificationContext";
 
@@ -258,7 +258,7 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete, onOpe
                 onClick={handleClick}
             >
                 <div className="flex items-center gap-2 min-w-0">
-                    <File size={14} className={isArtifact ? (nodeType === "hub" ? "text-purple-400" : "text-cyan-400") : "text-blue-400"} />
+                    <FileIcon size={14} className={isArtifact ? (nodeType === "hub" ? "text-purple-400" : "text-cyan-400") : "text-blue-400"} />
                     <span className="truncate text-gray-200" title={node.path}>{node.name}</span>
                 </div>
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">

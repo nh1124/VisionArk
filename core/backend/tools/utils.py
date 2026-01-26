@@ -6,8 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from models.database import Node, ServiceRegistry, UserSettings
-from services.lbs_client import LBSClient
-from services.knowledge_core_service import KnowledgeCoreService
+from integrations.lbs.client import LBSClient
+from integrations.knowledge_core.service import KnowledgeCoreService
 from utils.paths import get_project_dir
 
 async def get_user_api_key(user_id: str, session: AsyncSession) -> Optional[str]:
@@ -23,18 +23,8 @@ async def get_user_api_key(user_id: str, session: AsyncSession) -> Optional[str]
         print(f"Error fetching API key for user {user_id}: {e}")
         return None
 
-async def get_lbs_client(user_id: str, session: AsyncSession) -> LBSClient:
-    from utils.encryption import decrypt_string
-    lbs_api_key = None
-    lbs_url = None
-    res = await session.execute(select(ServiceRegistry).filter(ServiceRegistry.user_id==user_id, ServiceRegistry.service_name=="lbs"))
-    service = res.scalars().first()
-    if service:
-        lbs_url = service.base_url
-        if service.api_key_encrypted:
-            try: lbs_api_key = decrypt_string(service.api_key_encrypted)
-            except: pass
-    return LBSClient(base_url=lbs_url, api_key=lbs_api_key)
+from integrations.lbs.client import get_lbs_client
+from integrations.knowledge_core import KnowledgeCoreService
 
 def get_kc_service(user_id: str, session: AsyncSession) -> KnowledgeCoreService:
     return KnowledgeCoreService(session, user_id)

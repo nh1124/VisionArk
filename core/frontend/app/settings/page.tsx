@@ -12,6 +12,7 @@ interface Service {
     is_active: boolean;
     health_status?: string;
     last_health_check?: string;
+    config?: Record<string, any>;
 }
 
 interface Integration {
@@ -27,13 +28,14 @@ export default function SettingsPage() {
     const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
     // Data states
+    const [profile, setProfile] = useState({ id: "", username: "", email: "" });
     const [aiConfig, setAiConfig] = useState({ gemini_api_key: "" });
     const [services, setServices] = useState<Service[]>([]);
     const [integrations, setIntegrations] = useState<Integration[]>([]);
 
     // Form states
     const [passForm, setPassForm] = useState({ current: "", new: "", confirm: "" });
-    const [newService, setNewService] = useState({ service_name: "", base_url: "", api_key: "" });
+    const [newService, setNewService] = useState({ service_name: "", base_url: "", api_key: "", config: "{}" });
 
     useEffect(() => {
         loadSettings();
@@ -42,6 +44,7 @@ export default function SettingsPage() {
     const loadSettings = async () => {
         try {
             const data = await apiJson<any>("/api/settings");
+            setProfile(data.profile || { id: "", username: "", email: "" });
             setAiConfig({ gemini_api_key: data.ai_config?.gemini_api_key || "" });
             setServices(data.services || []);
             setIntegrations(data.integrations || []);
@@ -79,6 +82,11 @@ export default function SettingsPage() {
         }
     };
 
+    const copyToClipboard = (text: string) => {
+        navigator.clipboard.writeText(text);
+        showMessage("success", "Copied to clipboard");
+    };
+
     const saveAiConfig = async () => {
         setSaving(true);
         try {
@@ -99,14 +107,26 @@ export default function SettingsPage() {
             showMessage("error", "Service name and URL are required");
             return;
         }
+
+        let parsedConfig = {};
+        try {
+            parsedConfig = JSON.parse(newService.config || "{}");
+        } catch (e) {
+            showMessage("error", "Invalid JSON in configuration field");
+            return;
+        }
+
         setSaving(true);
         try {
             await apiJson("/api/settings/services", {
                 method: "POST",
-                body: JSON.stringify(newService)
+                body: JSON.stringify({
+                    ...newService,
+                    config: parsedConfig
+                })
             });
             showMessage("success", `Service ${newService.service_name} registered`);
-            setNewService({ service_name: "", base_url: "", api_key: "" });
+            setNewService({ service_name: "", base_url: "", api_key: "", config: "{}" });
             loadSettings();
         } catch (err: any) {
             showMessage("error", err.message || "Failed to register service");
@@ -114,6 +134,7 @@ export default function SettingsPage() {
             setSaving(false);
         }
     };
+
 
     const updateLbsService = async () => {
         if (!newService.api_key) {
@@ -133,7 +154,7 @@ export default function SettingsPage() {
                 body: JSON.stringify(lbsServiceData)
             });
             showMessage("success", "LBS configuration updated successfully");
-            setNewService({ service_name: "", base_url: "", api_key: "" });
+            setNewService({ service_name: "", base_url: "", api_key: "", config: "{}" });
             loadSettings();
         } catch (err: any) {
             showMessage("error", err.message || "Failed to update LBS");
@@ -160,7 +181,7 @@ export default function SettingsPage() {
                 body: JSON.stringify(kcServiceData)
             });
             showMessage("success", "KnowledgeCore configuration updated successfully");
-            setNewService({ service_name: "", base_url: "", api_key: "" });
+            setNewService({ service_name: "", base_url: "", api_key: "", config: "{}" });
             loadSettings();
         } catch (err: any) {
             showMessage("error", err.message || "Failed to update KnowledgeCore");
@@ -309,6 +330,50 @@ export default function SettingsPage() {
                     {/* Account Tab */}
                     {activeTab === "account" && (
                         <div className="space-y-8 animate-in fade-in duration-300">
+                            {/* Profile Information */}
+                            <div className="bg-gray-900 border border-gray-800 rounded-xl p-8">
+                                <h2 className="text-xl font-bold mb-4">Account Profile</h2>
+                                <p className="text-gray-400 text-sm mb-6">Your personal account identification and contact details.</p>
+
+                                <div className="space-y-4 max-w-md">
+                                    <div>
+                                        <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">User ID (Webhook usage)</label>
+                                        <div className="flex gap-2">
+                                            <input
+                                                type="text"
+                                                readOnly
+                                                value={profile.id}
+                                                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2 text-gray-400 font-mono text-sm outline-none"
+                                            />
+                                            <button
+                                                onClick={() => copyToClipboard(profile.id)}
+                                                className="bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
+                                            >
+                                                Copy
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Username</label>
+                                        <input
+                                            type="text"
+                                            readOnly
+                                            value={profile.username}
+                                            className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2 text-gray-400 outline-none"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Email Address</label>
+                                        <input
+                                            type="text"
+                                            readOnly
+                                            value={profile.email || "No email provided"}
+                                            className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2 text-gray-400 outline-none"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
                             <div className="bg-gray-900 border border-gray-800 rounded-xl p-8">
                                 <h2 className="text-xl font-bold mb-4">Security</h2>
                                 <p className="text-gray-400 text-sm mb-6">Update your account password to keep your data secure.</p>
@@ -539,10 +604,97 @@ export default function SettingsPage() {
 
                     {/* Integrations Tab */}
                     {activeTab === "integrations" && (
-                        <div className="animate-in fade-in duration-300">
+                        <div className="space-y-8 animate-in fade-in duration-300">
+                            {/* Generic Services Implementation */}
                             <div className="bg-gray-900 border border-gray-800 rounded-xl p-8">
-                                <h2 className="text-xl font-bold mb-4">Linked Accounts</h2>
-                                <p className="text-gray-400 text-sm mb-6">Connect your workspace with external identity providers.</p>
+                                <h2 className="text-xl font-bold mb-4">External Systems</h2>
+                                <p className="text-gray-400 text-sm mb-6">Connect and configure external platforms like LINE, Discord, or custom webhooks.</p>
+
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                    {/* Register Form */}
+                                    <div className="space-y-4">
+                                        <h3 className="text-sm font-bold uppercase tracking-widest text-gray-500">Add New Connection</h3>
+                                        <div className="space-y-3">
+                                            <input
+                                                type="text"
+                                                placeholder="Service Name (e.g. discord, line)"
+                                                value={newService.service_name}
+                                                onChange={e => setNewService({ ...newService, service_name: e.target.value })}
+                                                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2 text-sm"
+                                            />
+                                            <input
+                                                type="text"
+                                                placeholder="Base URL / Webhook URL"
+                                                value={newService.base_url}
+                                                onChange={e => setNewService({ ...newService, base_url: e.target.value })}
+                                                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2 text-sm"
+                                            />
+                                            <input
+                                                type="password"
+                                                placeholder="API Key / Secret (Optional)"
+                                                value={newService.api_key}
+                                                onChange={e => setNewService({ ...newService, api_key: e.target.value })}
+                                                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2 text-sm"
+                                            />
+                                            <div className="space-y-1">
+                                                <label className="text-[10px] uppercase font-bold text-gray-600 block px-1">JSON Configuration</label>
+                                                <textarea
+                                                    placeholder='{ "channel_id": "12345" }'
+                                                    value={newService.config}
+                                                    onChange={e => setNewService({ ...newService, config: e.target.value })}
+                                                    className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2 text-sm h-24 font-mono"
+                                                />
+                                            </div>
+                                            <button
+                                                onClick={registerService}
+                                                disabled={saving}
+                                                className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-2 rounded-lg transition-colors"
+                                            >
+                                                {saving ? "Registering..." : "Connect System"}
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Active Connections */}
+                                    <div className="space-y-4">
+                                        <h3 className="text-sm font-bold uppercase tracking-widest text-gray-500">Active Connections</h3>
+                                        <div className="space-y-3">
+                                            {services.filter(s => s.service_name !== 'lbs' && s.service_name !== 'knowledge_core').length === 0 ? (
+                                                <div className="text-center py-8 bg-gray-950 rounded-lg border border-gray-800 border-dashed">
+                                                    <p className="text-gray-500 text-sm">No custom integrations connected.</p>
+                                                </div>
+                                            ) : (
+                                                services.filter(s => s.service_name !== 'lbs' && s.service_name !== 'knowledge_core').map((s, idx) => (
+                                                    <div key={idx} className="bg-gray-950 border border-gray-800 rounded-lg p-4 flex items-center justify-between">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="w-8 h-8 bg-gray-800 rounded flex items-center justify-center font-bold text-gray-400 uppercase text-xs">
+                                                                {s.service_name[0]}
+                                                            </div>
+                                                            <div>
+                                                                <h4 className="font-bold text-sm capitalize">{s.service_name}</h4>
+                                                                <p className="text-[10px] text-gray-500 truncate max-w-[150px]">{s.base_url}</p>
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className={`w-2 h-2 rounded-full ${s.health_status === 'healthy' ? 'bg-green-500' : 'bg-red-500'}`}></span>
+                                                            <button
+                                                                onClick={() => checkHealth(s.id)}
+                                                                className="text-[10px] text-blue-400 hover:underline"
+                                                            >
+                                                                Refresh
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ))
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="bg-gray-900 border border-gray-800 rounded-xl p-8">
+                                <h2 className="text-xl font-bold mb-4">Linked Identities</h2>
+                                <p className="text-gray-400 text-sm mb-6">Connect your workspace with external identity providers for SSO.</p>
 
                                 <div className="space-y-4">
                                     {integrations.length === 0 ? (
@@ -573,6 +725,7 @@ export default function SettingsPage() {
                             </div>
                         </div>
                     )}
+
 
                 </div>
             </div>

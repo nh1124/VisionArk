@@ -135,6 +135,17 @@ class BaseNode(ABC):
             if settings and settings.ai_config:
                 self.context["preferred_model"] = settings.ai_config.get("default_model")
 
+        # 4. Dynamic Integration Tools
+        try:
+            from tools import get_integration_tools
+            integration_tools = await get_integration_tools(self.user_id, session)
+            existing_names = {t.name for t in self.tools}
+            for it in integration_tools:
+                if it.name not in existing_names:
+                    self.tools.append(it)
+        except Exception as e:
+            print(f"[BaseNode] Warning: Failed to load integration tools: {e}")
+
         # 3. Load Node Identity (for display_name/description if missing)
         # Often provided by registry, but good to have a backup for project-less nodes
 

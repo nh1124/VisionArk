@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from datetime import date
 from typing import List, Optional, Dict
 
-from services.lbs_client import LBSClient, TaskStatus
+from .client import LBSClient, TaskStatus
 from services.auth import resolve_identity, Identity, bearer_scheme
 from models.database import get_async_db
 from sqlalchemy.ext.asyncio import AsyncSession

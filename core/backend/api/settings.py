@@ -26,6 +26,7 @@ class ServiceRegister(BaseModel):
     service_name: str
     base_url: str
     api_key: Optional[str] = None
+    config: Optional[Dict] = Field(default_factory=dict)
 
 class ConnectionTest(BaseModel):
     base_url: str
@@ -38,12 +39,19 @@ class ServiceResponse(BaseModel):
     is_active: bool
     health_status: Optional[str]
     last_health_check: Optional[datetime]
+    config: Optional[Dict] = {}
     
 class PasswordChange(BaseModel):
     current_password: str
     new_password: str
 
+class UserProfile(BaseModel):
+    id: str
+    username: str
+    email: Optional[str]
+
 class SettingsSummary(BaseModel):
+    profile: UserProfile
     ai_config: Dict
     services: List[ServiceResponse]
     integrations: List[Dict]
@@ -79,7 +87,17 @@ async def get_settings(
         for i in integrations
     ]
     
+    # 4. Profile
+    result = await db.execute(select(User).filter(User.id == identity.user_id))
+    user = result.scalars().first()
+    profile = {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email
+    } if user else {"id": identity.user_id, "username": "Unknown", "email": None}
+    
     return {
+        "profile": profile,
         "ai_config": masked_ai_config,
         "services": services,
         "integrations": integration_list
@@ -134,12 +152,14 @@ async def register_service(
         service.base_url = reg.base_url
         if encrypted_key:
             service.api_key_encrypted = encrypted_key
+        service.config = reg.config
     else:
         service = ServiceRegistry(
             user_id=identity.user_id,
             service_name=reg.service_name,
             base_url=reg.base_url,
-            api_key_encrypted=encrypted_key
+            api_key_encrypted=encrypted_key,
+            config=reg.config
         )
         db.add(service)
     

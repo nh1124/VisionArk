@@ -9,13 +9,15 @@ import MessageWithAttachments from "@/components/MessageWithAttachments";
 import FilesSidebar from "@/components/FilesSidebar";
 import CommandAutocomplete, { CommandAutocompleteHandle } from "../../components/CommandAutocomplete";
 import { apiFetch } from "@/lib/api";
-import { Settings, Files, RotateCcw, X } from "lucide-react";
+import { Settings, Files, RotateCcw, X, Zap } from "lucide-react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useModel } from "@/lib/ModelContext";
 import { Panel, Group, Separator } from "react-resizable-panels";
 import Canvas from "@/components/Canvas";
 import EditCommandPalette from "@/components/EditCommandPalette";
 import { useNotification } from "@/lib/NotificationContext";
+import ScheduleMessageModal from "@/components/automation/ScheduleMessageModal";
+import AutomationTab from "@/components/automation/AutomationTab";
 
 interface MessageAttachment {
     name: string;
@@ -60,6 +62,8 @@ export default function ProjectChatPage({
     const [canvasFilePath, setCanvasFilePath] = useState<string | undefined>(undefined);
     const [canvasSelection, setCanvasSelection] = useState<string | null>(null);
     const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+    const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+    const [sidebarMode, setSidebarMode] = useState<"files" | "automation">("files");
     const lastProcessedCanvasUpdateRef = useRef<string | null>(null);
     const { showToast } = useNotification();
 
@@ -800,11 +804,34 @@ export default function ProjectChatPage({
                             <Settings size={18} />
                         </Link>
                         <button
-                            onClick={() => setShowSidebar(!showSidebar)}
-                            className={`p-2 rounded-lg transition-all ${showSidebar
+                            onClick={() => {
+                                if (showSidebar && sidebarMode === "automation") {
+                                    setShowSidebar(false);
+                                } else {
+                                    setSidebarMode("automation");
+                                    setShowSidebar(true);
+                                }
+                            }}
+                            className={`p-2 rounded-lg transition-all ${showSidebar && sidebarMode === "automation"
+                                ? "bg-amber-500/20 text-amber-400"
+                                : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
+                            title={showSidebar && sidebarMode === "automation" ? "Hide Automation" : "Show Automation"}
+                        >
+                            <Zap size={18} />
+                        </button>
+                        <button
+                            onClick={() => {
+                                if (showSidebar && sidebarMode === "files") {
+                                    setShowSidebar(false);
+                                } else {
+                                    setSidebarMode("files");
+                                    setShowSidebar(true);
+                                }
+                            }}
+                            className={`p-2 rounded-lg transition-all ${showSidebar && sidebarMode === "files"
                                 ? "bg-cyan-500/20 text-cyan-400"
                                 : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
-                            title={showSidebar ? "Hide Files" : "Show Files"}
+                            title={showSidebar && sidebarMode === "files" ? "Hide Files" : "Show Files"}
                         >
                             <Files size={18} />
                         </button>
@@ -944,6 +971,7 @@ export default function ProjectChatPage({
                         onClone={handleClone}
                         loading={loading}
                         onStop={handleStop}
+                        onScheduleMessage={() => setIsScheduleModalOpen(true)} // Added prop
                     />
                     <div className="mt-2 flex items-center justify-center gap-4">
                         <div className="text-[10px] text-gray-600">
@@ -960,6 +988,16 @@ export default function ProjectChatPage({
                     </div>
                 </div>
             </div>
+
+            {isScheduleModalOpen && (
+                <ScheduleMessageModal
+                    projectId={projectId}
+                    onClose={() => setIsScheduleModalOpen(false)}
+                    onScheduled={() => {
+                        fetchHistory();
+                    }}
+                />
+            )}
         </div>
     );
 
@@ -1015,7 +1053,9 @@ export default function ProjectChatPage({
                 {showSidebar && (
                     <div className="w-80 h-full border-l border-gray-800 bg-gray-900/50 backdrop-blur-xl absolute right-0 top-0 z-30 shadow-2xl animate-in slide-in-from-right duration-300 flex flex-col p-4">
                         <div className="flex justify-between items-center mb-4">
-                            <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">Files & Artifacts</h2>
+                            <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">
+                                {sidebarMode === "files" ? "Files & Artifacts" : "Project Automation"}
+                            </h2>
                             <button
                                 onClick={() => setShowSidebar(false)}
                                 className="p-1 hover:bg-gray-800 rounded-md text-gray-500 hover:text-white transition-colors"
@@ -1024,18 +1064,25 @@ export default function ProjectChatPage({
                             </button>
                         </div>
                         <div className="flex-1 overflow-hidden">
-                            <FilesSidebar
-                                nodeType="project"
-                                nodeName={projectId}
-                                onOpenFile={(content, path, format) => {
-                                    setCanvasContent(content);
-                                    setCanvasFilePath(path);
-                                    setCanvasFormat(format);
-                                    setShowCanvas(true);
-                                    setShowSidebar(false);
-                                }}
-                                onPreviewImage={(url, name) => setPreviewImage({ url, name })}
-                            />
+                            {sidebarMode === "files" ? (
+                                <FilesSidebar
+                                    nodeType="project"
+                                    nodeName={projectId}
+                                    onOpenFile={(content, path, format) => {
+                                        setCanvasContent(content);
+                                        setCanvasFilePath(path);
+                                        setCanvasFormat(format);
+                                        setShowCanvas(true);
+                                        setShowSidebar(false);
+                                    }}
+                                    onPreviewImage={(url, name) => setPreviewImage({ url, name })}
+                                />
+                            ) : (
+                                <AutomationTab
+                                    projectId={projectId}
+                                    onScheduleClick={() => setIsScheduleModalOpen(true)}
+                                />
+                            )}
                         </div>
                     </div>
                 )}

@@ -10,7 +10,7 @@ from datetime import datetime, date, timedelta
 import uuid
 
 from models.database import get_session, Node
-from services.lbs_client import LBSClient
+from integrations.lbs import LBSClient
 from api.auth import get_current_user
 
 router = APIRouter(prefix="/api/hub/suggestions", tags=["suggestions"])

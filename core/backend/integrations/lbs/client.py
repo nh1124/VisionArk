@@ -10,6 +10,23 @@ class TaskStatus(str, enum.Enum):
     DONE = "done"
     SKIPPED = "skipped"
 
+async def get_lbs_client(user_id: str, session: Any) -> 'LBSClient':
+    """Helper to fetch LBS client for a user from the database."""
+    from models.database import ServiceRegistry
+    from utils.encryption import decrypt_string
+    from sqlalchemy import select
+    
+    lbs_api_key = None
+    lbs_url = None
+    res = await session.execute(select(ServiceRegistry).filter(ServiceRegistry.user_id==user_id, ServiceRegistry.service_name=="lbs"))
+    service = res.scalars().first()
+    if service:
+        lbs_url = service.base_url
+        if service.api_key_encrypted:
+            try: lbs_api_key = decrypt_string(service.api_key_encrypted)
+            except: pass
+    return LBSClient(base_url=lbs_url, api_key=lbs_api_key)
+
 class LBSClient:
     """
     Asynchronous client for interacting with the LBS Microservice.
