@@ -203,6 +203,7 @@ class ServiceRegistry(Base):
     is_active = Column(Boolean, default=True)
     last_health_check = Column(DateTime, nullable=True)
     health_status = Column(String(50), nullable=True)  # "healthy", "unreachable", "error"
+    config = Column(JSON, nullable=True, default=dict) # Flexible configuration for external systems
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, onupdate=datetime.utcnow)
     
@@ -230,6 +231,7 @@ class ExternalIdentity(Base):
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     issuer = Column(String(255), nullable=False)   # e.g., "google", "lbs"
     subject = Column(String(255), nullable=False)  # The unique ID in the external system
+    project_id = Column(String(36), ForeignKey('projects.id'), nullable=True, index=True) # Dedicated project for this identity
     linked_at = Column(DateTime, default=datetime.utcnow)
     last_login_at = Column(DateTime, nullable=True)
 
@@ -440,6 +442,15 @@ def _run_migrations(engine):
                 conn.commit()
                 print("✅ Migration: Added remote_user_id column to service_registry")
     
+    # Migration: Add config column to service_registry if missing
+    if 'service_registry' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('service_registry')]
+        if 'config' not in columns:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE service_registry ADD COLUMN config JSON"))
+                conn.commit()
+                print("✅ Migration: Added config column to service_registry")
+    
     # Migration: Add Gemini File API columns to uploaded_files if missing
     # Remove as columns are removed from model
     pass
@@ -491,6 +502,18 @@ def _run_migrations(engine):
                         print(f"[INFO] Migration: Renamed {old_col} to {new_col} in {table}")
                     except Exception as e:
                         print(f"[ERROR] Migration: Failed to rename {old_col} to {new_col} in {table}: {str(e)}")
+    
+    # Migration: Add project_id to external_identities if missing
+    if 'external_identities' in inspector.get_table_names():
+        columns = [c['name'] for c in inspector.get_columns('external_identities')]
+        if 'project_id' not in columns:
+            with engine.connect() as conn:
+                try:
+                    conn.execute(text("ALTER TABLE external_identities ADD COLUMN project_id VARCHAR(36) REFERENCES projects(id)"))
+                    conn.commit()
+                    print("[INFO] Migration: Added project_id column to external_identities")
+                except Exception as e:
+                    print(f"[WARN] Migration failed for external_identities.project_id: {str(e)}")
     # Migration: Add unique constraint uix_project_role to nodes if missing
     if 'nodes' in inspector.get_table_names():
         constraints = inspector.get_unique_constraints('nodes')

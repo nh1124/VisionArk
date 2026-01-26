@@ -70,9 +70,16 @@ class AESDispatcher:
                 )
             
             await session.commit()
-
     async def schedule_task(self, user_id: str, task_type: str, scheduled_at: datetime, project_id: str = None, payload: dict = None, recurring_rule: str = None):
         """API/Service method to programmatically schedule a task"""
+        if scheduled_at and scheduled_at.tzinfo is not None:
+            # Convert to UTC first if it's not already
+            import datetime as dt
+            if scheduled_at.tzinfo != dt.timezone.utc:
+                scheduled_at = scheduled_at.astimezone(dt.timezone.utc)
+            # Strip timezone info for naive TIMESTAMP WITHOUT TIME ZONE column
+            scheduled_at = scheduled_at.replace(tzinfo=None)
+
         async with self.session_maker() as session:
             new_task = ScheduledTask(
                 id=str(uuid.uuid4()),

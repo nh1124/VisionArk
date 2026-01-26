@@ -16,6 +16,8 @@ from services.command_parser import parse_command, execute_command
 from models.database import AsyncSessionLocal, ScheduledTask, ScheduledTaskStatus, Node, TaskType, Project
 from services.aes_dispatcher import AESDispatcher
 from sqlalchemy import select
+from va_sdk import task_registry, reply_registry
+from integrations import * # Force load integrations to register handlers
 
 class Worker:
     def __init__(self):
@@ -70,9 +72,22 @@ class Worker:
             engine = get_async_engine()
             async_session_cls = get_async_session_maker(engine)
             
+            from types import SimpleNamespace
             async with async_session_cls() as db_session:
                 context["db_session"] = db_session
                 
+                # Check Registry First (e.g. for "line_reply")
+                task_obj = SimpleNamespace(
+                    id=task_id, 
+                    type=task_type, 
+                    context=context, 
+                    message=message
+                )
+                if await self._handle_registry_task(task_obj, db_session):
+                    # If handled by registry, we are done
+                    self.manager.update_status(task_id, "completed")
+                    return
+
                 if task_type == TaskType.NODE_EXECUTION:
                     await self._handle_node_execution(message, context, db_session)
                 elif task_type == TaskType.AI_ROUTING:
@@ -137,6 +152,28 @@ class Worker:
             print(f"❌ AI Routing Analysis failed: {exc}")
             raise exc
 
+    async def _handle_registry_task(self, task, db_session) -> bool:
+        """Attempt to handle task using registry"""
+        handler = task_registry.get(task.type)
+        if not handler:
+            return False
+            
+        print(f"[Worker] Delegating task {task.type} to registry handler.")
+        try:
+            await handler(task, db_session)
+            return True
+        except Exception as e:
+            print(f"❌ Registry handler failed for {task.type}: {e}")
+            # We don't raise here to let the main loop mark it as failed if needed, 
+            # but usually the handler should manage the task status.
+            # For safety, let's treat it as handled but failed.
+            t = await db_session.get(ScheduledTask, task.id)
+            if t:
+                t.status = ScheduledTaskStatus.FAILED
+                t.result = {"error": str(e)}
+                await db_session.commit()
+            return True
+
     async def _handle_aes_task(self, context: dict, db_session):
         """Logic for Automated Execution System (AES) system tasks"""
         from services.aes_system_handlers import AESSystemHandlers
@@ -196,6 +233,31 @@ class Worker:
         
         self.manager.update_status(task_id, "completed", result)
         print(f"Worker: Task {task_id} completed.")
+
+        # 5. External Channel Reply (LINE, etc.)
+        if context.get("external_reply_channel"):
+            await self._handle_external_reply(result, context, db_session)
+
+    async def _handle_external_reply(self, result: Any, context: dict, db_session):
+        """Send the processing result back to an external source (e.g., LINE)"""
+        channel = context.get("external_reply_channel")
+        user_id = context.get("user_id")
+        
+        # Convert result to string if it's not already
+        message_text = str(result) if not isinstance(result, str) else result
+
+        if not channel:
+            return
+
+        handler = reply_registry.get(channel)
+        if handler:
+            print(f"[Worker] Delegating reply to registry handler for channel: {channel}")
+            try:
+                await handler(result, context, db_session)
+            except Exception as e:
+                print(f"[Worker] Reply handler failed for {channel}: {e}")
+        else:
+            print(f"[Worker] No handler registered for reply channel: {channel}")
 
     async def _process_attachments(self, context: dict, db_session) -> list:
         from models.database import UploadedFile

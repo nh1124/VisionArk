@@ -85,16 +85,20 @@ class ProjectNode(BaseNode):
             from models.database import Node, Project
             
             project_id = self.context.get('project_id')
-            result = await session.execute(select(Project).filter(
-                Project.user_id == self.user_id,
-                Project.id == project_id
-            ))
-            project = result.scalars().first()
+            if project_id:
+                result = await session.execute(select(Project).filter(
+                    Project.user_id == self.user_id,
+                    Project.id == project_id
+                ))
+                project = result.scalars().first()
+            else:
+                raise ValueError(f"No project found for user {self.user_id} and project_id {project_id}")
+
             if project:
                 self.project_id = project.id 
                 self.context['project_id'] = self.project_id
             else:
-                raise ValueError(f"Project '{project_id}' not found for user {self.user_id}") 
+                raise ValueError(f"No active project found for user {self.user_id}") 
             print(f"[ProjectNode] Project ID: {self.project_id}")
 
             # 3. Get Orchestrator Node ID (V6: and PROJECT type)
@@ -118,7 +122,6 @@ class ProjectNode(BaseNode):
         except Exception as e:
             print(f"[ProjectNode] Error in on_enter: {e}")
             raise
-
 
 
     async def on_execute(self, message: str) -> Any:
@@ -196,24 +199,30 @@ class ProjectNode(BaseNode):
                 self.context['session_id'] = new_session_id
                 
                 # 4. Inject Summary into new history as System Message
+                from datetime import timedelta
+                base_time = datetime.now() - timedelta(seconds=1)
+                
                 summary_msg = Message(
                     role=MessageRole.SYSTEM,
                     content=f"**PREVIOUS CONTEXT SUMMARY**:\n{summary}\n\nThe previous session was archived to maintain performance. Below are the last {len(overlap_messages)} messages for continuity.",
-                    timestamp=datetime.now()
+                    timestamp=base_time
                 )
                 
                 # Convert overlap dicts back to Message objects if needed
                 from models.message import MessageRole as MR
                 carry_over_msgs = []
-                for m_dict in overlap_messages:
+                for i, m_dict in enumerate(overlap_messages):
                     carry_over_msgs.append(Message(
                         role=MR(m_dict['role']),
                         content=m_dict['content'],
-                        timestamp=datetime.now()
+                        timestamp=base_time + timedelta(milliseconds=10 * (i + 1))
                     ))
                 
                 all_initial_msgs = [summary_msg] + carry_over_msgs
                 await self.memory.save_messages(self.session_id, all_initial_msgs)
+                
+                # 4.5 Update triggering message timestamp to follow archival genesis
+                current_msg.timestamp = datetime.now()
                 
                 # 5. Reset local history for this turn
                 history = all_initial_msgs + [current_msg]
