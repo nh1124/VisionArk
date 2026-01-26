@@ -74,8 +74,23 @@ async def get_tools(user_id: str, db):
 ```
 
 ### 5. Register the Integration
-- **Tools**: Automatic discovery (no manual step).
-- **API**: Add the router in `core/backend/main.py`.
+**Zero Configuration Required.**
+- **Tools**: Automatically discovered via `get_tools` in `__init__.py`.
+- **API (Routers)**: Automatically discovered via `FastAPI.APIRouter` in `api.py`. 
+
+The system core handles registration at startup by scanning the `integrations/` directory.
+
+## Dynamic API Discovery
+To enable automatic API registration:
+1. Define a `router` object in `api.py`.
+2. (Optional) Set `ROUTER_PREFIX` and `ROUTER_TAGS`.
+
+```python
+# api.py
+router = APIRouter()
+ROUTER_PREFIX = "/my-system" # Mounts at /api/my-system
+ROUTER_TAGS = ["My System"]
+```
 
 ## Frontend Integration
 Users manage connections in **Settings > Integrations**. Connect the `service_name` defined in your backend.

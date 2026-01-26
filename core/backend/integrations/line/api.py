@@ -11,6 +11,9 @@ from uuid import uuid4
 
 router = APIRouter()
 
+ROUTER_PREFIX = "/line"
+ROUTER_TAGS = ["LINE"]
+
 async def verify_signature(request: Request, channel_secret: str, signature: str = Header(None, alias="X-Line-Signature")):
     """Verify LINE Messaging API signature."""
     if not signature or not channel_secret:

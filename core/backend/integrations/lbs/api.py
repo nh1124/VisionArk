@@ -9,7 +9,8 @@ from services.auth import resolve_identity, Identity, bearer_scheme
 from models.database import get_async_db
 from sqlalchemy.ext.asyncio import AsyncSession
 
-router = APIRouter(prefix="/api/lbs", tags=["LBS"])
+router = APIRouter(tags=["LBS"])
+ROUTER_PREFIX = "/lbs"
 
 
 # Dependency to get LBS client with authenticated identity
