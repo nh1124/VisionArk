@@ -37,6 +37,40 @@ export default function SettingsPage() {
     const [passForm, setPassForm] = useState({ current: "", new: "", confirm: "" });
     const [newService, setNewService] = useState({ service_name: "", base_url: "", api_key: "", config: "{}" });
 
+    // Hub UI States
+    const [filter, setFilter] = useState<'all' | 'productivity' | 'communication' | 'developer'>('all');
+    const [configModal, setConfigModal] = useState<string | null>(null);
+
+    const HUB_CATALOG = [
+        {
+            id: 'google_calendar',
+            name: 'Google Calendar',
+            description: 'Sync your schedule and VA tasks across Google ecosystem.',
+            icon: '📅',
+            color: 'bg-white/10 text-blue-400',
+            category: 'productivity',
+            authType: 'oauth'
+        },
+        {
+            id: 'outlook',
+            name: 'Outlook Calendar',
+            description: 'Microsoft 365 integration for professional time management.',
+            icon: '📧',
+            color: 'bg-blue-600/10 text-blue-500',
+            category: 'productivity',
+            authType: 'oauth'
+        },
+        {
+            id: 'line',
+            name: 'LINE Messaging',
+            description: 'AI interaction via LINE bot with automated project isolation.',
+            icon: '💬',
+            color: 'bg-green-600/10 text-green-500',
+            category: 'communication',
+            authType: 'manual'
+        }
+    ];
+
     useEffect(() => {
         loadSettings();
     }, []);
@@ -276,6 +310,57 @@ export default function SettingsPage() {
             loadSettings();
         } catch (err) {
             console.error("Health check failed", err);
+        }
+    };
+
+    const connectGoogleCalendar = async () => {
+        if (!profile.id) {
+            showMessage("error", "Profile not loaded. Please refresh the page.");
+            return;
+        }
+        try {
+            const res = await apiJson<any>(`/api/google-calendar/auth?user_id=${profile.id}`);
+            if (res.auth_url) {
+                window.location.href = res.auth_url;
+            }
+        } catch (err: any) {
+            showMessage("error", err.message || "Failed to start Google auth");
+        }
+    };
+
+    const connectOutlook = async () => {
+        if (!profile.id) {
+            showMessage("error", "Profile not loaded. Please refresh the page.");
+            return;
+        }
+        try {
+            const res = await apiJson<any>(`/api/outlook/auth?user_id=${profile.id}`);
+            if (res.auth_url) {
+                window.location.href = res.auth_url;
+            }
+        } catch (err: any) {
+            showMessage("error", err.message || "Failed to start Outlook auth");
+        }
+    };
+
+    const disconnectService = async (serviceName: string) => {
+        if (!profile.id) return;
+        if (!window.confirm(`Are you sure you want to disconnect ${serviceName.replace('_', ' ')}?`)) return;
+
+        setSaving(true);
+        try {
+            // Determine endpoint based on service name (convention: /api/[service-slug]/disconnect)
+            const slug = serviceName.replace('_', '-');
+            await apiJson(`/api/${slug}/disconnect?user_id=${profile.id}`, {
+                method: "DELETE"
+            });
+            showMessage("success", `${serviceName.replace('_', ' ')} disconnected successfully`);
+            setConfigModal(null);
+            loadSettings();
+        } catch (err: any) {
+            showMessage("error", err.message || `Failed to disconnect ${serviceName}`);
+        } finally {
+            setSaving(false);
         }
     };
 
@@ -604,129 +689,236 @@ export default function SettingsPage() {
 
                     {/* Integrations Tab */}
                     {activeTab === "integrations" && (
-                        <div className="space-y-8 animate-in fade-in duration-300">
-                            {/* Generic Services Implementation */}
-                            <div className="bg-gray-900 border border-gray-800 rounded-xl p-8">
-                                <h2 className="text-xl font-bold mb-4">External Systems</h2>
-                                <p className="text-gray-400 text-sm mb-6">Connect and configure external platforms like LINE, Discord, or custom webhooks.</p>
+                        <div className="space-y-6 animate-in fade-in duration-300">
+                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                <div>
+                                    <h2 className="text-2xl font-bold">Integration Hub</h2>
+                                    <p className="text-gray-400 text-sm">Connect VisionArk with your favorite tools and platforms.</p>
+                                </div>
+                                <div className="flex bg-gray-900 p-1 rounded-lg border border-gray-800">
+                                    {(['all', 'productivity', 'communication', 'developer'] as const).map(cat => (
+                                        <button
+                                            key={cat}
+                                            onClick={() => setFilter(cat)}
+                                            className={`px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider transition-all ${filter === cat ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-gray-500 hover:text-gray-300'}`}
+                                        >
+                                            {cat}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
 
-                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                                    {/* Register Form */}
-                                    <div className="space-y-4">
-                                        <h3 className="text-sm font-bold uppercase tracking-widest text-gray-500">Add New Connection</h3>
-                                        <div className="space-y-3">
-                                            <input
-                                                type="text"
-                                                placeholder="Service Name (e.g. discord, line)"
-                                                value={newService.service_name}
-                                                onChange={e => setNewService({ ...newService, service_name: e.target.value })}
-                                                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2 text-sm"
-                                            />
-                                            <input
-                                                type="text"
-                                                placeholder="Base URL / Webhook URL"
-                                                value={newService.base_url}
-                                                onChange={e => setNewService({ ...newService, base_url: e.target.value })}
-                                                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2 text-sm"
-                                            />
-                                            <input
-                                                type="password"
-                                                placeholder="API Key / Secret (Optional)"
-                                                value={newService.api_key}
-                                                onChange={e => setNewService({ ...newService, api_key: e.target.value })}
-                                                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2 text-sm"
-                                            />
-                                            <div className="space-y-1">
-                                                <label className="text-[10px] uppercase font-bold text-gray-600 block px-1">JSON Configuration</label>
-                                                <textarea
-                                                    placeholder='{ "channel_id": "12345" }'
-                                                    value={newService.config}
-                                                    onChange={e => setNewService({ ...newService, config: e.target.value })}
-                                                    className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2 text-sm h-24 font-mono"
+                            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+                                {HUB_CATALOG
+                                    .filter(item => filter === 'all' || item.category === filter)
+                                    .map(item => {
+                                        const service = services.find(s => s.service_name === item.id);
+                                        const identity = integrations.find(i => i.issuer === item.id);
+                                        const isConnected = !!service?.is_active;
+
+                                        return (
+                                            <div
+                                                key={item.id}
+                                                className={`group bg-gray-900 border ${isConnected ? 'border-blue-500/30 bg-blue-500/[0.02]' : 'border-gray-800'} rounded-2xl p-6 transition-all hover:border-blue-500/50 hover:shadow-2xl hover:shadow-blue-900/10 relative overflow-hidden`}
+                                            >
+                                                {/* Card Background Glow */}
+                                                {isConnected && <div className="absolute -top-12 -right-12 w-24 h-24 bg-blue-600/10 blur-3xl rounded-full" />}
+
+                                                <div className="flex items-start justify-between mb-6">
+                                                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-3xl shadow-inner ${item.color}`}>
+                                                        {item.icon}
+                                                    </div>
+                                                    <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${isConnected ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-gray-800 text-gray-500 border border-gray-700'}`}>
+                                                        {isConnected ? 'Connected' : 'Disconnected'}
+                                                    </div>
+                                                </div>
+
+                                                <div className="mb-6">
+                                                    <h3 className="text-lg font-bold mb-1">{item.name}</h3>
+                                                    <p className="text-gray-400 text-xs leading-relaxed min-h-[32px]">{item.description}</p>
+                                                </div>
+
+                                                {isConnected && (
+                                                    <div className="mb-6 p-3 bg-gray-950/50 border border-gray-800 rounded-xl flex items-center gap-3">
+                                                        <div className="w-8 h-8 bg-blue-600/20 rounded-full flex items-center justify-center text-xs font-bold text-blue-400">
+                                                            {identity?.subject?.[0].toUpperCase() || '?'}
+                                                        </div>
+                                                        <div className="truncate">
+                                                            <p className="text-[10px] text-gray-500 font-bold uppercase">Linked Account</p>
+                                                            <p className="text-xs text-gray-300 truncate">{identity?.subject || 'Authenticated Session'}</p>
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                <div className="flex gap-2">
+                                                    {!isConnected ? (
+                                                        <button
+                                                            onClick={item.authType === 'oauth' ? (item.id === 'google_calendar' ? connectGoogleCalendar : connectOutlook) : () => setConfigModal(item.id)}
+                                                            className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-2.5 rounded-xl font-bold text-sm transition-all shadow-lg shadow-blue-900/20 active:scale-95"
+                                                        >
+                                                            Connect {item.name}
+                                                        </button>
+                                                    ) : (
+                                                        <>
+                                                            <button
+                                                                onClick={() => {
+                                                                    setNewService({
+                                                                        service_name: item.id,
+                                                                        base_url: service?.base_url || "",
+                                                                        api_key: "", // Hidden for security
+                                                                        config: JSON.stringify(service?.config || {}, null, 2)
+                                                                    });
+                                                                    setConfigModal(item.id);
+                                                                }}
+                                                                className="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-200 py-2.5 rounded-xl font-bold text-sm transition-all border border-gray-700"
+                                                            >
+                                                                Manage
+                                                            </button>
+                                                            <button
+                                                                onClick={() => checkHealth(service!.id)}
+                                                                className="w-12 bg-gray-800 hover:bg-gray-700 text-gray-400 py-2.5 rounded-xl flex items-center justify-center border border-gray-700 transition-all"
+                                                                title="Refresh Status"
+                                                            >
+                                                                ↻
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+
+                                {/* Custom Hook Card */}
+                                <div
+                                    onClick={() => setConfigModal('custom')}
+                                    className="group bg-gray-900 border border-gray-800 border-dashed rounded-2xl p-6 transition-all hover:border-blue-500/50 hover:bg-blue-500/[0.01] cursor-pointer flex flex-col items-center justify-center text-center gap-4"
+                                >
+                                    <div className="w-14 h-14 bg-gray-800 group-hover:bg-blue-600/20 rounded-2xl flex items-center justify-center text-2xl text-gray-600 group-hover:text-blue-400 transition-all">
+                                        +
+                                    </div>
+                                    <div>
+                                        <h3 className="font-bold mb-1">Custom Webhook</h3>
+                                        <p className="text-gray-500 text-xs">Connect any proprietary system</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Config Modal - Shared for all manual integrations */}
+                            {configModal && (
+                                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+                                    <div className="bg-gray-900 border border-gray-800 w-full max-w-lg rounded-3xl p-8 shadow-2xl">
+                                        <div className="flex justify-between items-center mb-6">
+                                            <h3 className="text-xl font-bold capitalize">Configure {configModal.replace('_', ' ')}</h3>
+                                            <button onClick={() => setConfigModal(null)} className="text-gray-500 hover:text-white">✕</button>
+                                        </div>
+
+                                        <div className="space-y-4">
+                                            <div>
+                                                <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Endpoint URL</label>
+                                                <input
+                                                    type="text"
+                                                    placeholder="https://api.example.com"
+                                                    value={newService.base_url}
+                                                    onChange={e => setNewService({ ...newService, base_url: e.target.value })}
+                                                    className="w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-3 text-sm focus:border-blue-500 outline-none"
                                                 />
                                             </div>
-                                            <button
-                                                onClick={registerService}
-                                                disabled={saving}
-                                                className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-2 rounded-lg transition-colors"
-                                            >
-                                                {saving ? "Registering..." : "Connect System"}
-                                            </button>
-                                        </div>
-                                    </div>
+                                            <div>
+                                                <label className="block text-xs font-bold text-gray-500 uppercase mb-2">API Key / Secret</label>
+                                                <input
+                                                    type="password"
+                                                    placeholder="Paste your key here"
+                                                    value={newService.api_key}
+                                                    onChange={e => setNewService({ ...newService, api_key: e.target.value })}
+                                                    className="w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-3 text-sm focus:border-blue-500 outline-none"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Config JSON</label>
+                                                <textarea
+                                                    placeholder='{ "channel": "main" }'
+                                                    value={newService.config}
+                                                    onChange={e => setNewService({ ...newService, config: e.target.value })}
+                                                    className="w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-3 text-sm h-32 font-mono focus:border-blue-500 outline-none"
+                                                />
+                                            </div>
 
-                                    {/* Active Connections */}
-                                    <div className="space-y-4">
-                                        <h3 className="text-sm font-bold uppercase tracking-widest text-gray-500">Active Connections</h3>
-                                        <div className="space-y-3">
-                                            {services.filter(s => s.service_name !== 'lbs' && s.service_name !== 'knowledge_core').length === 0 ? (
-                                                <div className="text-center py-8 bg-gray-950 rounded-lg border border-gray-800 border-dashed">
-                                                    <p className="text-gray-500 text-sm">No custom integrations connected.</p>
-                                                </div>
-                                            ) : (
-                                                services.filter(s => s.service_name !== 'lbs' && s.service_name !== 'knowledge_core').map((s, idx) => (
-                                                    <div key={idx} className="bg-gray-950 border border-gray-800 rounded-lg p-4 flex items-center justify-between">
-                                                        <div className="flex items-center gap-3">
-                                                            <div className="w-8 h-8 bg-gray-800 rounded flex items-center justify-center font-bold text-gray-400 uppercase text-xs">
-                                                                {s.service_name[0]}
-                                                            </div>
-                                                            <div>
-                                                                <h4 className="font-bold text-sm capitalize">{s.service_name}</h4>
-                                                                <p className="text-[10px] text-gray-500 truncate max-w-[150px]">{s.base_url}</p>
-                                                            </div>
+                                            {/* VisionArk Automation Extensions */}
+                                            <div className="pt-4 border-t border-gray-800">
+                                                <h4 className="text-xs font-bold text-blue-400 uppercase mb-4">VisionArk Automation</h4>
+                                                <div className="space-y-3">
+                                                    <label className="flex items-center gap-3 cursor-pointer group">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={(() => {
+                                                                try { return JSON.parse(newService.config || "{}").va_auto_meeting_link; }
+                                                                catch (e) { return false; }
+                                                            })()}
+                                                            onChange={e => {
+                                                                try {
+                                                                    const cfg = JSON.parse(newService.config || "{}");
+                                                                    cfg.va_auto_meeting_link = e.target.checked;
+                                                                    setNewService({ ...newService, config: JSON.stringify(cfg, null, 2) });
+                                                                } catch (err) { console.error("Invalid JSON in config", err); }
+                                                            }}
+                                                            className="w-4 h-4 rounded border-gray-700 bg-gray-950 text-blue-600 focus:ring-blue-500"
+                                                        />
+                                                        <div className="text-sm">
+                                                            <p className="text-gray-200 font-medium">Auto-generate meeting links</p>
+                                                            <p className="text-gray-500 text-[11px]">Generate Meet/Teams link for new tasks</p>
                                                         </div>
-                                                        <div className="flex items-center gap-2">
-                                                            <span className={`w-2 h-2 rounded-full ${s.health_status === 'healthy' ? 'bg-green-500' : 'bg-red-500'}`}></span>
-                                                            <button
-                                                                onClick={() => checkHealth(s.id)}
-                                                                className="text-[10px] text-blue-400 hover:underline"
-                                                            >
-                                                                Refresh
-                                                            </button>
+                                                    </label>
+                                                    <label className="flex items-center gap-3 cursor-pointer group">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={(() => {
+                                                                try { return JSON.parse(newService.config || "{}").va_realtime_sync; }
+                                                                catch (e) { return false; }
+                                                            })()}
+                                                            onChange={e => {
+                                                                try {
+                                                                    const cfg = JSON.parse(newService.config || "{}");
+                                                                    cfg.va_realtime_sync = e.target.checked;
+                                                                    setNewService({ ...newService, config: JSON.stringify(cfg, null, 2) });
+                                                                } catch (err) { console.error("Invalid JSON in config", err); }
+                                                            }}
+                                                            className="w-4 h-4 rounded border-gray-700 bg-gray-950 text-blue-600 focus:ring-blue-500"
+                                                        />
+                                                        <div className="text-sm">
+                                                            <p className="text-gray-200 font-medium">Enable Real-time Sync</p>
+                                                            <p className="text-gray-500 text-[11px]">Listen for changes via Webhooks</p>
                                                         </div>
-                                                    </div>
-                                                ))
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="bg-gray-900 border border-gray-800 rounded-xl p-8">
-                                <h2 className="text-xl font-bold mb-4">Linked Identities</h2>
-                                <p className="text-gray-400 text-sm mb-6">Connect your workspace with external identity providers for SSO.</p>
-
-                                <div className="space-y-4">
-                                    {integrations.length === 0 ? (
-                                        <div className="bg-gray-950 p-6 rounded-lg border border-gray-800 text-center">
-                                            <p className="text-gray-500 mb-4">You haven't linked any external accounts yet.</p>
-                                            <button className="text-blue-400 hover:text-blue-300 font-medium">+ Link External ID</button>
-                                        </div>
-                                    ) : (
-                                        integrations.map((i, idx) => (
-                                            <div key={idx} className="bg-gray-950 border border-gray-800 rounded-lg p-6 flex items-center justify-between">
-                                                <div className="flex items-center space-x-4">
-                                                    <div className="w-12 h-12 bg-gray-800 rounded-full flex items-center justify-center font-bold text-gray-400">
-                                                        {i.issuer[0].toUpperCase()}
-                                                    </div>
-                                                    <div>
-                                                        <h3 className="font-bold">{i.issuer}</h3>
-                                                        <p className="text-xs text-gray-500">ID: {i.subject}</p>
-                                                    </div>
-                                                </div>
-                                                <div className="text-right">
-                                                    <p className="text-xs text-gray-400">Linked on</p>
-                                                    <p className="text-sm font-medium">{new Date(i.linked_at).toLocaleDateString()}</p>
+                                                    </label>
                                                 </div>
                                             </div>
-                                        ))
-                                    )}
+                                            <div className="pt-4 flex gap-3">
+                                                <button
+                                                    onClick={() => {
+                                                        const id = configModal === 'custom' ? newService.service_name : configModal;
+                                                        if (!id) { showMessage('error', 'Plugin name required'); return; }
+                                                        registerService();
+                                                        setConfigModal(null);
+                                                    }}
+                                                    className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl font-bold transition-all"
+                                                >
+                                                    Save Configuration
+                                                </button>
+                                                {configModal !== 'custom' && services.some(s => s.service_name === configModal) && (
+                                                    <button
+                                                        onClick={() => disconnectService(configModal)}
+                                                        className="px-6 py-3 bg-red-500/10 text-red-500 border border-red-500/50 rounded-xl font-bold hover:bg-red-500 hover:text-white transition-all"
+                                                    >
+                                                        Disconnect
+                                                    </button>
+                                                )}
+                                                <button onClick={() => setConfigModal(null)} className="px-6 py-3 text-gray-400 hover:text-white font-bold">Cancel</button>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
+                            )}
                         </div>
                     )}
-
-
                 </div>
             </div>
         </div>

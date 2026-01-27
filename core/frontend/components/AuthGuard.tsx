@@ -31,12 +31,14 @@ export default function AuthGuard({ children }: AuthGuardProps) {
     if (isLoading || isMobile === null) {
         return (
             <div className="min-h-screen bg-gray-950 flex items-center justify-center text-white">
-                <div className="text-center">
-                    <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl mb-4 animate-pulse shadow-[0_0_20px_rgba(37,99,235,0.3)]">
-                        <span className="text-3xl text-white">🧠</span>
-                    </div>
-                    <p className="text-gray-400 font-medium">Initializing Vision Ark...</p>
+                <div className="relative mb-6">
+                    <img
+                        src="/icon-512x512.png"
+                        alt="VisionArk Logo"
+                        className="w-20 h-20 rounded-2xl shadow-[0_0_30px_rgba(37,99,235,0.2)] animate-pulse"
+                    />
                 </div>
+                <p className="text-gray-400 font-medium">Initializing Vision Ark...</p>
             </div>
         );
     }

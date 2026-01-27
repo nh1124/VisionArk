@@ -30,3 +30,4 @@ class Registry:
 task_registry = Registry("TaskRegistry")
 aes_registry = Registry("AESRegistry")
 reply_registry = Registry("ReplyRegistry")
+sync_registry = Registry("SyncRegistry")

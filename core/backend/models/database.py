@@ -199,6 +199,8 @@ class ServiceRegistry(Base):
     service_name = Column(String(100), nullable=False) # e.g., "lbs", "knowledge_core"
     base_url = Column(String(255), nullable=False)
     api_key_encrypted = Column(Text, nullable=True)    # Optional - stored encrypted
+    access_token_encrypted = Column(Text, nullable=True)
+    refresh_token_encrypted = Column(Text, nullable=True)
     remote_user_id = Column(String(100), nullable=True)  # User ID in the remote service (for user mapping)
     is_active = Column(Boolean, default=True)
     last_health_check = Column(DateTime, nullable=True)

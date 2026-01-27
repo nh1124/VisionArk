@@ -6,6 +6,7 @@ from typing import List, Optional, Dict
 
 from .client import LBSClient, TaskStatus
 from services.auth import resolve_identity, Identity, bearer_scheme
+from services.sync_coordinator import SyncCoordinator
 from models.database import get_async_db
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -124,9 +125,17 @@ async def get_dashboard_data(
 
 
 @router.post("/tasks")
-async def create_task(task: TaskCreate, client: LBSClient = Depends(get_lbs_client)):
+async def create_task(
+    task: TaskCreate, 
+    client: LBSClient = Depends(get_lbs_client),
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db)
+):
     try:
-        return await client.create_task(task.model_dump(mode='json'))
+        res = await client.create_task(task.model_dump(mode='json'))
+        # Trigger Export
+        await SyncCoordinator.trigger_export(db, identity.user_id, reason="task creation")
+        return res
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -184,17 +193,34 @@ async def get_task_history(
 
 
 @router.put("/tasks/{task_id}")
-async def update_task(task_id: str, task: TaskUpdate, client: LBSClient = Depends(get_lbs_client)):
+async def update_task(
+    task_id: str, 
+    task: TaskUpdate, 
+    client: LBSClient = Depends(get_lbs_client),
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db)
+):
     try:
-        return await client.update_task(task_id, task.model_dump(mode='json', exclude_unset=True))
+        res = await client.update_task(task_id, task.model_dump(mode='json', exclude_unset=True))
+        # Trigger Export
+        await SyncCoordinator.trigger_export(db, identity.user_id, reason="task update")
+        return res
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/tasks/{task_id}")
-async def delete_task(task_id: str, client: LBSClient = Depends(get_lbs_client)):
+async def delete_task(
+    task_id: str, 
+    client: LBSClient = Depends(get_lbs_client),
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db)
+):
     try:
-        return await client.delete_task(task_id)
+        res = await client.delete_task(task_id)
+        # Trigger Export
+        await SyncCoordinator.trigger_export(db, identity.user_id, reason="task deletion")
+        return res
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -335,9 +361,14 @@ class TaskCompletionRequest(BaseModel):
 async def complete_task(
     task_id: str,
     req: TaskCompletionRequest,
-    client: LBSClient = Depends(get_lbs_client)
+    client: LBSClient = Depends(get_lbs_client),
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db)
 ):
     try:
-        return await client.toggle_task_completion(task_id, req.target_date, req.status)
+        res = await client.toggle_task_completion(task_id, req.target_date, req.status)
+        # Trigger Export
+        await SyncCoordinator.trigger_export(db, identity.user_id, reason="task completion update")
+        return res
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

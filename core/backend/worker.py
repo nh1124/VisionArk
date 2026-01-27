@@ -26,6 +26,19 @@ class Worker:
 
     async def run(self):
         print("Worker starting... (V3 Router Enabled)")
+        
+        # Force load integrations to register handlers BEFORE processing tasks
+        print("[Worker] Loading integrations...")
+        import pkgutil
+        import importlib
+        import integrations
+        for loader, module_name, is_pkg in pkgutil.walk_packages(integrations.__path__, integrations.__name__ + "."):
+            if not is_pkg and module_name.count('.') == 1: # Only top-level integration packages
+                try:
+                    importlib.import_module(module_name)
+                except Exception as e:
+                    print(f"⚠️ Failed to load integration {module_name}: {e}")
+
         # Initialize Router Hooks
         try:
             from services.router import Router
@@ -80,6 +93,7 @@ class Worker:
                 task_obj = SimpleNamespace(
                     id=task_id, 
                     type=task_type, 
+                    user_id=user_id,
                     context=context, 
                     message=message
                 )
@@ -96,8 +110,11 @@ class Worker:
                     await self._handle_aes_task(context, db_session)
                 elif task_type == TaskType.APPROVAL_EXECUTION:
                     await self._handle_approval_task(context, db_session)
-                else:
+                elif task_type == TaskType.USER_MESSAGE:
                     await self._handle_user_message(message, context, db_session)
+                else:
+                    print(f"❌ Unknown task type: {task_type}")
+                    self.manager.update_status(task_id, "failed", f"Unknown task type: {task_type}")
             
         except Exception as e:
             print(f"❌ Task {task_id} failed: {e}")

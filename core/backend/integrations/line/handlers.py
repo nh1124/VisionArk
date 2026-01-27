@@ -34,7 +34,7 @@ async def handle_line_reply_task(task, db_session):
     if client:
         reply_text = task.context.get("reply_text")
         await client.push_message(line_user_id, reply_text)
-        print(f"[Worker] Replied to LINE via token for task {task.id}")
+        print(f"[Worker] Replied to LINE (Shared/Individual) via client for task {task.id}")
         
         # Update task status
         from models.database import ScheduledTask, ScheduledTaskStatus

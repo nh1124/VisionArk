@@ -1,7 +1,7 @@
 from typing import Any, Optional, Dict
 from pydantic import BaseModel, Field
 from tools.base import BaseTool
-from .service import KnowledgeCoreService
+from integrations.knowledge_core.service import KnowledgeCoreService
 from sqlalchemy.ext.asyncio import AsyncSession
 
 class SearchKnowledgeArgs(BaseModel):

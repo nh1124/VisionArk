@@ -4,7 +4,9 @@ from .library.system import AskNodeTool, ListNodesTool, GetNodeProfileTool, Broa
 from integrations.lbs.agent_tools import (
     ListTasksTool, CreateTaskTool, UpdateTaskTool, DeleteTaskTool, 
     CompleteLBSTaskTool, GetLBSScheduleTool, GetLoadOnDayTool, 
-    GetLoadInPeriodTool, ManageTaskExceptionTool, ListExceptionsTool
+    GetLoadInPeriodTool, ManageTaskExceptionTool, ListExceptionsTool,
+    GetCurrentConditionTool, UpdateUserConditionTool, ResetUserConditionTool,
+    GetTaskHistoryTool
 )
 from .library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool, DeleteArtifactTool, ImportGitHubRepoTool
 from integrations.knowledge_core.agent_tools import SearchKnowledgeTool, IngestKnowledgeTool
@@ -41,7 +43,6 @@ async def get_integration_tools(user_id: str, db) -> list:
 from .library.search import GoogleSearchTool, ResearchURLTool, SearchPlacesTool, DeepResearchTool
 from .library.markdown import InitPlanTool, UpdatePlanProgressTool, GetCurrentStatusTool, ReadMDSectionTool, UpdateMDSectionTool
 from .library.ai import GenerateImageTool, MermaidVisualizerTool, ExecuteCodeTool
-from .library.condition import GetCurrentConditionTool, UpdateUserConditionTool
 from .library.members import ListMembersTool, ManageMemberTool, UpdateNodeDescriptionTool
 from .library.writer import RecursiveWriterTool
 from .library.routing import MulticastMessageTool, SubscribeIntentTool
@@ -80,6 +81,8 @@ __all__ = [
     "ExecuteCodeTool",
     "GetCurrentConditionTool",
     "UpdateUserConditionTool",
+    "ResetUserConditionTool",
+    "GetTaskHistoryTool",
     "ListMembersTool",
     "ManageMemberTool",
     "UpdateNodeDescriptionTool",

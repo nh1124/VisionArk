@@ -24,7 +24,7 @@ else
 fi
 
 echo "[2/3] Building containers (this may take a while on first run)..."
-$DOCKER_COMPOSE -f infra/docker-compose.yml build --no-cache
+$DOCKER_COMPOSE --env-file .env -f infra/docker-compose.yml build --no-cache
 if [ $? -ne 0 ]; then
     echo "ERROR: Failed to build containers"
     exit 1
@@ -40,4 +40,4 @@ echo
 echo "Press Ctrl+C to stop all services"
 echo
 
-$DOCKER_COMPOSE -f infra/docker-compose.yml up
+$DOCKER_COMPOSE --env-file .env -f infra/docker-compose.yml up

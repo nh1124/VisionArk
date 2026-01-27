@@ -20,16 +20,17 @@ class ProjectNode(BaseNode):
         
         # New Class-Based Tools
         from tools.library.system import AskNodeTool, ListNodesTool, GetNodeProfileTool
-        from tools.library.lbs import (
-            ListTasksTool, CompleteLBSTaskTool, DeleteTaskTool,
-            GetLBSScheduleTool, GetLoadOnDayTool, GetLoadInPeriodTool,
-            GetTaskHistoryTool, ManageTaskExceptionTool, ListExceptionsTool
+        from integrations.lbs.agent_tools import (
+            ListTasksTool, CreateTaskTool, UpdateTaskTool, DeleteTaskTool,
+            CompleteLBSTaskTool, GetLBSScheduleTool, GetLoadOnDayTool, GetLoadInPeriodTool,
+            GetTaskHistoryTool, ManageTaskExceptionTool, ListExceptionsTool,
+            GetCurrentConditionTool, UpdateUserConditionTool, ResetUserConditionTool
         )
         from tools.library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool, DeleteArtifactTool, ImportGitHubRepoTool
-        from tools.library.knowledge import SearchKnowledgeTool, IngestKnowledgeTool
+        from integrations.knowledge_core.agent_tools import SearchKnowledgeTool, IngestKnowledgeTool
         from tools.library.search import GoogleSearchTool, DeepResearchTool
         from tools.library.ai import GenerateImageTool
-        from tools.library.condition import GetCurrentConditionTool, UpdateUserConditionTool
+        from tools.library.ai import GenerateImageTool
         from tools.library.markdown import UpdateMDSectionTool
         from tools.library.members import ListMembersTool, ManageMemberTool, UpdateNodeDescriptionTool
         from tools.library.writer import RecursiveWriterTool
@@ -70,6 +71,7 @@ class ProjectNode(BaseNode):
             GenerateImageTool(),
             GetCurrentConditionTool(),
             UpdateUserConditionTool(),
+            ResetUserConditionTool(),
             UpdateMDSectionTool(),
             UpdateCanvasTool()
         ]
@@ -85,6 +87,7 @@ class ProjectNode(BaseNode):
             from models.database import Node, Project
             
             project_id = self.context.get('project_id')
+            project = None
             if project_id:
                 result = await session.execute(select(Project).filter(
                     Project.user_id == self.user_id,

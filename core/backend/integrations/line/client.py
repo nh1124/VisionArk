@@ -50,7 +50,16 @@ class LineClient:
             return resp.json()
 
 async def get_line_client(user_id: str, db: AsyncSession) -> Optional[LineClient]:
-    """Factory to create a LineClient from a user's service registry."""
+    """Factory to create a LineClient from a user's service registry or global env."""
+    import os
+    channel_secret = os.getenv("LINE_CHANNEL_SECRET")
+    channel_access_token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+    
+    # Priority 1: Shared App (Environment Variables)
+    if channel_access_token:
+        return LineClient(channel_access_token, channel_secret)
+        
+    # Priority 2: Individual App (Service Registry)
     result = await db.execute(select(ServiceRegistry).filter(
         ServiceRegistry.user_id == user_id,
         ServiceRegistry.service_name == "line",
@@ -60,7 +69,5 @@ async def get_line_client(user_id: str, db: AsyncSession) -> Optional[LineClient
     if not service:
         return None
     
-    # api_key stores the Channel Access Token
-    # config stores the Channel Secret
     channel_secret = service.config.get("channel_secret") if service.config else None
     return LineClient(service.api_key, channel_secret)

@@ -101,7 +101,7 @@ services:
     volumes:
       - ../core/frontend:/app
       - /app/node_modules
-    command: npm run dev
+    command: npm run dev -- -H 0.0.0.0
     depends_on:
       - backend
     networks:
@@ -118,6 +118,21 @@ services:
     ports: [ "6379:6379" ]
     networks:
       - atmos-network
+
+  # Cloudflare Tunnel
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: atmos-tunnel
+    # Cloudflared will automatically use the TUNNEL_TOKEN environment variable provided by env_file
+    command: tunnel --no-autoupdate run
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - atmos-network
+    env_file:
+      - ../.env
 
 networks:
   atmos-network:

@@ -1,8 +1,9 @@
-from typing import Any, Optional, Dict, Union
+from typing import Any, Optional, Dict, Union, List
 from pydantic import BaseModel, Field
 from datetime import date
 from tools.base import BaseTool
-from .client import get_lbs_client, TaskStatus
+from integrations.lbs.client import get_lbs_client, TaskStatus
+from services.sync_coordinator import SyncCoordinator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 class ListTasksArgs(BaseModel):
@@ -57,7 +58,8 @@ class CreateTaskArgs(BaseModel):
     start_time: Optional[str] = Field(None, description="Start time (HH:MM)")
     end_time: Optional[str] = Field(None, description="End time (HH:MM)")
     is_locked: bool = Field(False, description="Lock this task from AI modifications")
-    notes: Optional[str] = Field(None, description="Additional notes")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional custom metadata (e.g., {'va_intent': {...}})")
+    notes: Optional[str] = None
 
 class CreateTaskTool(BaseTool):
     name = "create_task"
@@ -89,6 +91,7 @@ class CreateTaskTool(BaseTool):
                 "rule_type": rule_type,
                 "active": True,
                 "is_locked": kwargs.get("is_locked", False),
+                "metadata": kwargs.get("metadata") or {},
                 "notes": kwargs.get("notes")
             }
             
@@ -106,6 +109,8 @@ class CreateTaskTool(BaseTool):
                 data["month_day"] = kwargs.get("month_day")
                 
             res = await client.create_task(data)
+            # Trigger Export
+            await SyncCoordinator.trigger_export(db_session, user_id, reason="AI task creation")
             return {"success": True, "message": f"✅ Created task {task_name}", "data": res}
         except Exception as e:
             return {"success": False, "message": f"Failed to create task: {e}"}
@@ -118,6 +123,7 @@ class UpdateTaskArgs(BaseModel):
     start_time: Optional[str] = Field(None, description="Start time (HH:MM)")
     end_time: Optional[str] = Field(None, description="End time (HH:MM)")
     is_locked: Optional[bool] = Field(None, description="Lock/Unlock this task")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional custom metadata")
     notes: Optional[str] = None
 
 class UpdateTaskTool(BaseTool):
@@ -138,12 +144,13 @@ class UpdateTaskTool(BaseTool):
             client = await get_lbs_client(user_id, db_session)
             upd = {k: v for k,v in kwargs.items() if v is not None}
             if 'workload' in upd: upd['base_load_score'] = float(upd.pop('workload'))
-            if 'context' in upd: upd['context'] = upd.pop('context')
             
             if not upd:
                 return {"success": False, "message": "No changes provided"}
                 
             await client.update_task(task_id, upd)
+            # Trigger Export
+            await SyncCoordinator.trigger_export(db_session, user_id, reason="AI task update")
             return {"success": True, "message": f"Updated task {task_id}"}
         except Exception as e:
             return {"success": False, "message": f"Failed to update task: {e}"}
@@ -155,7 +162,6 @@ class DeleteTaskTool(BaseTool):
     name = "delete_task_by_id"
     description = (
         "Delete a task from the LBS system permanently. "
-        "ATTENTION: This action is IRREVERSIBLE. Use it only if a task was created by mistake. "
         "HOW TO USE: 'delete_task_by_id(task_id=\"...\")'."
     )
     args_schema = DeleteTaskArgs
@@ -169,6 +175,8 @@ class DeleteTaskTool(BaseTool):
         try:
             client = await get_lbs_client(user_id, db_session)
             await client.delete_task(task_id)
+            # Trigger Export
+            await SyncCoordinator.trigger_export(db_session, user_id, reason="AI task deletion")
             return {"success": True, "message": f"Deleted task {task_id}"}
         except Exception as e:
             return {"success": False, "message": f"Failed to delete task: {e}"}
@@ -182,7 +190,6 @@ class CompleteLBSTaskTool(BaseTool):
     name = "complete_lbs_task"
     description = (
         "Mark an LBS task as completed, skipped, or partially done for a specific date. "
-        "ATTENTION: 'target_date' must be in YYYY-MM-DD format. "
         "HOW TO USE: 'complete_lbs_task(task_id=\"...\", target_date=\"2025-01-20\", status=\"done\")'."
     )
     args_schema = CompleteLBSTaskArgs
@@ -194,9 +201,10 @@ class CompleteLBSTaskTool(BaseTool):
             return {"success": False, "message": "Context error"}
         
         try:
-            from integrations.lbs.client import TaskStatus
             client = await get_lbs_client(user_id, db_session)
             await client.toggle_task_completion(task_id, date.fromisoformat(target_date), TaskStatus(status))
+            # Trigger Export
+            await SyncCoordinator.trigger_export(db_session, user_id, reason="AI task completion update")
             return {"success": True, "message": f"Marked {task_id} as {status} for {target_date}"}
         except Exception as e:
             return {"success": False, "message": f"Failed to complete task: {e}"}
@@ -265,29 +273,6 @@ class GetLoadInPeriodTool(BaseTool):
             return {"success": True, "message": f"Heatmap: {len(hm)} days", "data": {"heatmap": hm}}
         except Exception as e:
             return {"success": False, "message": f"Failed to get heatmap: {e}"}
-            
-class GetTaskHistoryArgs(BaseModel):
-    task_id: str = Field(..., description="ID of the task")
-    start_date: str = Field(..., description="YYYY-MM-DD")
-    end_date: str = Field(..., description="YYYY-MM-DD")
-
-class GetTaskHistoryTool(BaseTool):
-    name = "get_task_execution_history"
-    description = "Get the historical execution records for a specific task over a date range."
-    args_schema = GetTaskHistoryArgs
-
-    async def run(self, task_id: str, start_date: str, end_date: str, **kwargs) -> Any:
-        db_session: AsyncSession = kwargs.get("db_session")
-        user_id: str = kwargs.get("user_id")
-        if not db_session or not user_id:
-            return {"success": False, "message": "Context error"}
-        
-        try:
-            client = await get_lbs_client(user_id, db_session)
-            history = await client.get_task_history(task_id, date.fromisoformat(start_date), date.fromisoformat(end_date))
-            return {"success": True, "message": f"Found {len(history)} records.", "data": {"history": history}}
-        except Exception as e:
-            return {"success": False, "message": f"Failed to get history: {e}"}
 
 class ManageTaskExceptionArgs(BaseModel):
     task_id: str = Field(..., description="ID of the task")
@@ -325,8 +310,6 @@ class ManageTaskExceptionTool(BaseTool):
                 res = await client.create_exception(data)
                 return {"success": True, "message": f"Created exception for {task_id} on {target_date}", "data": res}
             
-            # For update/delete, we need to find the exception ID first
-            # LBS API requires exception_id for update/delete
             excs = await client.get_exceptions(target_date, target_date)
             exc = next((e for e in excs if e.get("task_id") == task_id), None)
             
@@ -336,7 +319,7 @@ class ManageTaskExceptionTool(BaseTool):
             exc_id = exc["id"]
             
             if action == "update":
-                data = {k: v for k, v in args.items() if v is not None}
+                data = {k: v for k, v in kwargs.items() if v is not None}
                 await client.update_exception(exc_id, data)
                 return {"success": True, "message": f"Updated exception {exc_id} for {task_id}"}
             elif action == "delete":
@@ -374,37 +357,94 @@ class ListExceptionsTool(BaseTool):
         except Exception as e:
             return {"success": False, "message": f"Failed to list exceptions: {e}"}
 
-# --- Condition Utility Functions ---
+# --- Condition Tools ---
 
-async def get_current_condition(db_session: AsyncSession, user_id: str, target_date: Optional[Union[date, str]] = None):
-    """Retrieve the user's current reported condition."""
-    if not target_date:
-        target_date = date.today()
-    elif isinstance(target_date, str):
-        target_date = date.fromisoformat(target_date)
-        
-    client = await get_lbs_client(user_id, db_session)
-    async with client:
-        return await client.get_condition(target_date)
+class GetCurrentConditionArgs(BaseModel):
+    target_date: Optional[str] = Field(None, description="YYYY-MM-DD. Defaults to today.")
 
-async def update_user_condition(db_session: AsyncSession, user_id: str, cognitive_fatigue: int, target_date: Optional[Union[date, str]] = None, notes: Optional[str] = None):
-    """Update the user's reported cognitive fatigue level."""
-    if not target_date:
-        target_date = date.today()
-    elif isinstance(target_date, str):
-        target_date = date.fromisoformat(target_date)
-        
-    client = await get_lbs_client(user_id, db_session)
-    async with client:
-        return await client.update_condition(target_date, cognitive_fatigue, notes)
+class GetCurrentConditionTool(BaseTool):
+    name = "get_current_condition"
+    description = "Retrieve the user's reported cognitive or physical condition for a specific date."
+    args_schema = GetCurrentConditionArgs
 
-async def reset_user_condition(db_session: AsyncSession, user_id: str, target_date: Optional[Union[date, str]] = None):
-    """Delete the user's condition report for a specific date."""
-    if not target_date:
-        target_date = date.today()
-    elif isinstance(target_date, str):
-        target_date = date.fromisoformat(target_date)
+    async def run(self, target_date: Optional[str] = None, **kwargs) -> Any:
+        db_session: AsyncSession = kwargs.get("db_session")
+        user_id: str = kwargs.get("user_id")
+        if not db_session or not user_id: return {"success": False, "message": "Context error"}
+        try:
+            d = date.fromisoformat(target_date) if target_date else date.today()
+            client = await get_lbs_client(user_id, db_session)
+            async with client:
+                res = await client.get_condition(d)
+                return {"success": True, "message": f"Condition for {d}: {res}", "data": res}
+        except Exception as e:
+            return {"success": False, "message": f"Failed to get condition: {e}"}
+
+class UpdateUserConditionArgs(BaseModel):
+    cognitive_fatigue: int = Field(..., description="Cognitive fatigue level (1-10, where 10 is max fatigue)")
+    target_date: Optional[str] = Field(None, description="YYYY-MM-DD. Defaults to today.")
+    notes: Optional[str] = Field(None, description="Additional context about the condition")
+
+class UpdateUserConditionTool(BaseTool):
+    name = "update_user_condition"
+    description = "Report the user's current cognitive fatigue level to LBS for dynamic load adjustment."
+    args_schema = UpdateUserConditionArgs
+
+    async def run(self, cognitive_fatigue: int, target_date: Optional[str] = None, notes: Optional[str] = None, **kwargs) -> Any:
+        db_session: AsyncSession = kwargs.get("db_session")
+        user_id: str = kwargs.get("user_id")
+        if not db_session or not user_id: return {"success": False, "message": "Context error"}
         
-    client = await get_lbs_client(user_id, db_session)
-    async with client:
-        return await client.delete_condition(target_date)
+        try:
+            d = date.fromisoformat(target_date) if target_date else date.today()
+            client = await get_lbs_client(user_id, db_session)
+            async with client:
+                res = await client.update_condition(d, cognitive_fatigue, notes)
+                return {"success": True, "message": f"✅ Condition updated for {d}.", "data": res}
+        except Exception as e:
+            return {"success": False, "message": f"Failed to update condition: {e}"}
+
+class GetTaskHistoryArgs(BaseModel):
+    task_id: str = Field(..., description="ID of the task")
+    start_date: str = Field(..., description="YYYY-MM-DD")
+    end_date: str = Field(..., description="YYYY-MM-DD")
+
+class GetTaskHistoryTool(BaseTool):
+    name = "get_task_execution_history"
+    description = "Get the historical execution records for a specific task over a date range."
+    args_schema = GetTaskHistoryArgs
+
+    async def run(self, task_id: str, start_date: str, end_date: str, **kwargs) -> Any:
+        db_session: AsyncSession = kwargs.get("db_session")
+        user_id: str = kwargs.get("user_id")
+        if not db_session or not user_id:
+            return {"success": False, "message": "Context error"}
+        
+        try:
+            client = await get_lbs_client(user_id, db_session)
+            history = await client.get_task_history(task_id, date.fromisoformat(start_date), date.fromisoformat(end_date))
+            return {"success": True, "message": f"Found {len(history)} records.", "data": {"history": history}}
+        except Exception as e:
+            return {"success": False, "message": f"Failed to get history: {e}"}
+
+class ResetUserConditionArgs(BaseModel):
+    target_date: Optional[str] = Field(None, description="YYYY-MM-DD. Defaults to today.")
+
+class ResetUserConditionTool(BaseTool):
+    name = "reset_user_condition"
+    description = "Clear the user's condition report for a specific date."
+    args_schema = ResetUserConditionArgs
+
+    async def run(self, target_date: Optional[str] = None, **kwargs) -> Any:
+        db_session: AsyncSession = kwargs.get("db_session")
+        user_id: str = kwargs.get("user_id")
+        if not db_session or not user_id: return {"success": False, "message": "Context error"}
+        
+        try:
+            d = date.fromisoformat(target_date) if target_date else date.today()
+            client = await get_lbs_client(user_id, db_session)
+            async with client:
+                await client.delete_condition(d)
+                return {"success": True, "message": f"Reset condition for {d}."}
+        except Exception as e:
+            return {"success": False, "message": f"Failed to reset condition: {e}"}
