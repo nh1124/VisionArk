@@ -138,22 +138,38 @@ class GeminiProvider(BaseLLMProvider):
     ) -> CompletionResponse:
         """Asynchronously generate completion using Gemini with optional function calling"""
         model_name = preferred_model or self.model_name
-        full_prompt = self._build_prompt(messages)
-        content_parts = []
         
+        # 1. Convert history to Gemini parts, separating system instruction
+        history = []
+        system_instructions = []
+        for m in messages:
+            role_val = getattr(m.role, "value", m.role)
+            if role_val == "system":
+                system_instructions.append(m.content)
+            else:
+                role = "user" if role_val == "user" else "model"
+                history.append(types.Content(role=role, parts=[types.Part.from_text(text=m.content)]))
+        
+        system_instruction = None
+        if system_instructions:
+            system_instruction = types.Content(
+                role="system",
+                parts=[types.Part.from_text(text="\n\n".join(system_instructions))]
+            )
+        
+        # 2. Add current multimodal parts if any
         if attached_files:
-            for attached_file in attached_files:
-                if hasattr(attached_file, 'gemini_file_uri') and attached_file.gemini_file_uri:
-                    try:
-                        file_part = types.Part.from_uri(
-                            file_uri=attached_file.gemini_file_uri,
-                            mime_type=attached_file.file_type
-                        )
-                        content_parts.append(file_part)
-                    except Exception as e:
-                        logger.error(f"[Gemini] Failed to add file part: {e}")
-        
-        content_parts.append(types.Part.from_text(text=full_prompt))
+            if history and history[-1].role == "user":
+                for attached_file in attached_files:
+                    if hasattr(attached_file, 'gemini_file_uri') and attached_file.gemini_file_uri:
+                        try:
+                            file_part = types.Part.from_uri(
+                                file_uri=attached_file.gemini_file_uri,
+                                mime_type=attached_file.file_type
+                            )
+                            history[-1].parts.insert(0, file_part)
+                        except Exception as e:
+                            logger.error(f"[Gemini] Failed to add file part: {e}")
         
         active_tool_functions = tool_functions or getattr(self, '_tool_functions', {})
         if tool_definitions:
@@ -165,12 +181,12 @@ class GeminiProvider(BaseLLMProvider):
         
         tool_count = len(tools_for_model[0].function_declarations) if tools_for_model and hasattr(tools_for_model[0], 'function_declarations') else 0
         print(f"🛠️ [Gemini] Model initialized with {tool_count} tools.")
-        logger.info(f"[Gemini] Tools passed to model: {tool_count}")
         
         generation_config = types.GenerateContentConfig(
             temperature=temperature,
             max_output_tokens=max_tokens,
             tools=tools_for_model if tools_for_model else None,
+            system_instruction=system_instruction
         )
         
         if tools_for_model and hasattr(tools_for_model[0], 'function_declarations') and tools_for_model[0].function_declarations:
@@ -178,7 +194,8 @@ class GeminiProvider(BaseLLMProvider):
                 function_calling_config=types.FunctionCallingConfig(mode="AUTO")
             )
 
-        history = [types.Content(role="user", parts=content_parts)]
+        # history is already initialized
+
         turn_count = 0
         max_turns = settings.max_tool_turns
         accumulated_tool_results = []
@@ -336,6 +353,7 @@ class GeminiProvider(BaseLLMProvider):
                     else:
                         logger.warning(f"[Gemini] Skipping unsupported tool file type: {injected_mime_type} for {injected_file_uri}")
             
+            # Append model response and tool results to history for next generate call
             history.append(types.Content(role="tool", parts=tool_response_parts))
             
         return CompletionResponse(
@@ -360,34 +378,40 @@ class GeminiProvider(BaseLLMProvider):
         # Determine model to use (per-request override or default)
         model_name = preferred_model or self.model_name
         
-        # Build prompt from messages
-        full_prompt = self._build_prompt(messages)
+        # 1. Convert history to Gemini parts, separating system instruction
+        history = []
+        system_instructions = []
+        for m in messages:
+            if m.role == "system":
+                system_instructions.append(m.content)
+            else:
+                role = "user" if m.role == "user" else "model"
+                history.append(types.Content(role=role, parts=[types.Part.from_text(text=m.content)]))
         
-        # Build content parts for multimodal request
-        content_parts = []
+        system_instruction = None
+        if system_instructions:
+            system_instruction = types.Content(
+                role="system",
+                parts=[types.Part.from_text(text="\n\n".join(system_instructions))]
+            )
         
-        # Add file parts first
+        # 2. Add current multimodal parts
         if attached_files:
-            for attached_file in attached_files:
-                if hasattr(attached_file, 'gemini_file_uri') and attached_file.gemini_file_uri:
-                    # Gemini DOES NOT support application/octet-stream for multimodal parts
-                    if attached_file.file_type == "application/octet-stream":
-                        print(f"[Gemini] Skipping unsupported file type: {attached_file.file_type} for {attached_file.filename}")
-                        continue
-                        
-                    try:
-                        # New SDK uses Part.from_uri or similar
-                        file_part = types.Part.from_uri(
-                            file_uri=attached_file.gemini_file_uri,
-                            mime_type=attached_file.file_type
-                        )
-                        content_parts.append(file_part)
-                        print(f"[Gemini] Added file part: {attached_file.filename} ({attached_file.file_type})")
-                    except Exception as e:
-                        print(f"[Gemini] Failed to add file part for {attached_file.filename}: {e}")
-        
-        # Add text prompt
-        content_parts.append(types.Part.from_text(text=full_prompt))
+            if history and history[-1].role == "user":
+                for attached_file in attached_files:
+                    if hasattr(attached_file, 'gemini_file_uri') and attached_file.gemini_file_uri:
+                        if attached_file.file_type == "application/octet-stream":
+                            continue
+                        try:
+                            # Use internal attribute name consistency
+                            file_uri = attached_file.gemini_file_uri
+                            file_part = types.Part.from_uri(
+                                file_uri=file_uri,
+                                mime_type=attached_file.file_type
+                            )
+                            history[-1].parts.insert(0, file_part)
+                        except Exception as e:
+                            print(f"[Gemini] Failed to add file part: {e}")
         
         # 1. Prepare Tools
         active_tool_functions = tool_functions or getattr(self, '_tool_functions', {})
@@ -397,9 +421,6 @@ class GeminiProvider(BaseLLMProvider):
             tools_for_model = self._convert_dict_tools_to_gemini(tool_definitions)
         elif hasattr(self, '_tool_definitions') and self._tool_definitions:
             tools_for_model = self._convert_dict_tools_to_gemini(self._tool_definitions)
-        elif self.tools:
-            # LangChain conversion skipped for now
-            tools_for_model = []
         else:
             tools_for_model = []
         
@@ -408,6 +429,7 @@ class GeminiProvider(BaseLLMProvider):
             temperature=temperature,
             max_output_tokens=max_tokens,
             tools=tools_for_model if tools_for_model else None,
+            system_instruction=system_instruction
         )
         
         # Only set ToolConfig if we have actual functions to call
@@ -417,14 +439,6 @@ class GeminiProvider(BaseLLMProvider):
                     mode="AUTO"
                 )
             )
-
-        # Initialize history for this request
-        history = [
-            types.Content(
-                role="user",
-                parts=content_parts
-            )
-        ]
         
         turn_count = 0
         max_turns = settings.max_tool_turns
@@ -582,7 +596,7 @@ class GeminiProvider(BaseLLMProvider):
                     else:
                         print(f"[Gemini] Skipping unsupported tool file type: {injected_mime_type} for {injected_file_uri}")
             
-            # Add tool responses to history (role is 'tool' in new SDK)
+            # Add tool responses and model content to history
             history.append(types.Content(
                 role="tool",
                 parts=tool_response_parts
@@ -718,27 +732,41 @@ class GeminiProvider(BaseLLMProvider):
     ):
         """Asynchronously stream chat events including status updates during function calling."""
         model_name = preferred_model or self.model_name
-        full_prompt = self._build_prompt(messages)
-        content_parts = []
+        # 1. Convert history to Gemini parts, separating system instruction
+        history = []
+        system_instructions = []
+        for m in messages:
+            role_val = getattr(m.role, "value", m.role)
+            if role_val == "system":
+                system_instructions.append(m.content)
+            else:
+                role = "user" if role_val == "user" else "model"
+                history.append(types.Content(role=role, parts=[types.Part.from_text(text=m.content)]))
         
+        system_instruction = None
+        if system_instructions:
+            system_instruction = types.Content(
+                role="system",
+                parts=[types.Part.from_text(text="\n\n".join(system_instructions))]
+            )
+        
+        # 2. Add current multimodal parts
         if attached_files:
-            for attached_file in attached_files:
-                if hasattr(attached_file, 'gemini_file_uri') and attached_file.gemini_file_uri:
-                    # Gemini DOES NOT support application/octet-stream for multimodal parts
-                    if attached_file.file_type == "application/octet-stream":
-                        print(f"[Gemini] Skipping unsupported file type (stream): {attached_file.file_type}")
-                        continue
-                        
-                    try:
-                        file_part = types.Part.from_uri(
-                            file_uri=attached_file.gemini_file_uri,
-                            mime_type=attached_file.file_type
-                        )
-                        content_parts.append(file_part)
-                    except Exception as e:
-                        print(f"[Gemini] Failed to add file part: {e}")
-        
-        content_parts.append(types.Part.from_text(text=full_prompt))
+            if history and history[-1].role == "user":
+                for attached_file in attached_files:
+                    if hasattr(attached_file, 'gemini_file_uri') and attached_file.gemini_file_uri:
+                        # Gemini DOES NOT support application/octet-stream for multimodal parts
+                        if attached_file.file_type == "application/octet-stream":
+                            continue
+                            
+                        try:
+                            file_part = types.Part.from_uri(
+                                file_uri=attached_file.gemini_file_uri,
+                                mime_type=attached_file.file_type
+                            )
+                            history[-1].parts.insert(0, file_part)
+                        except Exception as e:
+                            print(f"[Gemini] Failed to add file part: {e}")
         
         active_tool_functions = tool_functions or getattr(self, '_tool_functions', {})
         if tool_definitions:
@@ -752,6 +780,7 @@ class GeminiProvider(BaseLLMProvider):
             temperature=temperature,
             max_output_tokens=max_tokens,
             tools=tools_for_model if tools_for_model else None,
+            system_instruction=system_instruction
         )
         
         if tools_for_model and hasattr(tools_for_model[0], 'function_declarations') and tools_for_model[0].function_declarations:
@@ -759,7 +788,8 @@ class GeminiProvider(BaseLLMProvider):
                 function_calling_config=types.FunctionCallingConfig(mode="AUTO")
             )
 
-        history = [types.Content(role="user", parts=content_parts)]
+        # history is already initialized
+
         turn_count = 0
         max_turns = settings.max_tool_turns
         accumulated_tool_results = []
@@ -961,22 +991,40 @@ class GeminiProvider(BaseLLMProvider):
         Stream chat events including status updates during function calling.
         """
         model_name = preferred_model or self.model_name
-        full_prompt = self._build_prompt(messages)
-        content_parts = []
+        # 1. Convert history to Gemini parts, separating system instruction
+        history = []
+        system_instructions = []
+        for m in messages:
+            if m.role == "system":
+                system_instructions.append(m.content)
+            else:
+                role = "user" if m.role == "user" else "model"
+                history.append(types.Content(role=role, parts=[types.Part.from_text(text=m.content)]))
         
+        system_instruction = None
+        if system_instructions:
+            system_instruction = types.Content(
+                role="system",
+                parts=[types.Part.from_text(text="\n\n".join(system_instructions))]
+            )
+        
+        # 2. Add current multimodal parts
         if attached_files:
-            for attached_file in attached_files:
-                if hasattr(attached_file, 'gemini_file_uri') and attached_file.gemini_file_uri:
-                    try:
-                        file_part = types.Part.from_uri(
-                            file_uri=attached_file.gemini_file_uri,
-                            mime_type=attached_file.file_type
-                        )
-                        content_parts.append(file_part)
-                    except Exception as e:
-                        print(f"[Gemini] Failed to add file part: {e}")
-        
-        content_parts.append(types.Part.from_text(text=full_prompt))
+            if history and history[-1].role == "user":
+                for attached_file in attached_files:
+                    if hasattr(attached_file, 'gemini_file_uri') and attached_file.gemini_file_uri:
+                        # Gemini DOES NOT support application/octet-stream for multimodal parts
+                        if attached_file.file_type == "application/octet-stream":
+                            continue
+                            
+                        try:
+                            file_part = types.Part.from_uri(
+                                file_uri=attached_file.gemini_file_uri,
+                                mime_type=attached_file.file_type
+                            )
+                            history[-1].parts.insert(0, file_part)
+                        except Exception as e:
+                            print(f"[Gemini] Failed to add file part: {e}")
         
         active_tool_functions = tool_functions or getattr(self, '_tool_functions', {})
         if tool_definitions:
@@ -990,14 +1038,16 @@ class GeminiProvider(BaseLLMProvider):
             temperature=temperature,
             max_output_tokens=max_tokens,
             tools=tools_for_model if tools_for_model else None,
+            system_instruction=system_instruction
         )
         
         if tools_for_model and hasattr(tools_for_model[0], 'function_declarations') and tools_for_model[0].function_declarations:
             generation_config.tool_config = types.ToolConfig(
                 function_calling_config=types.FunctionCallingConfig(mode="AUTO")
             )
+ 
+        # history is already initialized
 
-        history = [types.Content(role="user", parts=content_parts)]
         turn_count = 0
         max_turns = settings.max_tool_turns
         accumulated_tool_results = []
@@ -1118,7 +1168,7 @@ class GeminiProvider(BaseLLMProvider):
                             else:
                                 print(f"[Gemini] Skipping unsupported tool file type: {mime_type} for {file_uri}")
                 
-                # Add tool responses to history for next turn
+                # Add responses to history for next turn
                 history.append(types.Content(role="tool", parts=tool_response_parts))
                 yield {"type": "status", "data": "Synthesizing result..."}
 
@@ -1128,14 +1178,4 @@ class GeminiProvider(BaseLLMProvider):
                 yield {"type": "error", "data": str(e)}
                 return
 
-    def _build_prompt(self, messages: List[Message]) -> str:
-        """Convert Message list to Gemini prompt format"""
-        prompt_parts = []
-        for msg in messages:
-            if msg.role == "system":
-                prompt_parts.append(f"System: {msg.content}\n\n")
-            elif msg.role == "user":
-                prompt_parts.append(f"User: {msg.content}\n\n")
-            elif msg.role == "assistant":
-                prompt_parts.append(f"Assistant: {msg.content}\n\n")
-        return "".join(prompt_parts)
+    # Removed _build_prompt in favor of structured Content list

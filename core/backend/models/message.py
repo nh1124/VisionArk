@@ -132,13 +132,10 @@ class Message:
     
     def format_for_chat(self) -> str:
         """
-        Format for LLM - include full file contents and meta_info
+        Format for LLM - include full file contents but EXCLUDE technical meta_info
+        to prevent LLM from mimicking internal JSON/log formats.
         """
         parts = []
-        
-        # Add meta-info context if present (agent provides formatted string)
-        if self.meta_info:
-            parts.append(f"[Context: {self.meta_info}]")
         
         # Main message content
         parts.append(self.content)

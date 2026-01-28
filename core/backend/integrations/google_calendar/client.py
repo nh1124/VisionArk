@@ -87,6 +87,16 @@ class GoogleCalendarClient:
         
         attempts = 0
         while attempts < 2:
+            if not self.access_token:
+                # If we have no token, try to refresh immediately before the first request
+                try:
+                    await self._refresh_access_token()
+                except Exception as e:
+                    raise Exception(f"Google Calendar authentication failed: No access token available and refresh failed: {e}")
+
+            if not self.access_token:
+                 raise Exception("Google Calendar authentication failed: Access token is empty after refresh attempt.")
+
             headers = {"Authorization": f"Bearer {self.access_token}"}
             if "headers" in kwargs:
                 headers.update(kwargs.pop("headers"))

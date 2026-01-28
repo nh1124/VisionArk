@@ -278,7 +278,7 @@ class BaseNode(ABC):
 
         # Get preferred model from context
         preferred_model = self.context.get("preferred_model")
-
+        
         # Call LLM
         try:
             t0 = time.time()

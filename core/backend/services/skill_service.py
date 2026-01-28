@@ -22,12 +22,15 @@ class SkillService:
         if not skills:
             return ""
 
-        header = "\n\n### ATTACHED SKILLS (Instructions & Guidelines)\n"
-        footer = "\n### END OF SKILLS\n"
+        header = "\n\n### ATTACHED SKILLS (Strategic Guidelines)\n"
+        header += "> [!NOTE]\n"
+        header += "> The following skills are provided as strategic guidelines. You are encouraged to follow these procedures when applicable, but you maintain the autonomy to adapt or combined tools as needed to achieve the objective efficiently.\n"
+        
+        footer = "\n### END OF SKILL GUIDELINES\n"
         
         skill_blocks = []
         for skill in skills:
-            block = f"#### Skill: {skill.name}\n{skill.content}"
+            block = f"#### Skill Guideline: {skill.name}\n{skill.content}"
             skill_blocks.append(block)
             
         return header + "\n---\n".join(skill_blocks) + footer

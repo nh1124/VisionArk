@@ -11,8 +11,8 @@ class GlobalScheduler(GenericSystemNode):
     role_name = "GlobalScheduler"
     display_name = "Global Scheduler"
     description = (
-        "System-wide Load Balancer & Orchestrator. Authorized to manage LBS tasks across all projects, "
-        "monitor global cognitive load, and resolve cross-project conflicts."
+        "System-wide Load Balancer. Authorized to manage LBS tasks across all projects, "
+        "monitor global cognitive load, and resolve scheduling conflicts."
     )
     default_tools = [
         "get_load_in_period", "broadcast_system_message",

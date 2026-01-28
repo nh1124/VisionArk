@@ -60,6 +60,41 @@ class Worker:
         # Start AES Dispatcher as a background task
         asyncio.create_task(self.dispatcher.run_forever())
         
+        # Ensure daily Router synchronization is scheduled
+        try:
+            from datetime import timedelta
+            async with AsyncSessionLocal() as db:
+                # We check for any pending SYNC_ROUTER_HOOKS task
+                stmt = select(ScheduledTask).filter(
+                    ScheduledTask.task_type == "SYNC_ROUTER_HOOKS",
+                    ScheduledTask.status == ScheduledTaskStatus.PENDING
+                )
+                res = await db.execute(stmt)
+                if not res.scalars().first():
+                    print("[Worker] Scheduling daily SYNC_ROUTER_HOOKS task...")
+                    # Find a user to assign this to (usually the primary user or system)
+                    # For now, we fetch the first user or skip if none
+                    u_stmt = select(Project.user_id).limit(1)
+                    u_res = await db.execute(u_stmt)
+                    sys_user_id = u_res.scalar()
+                    
+                    if sys_user_id:
+                        import uuid
+                        new_st = ScheduledTask(
+                            id=str(uuid.uuid4()),
+                            user_id=sys_user_id,
+                            task_type="SYNC_ROUTER_HOOKS",
+                            payload={},
+                            scheduled_at=datetime.utcnow() + timedelta(days=1),
+                            recurring_rule="0 0 * * *", # Daily at midnight
+                            status=ScheduledTaskStatus.PENDING
+                        )
+                        db.add(new_st)
+                        await db.commit()
+                        print("[Worker] Daily SYNC_ROUTER_HOOKS task scheduled.")
+        except Exception as e:
+            print(f"⚠️ Failed to schedule Router sync: {e}")
+
         while True:
             try:
                 # Poll Redis (Blocking) in executor to stay async-friendly

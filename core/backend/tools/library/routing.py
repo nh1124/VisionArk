@@ -139,7 +139,8 @@ class SubscribeIntentTool(BaseTool):
             if not node:
                 return f"Error: Node record {node_id} not found."
 
-            meta = node.meta_payload or {}
+            import copy
+            meta = copy.deepcopy(node.meta_payload or {})
             updated = False
 
             # Handle Regex Path
@@ -183,9 +184,8 @@ class SubscribeIntentTool(BaseTool):
                 await db_session.commit()
             
             # 2. Register regex in memory for immediate effect (if applicable)
-            if pattern:
-                router = Router()
-                router.register_hook(pattern, node_id, description or f"Subscription from {node.display_name}")
+            # We re-initialize the entire hook set to ensure consistency
+            await Router.initialize_default_hooks()
             
             # Include the ID in the response if we only added one thing
             msg = "Successfully subscribed to intent."
@@ -238,7 +238,8 @@ class UnsubscribeIntentTool(BaseTool):
             if not node:
                 return f"Error: Node record {node_id} not found."
 
-            meta = node.meta_payload or {}
+            import copy
+            meta = copy.deepcopy(node.meta_payload or {})
             updated = False
 
             # Helper to remove from list
@@ -280,6 +281,11 @@ class UnsubscribeIntentTool(BaseTool):
                 from sqlalchemy.orm.attributes import flag_modified
                 flag_modified(node, "meta_payload")
                 await db_session.commit()
+                
+                # Sync Router memory
+                from services.router import Router
+                await Router.initialize_default_hooks()
+                
                 return "Successfully unsubscribed."
             
             return "No matching subscription found to remove."
