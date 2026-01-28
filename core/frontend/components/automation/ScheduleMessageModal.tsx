@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { AlarmClock } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useNotification } from "@/lib/NotificationContext";
 
@@ -59,7 +60,10 @@ export default function ScheduleMessageModal({ projectId, onClose, onScheduled }
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-md shadow-2xl animate-in fade-in zoom-in duration-200">
                 <div className="p-6">
-                    <h3 className="text-lg font-bold text-white mb-4">Schedule Reserved Message</h3>
+                    <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                        <AlarmClock size={20} className="text-cyan-500" />
+                        Schedule Reserved Message
+                    </h3>
 
                     <form onSubmit={handleSubmit} className="space-y-4">
                         <div>

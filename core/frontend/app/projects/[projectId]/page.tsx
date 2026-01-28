@@ -9,7 +9,7 @@ import MessageWithAttachments from "@/components/MessageWithAttachments";
 import FilesSidebar from "@/components/FilesSidebar";
 import CommandAutocomplete, { CommandAutocompleteHandle } from "../../components/CommandAutocomplete";
 import { apiFetch } from "@/lib/api";
-import { Settings, Files, RotateCcw, X, Zap } from "lucide-react";
+import { Settings, Files, RotateCcw, X, AlarmClock } from "lucide-react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useModel } from "@/lib/ModelContext";
 import { Panel, Group, Separator } from "react-resizable-panels";
@@ -789,7 +789,7 @@ export default function ProjectChatPage({
     };
 
     const chatView = (
-        <div className="flex-1 flex flex-col h-full overflow-hidden relative bg-gray-950">
+        <div className="flex-1 flex flex-col h-full overflow-hidden relative bg-gray-950 min-w-0">
             {/* Header - Minimal Gemini-style - Hide on mobile since the global header handles it */}
             {!isMobile && (
                 <div className="bg-gray-900/50 border-b border-gray-800/50 px-4 py-2.5 flex items-center justify-between flex-shrink-0">
@@ -813,11 +813,11 @@ export default function ProjectChatPage({
                                 }
                             }}
                             className={`p-2 rounded-lg transition-all ${showSidebar && sidebarMode === "automation"
-                                ? "bg-amber-500/20 text-amber-400"
+                                ? "bg-cyan-500/20 text-cyan-400"
                                 : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
                             title={showSidebar && sidebarMode === "automation" ? "Hide Automation" : "Show Automation"}
                         >
-                            <Zap size={18} />
+                            <AlarmClock size={18} />
                         </button>
                         <button
                             onClick={() => {
@@ -841,7 +841,7 @@ export default function ProjectChatPage({
 
             {/* Messages - Scrollable area */}
             <div className="flex-1 overflow-y-auto px-4 py-8">
-                <div className="max-w-4xl mx-auto space-y-6" key={`messages-${messages.length}`}>
+                <div className="max-w-4xl mx-auto space-y-6 min-w-0 w-full" key={`messages-${messages.length}`}>
                     {messages.length === 0 && !loading && (
                         <div className="text-center text-gray-500 py-20">
                             <div className="w-16 h-16 bg-cyan-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6">
@@ -907,7 +907,7 @@ export default function ProjectChatPage({
             {/* Command Help Overlay */}
             {showCommandHelp && (
                 <div className="px-4">
-                    <div className="max-w-4xl mx-auto border-t border-gray-800 pt-4">
+                    <div className="max-w-4xl mx-auto border-t border-gray-800 pt-4 min-w-0">
                         <CommandAutocomplete
                             ref={commandRef}
                             value={commandInputValue}
@@ -924,7 +924,7 @@ export default function ProjectChatPage({
 
             {/* Input - Fixed at bottom */}
             <div className="pb-4 px-4">
-                <div className="max-w-4xl mx-auto flex flex-col min-h-0">
+                <div className="max-w-4xl mx-auto flex flex-col min-h-0 min-w-0">
                     {!isMobile && (
                         <div className="flex justify-between items-center mb-2 px-4">
                             <div className="text-[10px] text-gray-500 font-mono uppercase tracking-widest">
@@ -1003,7 +1003,7 @@ export default function ProjectChatPage({
 
     return (
         <>
-            <div className="flex h-full w-full overflow-hidden bg-gray-950">
+            <div className="flex h-full w-full overflow-hidden bg-gray-950 min-w-0">
                 {!isMobile && showCanvas ? (
                     <Group orientation="horizontal" className="h-full w-full">
                         <Panel defaultSize={50} minSize={30}>
@@ -1030,7 +1030,7 @@ export default function ProjectChatPage({
                         </Panel>
                     </Group>
                 ) : (
-                    <div className="flex-1 flex flex-col h-full">
+                    <div className="flex-1 flex flex-col h-full min-h-0 min-w-0">
                         {isMobile && showCanvas ? (
                             <div className="flex-1 flex flex-col overflow-hidden">
                                 <Canvas

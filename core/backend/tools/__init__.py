@@ -1,6 +1,9 @@
 # New Class-Based Tool Architecture
 from .base import BaseTool
-from .library.system import AskNodeTool, ListNodesTool, GetNodeProfileTool, BroadcastSystemMessageTool
+from .library.system import (
+    AskNodeTool, ListNodesTool, GetNodeProfileTool, BroadcastSystemMessageTool,
+    ListUserProjectsTool, UpdateProjectTool, GetProjectHealthTool
+)
 from integrations.lbs.agent_tools import (
     ListTasksTool, CreateTaskTool, UpdateTaskTool, DeleteTaskTool, 
     CompleteLBSTaskTool, GetLBSScheduleTool, GetLoadOnDayTool, 
@@ -54,6 +57,9 @@ __all__ = [
     "ListNodesTool",
     "GetNodeProfileTool",
     "BroadcastSystemMessageTool",
+    "ListUserProjectsTool",
+    "UpdateProjectTool",
+    "GetProjectHealthTool",
     "ListTasksTool",
     "CreateTaskTool",
     "UpdateTaskTool",

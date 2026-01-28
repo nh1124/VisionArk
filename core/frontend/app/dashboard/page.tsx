@@ -131,14 +131,7 @@ export default function DashboardPage() {
                 <div className="flex justify-between items-center mb-8 hidden sm:flex">
                     <div>
                         <h1 className="text-3xl font-bold text-white tracking-tight">Dashboard</h1>
-                        <p className="text-gray-500 text-sm mt-1">Human State OS / Personal Load Balance</p>
                     </div>
-                    <button
-                        onClick={() => setRefreshKey(k => k + 1)}
-                        className="px-5 py-2.5 bg-gray-900 border border-gray-800 hover:border-gray-700 rounded-xl transition-all text-sm text-gray-300 font-medium flex items-center gap-2 shadow-sm"
-                    >
-                        <span>↺</span> Refresh
-                    </button>
                 </div>
 
                 {/* Hub Proactive Suggestions */}

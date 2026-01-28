@@ -49,18 +49,80 @@ In your webhook (`api.py`):
 3.  If missing, create a dedicated `Project` and link it to the identity.
 4.  Enqueue the task with that `project_id`.
 
+## UI Integration (`manifest.json`)
+
+To display your integration in the **Integration Hub** (Settings > Integrations), create a `manifest.json` file in your integration folder.
+
+```json
+{
+  "id": "my_system",
+  "name": "My System",
+  "description": "Short description of what this does.",
+  "icon": "🚀",
+  "color": "bg-blue-600/10 text-blue-500",
+  "category": "productivity",
+  "authType": "oauth",
+  "config_fields": [
+    { "key": "__api_key__", "label": "API Key", "type": "password", "description": "Obtain this from the developer portal." },
+    { "key": "base_url", "label": "Endpoint URL", "type": "text", "default": "https://api.example.com" },
+    { "key": "va_auto_meeting_link", "label": "Auto-generate meeting links", "type": "checkbox", "description": "Generate Meet/Teams link for new tasks" }
+  ],
+  "setup_instructions": [
+    { "step": 1, "title": "Obtain API Credentials", "content": "Log in to the developer console and create a new application." },
+    { "step": 2, "title": "Configure Webhook", "content": "Set the webhook URL to https://visionark.example.com/api/my-system/webhook." }
+  ]
+}
+```
+
+### Config Fields (`config_fields`)
+Defining `config_fields` allows for a custom configuration UI in the "Manage" / "Connect" modal:
+- **`key`**: The key used in the backend `ServiceRegistry.config`.
+    - Special key `__api_key__`: Maps to `ServiceRegistry.api_key_encrypted`.
+    - Special key `base_url`: Maps to `ServiceRegistry.base_url`.
+- **`label`**: The display name for the field in the UI.
+- **`type`**: Supports `text`, `password`, `checkbox`, `textarea`.
+- **`description`**: Optional hint text displayed below the field.
+- **`default`**: Optional default value applied when first connecting.
+
+### Setup Instructions (`setup_instructions`)
+If provided, these instructions will be rendered as a **Setup Guide** within the configuration modal. This is highly recommended for complex integrations (e.g., OAuth setups or Webhook configurations) to guide the user without forcing them to leave the app.
+
+The system automatically discovers these manifests and renders them in the frontend hub.
+
+## Custom Database Models (`models.py`)
+
+If your integration requires dedicated storage, create a `models.py` file. VisionArk automatically discovers and registers these models at startup.
+
+**Important**: 
+- Use the `Base` from `models.database`.
+- Prefix your table names with `integr_[name]_` to avoid collisions.
+
+```python
+from sqlalchemy import Column, Integer, String
+from models.database import Base
+
+class MyIntegrationTable(Base):
+    __tablename__ = "integr_my_system_data"
+    id = Column(Integer, primary_key=True)
+    # ... your columns
+```
+
 ## Step-by-Step Implementation
 
 ### 1. Create the Integration Folder
 Create a new directory under `core/backend/integrations/`.
 
-### 2. Implement the API Client (`client.py`)
+### 2. Add Manifest & Models
+- `manifest.json`: For UI presence.
+- `models.py`: For custom storage.
+
+### 3. Implement the API Client (`client.py`)
 Create a class to handle communication. Use `ServiceRegistry` to retrieve credentials.
 
-### 3. Define Agent Tools (`agent_tools.py`)
+### 4. Define Agent Tools (`agent_tools.py`)
 Inherit from `BaseTool` (exported via `va_sdk`).
 
-### 4. Enable Dynamic Discovery (`__init__.py`)
+### 5. Enable Dynamic Discovery (`__init__.py`)
 Implement a `get_tools` function. The system automatically scans for this. 
 **Crucial**: Also import your `handlers.py` here to ensure they are registered at startup.
 

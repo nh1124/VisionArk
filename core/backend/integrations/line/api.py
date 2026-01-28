@@ -11,6 +11,7 @@ from uuid import uuid4
 import secrets
 import os
 from datetime import datetime, timedelta
+from .models import LineLinkingToken
 
 router = APIRouter()
 
@@ -40,39 +41,18 @@ async def link_line_account(
     token: The unique linking token sent to LINE.
     user_id: The VisionArk user ID to link with.
     """
-    # 1. Search for the token across all LINE service registrations
-    # This is slightly expensive but keeps the core clean.
-    result = await db.execute(select(ServiceRegistry).filter(
-        ServiceRegistry.service_name == "line"
-    ))
-    services = result.scalars().all()
-    
-    found_service = None
-    line_user_id = None
-    
-    for service in services:
-        pending_links = service.config.get("pending_links", {})
-        if token in pending_links:
-            link_data = pending_links[token]
-            # Check expiry
-            expires_at = datetime.fromisoformat(link_data["expires_at"])
-            if expires_at > datetime.utcnow():
-                found_service = service
-                line_user_id = link_data["line_user_id"]
-                # Cleanup token
-                del pending_links[token]
-                from sqlalchemy.orm.attributes import flag_modified
-                flag_modified(service, "config")
-                break
-            else:
-                # Cleanup expired token
-                del pending_links[token]
-                from sqlalchemy.orm.attributes import flag_modified
-                flag_modified(service, "config")
+    # 1. Search for the token in the dedicated integration table
+    stmt = select(LineLinkingToken).filter(
+        LineLinkingToken.token == token,
+        LineLinkingToken.expires_at > datetime.utcnow()
+    )
+    result = await db.execute(stmt)
+    token_obj = result.scalars().first()
 
-    if not found_service:
-        await db.commit() # Save cleanups if any
+    if not token_obj:
         raise HTTPException(status_code=404, detail="Invalid or expired linking token")
+
+    line_user_id = token_obj.line_user_id
 
     # 2. Check if identity already exists
     id_result = await db.execute(select(ExternalIdentity).filter(
@@ -91,6 +71,8 @@ async def link_line_account(
         )
         db.add(new_identity)
     
+    # 3. Cleanup token and Commit
+    await db.delete(token_obj)
     await db.commit()
     
     return {"status": "success", "message": "LINE account linked successfully"}
@@ -105,8 +87,8 @@ async def shared_line_webhook(
     Universal LINE webhook for the Shared App model.
     Uses credentials from environment variables.
     """
-    channel_secret = os.getenv("LINE_CHANNEL_SECRET")
-    channel_access_token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+    channel_secret = os.getenv("LINE_CHANNEL_SECRET", "").strip()
+    channel_access_token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "").strip()
     
     if not channel_secret or not channel_access_token:
         print("[ERROR] Shared LINE credentials missing in .env", flush=True)
@@ -117,8 +99,15 @@ async def shared_line_webhook(
     
     # 1. Verify Signature
     digest = hmac.new(channel_secret.encode("utf-8"), body, hashlib.sha256).digest()
-    if not hmac.compare_digest(base64.b64encode(digest).decode("utf-8"), signature):
+    calc_signature = base64.b64encode(digest).decode("utf-8")
+    
+    if not hmac.compare_digest(calc_signature, signature):
+        print(f"[LINE Webhook] Signature mismatch!", flush=True)
+        print(f"  Received: {signature}", flush=True)
+        print(f"  Calculated: {calc_signature}", flush=True)
         raise HTTPException(status_code=401, detail="Invalid signature")
+
+    print("[LINE Webhook] Signature verified successfully", flush=True)
 
     # 2. Process Events
     data = json.loads(body_str)
@@ -128,6 +117,7 @@ async def shared_line_webhook(
             
         line_user_id = event["source"]["userId"]
         message_text = event["message"].get("text", "")
+        reply_token = event.get("replyToken")
         
         # 3. Identity Lookup
         id_result = await db.execute(select(ExternalIdentity).filter(
@@ -141,39 +131,13 @@ async def shared_line_webhook(
             token_str = secrets.token_urlsafe(32)
             expires_at = datetime.utcnow() + timedelta(minutes=15)
             
-            # Store link token in a "System" service registry or first available LINE registry
-            # We search for any "line" registry to hold this transient data
-            reg_result = await db.execute(select(ServiceRegistry).filter(
-                ServiceRegistry.service_name == "line"
-            ))
-            service = reg_result.scalars().first()
-            if not service:
-                # Fallback: create a dummy one or fail?
-                # For Shared App, we should have at least one or a dedicated system user.
-                # Let's use the first user in the DB as fallback host for config.
-                user_res = await db.execute(select(User).limit(1))
-                system_user = user_res.scalars().first()
-                if not system_user:
-                    print("[ERROR] No users found to host linking token", flush=True)
-                    continue
-                service = ServiceRegistry(
-                    user_id=system_user.id,
-                    service_name="line",
-                    base_url="https://api.line.me",
-                    is_active=True,
-                    config={}
-                )
-                db.add(service)
-
-            if "pending_links" not in service.config:
-                service.config["pending_links"] = {}
-            
-            service.config["pending_links"][token_str] = {
-                "line_user_id": line_user_id,
-                "expires_at": expires_at.isoformat()
-            }
-            from sqlalchemy.orm.attributes import flag_modified
-            flag_modified(service, "config")
+            # Store link token in the dedicated integration table
+            new_token = LineLinkingToken(
+                token=token_str,
+                line_user_id=line_user_id,
+                expires_at=expires_at
+            )
+            db.add(new_token)
             await db.commit()
             
             frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
@@ -205,14 +169,17 @@ async def shared_line_webhook(
         
         from queue_system.manager import QueueManager
         manager = QueueManager()
-        manager.enqueue_user_message(
+        manager.enqueue(
+            task_type="user_message", # Use user_message to trigger AI routing/processing
             user_id=actual_user_id,
             message=message_text,
             context={
                 "source": "line",
+                "external_reply_channel": "line",
+                "line_reply_token": reply_token,
                 "line_user_id": line_user_id,
                 "project_id": identity.project_id
-            }
+            } 
         )
     
     return {"status": "ok"}
@@ -277,20 +244,16 @@ async def line_webhook(
             # Instead of auto-linking, we generate a token and invite the user
             print(f"[debug] Identity not found for {line_user_id}. Sending invitation.", flush=True)
             
-            # Generate a secure token
             token_str = secrets.token_urlsafe(32)
             expires_at = datetime.utcnow() + timedelta(minutes=15)
-            
-            # Store in service config
-            if "pending_links" not in service.config:
-                service.config["pending_links"] = {}
-            
-            service.config["pending_links"][token_str] = {
-                "line_user_id": line_user_id,
-                "expires_at": expires_at.isoformat()
-            }
-            from sqlalchemy.orm.attributes import flag_modified
-            flag_modified(service, "config")
+
+            # Store link token in the dedicated integration table
+            new_token = LineLinkingToken(
+                token=token_str,
+                line_user_id=line_user_id,
+                expires_at=expires_at
+            )
+            db.add(new_token)
             await db.commit()
             
             # Send invitation via LINE

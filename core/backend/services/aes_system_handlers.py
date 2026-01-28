@@ -265,6 +265,29 @@ class ProjectSnapshotHandler(BaseAESHandler):
             root_dir=str(proj_dir)
         )
         print(f"[AES] Snapshot created: {archive_path}.zip")
+        
+@register_aes_handler("SYSTEM_SKILL_MINING")
+class SkillMiningHandler(BaseAESHandler):
+    """
+    Triggers the skill mining logic to analyze interactions and extract procedural intelligence.
+    Can be a specific task_id or a batch analysis.
+    """
+    async def run(self, context: Dict[str, Any]):
+        task_id = context.get("task_id")
+        user_id = context.get("user_id") or self.user_id
+        is_batch = context.get("is_batch", False)
+
+        print(f"[AES] Executing SYSTEM_SKILL_MINING for user {user_id} (batch={is_batch})")
+        
+        from services.skill_mining import SkillMiningService
+        miner = SkillMiningService(self.db)
+        
+        if is_batch:
+            await miner.run_batch_mining(user_id)
+        elif task_id:
+            await miner.analyze_task_for_skills(task_id, user_id)
+        else:
+            print("[AES] Warning: SYSTEM_SKILL_MINING requires task_id or is_batch=True")
 
 class AESSystemHandlers:
     """

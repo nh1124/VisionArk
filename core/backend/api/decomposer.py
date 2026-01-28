@@ -7,10 +7,11 @@ from pydantic import BaseModel
 from typing import List, Optional
 from sqlalchemy.orm import Session
 
-from models.database import get_session, UserSettings
-from llm.gemini_provider import GeminiProvider
+from models.database import UserSettings
+from llm.provider_factory import get_provider
+from llm.base_provider import Message, SimpleMessage
 from api.auth import get_current_user
-from utils.encryption import decrypt_string
+from services.auth import get_db
 import json
 import re
 
@@ -37,18 +38,18 @@ class DecomposeResponse(BaseModel):
 
 
 def _get_gemini_api_key(user_id: str, session: Session) -> str:
-    """Retrieve and decrypt Gemini API key for the user"""
+    """Retrieve Gemini API key for the user (already decrypted by property)"""
     settings = session.query(UserSettings).filter_by(user_id=user_id).first()
     if not settings or not settings.gemini_api_key:
         raise HTTPException(status_code=400, detail="Gemini API key not configured")
-    return decrypt_string(settings.gemini_api_key)
+    return settings.gemini_api_key
 
 
 @router.post("", response_model=DecomposeResponse)
 async def decompose_task(
     request: DecomposeRequest,
     current_user=Depends(get_current_user),
-    session: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """
     Use Gemini to decompose a high-level task into structured subtasks.
@@ -57,7 +58,7 @@ async def decompose_task(
     user_id = current_user.user_id
     
     # Get API key
-    api_key = _get_gemini_api_key(user_id, session)
+    api_key = _get_gemini_api_key(user_id, db)
     
     # Build the prompt for task decomposition
     prompt = f"""You are a task decomposition assistant. Given a high-level task description, break it down into actionable subtasks.
@@ -84,15 +85,15 @@ Example output:
     
     try:
         # Use Gemini to generate subtasks
-        provider = GeminiProvider(api_key=api_key)
-        response = await provider.complete(
-            prompt=prompt,
-            model="gemini-2.0-flash",
+        provider = get_provider(api_key=api_key)
+        response = await provider.complete_async(
+            messages=[SimpleMessage(role="user", content=prompt)],
+            preferred_model="gemini-2.5-flash-lite",
             temperature=0.7
         )
         
         # Parse the JSON response
-        response_text = response.strip()
+        response_text = response.content.strip()
         
         # Try to extract JSON from the response if it's wrapped in markdown
         json_match = re.search(r'\[[\s\S]*\]', response_text)

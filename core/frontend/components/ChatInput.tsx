@@ -21,6 +21,7 @@ interface ChatInputProps {
     onScheduleMessage?: () => void;
     loading?: boolean;
     onStop?: () => void;
+    compact?: boolean;
 }
 
 import { MODEL_OPTIONS, getModelDisplayName } from "@/lib/ModelContext";
@@ -41,7 +42,8 @@ function ChatInputComponent({
     onScheduleMessage,
     loading = false,
     onStop,
-    onKeyDown
+    onKeyDown,
+    compact = false
 }: ChatInputProps) {
     // Internal state for the input value - prevents parent re-renders on each keystroke
     const [internalValue, setInternalValue] = useState(initialValue);
@@ -257,7 +259,7 @@ function ChatInputComponent({
     };
 
     return (
-        <div className={`sticky bottom-0 bg-transparent ${isMobile ? "p-2" : "p-4"}`}>
+        <div className={`sticky bottom-0 bg-transparent ${compact ? "p-0" : (isMobile ? "p-2" : "p-4")}`}>
             {/* File Attachments Preview */}
             {attachedFiles.length > 0 && (
                 <div className="mb-3 flex flex-wrap gap-2">
@@ -310,7 +312,7 @@ function ChatInputComponent({
                 className={`flex flex-col shadow-2xl transition-[inset,transform,background-color,border-color,border-radius] duration-500 ease-in-out
                     ${isExpanded
                         ? "fixed inset-4 md:inset-x-20 md:inset-y-10 z-[1000] bg-gray-900 border border-gray-700 rounded-3xl overflow-hidden"
-                        : `relative rounded-3xl border ${isDragging ? "border-purple-500 bg-purple-500/10" : "border-gray-700 bg-gray-900/80 backdrop-blur-sm"}`
+                        : `relative ${compact ? "rounded-2xl" : "rounded-3xl"} border ${isDragging ? "border-purple-500 bg-purple-500/10" : "border-gray-700 bg-gray-900/80 backdrop-blur-sm"}`
                     }`}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
@@ -329,11 +331,11 @@ function ChatInputComponent({
                         onPaste={handlePaste}
                         placeholder={isDragging ? "Drop files here..." : placeholder}
                         className={`w-full bg-transparent border-none focus:outline-none resize-none px-4 text-gray-100 placeholder-gray-600 
-                            ${isExpanded ? "flex-1 text-lg p-6" : isMobile ? "py-2.5 text-sm" : "py-2.5"}`}
+                            ${isExpanded ? "flex-1 text-lg p-6" : (compact || isMobile) ? "py-2.5 text-sm" : "py-2.5"}`}
                         disabled={disabled}
                         style={{
-                            minHeight: isMobile ? "40px" : (isExpanded ? "100%" : "40px"),
-                            maxHeight: isExpanded ? "none" : (isMobile ? "150px" : "300px"), // Increased max-height for normal mode
+                            minHeight: (compact || isMobile) ? "40px" : (isExpanded ? "100%" : "40px"),
+                            maxHeight: isExpanded ? "none" : (compact || isMobile) ? "150px" : "300px", // Increased max-height for normal mode
                             overflowY: "auto"
                         }}
                     />
@@ -369,12 +371,12 @@ function ChatInputComponent({
                 </div>
 
                 {/* Bottom Row: Controls */}
-                <div className={`flex items-center justify-between gap-1 border-t border-gray-800/50 ${isMobile ? "px-2 py-1" : "px-4 py-2"} ${showModelMenu || showToolsMenu ? "" : "overflow-x-auto no-scrollbar"
+                <div className={`flex items-center justify-between gap-1 border-t border-gray-800/50 ${compact ? "px-2 py-1" : (isMobile ? "px-2 py-1" : "px-4 py-2")} ${showModelMenu || showToolsMenu ? "" : "overflow-x-auto no-scrollbar"
                     }`}>
                     {/* Left Side Buttons */}
                     <div className="flex items-center gap-0.5 sm:gap-1 flex-shrink-0">
                         {/* File Attach Button (+) */}
-                        {allowFileAttach && (
+                        {allowFileAttach && !compact && (
                             <button
                                 onClick={() => fileInputRef.current?.click()}
                                 className="p-3 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-all min-w-[44px] min-h-[44px] flex items-center justify-center"
@@ -388,44 +390,46 @@ function ChatInputComponent({
                         )}
 
                         {/* Tools Button */}
-                        <div className="relative" ref={toolsMenuRef}>
-                            <button
-                                onClick={() => setShowToolsMenu(!showToolsMenu)}
-                                className="p-3 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-all flex items-center gap-2 px-3 sm:px-4 group min-h-[44px]"
-                                title="Tools"
-                                disabled={disabled}
-                            >
-                                <svg className="w-5 h-5 text-gray-500 group-hover:text-purple-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                </svg>
-                                <span className="text-sm font-medium hidden xs:inline whitespace-nowrap">Tools</span>
-                            </button>
+                        {!compact && (
+                            <div className="relative" ref={toolsMenuRef}>
+                                <button
+                                    onClick={() => setShowToolsMenu(!showToolsMenu)}
+                                    className="p-3 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-all flex items-center gap-2 px-3 sm:px-4 group min-h-[44px]"
+                                    title="Tools"
+                                    disabled={disabled}
+                                >
+                                    <svg className="w-5 h-5 text-gray-500 group-hover:text-purple-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                    </svg>
+                                    <span className="text-sm font-medium hidden xs:inline whitespace-nowrap">Tools</span>
+                                </button>
 
-                            {/* Tools Dropdown */}
-                            {showToolsMenu && (
-                                <div className="absolute bottom-full left-0 mb-4 bg-gray-900 border border-gray-700/50 rounded-2xl shadow-2xl py-2 min-w-[200px] z-50 overflow-hidden backdrop-blur-xl">
-                                    <button
-                                        onClick={() => {
-                                            onClone?.();
-                                            setShowToolsMenu(false);
-                                        }}
-                                        className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-white/5 transition-all flex items-center gap-3"
-                                    >
-                                        <span className="text-purple-400">📋</span> Clone Spoke (Branch)
-                                    </button>
-                                    <button
-                                        onClick={() => {
-                                            onScheduleMessage?.();
-                                            setShowToolsMenu(false);
-                                        }}
-                                        className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-white/5 transition-all flex items-center gap-3"
-                                    >
-                                        <span className="text-blue-400">📅</span> Schedule Message
-                                    </button>
-                                </div>
-                            )}
-                        </div>
+                                {/* Tools Dropdown */}
+                                {showToolsMenu && (
+                                    <div className="absolute bottom-full left-0 mb-4 bg-gray-900 border border-gray-700/50 rounded-2xl shadow-2xl py-2 min-w-[200px] z-50 overflow-hidden backdrop-blur-xl">
+                                        <button
+                                            onClick={() => {
+                                                onClone?.();
+                                                setShowToolsMenu(false);
+                                            }}
+                                            className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-white/5 transition-all flex items-center gap-3"
+                                        >
+                                            <span className="text-purple-400">📋</span> Clone Spoke (Branch)
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                onScheduleMessage?.();
+                                                setShowToolsMenu(false);
+                                            }}
+                                            className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-white/5 transition-all flex items-center gap-3"
+                                        >
+                                            <span className="text-blue-400">📅</span> Schedule Message
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
 
                     {/* Hidden File Input */}
@@ -441,7 +445,7 @@ function ChatInputComponent({
                     {/* Right Side Buttons */}
                     <div className="flex items-center gap-1">
                         {/* Model Selector */}
-                        {showModelSelector && (
+                        {showModelSelector && !compact && (
                             <div className="relative" ref={modelMenuRef}>
                                 <button
                                     onClick={() => setShowModelMenu(!showModelMenu)}

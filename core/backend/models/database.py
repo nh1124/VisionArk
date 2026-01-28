@@ -75,6 +75,7 @@ class TaskType(str, Enum):
     AI_ROUTING = "ai_routing"
     AES_SYSTEM_TASK = "aes_system_task"
     APPROVAL_EXECUTION = "approval_execution"
+    SYSTEM_MANAGEMENT = "system_management"
 
 
 class ScheduledTask(Base):
@@ -290,6 +291,40 @@ class Node(Base):
     )
 
 
+class Skill(Base):
+    """Reusable packages of instructions and domain logic"""
+    __tablename__ = "skills"
+    
+    id = Column(String(100), primary_key=True)               # UUID or skill-id-v1
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True) # Null for Global skills
+    name = Column(String(100), nullable=False)
+    description = Column(String(500), nullable=True)
+    content = Column(Text, nullable=False)                  # The body of SKILL.md
+    metadata_payload = Column(JSON, default=dict)           # YAML Frontmatter details
+    is_active = Column(Boolean, default=True)
+    is_draft = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, onupdate=datetime.utcnow)
+
+    # Relationships
+    user = relationship("User")
+
+
+class NodeSkill(Base):
+    """Many-to-many relationship between Nodes and Skills"""
+    __tablename__ = "node_skills"
+    
+    node_id = Column(String(36), ForeignKey("nodes.id"), primary_key=True)
+    skill_id = Column(String(100), ForeignKey("skills.id"), primary_key=True)
+    
+    # Relationships
+    node = relationship("Node", backref="attached_skills")
+    skill = relationship("Skill")
+
+
+
+
+
 
 class ChatSession(Base):
     """Grouped conversation history"""
@@ -418,10 +453,15 @@ def get_engine(db_url: str = None):
 
 def init_database(database_url: str = None):
     """Initialize database tables and run migrations"""
+    # 1. Discover integration-specific models (Pattern A)
+    from va_sdk.discovery import discover_integration_models
+    discover_integration_models()
+    
+    # 2. Setup engine and create core tables
     engine = get_engine(database_url)
     Base.metadata.create_all(engine)
     
-    # Run schema migrations for existing tables
+    # 3. Run schema migrations for existing tables
     _run_migrations(engine)
     
     return engine
@@ -528,6 +568,38 @@ def _run_migrations(engine):
                     print("[INFO] Migration: Added unique index uix_project_role to nodes")
                 except Exception as e:
                     print(f"[WARN] Migration failed for uix_project_role: {str(e)}")
+
+    # Migration: Initialize general_settings in user_settings if null
+    if 'user_settings' in inspector.get_table_names():
+        with engine.connect() as conn:
+            try:
+                # Initialize rows where general_settings is null
+                conn.execute(text(
+                    "UPDATE user_settings SET general_settings = '{\"language\": \"en\", \"timezone\": \"UTC\", \"location\": \"\"}' "
+                    "WHERE general_settings IS NULL OR general_settings::text = '{}'"
+                ))
+                conn.commit()
+                print("[INFO] Migration: Initialized general_settings in user_settings")
+            except Exception as e:
+                print(f"[WARN] Migration failed for user_settings initialization: {str(e)}")
+
+    # Migration: Increase Skill ID column lengths
+    if 'skills' in inspector.get_table_names():
+        columns = {col['name']: col for col in inspector.get_columns('skills')}
+        # Check if the 'id' column exists and if it's currently shorter than 100
+        # The type object from inspector might vary, but length is a common attribute for String/VARCHAR
+        try:
+            current_length = columns['id']['type'].length
+            if current_length and current_length < 100:
+                with engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE skills ALTER COLUMN id TYPE VARCHAR(100)"))
+                    if 'node_skills' in inspector.get_table_names():
+                        conn.execute(text("ALTER TABLE node_skills ALTER COLUMN skill_id TYPE VARCHAR(100)"))
+                    conn.commit()
+                    print("✅ Migration: Increased Skill ID column lengths to 100")
+        except (AttributeError, KeyError) as e:
+            # Fallback if length attribute is missing or structure is different
+            print(f"[DEBUG] Migration check for Skill ID skipped or failed: {str(e)}")
 
 
 def get_session(engine):

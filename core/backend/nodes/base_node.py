@@ -94,8 +94,19 @@ class BaseNode(ABC):
                 desc = decl.get("description")
                 tool_text += f"- `{name}`: {desc}\n"
         
-        # 4. Combine
-        all_parts = component_texts + [role_text, tool_text]
+        # 4. Agent Skills (Dynamically injected instructions)
+        skill_text = ""
+        node_id = self.context.get("node_id")
+        if node_id:
+            try:
+                from services.skill_service import SkillService
+                async with AsyncSessionLocal() as db:
+                    skill_text = await SkillService.inject_skills_to_prompt(db, node_id, "")
+            except Exception as se:
+                print(f"[BaseNode] Error loading skills: {se}")
+
+        # 5. Combine
+        all_parts = component_texts + [role_text, skill_text, tool_text]
         parts = [p for p in all_parts if p]
         return "\n\n".join(parts) if parts else "You are a helpful AI assistant."
     
@@ -128,12 +139,14 @@ class BaseNode(ABC):
             from tools.utils import get_user_api_key
             self.context["api_key"] = await get_user_api_key(self.user_id, session)
             
-        if not self.context.get("preferred_model"):
+        if not self.context.get("user_settings") or not self.context.get("preferred_model"):
             from models.database import UserSettings
             res = await session.execute(select(UserSettings).filter(UserSettings.user_id == self.user_id))
             settings = res.scalars().first()
-            if settings and settings.ai_config:
-                self.context["preferred_model"] = settings.ai_config.get("default_model")
+            if settings:
+                self.context["user_settings"] = settings.general_settings or {}
+                if settings.ai_config:
+                    self.context["preferred_model"] = settings.ai_config.get("default_model")
 
         # 4. Dynamic Integration Tools
         try:
@@ -237,9 +250,27 @@ class BaseNode(ABC):
                 if not self.llm: 
                     return f"Error: AI Provider configuration failed. {str(e)}"
 
-        # --- Inject current time ---
-        current_time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S (%A)')
-        time_context = f"\n\n## Current Context\n- **Current Date & Time**: {current_time_str}\n"
+        # --- Inject current time and localization ---
+        import pytz
+        user_settings = self.context.get("user_settings", {})
+        language = user_settings.get("language", "en")
+        timezone_str = user_settings.get("timezone", "UTC")
+        location = user_settings.get("location", "Unknown")
+
+        try:
+            tz = pytz.timezone(timezone_str)
+            local_now = datetime.now(tz)
+        except Exception:
+            local_now = datetime.now()
+            timezone_str = "UTC"
+
+        current_time_str = local_now.strftime('%Y-%m-%d %H:%M:%S (%A)')
+        
+        time_context = f"\n\n## Current Context\n- **Current Local Time**: {current_time_str}\n"
+        time_context += f"- **Timezone**: {timezone_str}\n"
+        time_context += f"- **Language Preference**: {language}\n"
+        if location:
+            time_context += f"- **Location**: {location}\n"
 
         # Format messages
         llm_messages = [m.to_llm_message() for m in message_history]

@@ -8,6 +8,14 @@ const nextConfig = {
       bodySizeLimit: '100mb',
     },
     proxyTimeout: 300000, // 5 minutes (in ms)
+    allowedDevOrigins: [
+      'visionark.jp',
+      '*.visionark.jp',
+      'localhost:3000',
+      'localhost:3001',
+      'localhost',
+      '127.0.0.1'
+    ],
   },
   // Server external packages for proper proxying
   serverExternalPackages: [],
@@ -16,6 +24,10 @@ const nextConfig = {
     // In Docker: use backend service name (http://backend:8000)
     // Local dev: use localhost:8000
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    // const apiUrl = 'http://host.docker.internal:8000';
+    // const apiUrl = 'http://172.21.0.4:8000';
+
+    console.log(`[Next.js Config] Configuring API rewrites to: ${apiUrl}`);
 
     return [
       {

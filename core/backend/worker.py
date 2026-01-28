@@ -47,6 +47,14 @@ class Worker:
         except Exception as re:
             print(f"⚠️ Router initialization failed: {re}")
             
+        # Sync Agent Skills
+        try:
+            from skills import init_skills
+            await init_skills()
+            print("Skills: Registered skills synced.")
+        except Exception as se:
+            print(f"⚠️ Skill sync failed: {se}")
+
         print("Worker started. Waiting for tasks...")
         
         # Start AES Dispatcher as a background task
@@ -110,6 +118,8 @@ class Worker:
                     await self._handle_aes_task(context, db_session)
                 elif task_type == TaskType.APPROVAL_EXECUTION:
                     await self._handle_approval_task(context, db_session)
+                elif task_type == TaskType.SYSTEM_MANAGEMENT:
+                    await self._handle_user_message(message, context, db_session)
                 elif task_type == TaskType.USER_MESSAGE:
                     await self._handle_user_message(message, context, db_session)
                 else:
@@ -121,6 +131,20 @@ class Worker:
             import traceback
             traceback.print_exc()
             self.manager.update_status(task_id, "failed", str(e))
+        finally:
+            # 6. Skill Mining (Async cleanup/analysis)
+            if task_data.get("task_type") in [TaskType.USER_MESSAGE, TaskType.NODE_EXECUTION]:
+                asyncio.create_task(self._trigger_skill_mining(task_id, user_id))
+
+    async def _trigger_skill_mining(self, task_id: str, user_id: str):
+        """Background hook for skill extraction"""
+        try:
+            from services.skill_mining import SkillMiningService
+            async with AsyncSessionLocal() as db:
+                miner = SkillMiningService(db)
+                await miner.analyze_task_for_skills(task_id, user_id)
+        except Exception as e:
+             print(f"[Worker] Skill mining trigger failed: {e}")
 
     async def _handle_node_execution(self, message: str, context: dict, db_session):
         """Logic for async node-to-node communication"""
@@ -225,6 +249,7 @@ class Worker:
     async def _handle_user_message(self, message: str, context: dict, db_session):
         """Default logic for user chat and commands"""
         task_id = context.get("task_id")
+        user_id = context.get("user_id")
 
         # 1. Attachments
         if context.get("files"):
@@ -234,7 +259,23 @@ class Worker:
         if await self._command_detection(message, context):
             return
 
-        # 3. GLOBAL ROUTER (Cross-project intent analysis)
+        # 3. EXPLICIT TARGETING (e.g. from System Chat)
+        target_role = context.get("target_node_role")
+        if target_role:
+             from services.system_node_registry import SystemNodeRegistry
+             from services.node_factory import NodeFactory
+             
+             # Locate the node ID for this system role
+             res = await db_session.execute(select(Node).filter(Node.role_name == target_role, Node.node_type == "SYSTEM"))
+             node_record = res.scalars().first()
+             if node_record:
+                 print(f"Worker: Explicitly targeting system node {target_role}")
+                 node = NodeFactory.get_node(node_record, context)
+                 result = await node.process(message)
+                 self.manager.update_status(task_id, "completed", result)
+                 return
+
+        # 4. GLOBAL ROUTER (Cross-project intent analysis)
         try:
             from services.router import Router
             router = Router()
@@ -242,14 +283,18 @@ class Worker:
         except Exception as re:
             print(f"⚠️ Router dispatch error: {re}")
             
-        # 4. DATA/PROJECT CONTEXT (Project-specific execution)
-        # Note: Sequential execution allows Global AI to identify cross-project needs 
-        # while the Project Node handles the immediate workspace context.
-        target_node = ProjectNode(context)
-        result = await target_node.process(message)
-        
-        self.manager.update_status(task_id, "completed", result)
-        print(f"Worker: Task {task_id} completed.")
+        # 5. DATA/PROJECT CONTEXT (Project-specific execution)
+        project_id = context.get("project_id")
+        if project_id:
+            target_node = ProjectNode(context)
+            result = await target_node.process(message)
+            self.manager.update_status(task_id, "completed", result)
+            print(f"Worker: Task {task_id} completed.")
+        else:
+            print(f"Worker: No project_id in context. Skipping ProjectNode. (Task {task_id})")
+            # If not handled by router/explicit, and no project, mark as completed but mention no context
+            # (In a real system, we might want a 'failed' status if nothing happened, but router usually hits RouterNode)
+            self.manager.update_status(task_id, "completed", "Message processed by system router.")
 
         # 5. External Channel Reply (LINE, etc.)
         if context.get("external_reply_channel"):

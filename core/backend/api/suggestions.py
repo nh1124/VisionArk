@@ -9,8 +9,11 @@ from sqlalchemy.orm import Session
 from datetime import datetime, date, timedelta
 import uuid
 
-from models.database import get_session, Node
-from integrations.lbs import LBSClient
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
+from models.database import get_async_db, Node, Project
+from integrations.lbs import LBSClient, get_lbs_client
 from api.auth import get_current_user
 
 router = APIRouter(prefix="/api/hub/suggestions", tags=["suggestions"])
@@ -35,7 +38,7 @@ class SuggestionsResponse(BaseModel):
 @router.get("", response_model=SuggestionsResponse)
 async def get_hub_suggestions(
     current_user=Depends(get_current_user),
-    session: Session = Depends(get_session)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Get proactive suggestions from Hub based on:
@@ -49,7 +52,7 @@ async def get_hub_suggestions(
     
     try:
         # Get LBS client
-        lbs_client = LBSClient.from_user_settings(user_id, session)
+        lbs_client = await get_lbs_client(user_id, db)
         
         if lbs_client:
             # Check for overdue tasks
@@ -61,7 +64,7 @@ async def get_hub_suggestions(
             suggestions.extend(high_load_suggestions)
         
         # Check for inactive projects
-        inactive_suggestions = _check_inactive_projects(user_id, session, today)
+        inactive_suggestions = await _check_inactive_projects(user_id, db, today)
         suggestions.extend(inactive_suggestions)
         
         
@@ -80,20 +83,22 @@ async def _check_overdue_tasks(lbs_client: LBSClient, today: date) -> List[HubSu
     suggestions = []
     
     try:
-        # Get tasks from yesterday and before
+        # Get schedule for the past week
         yesterday = today - timedelta(days=1)
         week_ago = today - timedelta(days=7)
         
-        tasks = lbs_client.get_tasks_in_range(
+        schedule_data = await lbs_client.get_schedule(
             start_date=week_ago.isoformat(),
             end_date=yesterday.isoformat()
         )
         
-        # Filter for incomplete tasks
-        overdue_tasks = [
-            t for t in tasks 
-            if t.get("status") not in ["done", "skipped"]
-        ]
+        # Flat list of incomplete tasks from schedule
+        overdue_tasks = []
+        if isinstance(schedule_data, list):
+            for day_data in schedule_data:
+                for task in day_data.get("tasks", []):
+                    if task.get("status") not in ["done", "skipped"]:
+                        overdue_tasks.append(task)
         
         if overdue_tasks:
             count = len(overdue_tasks)
@@ -125,9 +130,9 @@ async def _check_high_load_days(lbs_client: LBSClient, today: date) -> List[HubS
         # Check next 7 days
         end_date = today + timedelta(days=7)
         
-        daily_loads = lbs_client.get_load_in_period(
-            start_date=today.isoformat(),
-            end_date=end_date.isoformat()
+        daily_loads = await lbs_client.get_heatmap(
+            start=today.isoformat(),
+            end=end_date.isoformat()
         )
         
         # Find days over capacity (assuming cap of 8)
@@ -162,16 +167,19 @@ async def _check_high_load_days(lbs_client: LBSClient, today: date) -> List[HubS
 
 
 
-def _check_inactive_projects(user_id: str, session: Session, today: date) -> List[HubSuggestion]:
+async def _check_inactive_projects(user_id: str, session: AsyncSession, today: date) -> List[HubSuggestion]:
     """Check for projects with no recent activity"""
     suggestions = []
     
     try:
         # Get all project nodes for the user (excluding hub)
-        projects = session.query(Node).filter(
-            Node.user_id == user_id,
-            Node.is_archived == False
-        ).all()
+        result = await session.execute(
+            select(Project).filter(
+                Project.user_id == user_id,
+                Project.status != "archived"
+            )
+        )
+        projects = result.scalars().all()
         
         inactive_threshold = today - timedelta(days=3)
         
@@ -181,7 +189,7 @@ def _check_inactive_projects(user_id: str, session: Session, today: date) -> Lis
             if project.updated_at:
                 last_activity = project.updated_at.date() if hasattr(project.updated_at, 'date') else project.updated_at
                 if last_activity < inactive_threshold:
-                    inactive_projects.append(project.display_name)
+                    inactive_projects.append(project.name)
         
         if inactive_projects:
             count = len(inactive_projects)

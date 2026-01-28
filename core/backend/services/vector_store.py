@@ -46,8 +46,21 @@ class VectorStore:
             metadata={"description": f"Reference documents for {project_id}"}
         )
         
-        # LLM provider for embeddings
-        self.llm = get_provider()
+        # LLM provider for embeddings (lazy loaded)
+        self._llm = None
+        self._api_key = None
+
+    @property
+    def llm(self):
+        if self._llm is None:
+            self._llm = get_provider(api_key=self._api_key)
+        return self._llm
+
+    def set_api_key(self, api_key: str):
+        """Update API key and reset provider"""
+        if api_key and api_key != self._api_key:
+            self._api_key = api_key
+            self._llm = None
     
     def add_document(
         self,

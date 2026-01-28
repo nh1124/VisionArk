@@ -12,8 +12,14 @@ from services.auth import resolve_identity, Identity
 from utils.password import hash_password, verify_password
 from utils.encryption import encrypt_string, decrypt_string
 from config import settings
+from va_sdk.discovery import get_integration_catalog
 
 router = APIRouter(prefix="/api/settings", tags=["Settings"])
+
+@router.get("/integrations/hub")
+async def get_integration_hub_catalog():
+    """Returns the dynamic integration catalog discovered from integrations/ folder"""
+    return get_integration_catalog()
 
 # --- Schemas ---
 
@@ -21,6 +27,11 @@ class AIConfigUpdate(BaseModel):
     gemini_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
     default_model: Optional[str] = None
+
+class GeneralSettingsUpdate(BaseModel):
+    language: Optional[str] = None
+    timezone: Optional[str] = None
+    location: Optional[str] = None
 
 class ServiceRegister(BaseModel):
     service_name: str
@@ -53,6 +64,7 @@ class UserProfile(BaseModel):
 class SettingsSummary(BaseModel):
     profile: UserProfile
     ai_config: Dict
+    general_settings: Dict
     services: List[ServiceResponse]
     integrations: List[Dict]
 
@@ -64,10 +76,11 @@ async def get_settings(
     db: AsyncSession = Depends(get_async_db)
 ):
     """Get all user settings, services, and integrations"""
-    # 1. AI Config
+    # 1. AI Config & General Settings
     result = await db.execute(select(UserSettings).filter(UserSettings.user_id == identity.user_id))
     settings_obj = result.scalars().first()
     ai_config = settings_obj.ai_config if settings_obj else {}
+    general_settings_data = settings_obj.general_settings if settings_obj else {}
     
     # Mask API keys in response
     masked_ai_config = ai_config.copy()
@@ -99,9 +112,44 @@ async def get_settings(
     return {
         "profile": profile,
         "ai_config": masked_ai_config,
+        "general_settings": general_settings_data,
         "services": services,
         "integrations": integration_list
     }
+
+@router.patch("/general")
+async def update_general_settings(
+    update: GeneralSettingsUpdate,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Update general localization settings"""
+    from sqlalchemy.orm.attributes import flag_modified
+    
+    result = await db.execute(select(UserSettings).filter(UserSettings.user_id == identity.user_id))
+    settings_obj = result.scalars().first()
+    if not settings_obj:
+        # Default initialization
+        settings_obj = UserSettings(
+            user_id=identity.user_id, 
+            ai_config={}, 
+            general_settings={"language": "en", "timezone": "UTC", "location": ""}
+        )
+        db.add(settings_obj)
+    
+    current_general = dict(settings_obj.general_settings) if settings_obj.general_settings else {}
+    
+    if update.language is not None:
+        current_general["language"] = update.language
+    if update.timezone is not None:
+        current_general["timezone"] = update.timezone
+    if update.location is not None:
+        current_general["location"] = update.location
+        
+    settings_obj.general_settings = current_general
+    flag_modified(settings_obj, "general_settings")
+    await db.commit()
+    return {"message": "General settings updated"}
 
 @router.patch("/ai")
 async def update_ai_settings(

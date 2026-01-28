@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { apiFetch, apiJson } from "@/lib/api";
 
-type Tab = "account" | "services" | "integrations" | "ai";
+type Tab = "account" | "general" | "services" | "integrations" | "ai";
 
 interface Service {
     id: number;
@@ -30,8 +30,10 @@ export default function SettingsPage() {
     // Data states
     const [profile, setProfile] = useState({ id: "", username: "", email: "" });
     const [aiConfig, setAiConfig] = useState({ gemini_api_key: "" });
+    const [generalSettings, setGeneralSettings] = useState({ language: "en", timezone: "UTC", location: "" });
     const [services, setServices] = useState<Service[]>([]);
     const [integrations, setIntegrations] = useState<Integration[]>([]);
+    const [hubCatalog, setHubCatalog] = useState<any[]>([]);
 
     // Form states
     const [passForm, setPassForm] = useState({ current: "", new: "", confirm: "" });
@@ -40,36 +42,6 @@ export default function SettingsPage() {
     // Hub UI States
     const [filter, setFilter] = useState<'all' | 'productivity' | 'communication' | 'developer'>('all');
     const [configModal, setConfigModal] = useState<string | null>(null);
-
-    const HUB_CATALOG = [
-        {
-            id: 'google_calendar',
-            name: 'Google Calendar',
-            description: 'Sync your schedule and VA tasks across Google ecosystem.',
-            icon: '📅',
-            color: 'bg-white/10 text-blue-400',
-            category: 'productivity',
-            authType: 'oauth'
-        },
-        {
-            id: 'outlook',
-            name: 'Outlook Calendar',
-            description: 'Microsoft 365 integration for professional time management.',
-            icon: '📧',
-            color: 'bg-blue-600/10 text-blue-500',
-            category: 'productivity',
-            authType: 'oauth'
-        },
-        {
-            id: 'line',
-            name: 'LINE Messaging',
-            description: 'AI interaction via LINE bot with automated project isolation.',
-            icon: '💬',
-            color: 'bg-green-600/10 text-green-500',
-            category: 'communication',
-            authType: 'manual'
-        }
-    ];
 
     useEffect(() => {
         loadSettings();
@@ -80,8 +52,13 @@ export default function SettingsPage() {
             const data = await apiJson<any>("/api/settings");
             setProfile(data.profile || { id: "", username: "", email: "" });
             setAiConfig({ gemini_api_key: data.ai_config?.gemini_api_key || "" });
+            setGeneralSettings(data.general_settings || { language: "en", timezone: "UTC", location: "" });
             setServices(data.services || []);
             setIntegrations(data.integrations || []);
+
+            // Also load dynamic hub catalog
+            const catalog = await apiJson<any[]>("/api/settings/integrations/hub");
+            setHubCatalog(catalog || []);
         } catch (err) {
             console.error("Failed to load settings:", err);
             showMessage("error", "Failed to load settings");
@@ -131,6 +108,21 @@ export default function SettingsPage() {
             showMessage("success", "AI settings saved");
         } catch (err: any) {
             showMessage("error", err.message || "Failed to save AI settings");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const saveGeneralSettings = async () => {
+        setSaving(true);
+        try {
+            await apiJson("/api/settings/general", {
+                method: "PATCH",
+                body: JSON.stringify(generalSettings)
+            });
+            showMessage("success", "Localization settings saved");
+        } catch (err: any) {
+            showMessage("error", err.message || "Failed to save localization settings");
         } finally {
             setSaving(false);
         }
@@ -390,6 +382,12 @@ export default function SettingsPage() {
                         Account & Security
                     </button>
                     <button
+                        onClick={() => setActiveTab("general")}
+                        className={`w-full text-left px-4 py-3 rounded-lg font-medium transition-colors ${activeTab === 'general' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-gray-400 hover:bg-gray-900 hover:text-gray-200'}`}
+                    >
+                        General & Localization
+                    </button>
+                    <button
                         onClick={() => setActiveTab("ai")}
                         className={`w-full text-left px-4 py-3 rounded-lg font-medium transition-colors ${activeTab === 'ai' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-gray-400 hover:bg-gray-900 hover:text-gray-200'}`}
                     >
@@ -510,6 +508,83 @@ export default function SettingsPage() {
                                 <button className="bg-red-500/10 text-red-500 border border-red-500/50 px-6 py-2 rounded-lg font-medium hover:bg-red-500 hover:text-white transition-all">
                                     Delete Account
                                 </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* General Tab */}
+                    {activeTab === "general" && (
+                        <div className="space-y-8 animate-in fade-in duration-300">
+                            <div className="bg-gray-900 border border-gray-800 rounded-xl p-8">
+                                <h2 className="text-xl font-bold mb-4">Localization Preferences</h2>
+                                <p className="text-gray-400 text-sm mb-6">Personalize how agents interact with you and perceive time.</p>
+
+                                <div className="space-y-6 max-w-md">
+                                    <div>
+                                        <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Preferred Language</label>
+                                        <select
+                                            value={generalSettings.language}
+                                            onChange={(e) => setGeneralSettings({ ...generalSettings, language: e.target.value })}
+                                            className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2 text-gray-200 outline-none focus:border-blue-500"
+                                        >
+                                            <option value="en">English (US)</option>
+                                            <option value="ja">Japanese (日本語)</option>
+                                            <option value="es">Spanish (Español)</option>
+                                            <option value="fr">French (Français)</option>
+                                            <option value="de">German (Deutsch)</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Primary Timezone</label>
+                                        <select
+                                            value={generalSettings.timezone}
+                                            onChange={(e) => setGeneralSettings({ ...generalSettings, timezone: e.target.value })}
+                                            className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2 text-gray-200 outline-none focus:border-blue-500"
+                                        >
+                                            <option value="UTC">UTC (Universal Coordinated Time)</option>
+                                            {Intl.supportedValuesOf('timeZone').map((tz) => (
+                                                <option key={tz} value={tz}>{tz}</option>
+                                            ))}
+                                        </select>
+                                        <p className="mt-1 text-[10px] text-gray-600">Select your local IANA timezone.</p>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Default Location</label>
+                                        <select
+                                            value={generalSettings.location}
+                                            onChange={(e) => setGeneralSettings({ ...generalSettings, location: e.target.value })}
+                                            className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2 text-gray-200 outline-none focus:border-blue-500"
+                                        >
+                                            <optgroup label="Common Cities">
+                                                <option value="">(Not Set)</option>
+                                                <option value="Tokyo, Japan">Tokyo, Japan</option>
+                                                <option value="New York, USA">New York, USA</option>
+                                                <option value="London, UK">London, UK</option>
+                                                <option value="Paris, France">Paris, France</option>
+                                                <option value="Berlin, Germany">Berlin, Germany</option>
+                                                <option value="Beijing, China">Beijing, China</option>
+                                                <option value="Mumbai, India">Mumbai, India</option>
+                                                <option value="Dubai, UAE">Dubai, UAE</option>
+                                                <option value="Sao Paulo, Brazil">Sao Paulo, Brazil</option>
+                                                <option value="Sydney, Australia">Sydney, Australia</option>
+                                                <option value="Singapore">Singapore</option>
+                                                <option value="Los Angeles, USA">Los Angeles, USA</option>
+                                                <option value="San Francisco, USA">San Francisco, USA</option>
+                                            </optgroup>
+                                            <optgroup label="Other Locations">
+                                                <option value="custom" disabled>Other cities currently restricted to list</option>
+                                            </optgroup>
+                                        </select>
+                                        <p className="mt-1 text-[10px] text-gray-600">Select your default city for location-aware tools.</p>
+                                    </div>
+                                    <button
+                                        onClick={saveGeneralSettings}
+                                        disabled={saving}
+                                        className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50"
+                                    >
+                                        {saving ? "Saving..." : "Save Preferences"}
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     )}
@@ -690,17 +765,13 @@ export default function SettingsPage() {
                     {/* Integrations Tab */}
                     {activeTab === "integrations" && (
                         <div className="space-y-6 animate-in fade-in duration-300">
-                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                                <div>
-                                    <h2 className="text-2xl font-bold">Integration Hub</h2>
-                                    <p className="text-gray-400 text-sm">Connect VisionArk with your favorite tools and platforms.</p>
-                                </div>
-                                <div className="flex bg-gray-900 p-1 rounded-lg border border-gray-800">
+                            <div className="flex justify-end">
+                                <div className="flex bg-gray-900/50 p-1 rounded-xl border border-gray-800 backdrop-blur-sm">
                                     {(['all', 'productivity', 'communication', 'developer'] as const).map(cat => (
                                         <button
                                             key={cat}
                                             onClick={() => setFilter(cat)}
-                                            className={`px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider transition-all ${filter === cat ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-gray-500 hover:text-gray-300'}`}
+                                            className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${filter === cat ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'text-gray-500 hover:text-gray-300'}`}
                                         >
                                             {cat}
                                         </button>
@@ -708,8 +779,11 @@ export default function SettingsPage() {
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-                                {HUB_CATALOG
+                            <div
+                                className="grid gap-6"
+                                style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 400px), 1fr))' }}
+                            >
+                                {hubCatalog
                                     .filter(item => filter === 'all' || item.category === filter)
                                     .map(item => {
                                         const service = services.find(s => s.service_name === item.id);
@@ -753,7 +827,22 @@ export default function SettingsPage() {
                                                 <div className="flex gap-2">
                                                     {!isConnected ? (
                                                         <button
-                                                            onClick={item.authType === 'oauth' ? (item.id === 'google_calendar' ? connectGoogleCalendar : connectOutlook) : () => setConfigModal(item.id)}
+                                                            onClick={item.authType === 'oauth' ? (item.id === 'google_calendar' ? connectGoogleCalendar : connectOutlook) : () => {
+                                                                const manifest = hubCatalog.find(h => h.id === item.id);
+                                                                const defaults: any = {};
+                                                                manifest?.config_fields?.forEach((f: any) => {
+                                                                    if (f.default && f.key !== '__api_key__' && f.key !== 'base_url') {
+                                                                        defaults[f.key] = f.default;
+                                                                    }
+                                                                });
+                                                                setNewService({
+                                                                    service_name: item.id,
+                                                                    base_url: manifest?.config_fields?.find((f: any) => f.key === 'base_url')?.default || "",
+                                                                    api_key: "",
+                                                                    config: JSON.stringify(defaults, null, 2)
+                                                                });
+                                                                setConfigModal(item.id);
+                                                            }}
                                                             className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-2.5 rounded-xl font-bold text-sm transition-all shadow-lg shadow-blue-900/20 active:scale-95"
                                                         >
                                                             Connect {item.name}
@@ -762,11 +851,19 @@ export default function SettingsPage() {
                                                         <>
                                                             <button
                                                                 onClick={() => {
+                                                                    const manifest = hubCatalog.find(h => h.id === item.id);
+                                                                    const defaults: any = {};
+                                                                    manifest?.config_fields?.forEach((f: any) => {
+                                                                        if (f.default && f.key !== '__api_key__' && f.key !== 'base_url') {
+                                                                            defaults[f.key] = f.default;
+                                                                        }
+                                                                    });
+
                                                                     setNewService({
                                                                         service_name: item.id,
-                                                                        base_url: service?.base_url || "",
+                                                                        base_url: service?.base_url || manifest?.config_fields?.find((f: any) => f.key === 'base_url')?.default || "",
                                                                         api_key: "", // Hidden for security
-                                                                        config: JSON.stringify(service?.config || {}, null, 2)
+                                                                        config: JSON.stringify({ ...defaults, ...(service?.config || {}) }, null, 2)
                                                                     });
                                                                     setConfigModal(item.id);
                                                                 }}
@@ -812,84 +909,167 @@ export default function SettingsPage() {
                                             <button onClick={() => setConfigModal(null)} className="text-gray-500 hover:text-white">✕</button>
                                         </div>
 
-                                        <div className="space-y-4">
-                                            <div>
-                                                <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Endpoint URL</label>
-                                                <input
-                                                    type="text"
-                                                    placeholder="https://api.example.com"
-                                                    value={newService.base_url}
-                                                    onChange={e => setNewService({ ...newService, base_url: e.target.value })}
-                                                    className="w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-3 text-sm focus:border-blue-500 outline-none"
-                                                />
-                                            </div>
-                                            <div>
-                                                <label className="block text-xs font-bold text-gray-500 uppercase mb-2">API Key / Secret</label>
-                                                <input
-                                                    type="password"
-                                                    placeholder="Paste your key here"
-                                                    value={newService.api_key}
-                                                    onChange={e => setNewService({ ...newService, api_key: e.target.value })}
-                                                    className="w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-3 text-sm focus:border-blue-500 outline-none"
-                                                />
-                                            </div>
-                                            <div>
-                                                <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Config JSON</label>
-                                                <textarea
-                                                    placeholder='{ "channel": "main" }'
-                                                    value={newService.config}
-                                                    onChange={e => setNewService({ ...newService, config: e.target.value })}
-                                                    className="w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-3 text-sm h-32 font-mono focus:border-blue-500 outline-none"
-                                                />
-                                            </div>
+                                        <div className="max-h-[70vh] overflow-y-auto pr-2 custom-scrollbar">
+                                            {(() => {
+                                                const manifest = hubCatalog.find(h => h.id === configModal);
+                                                if (manifest?.setup_instructions?.length > 0) {
+                                                    return (
+                                                        <div className="mb-8 bg-blue-600/5 border border-blue-500/10 rounded-2xl p-4 space-y-4">
+                                                            <h4 className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">Setup Guide</h4>
+                                                            {manifest.setup_instructions.map((s: any) => (
+                                                                <div key={s.step} className="flex gap-4">
+                                                                    <div className="w-6 h-6 shrink-0 bg-blue-600/20 text-blue-400 rounded-lg flex items-center justify-center text-xs font-bold">
+                                                                        {s.step}
+                                                                    </div>
+                                                                    <div>
+                                                                        <div className="text-sm font-bold text-gray-200">{s.title}</div>
+                                                                        <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">{s.content}</p>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    );
+                                                }
+                                                return null;
+                                            })()}
 
-                                            {/* VisionArk Automation Extensions */}
-                                            <div className="pt-4 border-t border-gray-800">
-                                                <h4 className="text-xs font-bold text-blue-400 uppercase mb-4">VisionArk Automation</h4>
-                                                <div className="space-y-3">
-                                                    <label className="flex items-center gap-3 cursor-pointer group">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={(() => {
-                                                                try { return JSON.parse(newService.config || "{}").va_auto_meeting_link; }
-                                                                catch (e) { return false; }
-                                                            })()}
-                                                            onChange={e => {
-                                                                try {
-                                                                    const cfg = JSON.parse(newService.config || "{}");
-                                                                    cfg.va_auto_meeting_link = e.target.checked;
-                                                                    setNewService({ ...newService, config: JSON.stringify(cfg, null, 2) });
-                                                                } catch (err) { console.error("Invalid JSON in config", err); }
-                                                            }}
-                                                            className="w-4 h-4 rounded border-gray-700 bg-gray-950 text-blue-600 focus:ring-blue-500"
-                                                        />
-                                                        <div className="text-sm">
-                                                            <p className="text-gray-200 font-medium">Auto-generate meeting links</p>
-                                                            <p className="text-gray-500 text-[11px]">Generate Meet/Teams link for new tasks</p>
-                                                        </div>
-                                                    </label>
-                                                    <label className="flex items-center gap-3 cursor-pointer group">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={(() => {
-                                                                try { return JSON.parse(newService.config || "{}").va_realtime_sync; }
-                                                                catch (e) { return false; }
-                                                            })()}
-                                                            onChange={e => {
-                                                                try {
-                                                                    const cfg = JSON.parse(newService.config || "{}");
-                                                                    cfg.va_realtime_sync = e.target.checked;
-                                                                    setNewService({ ...newService, config: JSON.stringify(cfg, null, 2) });
-                                                                } catch (err) { console.error("Invalid JSON in config", err); }
-                                                            }}
-                                                            className="w-4 h-4 rounded border-gray-700 bg-gray-950 text-blue-600 focus:ring-blue-500"
-                                                        />
-                                                        <div className="text-sm">
-                                                            <p className="text-gray-200 font-medium">Enable Real-time Sync</p>
-                                                            <p className="text-gray-500 text-[11px]">Listen for changes via Webhooks</p>
-                                                        </div>
-                                                    </label>
-                                                </div>
+                                            <div className="space-y-4">
+                                                {(() => {
+                                                    const manifest = hubCatalog.find(h => h.id === configModal);
+                                                    if (manifest?.config_fields) {
+                                                        return manifest.config_fields.map((field: any) => (
+                                                            <div key={field.key} className="py-1">
+                                                                {field.type === 'checkbox' ? (
+                                                                    <label className="flex items-center gap-4 cursor-pointer group p-3 bg-gray-800/20 rounded-2xl border border-gray-800 hover:border-blue-500/30 transition-all">
+                                                                        <input
+                                                                            type="checkbox"
+                                                                            checked={(() => {
+                                                                                if (field.key === '__api_key__') return !!newService.api_key;
+                                                                                if (field.key === 'base_url') return !!newService.base_url;
+                                                                                try {
+                                                                                    const cfg = JSON.parse(newService.config || "{}");
+                                                                                    return !!cfg[field.key];
+                                                                                } catch (e) { return false; }
+                                                                            })()}
+                                                                            onChange={e => {
+                                                                                if (field.key === '__api_key__') {
+                                                                                    setNewService({ ...newService, api_key: e.target.checked ? "true" : "" });
+                                                                                } else if (field.key === 'base_url') {
+                                                                                    setNewService({ ...newService, base_url: e.target.checked ? "true" : "" });
+                                                                                } else {
+                                                                                    try {
+                                                                                        const cfg = JSON.parse(newService.config || "{}");
+                                                                                        cfg[field.key] = e.target.checked;
+                                                                                        setNewService({ ...newService, config: JSON.stringify(cfg, null, 2) });
+                                                                                    } catch (err) { console.error("Invalid JSON in config", err); }
+                                                                                }
+                                                                            }}
+                                                                            className="w-5 h-5 rounded border-gray-700 bg-gray-950 text-blue-600 focus:ring-blue-500"
+                                                                        />
+                                                                        <div>
+                                                                            <div className="text-sm font-bold text-gray-200 group-hover:text-blue-400 transition-colors">{field.label}</div>
+                                                                            {field.description && <p className="text-xs text-gray-500 mt-0.5">{field.description}</p>}
+                                                                        </div>
+                                                                    </label>
+                                                                ) : (
+                                                                    <>
+                                                                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2 ml-1">{field.label}</label>
+                                                                        {field.type === 'textarea' ? (
+                                                                            <textarea
+                                                                                placeholder={field.placeholder}
+                                                                                value={(() => {
+                                                                                    if (field.key === '__api_key__') return newService.api_key;
+                                                                                    if (field.key === 'base_url') return newService.base_url;
+                                                                                    try {
+                                                                                        const cfg = JSON.parse(newService.config || "{}");
+                                                                                        return cfg[field.key] || "";
+                                                                                    } catch (e) { return ""; }
+                                                                                })()}
+                                                                                onChange={e => {
+                                                                                    if (field.key === '__api_key__') {
+                                                                                        setNewService({ ...newService, api_key: e.target.value });
+                                                                                    } else if (field.key === 'base_url') {
+                                                                                        setNewService({ ...newService, base_url: e.target.value });
+                                                                                    } else {
+                                                                                        try {
+                                                                                            const cfg = JSON.parse(newService.config || "{}");
+                                                                                            cfg[field.key] = e.target.value;
+                                                                                            setNewService({ ...newService, config: JSON.stringify(cfg, null, 2) });
+                                                                                        } catch (err) { console.error("Invalid JSON in config", err); }
+                                                                                    }
+                                                                                }}
+                                                                                className="w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-3 text-sm h-32 font-mono focus:border-blue-500 outline-none"
+                                                                            />
+                                                                        ) : (
+                                                                            <input
+                                                                                type={field.type || "text"}
+                                                                                placeholder={field.placeholder}
+                                                                                value={(() => {
+                                                                                    if (field.key === '__api_key__') return newService.api_key;
+                                                                                    if (field.key === 'base_url') return newService.base_url;
+                                                                                    try {
+                                                                                        const cfg = JSON.parse(newService.config || "{}");
+                                                                                        return cfg[field.key] || "";
+                                                                                    } catch (e) { return ""; }
+                                                                                })()}
+                                                                                onChange={e => {
+                                                                                    if (field.key === '__api_key__') {
+                                                                                        setNewService({ ...newService, api_key: e.target.value });
+                                                                                    } else if (field.key === 'base_url') {
+                                                                                        setNewService({ ...newService, base_url: e.target.value });
+                                                                                    } else {
+                                                                                        try {
+                                                                                            const cfg = JSON.parse(newService.config || "{}");
+                                                                                            cfg[field.key] = e.target.value;
+                                                                                            setNewService({ ...newService, config: JSON.stringify(cfg, null, 2) });
+                                                                                        } catch (err) { console.error("Invalid JSON in config", err); }
+                                                                                    }
+                                                                                }}
+                                                                                className="w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-3 text-sm focus:border-blue-500 outline-none"
+                                                                            />
+                                                                        )}
+                                                                    </>
+                                                                )}
+                                                            </div>
+                                                        ));
+                                                    }
+
+                                                    // Fallback to default fields if no config_fields defined
+                                                    return (
+                                                        <>
+                                                            <div>
+                                                                <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Endpoint URL</label>
+                                                                <input
+                                                                    type="text"
+                                                                    placeholder="https://api.example.com"
+                                                                    value={newService.base_url}
+                                                                    onChange={e => setNewService({ ...newService, base_url: e.target.value })}
+                                                                    className="w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-3 text-sm focus:border-blue-500 outline-none"
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <label className="block text-xs font-bold text-gray-500 uppercase mb-2">API Key / Secret</label>
+                                                                <input
+                                                                    type="password"
+                                                                    placeholder="Paste your key here"
+                                                                    value={newService.api_key}
+                                                                    onChange={e => setNewService({ ...newService, api_key: e.target.value })}
+                                                                    className="w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-3 text-sm focus:border-blue-500 outline-none"
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Config JSON</label>
+                                                                <textarea
+                                                                    placeholder='{ "channel": "main" }'
+                                                                    value={newService.config}
+                                                                    onChange={e => setNewService({ ...newService, config: e.target.value })}
+                                                                    className="w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-3 text-sm h-32 font-mono focus:border-blue-500 outline-none"
+                                                                />
+                                                            </div>
+                                                        </>
+                                                    );
+                                                })()}
+
                                             </div>
                                             <div className="pt-4 flex gap-3">
                                                 <button

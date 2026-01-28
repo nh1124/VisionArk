@@ -15,7 +15,8 @@ class SystemNodeRegistry:
     def discover_system_nodes() -> List[Type[GenericSystemNode]]:
         """Find all subclasses of GenericSystemNode in the nodes.system package."""
         import nodes.system.global_scheduler as gs
-        return [gs.GlobalScheduler]
+        import nodes.system.project_manager_node as pmn
+        return [gs.GlobalScheduler, pmn.ProjectManagerNode]
 
     @classmethod
     def get_node_class(cls, role_name: str) -> Type[GenericSystemNode]:

@@ -13,6 +13,13 @@ class Message:
     content: str
 
 
+class SimpleMessage:
+    """Simplified message class for backward compatibility or direct attribute access"""
+    def __init__(self, role: str, content: str):
+        self.role = role
+        self.content = content
+
+
 @dataclass
 class CompletionResponse:
     """Standard response format"""

@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 
 from models.database import init_database
 from api import agents, commands, rag, context, files, auth, settings as settings_api, export
-from api import decomposer, suggestions, scheduler, approvals, automation
+from api import decomposer, suggestions, scheduler, approvals, automation, skills
 from va_sdk.discovery import include_integration_routers
 
 from config import settings
@@ -30,6 +30,10 @@ async def lifespan(app: FastAPI):
     # Sync System Nodes
     from services.system_node_registry import sync_system_nodes
     await sync_system_nodes()
+
+    # Sync Agent Skills
+    from skills import init_skills
+    await init_skills()
 
     # Sync Member Nodes
     from services.member_node_registry import sync_member_nodes
@@ -79,6 +83,7 @@ app.include_router(export.router)
 app.include_router(scheduler.router)
 app.include_router(approvals.router)
 app.include_router(automation.router)
+app.include_router(skills.router)
 
 
 @app.get("/")

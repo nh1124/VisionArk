@@ -1,0 +1,40 @@
+{
+    "id": "line",
+    "name": "LINE Messaging",
+    "description": "Connect your LINE account to interact with VisionArk AI via our shared bot.",
+    "icon": "💬",
+    "color": "bg-green-600/10 text-green-500",
+    "category": "communication",
+    "authType": "shared",
+    "config_fields": [
+        {
+            "key": "va_auto_meeting_link",
+            "label": "Auto-generate meeting links",
+            "type": "checkbox",
+            "description": "Generate Meet/Teams link for new tasks"
+        },
+        {
+            "key": "va_realtime_sync",
+            "label": "Enable Real-time Sync",
+            "type": "checkbox",
+            "description": "Listen for changes via Webhooks"
+        }
+    ],
+    "setup_instructions": [
+        {
+            "step": 1,
+            "title": "Add Friend",
+            "content": "Add the VisionArk Shared Bot to your LINE friend list."
+        },
+        {
+            "step": 2,
+            "title": "Receive Link",
+            "content": "Send any message to the bot. You will receive a secure account linking invitation."
+        },
+        {
+            "step": 3,
+            "title": "Connect Account",
+            "content": "Click the link in LINE and follow the prompts to safely link your VisionArk profile."
+        }
+    ]
+}

@@ -3,6 +3,12 @@
 import { useState, useEffect } from "react";
 import { apiFetch } from "@/lib/api";
 
+interface TaskSummary {
+    task_id: string;
+    task_name: string;
+    status: string;
+}
+
 interface DayData {
     date: string;
     load: number;
@@ -10,6 +16,7 @@ interface DayData {
     level: "SAFE" | "WARNING" | "DANGER" | "CRITICAL";
     taskCount: number;
     task_count?: number; // fallback
+    tasks?: TaskSummary[];
 }
 
 interface HeatMapCalendarProps {
@@ -41,14 +48,34 @@ export default function HeatMapCalendar({
         const endDate = `${lastDay.getFullYear()}-${String(lastDay.getMonth() + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
 
         try {
-            // Note: The backend needs to handle include_completed if we want exact filtering there.
-            // For now we pass it as a param.
-            const statusParams = includeCompleted ? "status=todo&status=done" : "status=todo";
+            // Use schedule API to get full task details for each day
             const response = await apiFetch(
-                `/api/lbs/heatmap?start=${startDate}&end=${endDate}&${statusParams}`
+                `/api/lbs/schedule?start_date=${startDate}&end_date=${endDate}`
             );
             const data = await response.json();
-            const days = Array.isArray(data) ? data : (data.days || []);
+
+            // Map schedule data to DayData format
+            const days: DayData[] = data.map((day: any) => {
+                // Determine level based on load
+                const load = day.total_load || 0;
+                let level: "SAFE" | "WARNING" | "DANGER" | "CRITICAL" = "SAFE";
+                if (load > 8) level = "CRITICAL";
+                else if (load > 5) level = "DANGER";
+                else if (load > 3) level = "WARNING";
+
+                return {
+                    date: day.date,
+                    load: load,
+                    level: level,
+                    taskCount: day.tasks?.length || 0,
+                    tasks: day.tasks?.map((t: any) => ({
+                        task_id: t.task_id,
+                        task_name: t.task_name,
+                        status: t.status
+                    })) || []
+                };
+            });
+
             setDaysData(days);
         } catch (error) {
             console.error("Failed to load heat map data:", error);
@@ -143,12 +170,35 @@ export default function HeatMapCalendar({
                                         hover:scale-[1.02] active:scale-[0.98]
                                     `}
                                 >
-                                    <div className="flex justify-between items-center mb-0.5 sm:mb-1">
-                                        <span className={`text-[9px] sm:text-xs font-bold leading-none ${cell.data ? 'text-gray-400' : 'text-gray-600'}`}>
+                                    <div className="flex justify-between items-center mb-1">
+                                        <span className={`text-[10px] sm:text-xs font-bold leading-none ${cell.data ? 'text-blue-400' : 'text-gray-600'}`}>
                                             {cell.day}
                                         </span>
-                                        {cell.data && (
-                                            <div className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full shadow-sm ${getLevelDotColor(level)}`} />
+                                        {cell.data && cell.data.taskCount > 0 && (
+                                            <div className="flex items-center gap-1">
+                                                <span className="text-[8px] font-black text-gray-500">{cell.data.taskCount}</span>
+                                                <div className={`w-1.5 h-1.5 rounded-full shadow-sm ${getLevelDotColor(level)}`} />
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Task List */}
+                                    <div className="flex-1 overflow-hidden flex flex-col gap-0.5 mt-0.5 relative z-10">
+                                        {cell.data?.tasks?.slice(0, 3).map((task, idx) => (
+                                            <div
+                                                key={task.task_id}
+                                                className={`text-[8px] sm:text-[9px] truncate leading-none py-0.5 px-1 rounded ${task.status === 'done'
+                                                        ? 'bg-emerald-500/10 text-emerald-500/70 line-through'
+                                                        : 'bg-white/5 text-gray-400'
+                                                    }`}
+                                            >
+                                                {task.task_name}
+                                            </div>
+                                        ))}
+                                        {cell.data && cell.data.taskCount > 3 && (
+                                            <div className="text-[7px] sm:text-[8px] text-gray-600 font-bold pl-1 mt-auto">
+                                                +{cell.data.taskCount - 3} more
+                                            </div>
                                         )}
                                     </div>
 

@@ -13,10 +13,17 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from integrations.lbs import LBSClient, get_lbs_client
+from integrations.lbs import LBSClient
+from integrations.lbs.api import get_lbs_client
 from services.auth import resolve_identity, Identity
 from models.database import get_async_db, UserSettings
 from utils.encryption import decrypt_string
+from services.scheduler_service import (
+    calculate_schedule_v3,
+    DEFAULT_SHUTDOWN_HOUR, 
+    FATIGUED_SHUTDOWN_HOUR,
+    FATIGUE_HIGH_THRESHOLD
+)
 
 import logging
 
@@ -148,11 +155,6 @@ async def suggest_schedule(
         )
         
         # Determine shutdown time for response
-        from services.scheduler_service import (
-            DEFAULT_SHUTDOWN_HOUR, 
-            FATIGUED_SHUTDOWN_HOUR,
-            FATIGUE_HIGH_THRESHOLD
-        )
         shutdown_hour = (
             FATIGUED_SHUTDOWN_HOUR if fatigue >= FATIGUE_HIGH_THRESHOLD 
             else DEFAULT_SHUTDOWN_HOUR
@@ -181,6 +183,12 @@ async def suggest_schedule(
         
     except HTTPException:
         raise
+    except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+        logger.error(f"LBS Service unreachable: {e}")
+        raise HTTPException(
+            status_code=503, 
+            detail="LBS service is currently unreachable. Please ensure the microservice is running."
+        )
     except Exception as e:
         logger.exception(f"Schedule suggest failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))

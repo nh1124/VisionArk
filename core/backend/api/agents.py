@@ -66,6 +66,13 @@ class BranchChat(BaseModel):
     message_index: int  # Index in the history to branch from
 
 
+class WorkspaceStats(BaseModel):
+    active_agents: int
+    tasks_completed: int
+    system_efficiency: str
+    upcoming_deadlines: int
+
+
 
 
 # Endpoints
@@ -90,26 +97,50 @@ async def get_task_status(
         
     return status
 
-@router.post("/tasks/{task_id}/stop")
-async def stop_task(
-    task_id: str,
-    identity: Identity = Depends(resolve_identity),
-):
-    """Manually stop/cancel an async task"""
-    from queue_system.manager import QueueManager
-    
-    manager = QueueManager()
-    status = manager.get_status(task_id)
-    
-    if not status:
-        raise HTTPException(status_code=404, detail="Task not found")
-        
-    # Check if task is already in terminal state
-    if status.get("status") in ["completed", "failed", "cancelled"]:
-        return {"status": status.get("status"), "message": "Task already terminated"}
-    
     manager.cancel_task(task_id)
     return {"status": "cancelled", "message": "Termination signal sent to agent"}
+
+
+@router.get("/workspace/stats", response_model=WorkspaceStats)
+async def get_workspace_stats(
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Get global workspace statistics for the dashboard"""
+    from queue_system.manager import QueueManager
+    from models.database import ScheduledTask, ChatMessage
+    from sqlalchemy import func
+
+    manager = QueueManager()
+    
+    # 1. AI Agents Active (Approximate by active tasks in queue)
+    active_agents = len(manager.get_all_active_tasks())
+    
+    # 2. Total Tasks Completed (Count completed messages/actions across all sessions)
+    # For now, count assistant messages as proxy for "completed tasks"
+    res = await db.execute(select(func.count(ChatMessage.id)).filter(ChatMessage.role == "assistant"))
+    tasks_completed = res.scalar() or 0
+    
+    # 3. System Efficiency (Placeholder)
+    system_efficiency = "98%"
+    
+    # 4. Upcoming Deadlines (Pending scheduled tasks for today)
+    today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow = today + timedelta(days=1)
+    res = await db.execute(select(func.count(ScheduledTask.id)).filter(
+        ScheduledTask.user_id == identity.user_id,
+        ScheduledTask.status == "pending",
+        ScheduledTask.scheduled_at >= today,
+        ScheduledTask.scheduled_at < tomorrow
+    ))
+    upcoming_deadlines = res.scalar() or 0
+    
+    return WorkspaceStats(
+        active_agents=active_agents,
+        tasks_completed=tasks_completed,
+        system_efficiency=system_efficiency,
+        upcoming_deadlines=upcoming_deadlines
+    )
 
 # ----------------------------------------------------------------------
 # PROJECTS (Formerly SPOKES)
@@ -625,6 +656,49 @@ async def list_projects(
                 if default_snippet not in n.system_prompt or len(n.system_prompt) > 200:
                     has_custom = True
 
+        # Get Queue stats from Redis
+        from queue_system.manager import QueueManager
+        manager = QueueManager()
+        # Note: We don't have a per-project counter in Redis yet, but we can check if there's an active task
+        active_task = manager.get_active_task_for_project(proj.id)
+        queue_count = 1 if active_task else 0
+
+        # Enriched Data for Bento UI
+        from models.database import ScheduledTask, ChatMessage, ChatSession
+        
+        # 1. Latest Activity (Last message content and time)
+        latest_activity = "No recent activity"
+        last_activity_time = None
+        
+        res = await db.execute(select(ChatMessage).join(ChatSession).filter(
+            ChatSession.project_id == proj.id
+        ).order_by(ChatMessage.created_at.desc()).limit(1))
+        last_msg = res.scalars().first()
+        if last_msg:
+            latest_activity = (last_msg.content[:50] + "...") if len(last_msg.content) > 50 else last_msg.content
+            last_activity_time = last_msg.created_at.isoformat()
+
+        # 2. Next Task (Upcoming Scheduled Task)
+        next_task = None
+        res = await db.execute(select(ScheduledTask).filter(
+            ScheduledTask.project_id == proj.id,
+            ScheduledTask.status == "pending"
+        ).order_by(ScheduledTask.scheduled_at.asc()).limit(1))
+        st = res.scalars().first()
+        if st:
+            next_task = {
+                "type": st.task_type,
+                "at": st.scheduled_at.isoformat()
+            }
+
+        # 3. Processing Logs (Last 3 assistant messages for terminal)
+        res = await db.execute(select(ChatMessage).join(ChatSession).filter(
+            ChatSession.project_id == proj.id,
+            ChatMessage.role == "assistant"
+        ).order_by(ChatMessage.created_at.desc()).limit(3))
+        msgs = res.scalars().all()
+        processing_logs = [m.content[:100] for m in reversed(msgs)] # Chronological order for terminal
+
         projects.append({
             "id": proj.id,
             "name": proj.name,
@@ -637,8 +711,13 @@ async def list_projects(
             "updated_at": proj.updated_at.isoformat() if proj.updated_at else None,
             "artifact_count": artifact_count,
             "ref_count": ref_count,
+            "queue_count": queue_count,
             "has_custom_prompt": has_custom,
-            "members": members
+            "members": members,
+            "latest_activity": latest_activity,
+            "last_activity_time": last_activity_time,
+            "next_task": next_task,
+            "processing_logs": processing_logs
         })
     
     return {"projects": projects}
@@ -1085,4 +1164,59 @@ async def clone_project(
     except Exception as e:
         db.rollback()
         print(f"[agents/clone_project] Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/system/{node_role}/chat")
+async def chat_with_system_node(
+    node_role: str,
+    message: str = Form(""),
+    stream: bool = Form(False),
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+    x_preferred_model: Optional[str] = Header(None, alias="X-Preferred-Model")
+):
+    """Chat with a specialized system node (e.g. project_manager)"""
+    from queue_system.manager import QueueManager
+    from models.database import TaskType, Node
+    import uuid
+
+    if not message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    try:
+        # 1. Verify that the node exists and is a SYSTEM node
+        result = await db.execute(select(Node).filter(Node.role_name == node_role, Node.node_type == "SYSTEM"))
+        node = result.scalars().first()
+        if not node:
+             raise HTTPException(status_code=404, detail=f"System node '{node_role}' not found")
+
+        # 2. Enqueue the task
+        manager = QueueManager()
+        
+        # We use a pseudo-project ID or "system" to indicate it's not a specific project
+        # In this OS, we might want a dedicated session for system nodes.
+        # For now, let's just send it with project_id=None
+        
+        context = {
+            "user_id": identity.user_id,
+            "target_node_role": node_role,
+            "preferred_model": x_preferred_model,
+            "stream": stream
+        }
+        
+        task_id = manager.enqueue(
+            user_id=identity.user_id,
+            message=message,
+            context=context,
+            task_type=TaskType.SYSTEM_MANAGEMENT
+        )
+        
+        return {
+            "status": "success",
+            "task_id": task_id,
+            "message": f"Message sent to {node.display_name}"
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

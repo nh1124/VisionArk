@@ -151,7 +151,7 @@ function MessageWithAttachmentsBase({
                                         const [isReportExpanded, setIsReportExpanded] = useState(false);
 
                                         return (
-                                            <div className="my-2 w-full min-w-full sm:min-w-[600px] rounded-xl border border-gray-700/50 bg-gray-950/50 overflow-hidden shadow-inner">
+                                            <div className="my-2 w-full max-w-full rounded-xl border border-gray-700/50 bg-gray-950/50 overflow-hidden shadow-inner">
                                                 <button
                                                     onClick={() => setIsReportExpanded(!isReportExpanded)}
                                                     className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-900/50 transition-colors text-left group"

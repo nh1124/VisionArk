@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import { apiFetch } from "@/lib/api";
+import { useTaskStore } from "@/store/useTaskStore";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { getSpokeColor } from "@/lib/colors";
 import TaskEditPanel from "../components/TaskEditPanel";
@@ -16,64 +17,52 @@ import {
     RefreshCw,
     CheckCircle2,
     Circle,
+    Star,
     Hash,
     Archive,
     Download,
     Upload,
-    Star,
     List,
-    CalendarDays
+    CalendarDays,
+    X
 } from "lucide-react";
+import { Task } from "./types";
 import HeatMapCalendar from "@/components/HeatMapCalendar";
+import GridCalendar from "@/components/GridCalendar";
 import TimelineCalendar from "@/components/TimelineCalendar";
 
-interface Task {
-    task_id: string;
-    task_name: string;
-    context: string;
-    base_load_score: number;
-    active: boolean;
-    rule_type: string;
-    due_date: string | null;
-    notes: string | null;
-    status?: "todo" | "done" | "skipped";
-    is_locked?: boolean;
-    start_time?: string | null;
-    end_time?: string | null;
-    mon?: boolean;
-    tue?: boolean;
-    wed?: boolean;
-    thu?: boolean;
-    fri?: boolean;
-    sat?: boolean;
-    sun?: boolean;
-    interval_days?: number;
-    anchor_date?: string | null;
-    month_day?: number;
-    nth_in_month?: number;
-    weekday_mon1?: number;
-    start_date?: string | null;
-    end_date?: string | null;
-}
-
 export default function UnifiedTasksPage() {
-    // State
+    const {
+        tasks,
+        allTasks,
+        loading,
+        targetDate,
+        setTargetDate,
+        viewMode,
+        setViewMode,
+        activeFilter,
+        activeProject,
+        fetchAllTasks,
+        updateTaskStatus,
+        calendarTasks,
+        fetchTasks
+    } = useTaskStore();
+
+    // UI Local State
     const isMobile = useIsMobile();
     const [selectedTask, setSelectedTask] = useState<Task | null>(null);
     const [panelOpen, setPanelOpen] = useState(false);
     const [createModalOpen, setCreateModalOpen] = useState(false);
     const [importModalOpen, setImportModalOpen] = useState(false);
-    const [isCompletedCollapsed, setIsCompletedCollapsed] = useState(false);
+    const [isCompletedCollapsed, setIsCompletedCollapsed] = useState(true);
+    const [isDayDetailsOpen, setIsDayDetailsOpen] = useState(false);
+    const todayStr = new Date().toISOString().split('T')[0];
+    const [dayDetailsDate, setDayDetailsDate] = useState(todayStr);
 
-    // View mode state
-    const [viewMode, setViewMode] = useState<"list" | "calendar" | "timeline">("list");
+    // Refresh and context
     const [currentMonth, setCurrentMonth] = useState(new Date());
     const [refreshKey, setRefreshKey] = useState(0);
-
-    // Data state
-    const [tasks, setTasks] = useState<Task[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [targetDate, setTargetDate] = useState<string>(new Date().toISOString().split('T')[0]);
+    const [allProjects, setAllProjects] = useState<string[]>([]);
 
     // Quick Add state
     const [quickAddName, setQuickAddName] = useState('');
@@ -83,9 +72,6 @@ export default function UnifiedTasksPage() {
     const quickAddRef = useRef<HTMLDivElement>(null);
     const qaDateRef = useRef<HTMLInputElement>(null);
 
-    // Projects list
-    const [allProjects, setAllProjects] = useState<string[]>([]);
-
     // Quick Add Options
     const [qaContext, setQaContext] = useState<string>("personal");
     const [qaLoadScore, setQaLoadScore] = useState<number>(3);
@@ -93,9 +79,10 @@ export default function UnifiedTasksPage() {
 
     // Load data
     useEffect(() => {
-        loadTasks();
+        fetchTasks(targetDate);
+        fetchAllTasks();
         loadAllProjects();
-    }, [targetDate]);
+    }, [targetDate, fetchTasks, fetchAllTasks, activeFilter]); // fetchAllTasks is stable
 
     // Handle clicks outside quick add to hide options
     useEffect(() => {
@@ -121,56 +108,57 @@ export default function UnifiedTasksPage() {
         }
     };
 
-    const loadTasks = async () => {
-        setLoading(true);
-        try {
-            const resp = await apiFetch(`/api/lbs/tasks?target_date=${targetDate}&active=true`);
-            const data = await resp.json();
-            setTasks(Array.isArray(data) ? data : []);
-
-            // Update default context if tasks exist
-            if (data.length > 0 && Array.isArray(data)) {
-                setQaContext(data[0].context);
-            }
-        } catch (err) {
-            console.error("Failed to load tasks:", err);
-        } finally {
-            setLoading(false);
-        }
-    };
-
     const availableProjects = useMemo(() => {
         const projectsFromTasks = tasks.map(t => t.context);
-        // Only include "personal" if no projects are found, otherwise rely on actual project list
         const defaults = allProjects.length === 0 ? ["personal"] : [];
         return Array.from(new Set([...allProjects, ...projectsFromTasks, ...defaults])).sort();
     }, [tasks, allProjects]);
 
-    // Split tasks
-    const pendingTasks = useMemo(() => tasks.filter(t => t.status !== 'done' && t.status !== 'skipped'), [tasks]);
-    const completedTasks = useMemo(() => tasks.filter(t => t.status === 'done' || t.status === 'skipped'), [tasks]);
+    // Split tasks with respect to activeFilter
+    const displayTasks = useMemo(() => {
+        const today = new Date();
+        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+        if (activeFilter === 'today') {
+            return tasks.filter(t => t.due_date === todayStr);
+        } else if (activeFilter === 'my-day') {
+            return tasks.filter(t => t.meta_payload?.is_my_day);
+        } else if (activeFilter === 'planned') {
+            // "Planned" should show all future tasks from the global list
+            return allTasks.filter(t => t.due_date && t.due_date >= todayStr);
+        } else if (activeFilter === 'completed') {
+            return allTasks.filter(t => t.status === 'completed' || t.status === 'done' || t.status === 'skipped');
+        } else if (activeFilter === 'project' && activeProject) {
+            return allTasks.filter(t => t.context === activeProject);
+        } else if (activeFilter === 'inbox') {
+            return allTasks;
+        }
+        return tasks;
+    }, [tasks, allTasks, activeFilter, activeProject]);
+
+    const pendingTasks = useMemo(() => {
+        return displayTasks.filter(t => t.status !== 'done' && t.status !== 'skipped' && t.status !== 'completed');
+    }, [displayTasks]);
+
+    const completedTasksList = useMemo(() => {
+        return displayTasks.filter(t => t.status === 'done' || t.status === 'skipped' || t.status === "completed");
+    }, [displayTasks]);
 
     const stats = useMemo(() => {
-        const total = tasks.length;
-        const done = completedTasks.length;
+        const total = displayTasks.length;
+        const done = completedTasksList.length;
         const progress = total > 0 ? Math.round((done / total) * 100) : 0;
         return { total, done, progress };
-    }, [tasks, completedTasks]);
+    }, [displayTasks, completedTasksList]);
 
     // Handlers
-    const handleMarkDone = async (taskId: string, currentStatus: string) => {
-        const newStatus = currentStatus === 'done' ? 'todo' : 'done';
-        try {
-            const resp = await apiFetch(`/api/lbs/tasks/${taskId}/complete`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ target_date: targetDate, status: newStatus })
-            });
-            if (resp.ok) {
-                setTasks(prev => prev.map(t => t.task_id === taskId ? { ...t, status: newStatus } : t));
-            }
-        } catch (err) {
-            console.error("Failed to update status:", err);
+    const handleMarkDone = (taskId: string, currentStatus: string) => {
+        const isCompleting = currentStatus !== 'done' && currentStatus !== 'completed';
+        const newStatus = isCompleting ? 'done' : 'todo';
+        updateTaskStatus(taskId, newStatus, targetDate);
+
+        if (isCompleting) {
+            setIsCompletedCollapsed(false);
         }
     };
 
@@ -192,7 +180,7 @@ export default function UnifiedTasksPage() {
             });
             if (resp.ok) {
                 setQuickAddName('');
-                loadTasks();
+                fetchTasks(targetDate);
             }
         } catch (err) {
             console.error('Failed to quick-add task:', err);
@@ -231,89 +219,86 @@ export default function UnifiedTasksPage() {
             {/* Background Style */}
             <div className={`fixed inset-0 ${viewMode === 'list' ? 'bg-gradient-to-b from-blue-900/20 to-gray-950' : 'bg-gray-950'} -z-10`} />
 
-            <div className="w-full px-4 sm:px-10 py-8 sm:py-12 flex-1 flex flex-col min-h-0 transition-all duration-500">
-                {/* Header */}
+            <div className="w-full px-4 sm:px-10 py-8 sm:py-12 flex-1 flex flex-col min-h-0 overflow-hidden transition-all duration-500">
                 {/* Header */}
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 sm:gap-0 mb-6 sm:mb-10">
+                    <div className="w-full sm:w-auto flex items-center gap-3">
+                        {/* Date Header and Controls */}
+                        <div className="flex flex-col items-start gap-2">
+                            <h1 className={`${isMobile ? 'text-base' : 'text-lg'} font-medium text-white whitespace-nowrap min-w-[200px] sm:min-w-[300px]`}>
+                                {viewMode === 'calendar'
+                                    ? currentMonth.toLocaleString('en-US', { month: 'long', year: 'numeric' })
+                                    : formatDateHeader(targetDate)
+                                }
+                            </h1>
+                        </div>
+                    </div>
 
-                    <div className="w-full sm:w-auto flex flex-col sm:flex-row items-center gap-3">
-                        {/* Date Controls */}
-                        <div className="w-full sm:w-auto flex items-center justify-between sm:justify-start gap-3 bg-gray-900/40 sm:bg-transparent p-2 sm:p-0 rounded-xl sm:rounded-none border border-gray-800/50 sm:border-none">
-                            <div className="flex items-center gap-3 text-gray-400 font-bold">
-                                <span className={isMobile ? 'text-sm' : 'text-base'}>{formatDateHeader(targetDate)}</span>
-                                <div className="flex items-center gap-1 bg-gray-900/50 border border-gray-800 rounded-lg p-0.5">
-                                    <button onClick={() => changeDate(-1)} className="p-1 hover:bg-gray-800 rounded-md transition-colors">
-                                        <ChevronLeft className="w-4 h-4" />
-                                    </button>
-                                    <button onClick={() => changeDate(1)} className="p-1 hover:bg-gray-800 rounded-md transition-colors">
-                                        <ChevronRight className="w-4 h-4" />
-                                    </button>
-                                </div>
-                            </div>
+                    {/* Action Buttons (Grouped on the right) */}
+                    <div className="w-full sm:w-auto flex items-center justify-end gap-2">
+                        {/* View Switcher */}
+                        <div className="flex items-center gap-0.5 bg-gray-900/80 border border-gray-800 rounded-xl p-1 shadow-lg">
+                            <button
+                                onClick={() => setViewMode("list")}
+                                className={`p-1.5 sm:p-2 rounded-lg transition-all ${viewMode === "list" ? 'bg-blue-600 text-white shadow-inner' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
+                                title="List View"
+                            >
+                                <List className="w-4 h-4" />
+                            </button>
+                            <button
+                                onClick={() => setViewMode("calendar")}
+                                className={`p-1.5 sm:p-2 rounded-lg transition-all ${viewMode === "calendar" ? 'bg-blue-600 text-white shadow-inner' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
+                                title="Monthly Calendar"
+                            >
+                                <CalendarDays className="w-4 h-4" />
+                            </button>
+                            <button
+                                onClick={() => setViewMode("timeline")}
+                                className={`p-1.5 sm:p-2 rounded-lg transition-all ${viewMode === "timeline" ? 'bg-blue-600 text-white shadow-inner' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
+                                title="Timeline"
+                            >
+                                <Calendar className="w-4 h-4" />
+                            </button>
                         </div>
 
-                        {/* Action Buttons */}
-                        <div className="w-full sm:w-auto flex items-center justify-center sm:justify-start gap-2">
-                            {/* View Switcher */}
-                            <div className="flex items-center gap-0.5 bg-gray-900/80 border border-gray-800 rounded-xl p-1">
-                                <button
-                                    onClick={() => setViewMode("list")}
-                                    className={`p-1.5 sm:p-2 rounded-lg transition-all ${viewMode === "list" ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
-                                    title="List View"
-                                >
-                                    <List className="w-4 h-4" />
-                                </button>
-                                <button
-                                    onClick={() => setViewMode("calendar")}
-                                    className={`p-1.5 sm:p-2 rounded-lg transition-all ${viewMode === "calendar" ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
-                                    title="Heat Map"
-                                >
-                                    <CalendarDays className="w-4 h-4" />
-                                </button>
-                                <button
-                                    onClick={() => setViewMode("timeline")}
-                                    className={`p-1.5 sm:p-2 rounded-lg transition-all ${viewMode === "timeline" ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
-                                    title="Timeline"
-                                >
-                                    <Calendar className="w-4 h-4" />
-                                </button>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                                <button onClick={() => setImportModalOpen(true)} className="p-2 sm:p-3 bg-gray-900/80 border border-gray-800 rounded-xl hover:bg-gray-800 transition-all text-gray-400 hover:text-white" title="Import">
-                                    <Upload className="w-4 h-4 sm:w-5 h-5" />
-                                </button>
-                                <button onClick={handleExportCSV} className="p-2 sm:p-3 bg-gray-900/80 border border-gray-800 rounded-xl hover:bg-gray-800 transition-all text-gray-400 hover:text-white" title="Export">
-                                    <Download className="w-4 h-4 sm:w-5 h-5" />
-                                </button>
-                                <button onClick={() => { loadTasks(); setRefreshKey(k => k + 1); }} className="p-2 sm:p-3 bg-gray-900/80 border border-gray-800 rounded-xl hover:bg-gray-800 transition-all text-gray-400 hover:text-white" title="Refresh">
-                                    <RefreshCw className={`w-4 h-4 sm:w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
-                                </button>
-                            </div>
+                        <div className="flex items-center gap-2">
+                            <button onClick={() => setImportModalOpen(true)} className="p-2 sm:p-2.5 bg-gray-900/80 border border-gray-800 rounded-xl hover:bg-gray-800 transition-all text-gray-400 hover:text-white shadow-lg" title="Import">
+                                <Upload className="w-4 h-4 sm:w-5 h-5" />
+                            </button>
+                            <button onClick={handleExportCSV} className="p-2 sm:p-2.5 bg-gray-900/80 border border-gray-800 rounded-xl hover:bg-gray-800 transition-all text-gray-400 hover:text-white shadow-lg" title="Export">
+                                <Download className="w-4 h-4 sm:w-5 h-5" />
+                            </button>
+                            <button onClick={() => { fetchTasks(targetDate); fetchAllTasks(); setRefreshKey(k => k + 1); }} className="p-2 sm:p-2.5 bg-gray-900/80 border border-gray-800 rounded-xl hover:bg-gray-800 transition-all text-gray-400 hover:text-white shadow-lg" title="Refresh">
+                                <RefreshCw className={`w-4 h-4 sm:w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
+                            </button>
                         </div>
                     </div>
                 </div>
 
-                {/* Main Content Area */}
-                <div className={`flex-1 space-y-4 overflow-y-auto no-scrollbar ${viewMode === "list" ? 'max-w-5xl mx-auto w-full pb-32' : 'w-full pb-8'}`}>
-                    {viewMode === "list" ? (
-                        // List View
-                        <>
-                            {loading && tasks.length === 0 ? (
-                                <div className="text-center py-20 text-gray-600 font-bold animate-pulse uppercase tracking-widest text-sm">
-                                    Synchronizing Tasks...
-                                </div>
-                            ) : tasks.length === 0 ? (
-                                <div className="bg-gray-900/30 border border-gray-800/50 border-dashed rounded-[2rem] py-32 text-center flex flex-col items-center justify-center group transition-all hover:bg-gray-900/40">
-                                    <div className="w-20 h-20 bg-gray-800/50 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                                        <Plus className="w-10 h-10 text-gray-600" />
+                {/* Main Content Area - Unified Scrollable List */}
+                <div className={`flex-1 overflow-hidden relative ${viewMode === "list" ? 'max-w-5xl mx-auto w-full' : 'w-full'}`}>
+                    <div className="absolute inset-0 overflow-y-auto custom-scrollbar px-1 pb-40">
+                        {viewMode === "list" ? (
+                            // List View
+                            <div className="space-y-6">
+                                {loading && displayTasks.length === 0 ? (
+                                    <div className="text-center py-20 text-gray-600 font-bold animate-pulse uppercase tracking-widest text-sm">
+                                        Synchronizing Tasks...
                                     </div>
-                                    <h2 className="text-xl font-bold text-gray-500 mb-2">What are you planning to do?</h2>
-                                    <p className="text-gray-600 text-sm font-medium">Add a new task from the input below.</p>
-                                </div>
-                            ) : (
-                                <>
-                                    {/* Pending Tasks */}
+                                ) : displayTasks.length === 0 ? (
+                                    <div className="bg-gray-900/30 border border-gray-800/50 border-dashed rounded-[2rem] py-32 text-center flex flex-col items-center justify-center group transition-all hover:bg-gray-900/40">
+                                        <div className="w-20 h-20 bg-gray-800/50 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                                            <Plus className="w-10 h-10 text-gray-600" />
+                                        </div>
+                                        <h2 className="text-xl font-bold text-gray-500 mb-2">
+                                            {activeFilter === 'today' ? "What are you planning to do Today?" :
+                                                activeFilter === 'planned' ? "No future tasks planned." :
+                                                    activeFilter === 'inbox' ? "Your inbox is empty." :
+                                                        "Nothing found here."}
+                                        </h2>
+                                        <p className="text-gray-600 text-sm font-medium">Add a new task from the input below.</p>
+                                    </div>
+                                ) : (
                                     <div className="space-y-1">
                                         {pendingTasks.map(task => (
                                             <TaskRow
@@ -329,200 +314,216 @@ export default function UnifiedTasksPage() {
                                                 }}
                                             />
                                         ))}
-                                    </div>
 
-                                    {/* Completed Section */}
-                                    {completedTasks.length > 0 && (
-                                        <div className="mt-6">
-                                            <button
-                                                onClick={() => setIsCompletedCollapsed(!isCompletedCollapsed)}
-                                                className="flex items-center gap-2 px-3 py-1.5 bg-gray-900/50 hover:bg-gray-900/80 rounded-lg text-gray-500 hover:text-gray-300 transition-all group mb-2"
-                                            >
-                                                {isCompletedCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                                                <span className="text-xs font-bold uppercase tracking-wider">Completed {completedTasks.length}</span>
-                                            </button>
-
-                                            {!isCompletedCollapsed && (
-                                                <div className="space-y-1 animate-in fade-in slide-in-from-top-2 duration-300">
-                                                    {completedTasks.map(task => (
-                                                        <TaskRow
-                                                            key={task.task_id}
-                                                            task={task}
-                                                            isMobile={!!isMobile}
-                                                            onToggle={() => handleMarkDone(task.task_id, task.status || 'todo')}
-                                                            onClick={async () => {
-                                                                const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}`);
-                                                                const fullTask = await resp.json();
-                                                                setSelectedTask(fullTask);
-                                                                setPanelOpen(true);
-                                                            }}
-                                                        />
-                                                    ))}
+                                        {/* Integrated Quick Add Row (Google/MS ToDo style) */}
+                                        <div className={`mt-2 bg-gray-900/40 border border-gray-800/50 rounded-xl transition-all duration-300 ${quickAddFocused ? 'bg-gray-900/60 ring-1 ring-blue-500/50 shadow-lg shadow-blue-500/5' : 'hover:bg-gray-900/60'}`} ref={quickAddRef}>
+                                            <div className="flex flex-col">
+                                                <div className="flex items-center gap-3 px-4 py-3">
+                                                    <Plus className={`w-5 h-5 ${quickAddFocused ? 'text-blue-500' : 'text-gray-500'}`} />
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Add a task"
+                                                        value={quickAddName}
+                                                        onChange={(e) => setQuickAddName(e.target.value)}
+                                                        onFocus={() => { setQuickAddFocused(true); setActiveOptions(true); }}
+                                                        onKeyDown={(e) => e.key === 'Enter' && handleQuickAdd()}
+                                                        disabled={quickAddLoading}
+                                                        className="flex-1 bg-transparent border-none focus:ring-0 font-semibold placeholder:text-gray-600 outline-none text-sm"
+                                                    />
+                                                    {quickAddName && (
+                                                        <button
+                                                            onClick={handleQuickAdd}
+                                                            disabled={quickAddLoading}
+                                                            className="p-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg transition-all shadow-lg active:scale-95"
+                                                        >
+                                                            {quickAddLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ChevronDown className="-rotate-90 w-3.5 h-3.5" />}
+                                                        </button>
+                                                    )}
                                                 </div>
-                                            )}
-                                        </div>
-                                    )}
-                                </>
-                            )}
-                        </>
-                    ) : (
-                        <div className="space-y-6">
-                            {viewMode === "calendar" ? (
-                                <>
-                                    {/* Month Navigation */}
-                                    <div className="flex items-center justify-between">
-                                        <h2 className="text-lg font-bold text-gray-300 tracking-tight">
-                                            {currentMonth.toLocaleString('en-US', { month: 'long', year: 'numeric' })}
-                                        </h2>
-                                        <div className="flex items-center gap-1 bg-gray-900/50 border border-gray-800 rounded-xl p-1">
-                                            <button
-                                                onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1))}
-                                                className="p-2 hover:bg-gray-800 rounded-lg transition-colors text-gray-500 hover:text-white"
-                                            >
-                                                <ChevronLeft className="w-4 h-4" />
-                                            </button>
-                                            <button
-                                                onClick={() => setCurrentMonth(new Date())}
-                                                className="px-3 py-1 text-xs font-bold text-gray-500 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
-                                            >
-                                                Today
-                                            </button>
-                                            <button
-                                                onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1))}
-                                                className="p-2 hover:bg-gray-800 rounded-lg transition-colors text-gray-500 hover:text-white"
-                                            >
-                                                <ChevronRight className="w-4 h-4" />
-                                            </button>
-                                        </div>
-                                    </div>
 
-                                    {/* Calendar Component */}
-                                    <HeatMapCalendar
+                                                {/* Expanded Options */}
+                                                {(activeOptions || quickAddName) && quickAddFocused && (
+                                                    <div className="px-4 pb-3 pt-1 flex items-center gap-2 animate-in slide-in-from-top-1 duration-200 border-t border-gray-800/30 mt-1">
+                                                        <div className="relative group">
+                                                            <select
+                                                                value={qaContext}
+                                                                onChange={(e) => setQaContext(e.target.value)}
+                                                                className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                                                            >
+                                                                {availableProjects.map(s => <option key={s} value={s}>{s}</option>)}
+                                                            </select>
+                                                            <button className="flex items-center gap-2 px-2.5 py-1.5 bg-gray-800/30 hover:bg-gray-800/60 rounded-lg text-[10px] font-bold uppercase tracking-wider text-gray-500 group-hover:text-blue-400 transition-all">
+                                                                <Archive className="w-3 h-3" />
+                                                                {qaContext}
+                                                            </button>
+                                                        </div>
+
+                                                        <div className="relative group">
+                                                            <select
+                                                                value={qaLoadScore}
+                                                                onChange={(e) => setQaLoadScore(parseFloat(e.target.value))}
+                                                                className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                                                            >
+                                                                {[1, 2, 3, 5, 8, 10].map(n => <option key={n} value={n}>{n}</option>)}
+                                                            </select>
+                                                            <button className="flex items-center gap-2 px-2.5 py-1.5 bg-gray-800/30 hover:bg-gray-800/60 rounded-lg text-[10px] font-bold uppercase tracking-wider text-gray-500 group-hover:text-green-400 transition-all">
+                                                                <Hash className="w-3 h-3" />
+                                                                {qaLoadScore}
+                                                            </button>
+                                                        </div>
+
+                                                        <div className="relative group">
+                                                            <input
+                                                                ref={qaDateRef}
+                                                                type="date"
+                                                                value={qaDueDate}
+                                                                onChange={(e) => setQaDueDate(e.target.value)}
+                                                                className="absolute inset-0 opacity-0 pointer-events-none"
+                                                            />
+                                                            <button
+                                                                onClick={() => qaDateRef.current?.showPicker()}
+                                                                className="flex items-center gap-2 px-2.5 py-1.5 bg-gray-800/30 hover:bg-gray-800/60 rounded-lg text-[10px] font-bold uppercase tracking-wider text-gray-500 group-hover:text-amber-400 transition-all"
+                                                            >
+                                                                <Calendar className="w-3 h-3" />
+                                                                {qaDueDate === targetDate ? "Today" : qaDueDate}
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* Completed Section Inline */}
+                                        {completedTasksList.length > 0 && (
+                                            <div className="mt-6">
+                                                <button
+                                                    onClick={() => setIsCompletedCollapsed(!isCompletedCollapsed)}
+                                                    className="flex items-center gap-2 px-3 py-1.5 bg-gray-900/50 hover:bg-gray-900/80 rounded-lg text-gray-500 hover:text-gray-300 transition-all group mb-2"
+                                                >
+                                                    {isCompletedCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                                    <span className="text-xs font-bold uppercase tracking-wider">Completed {completedTasksList.length}</span>
+                                                </button>
+
+                                                {!isCompletedCollapsed && (
+                                                    <div className="space-y-1 animate-in fade-in slide-in-from-top-2 duration-300">
+                                                        {completedTasksList.map(task => (
+                                                            <TaskRow
+                                                                key={task.task_id}
+                                                                task={task}
+                                                                isMobile={!!isMobile}
+                                                                onToggle={() => handleMarkDone(task.task_id, task.status || 'todo')}
+                                                                onClick={async () => {
+                                                                    const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}`);
+                                                                    const fullTask = await resp.json();
+                                                                    setSelectedTask(fullTask);
+                                                                    setPanelOpen(true);
+                                                                }}
+                                                            />
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        ) : viewMode === "calendar" ? (
+                            <div className="flex gap-6 h-full min-h-0">
+                                <div className="flex-1 min-w-0">
+                                    <GridCalendar
                                         month={currentMonth}
                                         onDayClick={(date) => {
                                             setTargetDate(date);
-                                            setQaDueDate(date);
-                                            setViewMode("list");
+                                            setDayDetailsDate(date);
+                                            setIsDayDetailsOpen(true);
                                         }}
-                                        refreshKey={refreshKey}
                                         includeCompleted={true}
                                     />
-                                </>
-                            ) : (
-                                // Timeline View
-                                <TimelineCalendar
-                                    targetDate={targetDate}
-                                    onTaskClick={(task) => {
-                                        setSelectedTask(task);
-                                        setPanelOpen(true);
-                                    }}
-                                    refreshKey={refreshKey}
-                                />
-                            )}
-                        </div>
-                    )}
-                </div>
-
-                {/* Bottom Quick Add (Floating Chatbox Style) - Only show in list view */}
-                {viewMode === "list" && (
-                    <div className="absolute bottom-6 left-4 right-4 sm:left-8 sm:right-8 flex justify-center pointer-events-none">
-                        <div className="w-full max-w-5xl pointer-events-auto relative" ref={quickAddRef}>
-                            {/* Quick Add Options Bar - Floating Above */}
-                            {(activeOptions || quickAddName) && (
-                                <div className="absolute bottom-full left-0 mb-3 flex items-center gap-2 px-4 py-2 bg-gray-900/90 backdrop-blur-xl border border-gray-800 rounded-2xl animate-in slide-in-from-bottom-2 duration-300 shadow-2xl z-20">
-                                    {/* Project/Context Selector */}
-                                    <div className="relative group">
-                                        <select
-                                            value={qaContext}
-                                            onChange={(e) => setQaContext(e.target.value)}
-                                            className="absolute inset-0 opacity-0 cursor-pointer z-10"
-                                        >
-                                            {availableProjects.map(s => <option key={s} value={s}>{s}</option>)}
-                                        </select>
-                                        <button className="flex items-center gap-2 px-3 py-1.5 bg-gray-800/50 hover:bg-gray-800 border border-gray-700/50 rounded-xl text-[10px] font-black uppercase tracking-wider text-gray-400 group-hover:text-blue-400 transition-all">
-                                            <Archive className="w-3.5 h-3.5" />
-                                            {qaContext}
-                                        </button>
-                                    </div>
-
-                                    {/* Workload Selector */}
-                                    <div className="relative group">
-                                        <select
-                                            value={qaLoadScore}
-                                            onChange={(e) => setQaLoadScore(parseFloat(e.target.value))}
-                                            className="absolute inset-0 opacity-0 cursor-pointer z-10"
-                                        >
-                                            {[1, 2, 3, 5, 8, 10].map(n => <option key={n} value={n}>{n}</option>)}
-                                        </select>
-                                        <button className="flex items-center gap-2 px-3 py-1.5 bg-gray-800/50 hover:bg-gray-800 border border-gray-700/50 rounded-xl text-[10px] font-black uppercase tracking-wider text-gray-400 group-hover:text-green-400 transition-all">
-                                            <Hash className="w-3.5 h-3.5" />
-                                            Impact: {qaLoadScore}
-                                        </button>
-                                    </div>
-
-                                    {/* Due Date Selector */}
-                                    <div className="relative group">
-                                        <input
-                                            ref={qaDateRef}
-                                            type="date"
-                                            value={qaDueDate}
-                                            onChange={(e) => setQaDueDate(e.target.value)}
-                                            className="absolute inset-0 opacity-0 pointer-events-none"
-                                        />
-                                        <button
-                                            onClick={() => qaDateRef.current?.showPicker()}
-                                            className="flex items-center gap-2 px-3 py-1.5 bg-gray-800/50 hover:bg-gray-800 border border-gray-700/50 rounded-xl text-[10px] font-black uppercase tracking-wider text-gray-400 group-hover:text-amber-400 transition-all"
-                                        >
-                                            <Calendar className="w-3.5 h-3.5" />
-                                            {qaDueDate === targetDate ? "Today" : qaDueDate}
-                                        </button>
-                                    </div>
-
-                                    <div className="ml-4 border-l border-gray-800 pl-2">
-                                        <button
-                                            onClick={() => setCreateModalOpen(true)}
-                                            className="p-1.5 text-gray-600 hover:text-gray-400 transition-colors"
-                                            title="Full Editor"
-                                        >
-                                            <Plus className="w-4 h-4" />
-                                        </button>
-                                    </div>
                                 </div>
-                            )}
 
-                            <div className={`bg-gray-900/95 backdrop-blur-xl border border-gray-800 rounded-2xl sm:rounded-3xl overflow-hidden transition-all duration-300 ${quickAddFocused ? 'bg-gray-900/98 shadow-xl shadow-black/40' : ''}`}>
-                                <div className="p-0.5 sm:p-1 flex flex-col">
-                                    <div className={`flex items-center gap-2 sm:gap-4 px-3 sm:px-4 ${isMobile ? 'py-1.5' : 'py-3'}`}>
-                                        <div className="w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center">
-                                            <Plus className={`${isMobile ? 'w-5 h-5' : 'w-6 h-6'} ${quickAddFocused ? 'text-blue-500' : 'text-gray-600'} transition-colors`} />
-                                        </div>
-                                        <input
-                                            type="text"
-                                            placeholder="Add a task"
-                                            value={quickAddName}
-                                            onChange={(e) => setQuickAddName(e.target.value)}
-                                            onFocus={() => { setQuickAddFocused(true); setActiveOptions(true); }}
-                                            onKeyDown={(e) => e.key === 'Enter' && handleQuickAdd()}
-                                            disabled={quickAddLoading}
-                                            className={`flex-1 bg-transparent border-none focus:ring-0 font-bold placeholder:text-gray-600 placeholder:font-bold outline-none ${isMobile ? 'text-sm py-1' : 'text-lg py-2'}`}
-                                        />
-                                        {quickAddName && (
+                                {/* Calendar Day Details Panel */}
+                                {isDayDetailsOpen && (
+                                    <div className="w-[350px] bg-gray-900/60 border border-gray-800 rounded-2xl flex flex-col min-h-0 animate-in slide-in-from-right-4 duration-300 shadow-2xl backdrop-blur-xl">
+                                        <div className="p-4 border-b border-gray-800 flex items-center justify-between">
+                                            <div>
+                                                <h3 className="text-sm font-black uppercase tracking-widest text-blue-400">Day Details</h3>
+                                                <p className="text-xs text-gray-500 font-bold">{formatDateHeader(dayDetailsDate)}</p>
+                                            </div>
                                             <button
-                                                onClick={handleQuickAdd}
-                                                disabled={quickAddLoading}
-                                                className={`${isMobile ? 'p-1.5' : 'p-2'} bg-blue-600 hover:bg-blue-500 rounded-lg sm:rounded-xl transition-all shadow-lg active:scale-95 flex items-center justify-center`}
+                                                onClick={() => setIsDayDetailsOpen(false)}
+                                                className="p-1.5 hover:bg-gray-800 rounded-lg text-gray-500 hover:text-white transition-all"
                                             >
-                                                <div className="w-4 h-4 sm:w-5 sm:h-5 flex items-center justify-center">
-                                                    {quickAddLoading ? <RefreshCw className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin" /> : <ChevronDown className="-rotate-90 w-4 h-4 sm:w-5 sm:h-5" />}
-                                                </div>
+                                                <X className="w-4 h-4" />
                                             </button>
-                                        )}
+                                        </div>
+
+                                        <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
+                                            {calendarTasks.filter(t => t.due_date === dayDetailsDate).length === 0 ? (
+                                                <div className="h-full flex flex-col items-center justify-center text-center p-8">
+                                                    <div className="w-12 h-12 bg-gray-800/50 rounded-full flex items-center justify-center mb-4">
+                                                        <Plus className="w-6 h-6 text-gray-600" />
+                                                    </div>
+                                                    <p className="text-xs font-bold text-gray-600 uppercase tracking-widest">No tasks for this day</p>
+                                                </div>
+                                            ) : (
+                                                calendarTasks.filter(t => t.due_date === dayDetailsDate).map(task => (
+                                                    <div
+                                                        key={task.task_id}
+                                                        onClick={async () => {
+                                                            const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}`);
+                                                            const fullTask = await resp.json();
+                                                            setSelectedTask(fullTask);
+                                                            setPanelOpen(true);
+                                                        }}
+                                                        className="group bg-gray-950/40 border border-gray-800/50 rounded-xl p-3 hover:bg-gray-900 hover:border-blue-500/30 transition-all cursor-pointer"
+                                                    >
+                                                        <div className="flex items-center gap-3 mb-1">
+                                                            <div className={task.status === 'done' || task.status === 'completed' ? 'text-blue-500' : 'text-gray-600'}>
+                                                                {task.status === 'done' || task.status === 'completed' ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4" />}
+                                                            </div>
+                                                            <span className={`text-sm font-bold truncate ${task.status === 'done' || task.status === 'completed' ? 'line-through text-gray-600' : 'text-gray-200 group-hover:text-blue-400'}`}>
+                                                                {task.task_name}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex items-center gap-2 pl-7">
+                                                            <span className="text-[10px] font-black uppercase tracking-tighter text-gray-600" style={{ color: getSpokeColor(task.context) }}>
+                                                                {task.context}
+                                                            </span>
+                                                            <span className="text-[10px] font-bold text-gray-700 bg-gray-900 rounded px-1.5 py-0.5">
+                                                                Impact: {task.base_load_score}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                ))
+                                            )}
+                                        </div>
+
+                                        <div className="p-3 border-t border-gray-800">
+                                            <button
+                                                onClick={() => {
+                                                    setQaDueDate(dayDetailsDate);
+                                                    setCreateModalOpen(true);
+                                                }}
+                                                className="w-full py-2.5 bg-blue-600/10 hover:bg-blue-600 text-blue-400 hover:text-white border border-blue-600/20 rounded-xl text-xs font-black uppercase tracking-widest transition-all shadow-lg shadow-blue-500/5 active:scale-95"
+                                            >
+                                                Add Task
+                                            </button>
+                                        </div>
                                     </div>
-                                </div>
+                                )}
                             </div>
-                        </div>
+                        ) : (
+                            <TimelineCalendar
+                                targetDate={targetDate}
+                                onTaskClick={(task) => {
+                                    setSelectedTask(task);
+                                    setPanelOpen(true);
+                                }}
+                                refreshKey={refreshKey}
+                            />
+                        )}
                     </div>
-                )}
+                </div>
             </div>
 
             {/* Modals & Panels */}
@@ -530,19 +531,19 @@ export default function UnifiedTasksPage() {
                 task={selectedTask}
                 isOpen={panelOpen}
                 onClose={() => setPanelOpen(false)}
-                onSave={() => loadTasks()}
-                onDelete={() => loadTasks()}
+                onSave={() => fetchTasks(targetDate)}
+                onDelete={() => fetchTasks(targetDate)}
             />
             <TaskCreateModal
                 isOpen={createModalOpen}
                 onClose={() => setCreateModalOpen(false)}
-                onTaskCreated={() => loadTasks()}
+                onTaskCreated={() => fetchTasks(targetDate)}
                 availableProjects={availableProjects}
             />
             <TaskImportModal
                 isOpen={importModalOpen}
                 onClose={() => setImportModalOpen(false)}
-                onImportComplete={() => loadTasks()}
+                onImportComplete={() => fetchTasks(targetDate)}
                 existingProjects={availableProjects}
             />
         </div>
@@ -551,7 +552,9 @@ export default function UnifiedTasksPage() {
 
 // Sub-component for a task row
 function TaskRow({ task, onToggle, onClick, isMobile }: { task: Task, onToggle: () => void, onClick: () => void, isMobile: boolean }) {
-    const isCompleted = task.status === 'done' || task.status === 'skipped';
+    const isCompleted = task.status === 'done' || task.status === 'skipped' || task.status === 'completed';
+    const { toggleMyDay } = useTaskStore();
+    const isMyDay = task.meta_payload?.is_my_day;
 
     return (
         <div
@@ -564,9 +567,11 @@ function TaskRow({ task, onToggle, onClick, isMobile }: { task: Task, onToggle: 
             >
                 {isCompleted ? <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" /> : <Circle className="w-4 h-4 sm:w-5 sm:h-5" />}
             </button>
+
             <h3 className={`flex-1 min-w-0 font-semibold truncate transition-colors group-hover:text-blue-400 ${isCompleted ? 'line-through text-gray-500' : 'text-white'} ${isMobile ? 'text-[13px]' : 'text-sm'}`}>
                 {task.task_name}
             </h3>
+
             <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0 ml-auto">
                 <span
                     className="text-[8px] sm:text-[9px] font-black uppercase tracking-wider px-1.2 sm:px-1.5 py-0.5 rounded bg-white/5"
@@ -584,7 +589,13 @@ function TaskRow({ task, onToggle, onClick, isMobile }: { task: Task, onToggle: 
                     {task.base_load_score}
                 </span>
             </div>
-            {!isMobile && <Star className="w-4 h-4 flex-shrink-0 text-gray-700 hover:text-amber-500 opacity-0 group-hover:opacity-100 transition-opacity" />}
+
+            <button
+                onClick={(e) => { e.stopPropagation(); toggleMyDay(task); }}
+                className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 flex items-center justify-center transition-transform active:scale-90 ${isMyDay ? 'text-amber-400' : 'text-gray-700 hover:text-gray-500'}`}
+            >
+                <Star size={isMobile ? 14 : 16} fill={isMyDay ? "currentColor" : "none"} />
+            </button>
         </div>
     );
 }

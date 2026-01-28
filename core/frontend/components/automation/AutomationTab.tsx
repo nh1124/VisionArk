@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "@/lib/api";
 import { useNotification } from "@/lib/NotificationContext";
-import { Loader2, Calendar, Clock, Trash2, Plus, Zap, RefreshCw } from "lucide-react";
+import { Loader2, Calendar, Clock, Trash2, Plus, AlarmClock, RefreshCw } from "lucide-react";
 
 interface ScheduledTask {
     id: string;
@@ -77,7 +77,10 @@ export default function AutomationTab({ projectId, onScheduleClick }: Automation
     return (
         <div className="flex flex-col h-full space-y-4">
             <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-400 font-medium">Scheduled Automations</span>
+                <div className="flex items-center gap-2">
+                    <AlarmClock size={16} className="text-cyan-500" />
+                    <span className="text-sm text-gray-400 font-medium">Scheduled Automations</span>
+                </div>
                 <div className="flex items-center gap-1">
                     <button
                         onClick={fetchTasks}

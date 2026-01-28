@@ -1,0 +1,35 @@
+{
+    "id": "outlook",
+    "name": "Outlook Calendar",
+    "description": "Microsoft 365 integration for professional time management.",
+    "icon": "📧",
+    "color": "bg-blue-600/10 text-blue-500",
+    "category": "productivity",
+    "authType": "oauth",
+    "config_fields": [
+        {
+            "key": "va_auto_meeting_link",
+            "label": "Auto-generate meeting links",
+            "type": "checkbox",
+            "description": "Generate Meet/Teams link for new tasks"
+        },
+        {
+            "key": "va_realtime_sync",
+            "label": "Enable Real-time Sync",
+            "type": "checkbox",
+            "description": "Listen for changes via Webhooks"
+        }
+    ],
+    "setup_instructions": [
+        {
+            "step": 1,
+            "title": "Sign in with Microsoft",
+            "content": "Click the 'Connect' button to start the OAuth flow with your Microsoft 365 or Outlook.com account."
+        },
+        {
+            "step": 2,
+            "title": "Grant Permissions",
+            "content": "VisionArk will request access to read and update your calendar events to keep your tasks in sync."
+        }
+    ]
+}

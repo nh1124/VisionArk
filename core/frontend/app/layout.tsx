@@ -32,8 +32,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark" suppressHydrationWarning={true}>
-      <body className={`${inter.variable} ${outfit.variable} font-sans bg-gray-950 text-gray-100 min-h-screen flex flex-col`}>
+    <html lang="en" className="dark h-full overflow-hidden" suppressHydrationWarning={true}>
+      <body className={`${inter.variable} ${outfit.variable} font-sans bg-gray-950 text-gray-100 h-full relative overflow-hidden flex flex-col`}>
         <AuthProvider>
           <NotificationProvider>
             <ModelProvider>

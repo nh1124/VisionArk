@@ -127,3 +127,12 @@ class QueueManager:
             active_task_id = self.get_active_task_for_project(project_id)
             if active_task_id == task_id:
                 self.clear_active_task(project_id)
+    def get_all_active_tasks(self) -> list:
+        """Get all active task IDs currently tracked"""
+        keys = self.client.keys("active_task:*")
+        tasks = []
+        for k in keys:
+            tid = self.client.get(k)
+            if tid:
+                tasks.append(tid)
+        return tasks

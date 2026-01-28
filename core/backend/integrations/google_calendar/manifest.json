@@ -1,0 +1,35 @@
+{
+    "id": "google_calendar",
+    "name": "Google Calendar",
+    "description": "Sync your schedule and VA tasks across Google ecosystem.",
+    "icon": "📅",
+    "color": "bg-white/10 text-blue-400",
+    "category": "productivity",
+    "authType": "oauth",
+    "config_fields": [
+        {
+            "key": "va_auto_meeting_link",
+            "label": "Auto-generate meeting links",
+            "type": "checkbox",
+            "description": "Generate Meet/Teams link for new tasks"
+        },
+        {
+            "key": "va_realtime_sync",
+            "label": "Enable Real-time Sync",
+            "type": "checkbox",
+            "description": "Listen for changes via Webhooks"
+        }
+    ],
+    "setup_instructions": [
+        {
+            "step": 1,
+            "title": "Aunthenticate with Google",
+            "content": "Click 'Connect' to authorize VisionArk to access your Google Calendar via OAuth 2.0."
+        },
+        {
+            "step": 2,
+            "title": "Sync Settings",
+            "content": "Once connected, your primary calendar will be synced with your VisionArk workspace."
+        }
+    ]
+}

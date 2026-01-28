@@ -8,7 +8,9 @@ from .client import LBSClient, TaskStatus
 from services.auth import resolve_identity, Identity, bearer_scheme
 from services.sync_coordinator import SyncCoordinator
 from models.database import get_async_db
+from .models import LBSTaskExtension
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 router = APIRouter(tags=["LBS"])
 ROUTER_PREFIX = "/lbs"
@@ -74,6 +76,7 @@ class TaskCreate(BaseModel):
     is_locked: bool = False
     start_time: Optional[str] = None
     end_time: Optional[str] = None
+    meta_payload: Optional[Dict] = None
 
 
 class TaskUpdate(BaseModel):
@@ -102,6 +105,7 @@ class TaskUpdate(BaseModel):
     is_locked: Optional[bool] = None
     start_time: Optional[str] = None
     end_time: Optional[str] = None
+    meta_payload: Optional[Dict] = None
 
 
 class ExceptionCreate(BaseModel):
@@ -133,10 +137,19 @@ async def create_task(
 ):
     try:
         res = await client.create_task(task.model_dump(mode='json'))
+        
+        # Save extension metadata if provided
+        task_data = task.model_dump()
+        if "meta_payload" in task_data and task_data["meta_payload"] and "id" in res:
+             ext = LBSTaskExtension(lbs_task_id=res["id"], meta_payload=task_data["meta_payload"])
+             db.add(ext)
+             await db.commit()
+
         # Trigger Export
         await SyncCoordinator.trigger_export(db, identity.user_id, reason="task creation")
         return res
     except Exception as e:
+        await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -145,7 +158,8 @@ async def list_tasks(
     context: Optional[str] = None,
     active: Optional[bool] = None,
     target_date: Optional[date] = None,
-    lbs: LBSClient = Depends(get_lbs_client)
+    lbs: LBSClient = Depends(get_lbs_client),
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     List project tasks with optional filters.
@@ -156,6 +170,20 @@ async def list_tasks(
     try:
         logger.info(f"list_tasks called: context={context}, active={active}, target_date={target_date}")
         result = await lbs.list_tasks(context=context, active=active, target_date=target_date)
+        
+        # Merge extension data
+        if result and isinstance(result, list):
+            task_ids = [t["id"] for t in result if "id" in t]
+            if task_ids:
+                ext_res = await db.execute(select(LBSTaskExtension).filter(LBSTaskExtension.lbs_task_id.in_(task_ids)))
+                ext_map = {e.lbs_task_id: e.meta_payload for e in ext_res.scalars().all()}
+                
+                for task in result:
+                    if task["id"] in ext_map:
+                        task["meta_payload"] = ext_map[task["id"]]
+                    else:
+                        task["meta_payload"] = {}
+
         logger.info(f"list_tasks returning {len(result)} tasks")
         return result
     except Exception as e:
@@ -167,14 +195,24 @@ async def list_tasks(
 async def get_task_details(
     task_id: str,
     target_date: Optional[date] = None,
-    lbs: LBSClient = Depends(get_lbs_client)
+    lbs: LBSClient = Depends(get_lbs_client),
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Get detailed information about a specific task.
     If target_date is provided, returns context-specific status for that date.
     """
     try:
-        return await lbs.get_task(task_id, target_date=target_date)
+        res = await lbs.get_task(task_id, target_date=target_date)
+        
+        # Merge extension data
+        ext = await db.get(LBSTaskExtension, task_id)
+        if ext:
+            res["meta_payload"] = ext.meta_payload
+        else:
+            res["meta_payload"] = {}
+            
+        return res
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -202,10 +240,23 @@ async def update_task(
 ):
     try:
         res = await client.update_task(task_id, task.model_dump(mode='json', exclude_unset=True))
+        
+        # Update extension metadata if provided
+        task_data = task.model_dump(exclude_unset=True)
+        if "meta_payload" in task_data and task_data["meta_payload"]:
+             ext = await db.get(LBSTaskExtension, task_id)
+             if ext:
+                 ext.meta_payload = task_data["meta_payload"]
+             else:
+                 ext = LBSTaskExtension(lbs_task_id=task_id, meta_payload=task_data["meta_payload"])
+                 db.add(ext)
+             await db.commit()
+
         # Trigger Export
         await SyncCoordinator.trigger_export(db, identity.user_id, reason="task update")
         return res
     except Exception as e:
+        await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -365,10 +416,22 @@ async def complete_task(
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
+    import logging
+    import traceback
+    logger = logging.getLogger(__name__)
     try:
+        logger.info(f"Completing task {task_id} for date {req.target_date} with status {req.status}")
         res = await client.toggle_task_completion(task_id, req.target_date, req.status)
+        
         # Trigger Export
-        await SyncCoordinator.trigger_export(db, identity.user_id, reason="task completion update")
+        try:
+            await SyncCoordinator.trigger_export(db, identity.user_id, reason="task completion update")
+        except Exception as export_err:
+            logger.error(f"Sync export failed but task was updated: {export_err}")
+            # We don't fail the whole request if export fails, but let's log it
+            
         return res
     except Exception as e:
+        logger.error(f"Error in complete_task: {e}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))

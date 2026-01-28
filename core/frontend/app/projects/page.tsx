@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { apiFetch, getFileToken } from "@/lib/api";
-import { Search, MoreVertical, Edit2, Trash2, X, Check, ExternalLink, Copy, FileDown, Send, Loader2 } from "lucide-react";
+import { Search, MoreVertical, Edit2, Trash2, X, Check, ExternalLink, Copy, Download, Send, Loader2, Settings, Rocket, Folder, Sparkles, LayoutGrid, List } from "lucide-react";
 import { useNotification } from "@/lib/NotificationContext";
 
 interface Project {
@@ -15,10 +15,17 @@ interface Project {
     has_custom_prompt: boolean;
     artifact_count: number;
     ref_count: number;
+    queue_count: number;
     created_at?: string;
     updated_at?: string;
     members?: string[];
+    latest_activity: string;
+    last_activity_time?: string;
+    next_task?: { type: string, at: string };
+    processing_logs: string[];
 }
+
+// WorkspaceStats interface removed
 
 export default function ProjectsPage() {
     const [projects, setProjects] = useState<Project[]>([]);
@@ -41,10 +48,18 @@ export default function ProjectsPage() {
     // For navigation after creation
     const router = useRouter();
 
+    const [viewMode, setViewMode] = useState<"tile" | "list">("tile");
+    const [systemHealth, setSystemHealth] = useState<"optimal" | "busy" | "degraded">("optimal");
+
     const { showConfirm, showToast } = useNotification();
 
     useEffect(() => {
         loadProjects();
+
+        // Polling for live status
+        const interval = setInterval(() => {
+            loadProjects();
+        }, 10000);
 
         // Close menu on click outside
         const handleClickOutside = (event: MouseEvent) => {
@@ -53,8 +68,13 @@ export default function ProjectsPage() {
             }
         };
         document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+            clearInterval(interval);
+        };
     }, []);
+
+    // loadStats removed
 
     const loadProjects = async () => {
         try {
@@ -245,62 +265,55 @@ export default function ProjectsPage() {
     return (
         <div className="p-8 w-full flex flex-col items-center">
             <div className="w-full max-w-7xl">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
-                    <h1 className="text-3xl font-bold text-cyan-400 whitespace-nowrap">Projects</h1>
+                {/* Header Section */}
+                <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
+                    <div>
+                        <h1 className="text-4xl font-black text-white tracking-tighter mb-2">Workspace</h1>
+                    </div>
 
-                    {/* Search Bar - Fixed width on desktop to prevent shifts */}
-                    <div className="relative group w-full md:w-[400px] flex-shrink-0">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 group-focus-within:text-cyan-400 transition-colors" size={18} />
-                        <input
-                            type="text"
-                            placeholder="Search projects by name..."
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full bg-gray-900/50 border border-gray-800 rounded-xl pl-10 pr-10 py-2.5 text-sm focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/30 transition-all font-medium"
-                        />
-                        {searchQuery && (
+                    <div className="flex items-center gap-3">
+                        <div className="flex bg-gray-900/80 p-1.5 rounded-2xl border border-gray-800 shadow-2xl backdrop-blur-md">
                             <button
-                                onClick={() => setSearchQuery("")}
-                                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white p-1"
+                                onClick={() => setViewMode("tile")}
+                                className={`p-2.5 rounded-xl transition-all ${viewMode === "tile" ? "bg-cyan-500 text-white shadow-[0_0_20px_rgba(6,182,212,0.4)] scale-105" : "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50"}`}
+                                title="Tile View"
                             >
-                                <X size={14} />
+                                <LayoutGrid size={18} />
                             </button>
-                        )}
+                            <button
+                                onClick={() => setViewMode("list")}
+                                className={`p-2.5 rounded-xl transition-all ${viewMode === "list" ? "bg-cyan-500 text-white shadow-[0_0_20px_rgba(6,182,212,0.4)] scale-105" : "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50"}`}
+                                title="List View"
+                            >
+                                <List size={18} />
+                            </button>
+                        </div>
                     </div>
                 </div>
 
-                {/* Create New Project - Stable container */}
-                <div className="bg-gray-900/40 border border-gray-800/50 backdrop-blur-sm rounded-2xl p-6 mb-10 shadow-xl overflow-hidden relative w-full">
-                    <div className="absolute top-0 left-0 w-1 h-full bg-cyan-500/50"></div>
-                    <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-                        <span className="text-cyan-400 text-lg">✦</span> New Project
-                    </h2>
+                {/* Command Center Stats Removed */}
+
+                {/* Create New Project */}
+                <div className="mb-12">
                     <div className="flex flex-col sm:flex-row gap-4">
-                        <input
-                            type="text"
-                            value={newProjectPrompt}
-                            onChange={(e) => setNewProjectPrompt(e.target.value)}
-                            onKeyPress={(e) => e.key === "Enter" && !creating && createProject()}
-                            placeholder="Describe what you want to work on..."
-                            className="flex-1 bg-gray-800/50 border border-gray-700/50 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/20 transition-all"
-                            disabled={creating}
-                        />
+                        <div className="relative flex-1">
+                            <input
+                                type="text"
+                                value={newProjectPrompt}
+                                onChange={(e) => setNewProjectPrompt(e.target.value)}
+                                onKeyPress={(e) => e.key === "Enter" && !creating && createProject()}
+                                placeholder="What would you like to build today?"
+                                className="w-full bg-gray-900/50 border border-gray-800 focus:border-cyan-500/50 rounded-2xl px-6 py-4 text-sm focus:outline-none transition-all shadow-inner"
+                                disabled={creating}
+                            />
+                            {creating && <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-cyan-500" />}
+                        </div>
                         <button
                             onClick={createProject}
                             disabled={creating || !newProjectPrompt.trim()}
-                            className="flex items-center justify-center gap-2 bg-cyan-600 hover:bg-cyan-500 disabled:bg-gray-800 disabled:text-gray-500 px-6 py-3 rounded-xl font-semibold text-sm transition-all active:scale-95 shadow-lg shadow-cyan-900/20 whitespace-nowrap"
+                            className="bg-white text-black hover:bg-gray-200 disabled:bg-gray-800 disabled:text-gray-500 px-8 py-4 rounded-2xl font-bold text-sm transition-all active:scale-95 shadow-lg whitespace-nowrap"
                         >
-                            {creating ? (
-                                <>
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                    Creating...
-                                </>
-                            ) : (
-                                <>
-                                    <Send className="w-4 h-4" />
-                                    Start
-                                </>
-                            )}
+                            Create Project
                         </button>
                     </div>
                 </div>
@@ -336,7 +349,7 @@ export default function ProjectsPage() {
                         </div>
                     )}
 
-                    {/* Projects List */}
+                    {/* Projects Content: Bento Grid */}
                     {loading ? (
                         <div className="flex flex-col items-center justify-center py-32 gap-4">
                             <div className="w-12 h-12 border-4 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin"></div>
@@ -350,170 +363,213 @@ export default function ProjectsPage() {
                             <p className="text-xl font-medium text-gray-400 mb-2">
                                 {searchQuery ? `No results found for "${searchQuery}"` : "Your project list is empty"}
                             </p>
-                            <p className="text-sm text-gray-600 max-w-md mx-auto">
-                                {searchQuery ? "Try a different search term or clear the filter" : "Initialize your first project above to begin collaborative task execution"}
-                            </p>
-                            {searchQuery && (
-                                <button onClick={() => setSearchQuery("")} className="mt-6 text-cyan-400 text-sm font-semibold hover:text-cyan-300 transition-colors">
-                                    Clear search filter
-                                </button>
-                            )}
                         </div>
                     ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <div className={viewMode === 'tile' ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 auto-rows-min" : "flex flex-col gap-3"}>
                             {filteredProjects.map((project) => {
                                 const isSelected = selectedProjects.has(project.id);
                                 const isMenuOpen = activeMenu === project.id;
-                                const isRenaming = renamingProject === project.id;
+                                const hasActiveTask = project.queue_count > 0;
+                                const hasUpcoming = !!project.next_task;
 
-                                return (
-                                    <div
-                                        key={project.id}
-                                        className={`group relative bg-gray-900 border rounded-2xl p-6 transition-all duration-300 ${isSelected
-                                            ? "border-cyan-500/50 ring-1 ring-cyan-500/20 bg-cyan-500/[0.02]"
-                                            : "border-gray-800/80 hover:border-cyan-500/50 hover:bg-gray-850 hover:shadow-2xl hover:shadow-cyan-900/10"
-                                            }`}
-                                    >
-                                        <div className="flex items-start justify-between mb-5">
-                                            <div className="flex items-start flex-1 min-w-0 pr-2">
-                                                <div className="pt-1 mr-4 flex-shrink-0">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={isSelected}
-                                                        onChange={(e) => {
-                                                            e.stopPropagation();
-                                                            toggleSelection(project.id);
-                                                        }}
-                                                        className="w-5 h-5 rounded border-gray-700 bg-gray-800 text-cyan-500 focus:ring-cyan-500/30 cursor-pointer transition-transform group-hover:scale-110"
-                                                    />
+                                // Bento Size Logic
+                                let colSpan = "col-span-1";
+                                let rowSpan = "row-span-1";
+                                if (viewMode === 'tile') {
+                                    if (hasActiveTask) {
+                                        colSpan = "lg:col-span-2";
+                                        rowSpan = "row-span-2";
+                                    } else if (hasUpcoming) {
+                                        colSpan = "lg:col-span-1";
+                                        rowSpan = "row-span-1";
+                                    }
+                                }
+
+                                if (viewMode === 'list') {
+                                    return (
+                                        <div
+                                            key={project.id}
+                                            className={`group flex items-center justify-between bg-gray-900/40 border ${isSelected ? 'border-cyan-500' : 'border-gray-800'} rounded-2xl p-4 hover:bg-gray-800/50 transition-all`}
+                                        >
+                                            <div className="flex items-center gap-4 flex-1 min-w-0">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={isSelected}
+                                                    onChange={() => toggleSelection(project.id)}
+                                                    className="w-4 h-4 rounded border-gray-700 bg-gray-800 text-cyan-500"
+                                                />
+                                                <Link href={`/projects/${project.id}`} className="flex-1 min-w-0">
+                                                    <h3 className="font-bold text-sm text-gray-100 truncate group-hover:text-cyan-400">
+                                                        {project.display_name || project.name}
+                                                    </h3>
+                                                </Link>
+                                            </div>
+
+                                            <div className="flex items-center gap-8 px-6">
+                                                <div className="flex flex-col items-center">
+                                                    <span className="text-[9px] text-gray-600 font-bold uppercase">Artifacts</span>
+                                                    <span className="text-xs font-mono text-gray-300">{project.artifact_count}</span>
                                                 </div>
-
-                                                <div className="flex-1 min-w-0">
-                                                    {isRenaming ? (
-                                                        <div className="flex items-center gap-2 mt-1">
-                                                            <input
-                                                                type="text"
-                                                                value={renameValue}
-                                                                onChange={(e) => setRenameValue(e.target.value)}
-                                                                className="flex-1 bg-gray-800 border border-cyan-500 rounded px-2 py-1 text-sm text-white focus:outline-none focus:ring-1 focus:ring-cyan-500/30"
-                                                                autoFocus
-                                                                onKeyDown={(e) => {
-                                                                    if (e.key === "Enter") saveRename(project.id);
-                                                                    if (e.key === "Escape") setRenamingProject(null);
-                                                                }}
-                                                            />
-                                                            <button onClick={() => saveRename(project.id)} disabled={savingRename} className="text-green-500 hover:text-green-400">
-                                                                <Check size={18} />
-                                                            </button>
-                                                            <button onClick={() => setRenamingProject(null)} className="text-red-500 hover:text-red-400">
-                                                                <X size={18} />
-                                                            </button>
-                                                        </div>
-                                                    ) : (
-                                                        <Link href={`/projects/${project.id}`} className="block min-w-0">
-                                                            <h3 className="font-bold text-base text-gray-100 truncate group-hover:text-cyan-400 transition-colors" title={project.display_name || project.name}>
-                                                                {project.display_name || project.name}
-                                                            </h3>
-                                                            <p className="text-[9px] text-gray-600 font-mono tracking-tighter uppercase truncate opacity-70">
-                                                                # {project.display_name || project.name}
-                                                            </p>
-                                                            {project.updated_at && (
-                                                                <p className="text-[8px] text-gray-500 mt-0.5 flex items-center gap-1 truncate">
-                                                                    <span className="w-1 h-1 bg-green-500 rounded-full flex-shrink-0"></span>
-                                                                    <span className="truncate">Active: {new Date(project.updated_at).toLocaleDateString()}</span>
-                                                                </p>
-                                                            )}
-                                                        </Link>
-                                                    )}
+                                                <div className="flex flex-col items-center">
+                                                    <span className="text-[9px] text-gray-600 font-bold uppercase">Refs</span>
+                                                    <span className="text-xs font-mono text-gray-300">{project.ref_count}</span>
+                                                </div>
+                                                <div className="flex flex-col items-center w-16">
+                                                    <span className="text-[9px] text-gray-600 font-bold uppercase">Queue</span>
+                                                    <span className={`text-xs font-mono ${(project as any).queue_count > 0 ? 'text-cyan-400 animate-pulse' : 'text-gray-500'}`}>
+                                                        {(project as any).queue_count || 0}
+                                                    </span>
                                                 </div>
                                             </div>
 
-                                            {/* Context Menu Button */}
-                                            <div className="relative flex-shrink-0 ml-2">
+                                            <div className="relative">
                                                 <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setActiveMenu(isMenuOpen ? null : project.id);
-                                                    }}
-                                                    className={`p-2 rounded-lg transition-all ${isMenuOpen ? "bg-gray-800 text-cyan-400" : "text-gray-500 hover:text-gray-200 hover:bg-gray-800"}`}
+                                                    onClick={(e) => { e.stopPropagation(); setActiveMenu(isMenuOpen ? null : project.id); }}
+                                                    className="p-2 text-gray-500 hover:text-white"
                                                 >
-                                                    < MoreVertical size={18} />
+                                                    <MoreVertical size={16} />
                                                 </button>
-
                                                 {isMenuOpen && (
-                                                    <div
-                                                        ref={menuRef}
-                                                        className="absolute right-0 top-10 w-48 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-top-2 duration-200"
-                                                    >
-                                                        <button
-                                                            onClick={() => startRename(project)}
-                                                            className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-cyan-500/10 hover:text-cyan-400 transition-colors"
-                                                        >
-                                                            <Edit2 size={14} /> Rename Project
+                                                    <div ref={menuRef} className="absolute right-0 top-10 w-48 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 py-1">
+                                                        <button onClick={() => startRename(project)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800">
+                                                            <Settings size={14} /> Settings
                                                         </button>
-                                                        <button
-                                                            onClick={() => cloneProject(project.id, project.display_name || project.name)}
-                                                            className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-cyan-500/10 hover:text-cyan-400 transition-colors"
-                                                        >
+                                                        <button onClick={() => cloneProject(project.id, project.display_name || project.name)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800">
                                                             <Copy size={14} /> Clone Project
                                                         </button>
-                                                        <Link
-                                                            href={`/projects/${project.id}`}
-                                                            className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-cyan-500/10 hover:text-cyan-400 transition-colors"
-                                                        >
-                                                            <ExternalLink size={14} /> Open Workspace
-                                                        </Link>
-                                                        <button
-                                                            onClick={() => handleExportChat(project.id, project.display_name || project.name)}
-                                                            className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-cyan-500/10 hover:text-cyan-400 transition-colors"
-                                                        >
-                                                            <FileDown size={14} /> Export Chat
+                                                        <button onClick={() => router.push(`/projects/${project.id}`)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800">
+                                                            <Rocket size={14} /> Open Workspace
                                                         </button>
-                                                        <div className="my-1 border-t border-gray-800"></div>
-                                                        <button
-                                                            onClick={() => deleteProject(project.id, project.display_name || project.name)}
-                                                            className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-400 hover:bg-red-500/10 transition-colors"
-                                                        >
+                                                        <button onClick={() => handleExportChat(project.id, project.display_name || project.name)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800">
+                                                            <Download size={14} /> Export Chat
+                                                        </button>
+                                                        <div className="border-t border-gray-800 mx-2 my-1"></div>
+                                                        <button onClick={() => deleteProject(project.id, project.display_name || project.name)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-500 hover:bg-red-500/10 font-medium">
                                                             <Trash2 size={14} /> Delete Project
                                                         </button>
                                                     </div>
                                                 )}
                                             </div>
                                         </div>
+                                    );
+                                }
 
-                                        <div className="grid grid-cols-2 gap-4 text-[11px] mb-2">
-                                            <div className="bg-gray-950/40 rounded-xl p-3 border border-gray-800/30">
-                                                <p className="text-gray-500 uppercase tracking-widest mb-1.5 font-bold">Artifacts</p>
-                                                <div className="flex items-end gap-2">
-                                                    <p className="text-xl font-bold font-mono text-gray-200 leading-none">{project.artifact_count}</p>
-                                                    <span className="text-gray-600 mb-0.5 font-black">FILES</span>
+                                return (
+                                    <div
+                                        key={project.id}
+                                        className={`group relative bg-gray-900/60 border rounded-3xl p-6 transition-all duration-300 flex flex-col ${colSpan} ${rowSpan} ${isSelected ? "border-cyan-500 ring-1 ring-cyan-500/20" : "border-gray-800 hover:border-cyan-500/30 shadow-xl"}`}
+                                    >
+                                        <div className="flex items-start justify-between mb-4">
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <span className={`w-2 h-2 rounded-full ${hasActiveTask ? 'bg-green-500 animate-pulse' : hasUpcoming ? 'bg-blue-500' : 'bg-gray-700'}`}></span>
+                                                    <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest leading-none">
+                                                        {hasActiveTask ? 'Processing' : hasUpcoming ? 'Scheduled' : 'Dormant'}
+                                                    </span>
                                                 </div>
+                                                <Link href={`/projects/${project.id}`}>
+                                                    <h3 className={`font-black tracking-tight text-white truncate group-hover:text-cyan-400 transition-colors ${hasActiveTask ? 'text-xl' : 'text-base'}`}>
+                                                        {project.display_name || project.name}
+                                                    </h3>
+                                                </Link>
                                             </div>
-                                            <div className="bg-gray-950/40 rounded-xl p-3 border border-gray-800/30">
-                                                <p className="text-gray-500 uppercase tracking-widest mb-1.5 font-bold">References</p>
-                                                <div className="flex items-end gap-2">
-                                                    <p className="text-xl font-bold font-mono text-gray-200 leading-none">{project.ref_count}</p>
-                                                    <span className="text-gray-600 mb-0.5 font-black">REFS</span>
-                                                </div>
-                                            </div>
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); setActiveMenu(isMenuOpen ? null : project.id); }}
+                                                className="p-2 text-gray-600 hover:text-white"
+                                            >
+                                                <MoreVertical size={18} />
+                                            </button>
                                         </div>
 
-                                        {project.has_custom_prompt && (
-                                            <div className="flex items-center gap-1.5 mt-4 text-[9px] text-cyan-500 font-black tracking-widest uppercase bg-cyan-500/5 px-3 py-1.5 rounded-full border border-cyan-500/20 w-fit">
-                                                <span className="animate-pulse">◈</span> Custom AI Instructions Active
+                                        {/* Large Card: Terminal Content */}
+                                        {hasActiveTask && colSpan.includes("lg:col-span-2") && (
+                                            <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-6 mb-6">
+                                                <div className="flex-1 bg-black/60 rounded-2xl p-4 font-mono text-[11px] leading-relaxed border border-white/5 overflow-hidden">
+                                                    <div className="flex items-center justify-between mb-3 border-b border-white/10 pb-2">
+                                                        <span className="text-gray-500 flex items-center gap-1.5 font-bold"><span className="w-1.5 h-1.5 rounded-full bg-green-500"></span> TERMINAL LOGS</span>
+                                                        <span className="text-gray-700">v4.0.1</span>
+                                                    </div>
+                                                    <div className="space-y-1.5">
+                                                        {project.processing_logs.length > 0 ? project.processing_logs.map((log, i) => (
+                                                            <div key={i} className="text-cyan-400/80 truncate">
+                                                                <span className="text-gray-700 mr-2">[{new Date().toLocaleTimeString()}]</span>
+                                                                {log}
+                                                            </div>
+                                                        )) : (
+                                                            <div className="text-gray-700 italic">Listening for activity...</div>
+                                                        )}
+                                                        <div className="text-white animate-pulse">▋</div>
+                                                    </div>
+                                                </div>
+                                                <div className="w-full lg:w-48 flex flex-col gap-4">
+                                                    <div className="flex-1 bg-cyan-950/20 rounded-2xl p-4 border border-cyan-500/10">
+                                                        <h4 className="text-[9px] font-bold text-cyan-500 uppercase tracking-widest mb-3">System Load</h4>
+                                                        <div className="h-2 bg-gray-800 rounded-full overflow-hidden mb-2">
+                                                            <div className="h-full bg-cyan-500 w-[75%] shadow-[0_0_10px_rgba(6,182,212,0.5)]"></div>
+                                                        </div>
+                                                        <div className="text-[10px] text-gray-400">Memory usage optimal</div>
+                                                    </div>
+                                                    <div className="bg-gray-800/20 rounded-2xl p-4">
+                                                        <h4 className="text-[9px] font-bold text-gray-500 uppercase tracking-widest mb-2">Next Sync</h4>
+                                                        <div className="text-xs font-bold text-white">14:00 AM</div>
+                                                    </div>
+                                                </div>
                                             </div>
                                         )}
 
-                                        {project.members && project.members.length > 0 && (
-                                            <div className="flex flex-wrap gap-1.5 mt-3">
-                                                {project.members.map((member, idx) => (
-                                                    <span
-                                                        key={idx}
-                                                        className="px-2 py-0.5 bg-gray-800/50 border border-gray-700/50 rounded text-[8px] text-gray-400 font-bold uppercase tracking-wider"
-                                                    >
-                                                        {member}
-                                                    </span>
-                                                ))}
+                                        {/* Medium/Small Content */}
+                                        {(!hasActiveTask || !colSpan.includes("lg:col-span-2")) && (
+                                            <div className="mb-6 flex-1">
+                                                <p className="text-xs text-gray-500 line-clamp-2 leading-relaxed italic mb-4">
+                                                    {project.latest_activity || "Waiting for first interaction..."}
+                                                </p>
+                                                {hasUpcoming && (
+                                                    <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-3 flex items-center justify-between">
+                                                        <div className="flex flex-col">
+                                                            <span className="text-[8px] font-bold text-blue-400 uppercase tracking-widest">Next Task</span>
+                                                            <span className="text-[10px] font-bold text-white truncate w-32">{project.next_task?.type}</span>
+                                                        </div>
+                                                        <span className="text-[10px] font-mono text-blue-500 font-bold">{project.next_task?.at ? new Date(project.next_task.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {/* Footer Stats (Always shown but smaller in focus) */}
+                                        <div className="flex items-center justify-between mt-auto pt-4 border-t border-white/5">
+                                            <div className="flex gap-4">
+                                                <div className="flex items-center gap-1.5" title="Artifacts">
+                                                    <Folder size={12} className="text-gray-600" />
+                                                    <span className="text-xs font-bold text-gray-400">{project.artifact_count}</span>
+                                                </div>
+                                                <div className="flex items-center gap-1.5" title="References">
+                                                    <Sparkles size={12} className="text-gray-600" />
+                                                    <span className="text-xs font-bold text-gray-400">{project.ref_count}</span>
+                                                </div>
+                                            </div>
+                                            <Link href={`/projects/${project.id}`} className="p-2 bg-gray-800/40 rounded-xl text-gray-400 hover:text-cyan-400 hover:bg-cyan-500/10 transition-all">
+                                                <ExternalLink size={14} />
+                                            </Link>
+                                        </div>
+
+                                        {isMenuOpen && (
+                                            <div ref={menuRef} className="absolute right-6 top-14 w-48 bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl z-50 py-1 overflow-hidden">
+                                                <button onClick={() => startRename(project)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800">
+                                                    <Settings size={14} /> Settings
+                                                </button>
+                                                <button onClick={() => cloneProject(project.id, project.display_name || project.name)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800">
+                                                    <Copy size={14} /> Clone Project
+                                                </button>
+                                                <button onClick={() => router.push(`/projects/${project.id}`)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800">
+                                                    <Rocket size={14} /> Open Workspace
+                                                </button>
+                                                <button onClick={() => handleExportChat(project.id, project.display_name || project.name)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800">
+                                                    <Download size={14} /> Export Chat
+                                                </button>
+                                                <div className="border-t border-gray-800 mx-2 my-1"></div>
+                                                <button onClick={() => deleteProject(project.id, project.display_name || project.name)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-500 hover:bg-red-500/10 font-medium">
+                                                    <Trash2 size={14} /> Delete Project
+                                                </button>
                                             </div>
                                         )}
                                     </div>

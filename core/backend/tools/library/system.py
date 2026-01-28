@@ -265,3 +265,173 @@ class BroadcastSystemMessageTool(BaseTool):
             return {"success": True, "message": f"Broadcasted alert to {count} projects via System Alerts session."}
         except Exception as e:
             return {"success": False, "message": f"Failed to broadcast message: {e}"}
+
+class ListUserProjectsTool(BaseTool):
+    name = "list_user_projects"
+    description = "List all projects belonging to the current user, including their status and priority."
+    args_schema = NoArgs
+
+    async def run(self, **kwargs) -> Any:
+        db_session: AsyncSession = kwargs.get("db_session")
+        user_id: str = kwargs.get("user_id")
+        if not db_session or not user_id:
+            return {"success": False, "message": "Context error"}
+
+        try:
+            from models.database import Project
+            from sqlalchemy import select
+
+            result = await db_session.execute(
+                select(Project).filter(Project.user_id == user_id)
+            )
+            projects = result.scalars().all()
+
+            data = []
+            for p in projects:
+                data.append({
+                    "id": p.id,
+                    "name": p.name,
+                    "status": p.status,
+                    "priority": p.priority,
+                    "created_at": p.created_at.isoformat() if p.created_at else None
+                })
+
+            return {"success": True, "message": f"Found {len(data)} projects.", "data": {"projects": data}}
+        except Exception as e:
+            return {"success": False, "message": f"Failed to list projects: {e}"}
+
+class UpdateProjectArgs(BaseModel):
+    project_id: str = Field(..., description="The UUID of the project to update")
+    name: Optional[str] = Field(None, description="New display name for the project")
+    status: Optional[str] = Field(None, description="New status (active/paused/archived)")
+    priority: Optional[int] = Field(None, description="Priority (1-5)")
+
+class UpdateProjectTool(BaseTool):
+    name = "update_project"
+    description = "Update project metadata such as name, status, or priority."
+    args_schema = UpdateProjectArgs
+
+    async def run(self, project_id: str, **kwargs) -> Any:
+        db_session: AsyncSession = kwargs.get("db_session")
+        user_id: str = kwargs.get("user_id")
+        if not db_session or not user_id:
+            return {"success": False, "message": "Context error"}
+
+        try:
+            from models.database import Project
+            from sqlalchemy import select
+
+            result = await db_session.execute(
+                select(Project).filter(Project.id == project_id, Project.user_id == user_id)
+            )
+            project = result.scalars().first()
+
+            if not project:
+                return {"success": False, "message": f"Project {project_id} not found."}
+
+            if "name" in kwargs and kwargs["name"]:
+                project.name = kwargs["name"]
+            if "status" in kwargs and kwargs["status"]:
+                project.status = kwargs["status"]
+            if "priority" in kwargs and kwargs["priority"]:
+                project.priority = kwargs["priority"]
+
+            await db_session.commit()
+            return {"success": True, "message": f"Project '{project.name}' updated successfully."}
+        except Exception as e:
+            if db_session: await db_session.rollback()
+            return {"success": False, "message": f"Failed to update project: {e}"}
+
+class GetProjectHealthArgs(BaseModel):
+    project_id: str = Field(..., description="The UUID of the project to inspect")
+
+class GetProjectHealthTool(BaseTool):
+    name = "get_project_health"
+    description = "Analyze the health of a project by checking task status, recent messages, and resource allocation."
+    args_schema = GetProjectHealthArgs
+
+    async def run(self, project_id: str, **kwargs) -> Any:
+        db_session: AsyncSession = kwargs.get("db_session")
+        user_id: str = kwargs.get("user_id")
+        if not db_session or not user_id:
+            return {"success": False, "message": "Context error"}
+
+        try:
+            from models.database import Project, ChatMessage, ChatSession, NodeType, Node
+            from sqlalchemy import select, func
+
+            # 1. Fetch Project
+            res_p = await db_session.execute(select(Project).filter(Project.id == project_id, Project.user_id == user_id))
+            project = res_p.scalars().first()
+            if not project:
+                return {"success": False, "message": "Project not found."}
+
+            # 2. Basic Stats
+            # Count active nodes
+            res_n = await db_session.execute(select(func.count(Node.id)).filter(Node.project_id == project_id, Node.status == "active"))
+            node_count = res_n.scalar() or 0
+
+            # Count recent messages (last 24h - simplified as just 'recent count' for this MVP tool)
+            # In a real system, we'd use intervals. Let's just count total messages for now as a health proxy.
+            res_m = await db_session.execute(
+                select(func.count(ChatMessage.id))
+                .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+                .filter(ChatSession.project_id == project_id)
+            )
+            msg_count = res_m.scalar() or 0
+
+            # 3. LBS Health (Integration check)
+            # Fetch tasks if lbs service is connected
+            from integrations.lbs.client import LBSClient
+            lbs_health = "unknown"
+            task_stats = {}
+            try:
+                client = LBSClient(user_id=user_id, db_session=db_session)
+                tasks = await client.get_tasks()
+                if isinstance(tasks, list):
+                    lbs_health = "healthy"
+                    task_stats = {
+                        "total": len(tasks),
+                        "completed": len([t for t in tasks if t.get("status") == "completed"]),
+                        "planned": len([t for t in tasks if t.get("status") == "planned"])
+                    }
+            except Exception:
+                lbs_health = "unavailable"
+
+            # 4. Synthesize Summary
+            health_score = 100
+            issues = []
+            if node_count == 0:
+                health_score -= 20
+                issues.append("No active specialist nodes configured.")
+            if lbs_health == "unavailable":
+                health_score -= 10
+                issues.append("LBS integration is disconnected.")
+            
+            summary = (
+                f"Project Health Analysis for '{project.name}':\n"
+                f"- Overall Score: {health_score}/100\n"
+                f"- Active Nodes: {node_count}\n"
+                f"- Activity Level: {msg_count} messages logged\n"
+                f"- LBS Status: {lbs_health}\n"
+            )
+            if task_stats:
+                summary += f"- Task Progress: {task_stats['completed']}/{task_stats['total']} completed\n"
+            
+            if issues:
+                summary += "\nAlerts:\n" + "\n".join([f"- {i}" for i in issues])
+
+            return {
+                "success": True,
+                "message": summary,
+                "data": {
+                    "health_score": health_score,
+                    "node_count": node_count,
+                    "msg_count": msg_count,
+                    "lbs_status": lbs_health,
+                    "task_stats": task_stats,
+                    "issues": issues
+                }
+            }
+        except Exception as e:
+            return {"success": False, "message": f"Failed to analyze health: {e}"}

@@ -27,10 +27,15 @@ class RecursiveWriterTool(BaseTool):
         user_id: str = kwargs.get("user_id")
         project_id: str = kwargs.get("project_id")
         api_key: str = kwargs.get("api_key")
+        db_session = kwargs.get("db_session")
         
         if not user_id or not project_id:
             return {"success": False, "message": "Context error: Missing user_id or project_id"}
             
+        if not api_key and db_session:
+            from tools.utils import get_user_api_key
+            api_key = await get_user_api_key(user_id, db_session)
+
         self.llm = get_provider(api_key=api_key)
         
         # 1. Resolve Target Path
