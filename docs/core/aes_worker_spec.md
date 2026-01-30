@@ -42,11 +42,12 @@ The Worker is a continuous loop that polls the queue.
 | **Processor** | Executes the logic. For AES tasks, it routes to `aes_system_handlers.py`. |
 | **Error Handling** | If a task fails, the Worker logs the error (as seen in your logs) and marks the job as failed, but the AES schedule remains active for the *next* run.
 
-## 4. Why the Error Occurred?
-The logs showed:
-`AttributeError: 'dict' object has no attribute 'role'`
+## 5. System Task Types (AES)
 
-- **Context**: The Worker successfully picked up the AES task (`SYSTEM_SKILL_MINING`).
-- **Execution**: It called `SkillMiningService.generate_draft_skill`.
-- **Failure**: The LLM provider expected an object with `.role` (standard VisionArk Message object) but received a raw `dict` from the new code.
-- **Status**: **Fixed**. We updated `skill_mining.py` to wrap the dictionary in a `SimpleMessage` object, ensuring compatibility without changing the core LLM provider.
+| Task Type | Trigger | Purpose |
+|-----------|---------|---------|
+| `SYSTEM_SKILL_MINING` | Post-Interaction (Conservative) | Analyzes recent chat messages to extract repeatable agent skills. |
+| `SYSTEM_SYNC_ROUTER` | Daily / Manual | Synchronizes Router Hooks from the database to the in-memory cache. |
+
+---
+*Last Updated: 2026-01-29*

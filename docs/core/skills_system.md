@@ -101,3 +101,22 @@ core/backend/
 │   ├── skill_service.py # Logic for prompt injection
 │   └── skill_mining.py  # Logic for dynamic learning
 ```
+
+## 6. Dynamic Knowledge Acquisition (Skill Mining)
+
+VisionArk includes a dynamic learning mechanism located in `skill_mining.py` that automatically extracts new skills from high-value user interactions.
+
+### Mining Logic & Safeguards
+To ensure high-quality skill generation and system stability, mining is governed by the following rules:
+
+1. **Conservative Triggering (AES)**: Skill mining is not performed in real-time. Instead, it is enqueued as a `SYSTEM_SKILL_MINING` task in the **Automated Execution System (AES)**.
+2. **Complexity Heuristics**: A skill is only drafted if the interaction meets complexity criteria:
+    - **Multiple Tool Types**: Uses at least 2 distinct types of tools.
+    - **Procedure Depth**: Involves at least 3 total tool calls.
+3. **Project-based Throttling**: To prevent queue pressure, mining for a specific project is restricted to **once every 10 minutes**. This status is tracked in the project's hidden `.visionark/mining_state.json` file.
+4. **Deduplication**: Before saving a new draft, the system checks for existing skills with the same name to avoid redundancy.
+
+### Lifecycle of a Mined Skill
+1. **Extraction**: The `SkillMiningService` uses an LLM (Gemini) to distill the "Procedural DNA" from the last 10 messages of an interaction.
+2. **Drafting**: The extracted skill is saved to the database with `is_draft=True`.
+3. **Review**: Users can see mined drafts in the Skills UI, where they can refine, approve (activate), or discard them.

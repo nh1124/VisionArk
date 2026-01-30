@@ -423,6 +423,33 @@ graph TD
   * **Local Refs:** そのプロジェクト固有の参考文献。Project Nodeには共有されない膨大なPDF（論文）、データセット、コードベースなどが含まれる。RAG（Retrieval-Augmented Generation）の検索対象となる。  
   * **Artifacts:** 生成された成果物（ドラフト、コード、図表）。
 
+### **LLM 推論アーキテクチャ (LLM Reasoning Architecture)**
+
+VisionArkのLLM実行は、責務の漏洩（Responsibility Leakage）を防ぎ、複数プロバイダーの共通利用を可能にするため、「コネクタ」と「推論エンジン」に分離されている。
+
+#### **1. LLM コネクタ (Providers)**
+* **役割**: 各LLM API（Gemini, OpenAI等）との低レイヤー通信。
+* **特性**: 無状態（Stateless）かつ単発（Single-turn）。
+* **責務**: メッセージの変換、APIコールの実行、および「思考の意図（Content/Tool Calls）」の返却に限定される。
+
+#### **2. 推論エンジン (Reasoning Engine)**
+* **役割**: 自律的なツール実行を伴う多段階推論の制御。
+* **特性**: 有状態（Stateful）な実行ループの管理。
+* **責務**:
+    * `while` ループによるツール実行の連鎖（Multi-turn Reasoning）。
+    * 実際のPython関数の実行。
+    * プログラム停止・キャンセルなどのランタイム制御。
+    * ユーザーへの実行ステータス通知。
+
+```mermaid
+graph LR
+    Node[BaseNode] --> Engine[Reasoning Engine]
+    Engine --> Provider[Cloud LLM Provider]
+    Engine --> Tool[Tool Execution]
+```
+
+詳細は `docs/core/llm_reasoning_architecture.md` を参照。
+
 ## **データの流れと制御フロー (Data Flow & Control Logic)**
 
 ### **制御フロー（最小要件）**

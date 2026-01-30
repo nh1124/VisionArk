@@ -1,0 +1,67 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "VisionArk Project Rules",
+    "description": "Configuration for project-specific file management and organization rules.",
+    "type": "object",
+    "properties": {
+        "naming_convention": {
+            "description": "Preferred naming convention for new files.",
+            "type": "string",
+            "enum": [
+                "snake_case",
+                "PascalCase",
+                "camelCase",
+                "kebab-case",
+                "none"
+            ],
+            "default": "snake_case"
+        },
+        "required_metadata": {
+            "description": "List of metadata fields required in markdown headers.",
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "default": [
+                "title",
+                "date",
+                "status"
+            ]
+        },
+        "directory_structure": {
+            "description": "Mapping of subdirectories to their intended purpose.",
+            "type": "object",
+            "additionalProperties": {
+                "type": "string"
+            },
+            "default": {
+                "docs/plans": "Implementation plans and strategy documents",
+                "docs/reports": "Research findings and analysis reports",
+                "docs/specs": "Functional and technical specifications",
+                "docs/archive": "Obsolete or historical files"
+            }
+        },
+        "auto_archive_days": {
+            "description": "Number of days before completed/obsolete files are moved to archive.",
+            "type": "integer",
+            "minimum": 0,
+            "default": 30
+        },
+        "allowed_extensions": {
+            "description": "List of allowed file extensions for this project.",
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "default": [
+                ".md",
+                ".json",
+                ".py",
+                ".js",
+                ".png",
+                ".jpg"
+            ]
+        }
+    },
+    "additionalProperties": true
+}

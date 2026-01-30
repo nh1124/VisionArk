@@ -19,3 +19,4 @@ markdown
 python-jose[cryptography]
 google-genai
 bcrypt
+jsonschema

@@ -1,0 +1,61 @@
+ M core/backend/api/agents.py
+ M core/backend/api/decomposer.py
+ M core/backend/api/files.py
+ M core/backend/api/skills.py
+ M core/backend/assets/prompts/components/formatting.md
+ M core/backend/assets/prompts/roles/project.md
+ M core/backend/assets/prompts/roles/ruler.md
+ D core/backend/llm/README.md
+ M core/backend/llm/base_provider.py
+ M core/backend/llm/gemini_provider.py
+ M core/backend/llm/openai_provider.py
+ M core/backend/main.py
+ M core/backend/models/database.py
+ M core/backend/models/message.py
+ M core/backend/nodes/base_node.py
+ M core/backend/nodes/members/ruler.py
+ M core/backend/nodes/project/project_node.py
+ M core/backend/nodes/system/memory_node.py
+ M core/backend/nodes/system/project_creator_node.py
+ M core/backend/requirements.txt
+ M core/backend/services/aes_system_handlers.py
+ M core/backend/services/file_service.py
+ M core/backend/services/skill_mining.py
+ M core/backend/tools/__init__.py
+ M core/backend/utils/paths.py
+ M core/backend/worker.py
+ M core/frontend/app/projects/[projectId]/page.tsx
+ M core/frontend/app/projects/[projectId]/settings/page.tsx
+ M core/frontend/app/skills/page.tsx
+ M core/frontend/components/FilesSidebar.tsx
+ M core/frontend/components/MarkdownRenderer.tsx
+ M core/frontend/components/Mermaid.tsx
+ M core/frontend/components/MessageWithAttachments.tsx
+ M core/frontend/components/Sidebar.tsx
+ D "docs/Agent Skills.md"
+ D "docs/External System.md"
+ D "docs/Vision Ark System Design.md"
+ D docs/node_prompt_summarization.md
+ D docs/reports/aes_worker_spec.md
+ D docs/reports/agent_skills_investigation.md
+ D docs/reports/agent_skills_spec_v1.md
+ D docs/reports/dynamic_skill_acquisition_spec.md
+ D docs/reports/skill_dynamic_learning_roadmap.md
+ D docs/tool_path_conventions.md
+ D infra/backend_logs.txt
+?? core/backend/api/notes.py
+?? core/backend/assets/schemas/
+?? core/backend/llm/reasoning_engine.py
+?? core/backend/services/note_service.py
+?? core/backend/tools/library/governance.py
+?? core/backend/tools/library/notes.py
+?? core/frontend/app/notes/
+?? core/frontend/components/AudioRecorder.tsx
+?? core/frontend/components/ProjectNotes.tsx
+?? core/frontend/store/useNoteStore.ts
+?? docs/README.md
+?? docs/core/
+?? docs/features/notes_feature.md
+?? docs/report/
+?? docs/reports/archive/
+?? git_status_output.txt

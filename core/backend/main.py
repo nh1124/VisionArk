@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from models.database import init_database
-from api import agents, commands, rag, context, files, auth, settings as settings_api, export
+from api import agents, commands, rag, context, files, auth, settings as settings_api, export, notes
 from api import decomposer, suggestions, scheduler, approvals, automation, skills
 from va_sdk.discovery import include_integration_routers
 
@@ -84,6 +84,7 @@ app.include_router(scheduler.router)
 app.include_router(approvals.router)
 app.include_router(automation.router)
 app.include_router(skills.router)
+app.include_router(notes.router)
 
 
 @app.get("/")
