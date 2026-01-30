@@ -68,6 +68,14 @@ class ApprovalStatus(str, Enum):
     FAILED = "failed"
 
 
+class NotificationType(str, Enum):
+    """Types of user notifications"""
+    INFO = "info"
+    SUCCESS = "success"
+    WARNING = "warning"
+    ERROR = "error"
+
+
 class TaskType(str, Enum):
     """Types of asynchronous tasks in the queue"""
     USER_MESSAGE = "user_message"
@@ -120,6 +128,23 @@ class ApprovalRequest(Base):
     user = relationship("User")
 
 
+class Notification(Base):
+    """User notifications across the system"""
+    __tablename__ = "notifications"
+
+    id = Column(String(36), primary_key=True)               # UUID
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
+    type = Column(String(20), default="info")               # From NotificationType
+    title = Column(String(255), nullable=False)
+    content = Column(Text, nullable=False)
+    link = Column(String(255), nullable=True)               # Optional link to related entity
+    is_read = Column(Boolean, default=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    # Relationships
+    user = relationship("User")
+    project = relationship("Project")
 
 
 class User(Base):

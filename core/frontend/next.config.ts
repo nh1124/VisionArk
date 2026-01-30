@@ -8,14 +8,6 @@ const nextConfig = {
       bodySizeLimit: '100mb',
     },
     proxyTimeout: 300000, // 5 minutes (in ms)
-    allowedDevOrigins: [
-      'visionark.jp',
-      '*.visionark.jp',
-      'localhost:3000',
-      'localhost:3001',
-      'localhost',
-      '127.0.0.1'
-    ],
   },
   // Server external packages for proper proxying
   serverExternalPackages: [],

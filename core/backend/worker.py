@@ -223,11 +223,48 @@ class Worker:
             if session_id:
                 from services.callback_service import CallbackService
                 await CallbackService.notify_node_completion(db_session, session_id, node_record.display_name, result, task_id=task_id)
+            
+            # Emit Real-time UI Notification
+            try:
+                from services.notification_service import NotificationService
+                from models.database import NotificationType
+                notif_service = NotificationService(db_session)
+                user_id = context.get("user_id")
+                if user_id:
+                    await notif_service.create_notification(
+                        user_id=user_id,
+                        title=f"Agent Work Completed",
+                        content=f"{node_record.display_name} has finished background processing.",
+                        type=NotificationType.SUCCESS,
+                        project_id=context.get("project_id"),
+                        link=f"/projects/{context.get('project_id')}" if context.get("project_id") else None
+                    )
+            except Exception as ne:
+                print(f"⚠️ [Worker] Real-time notification failed: {ne}")
+
             self.manager.update_status(task_id, "completed", result)
         except Exception as exc:
             if session_id:
                 from services.callback_service import CallbackService
                 await CallbackService.notify_node_failure(db_session, session_id, node_record.display_name, str(exc), task_id=task_id)
+            
+            # Emit Real-time UI Notification (Failure)
+            try:
+                from services.notification_service import NotificationService
+                from models.database import NotificationType
+                notif_service = NotificationService(db_session)
+                user_id = context.get("user_id")
+                if user_id:
+                    await notif_service.create_notification(
+                        user_id=user_id,
+                        title=f"Agent Work Failed",
+                        content=f"{node_record.display_name} encountered an error during background work.",
+                        type=NotificationType.ERROR,
+                        project_id=context.get("project_id")
+                    )
+            except Exception as ne:
+                 print(f"⚠️ [Worker] Real-time failure notification failed: {ne}")
+
             raise exc
 
     async def _handle_ai_routing_task(self, message: str, context: dict, db_session):

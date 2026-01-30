@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import MobileSidebar from "./MobileSidebar";
+import { NotificationBell } from "../NotificationBell";
 
 interface MobileLayoutProps {
     children: React.ReactNode;
@@ -43,6 +44,7 @@ export default function MobileLayout({ children }: MobileLayoutProps) {
                 </div>
 
                 <div className="flex items-center gap-2">
+                    <NotificationBell />
                     <button
                         onClick={() => setIsSidebarOpen(true)}
                         className="p-2 text-gray-400 hover:text-white transition-colors"

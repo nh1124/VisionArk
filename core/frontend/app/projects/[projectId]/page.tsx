@@ -20,6 +20,7 @@ import ScheduleMessageModal from "@/components/automation/ScheduleMessageModal";
 import AutomationTab from "@/components/automation/AutomationTab";
 import ProjectNotes from "@/components/ProjectNotes";
 import { StickyNote } from "lucide-react";
+import { NotificationBell } from "@/components/NotificationBell";
 
 interface MessageAttachment {
     name: string;
@@ -799,6 +800,7 @@ export default function ProjectChatPage({
                         {displayName}
                     </h1>
                     <div className="flex gap-2 items-center">
+                        <NotificationBell />
                         <Link href={`/projects/${projectId}/settings`}
                             className="p-2 text-gray-500 hover:text-white transition-colors"
                             title="Project Settings"
