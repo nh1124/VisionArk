@@ -24,7 +24,8 @@ class MemoryNode(BaseNode):
             
         from models.database import get_async_engine, get_async_session_maker, ChatMessage
         from sqlalchemy import select
-        from models.message import Message, MessageRole, AttachedFile
+        from sqlalchemy.orm import selectinload
+        from models.message import Message, MessageRole, AttachedFile, ToolCall
         from datetime import datetime
         
         history = []
@@ -33,9 +34,10 @@ class MemoryNode(BaseNode):
         
         async with async_session() as db:
             result = await db.execute(
-                select(ChatMessage).filter(
-                    ChatMessage.session_id == session_id
-                ).order_by(ChatMessage.created_at.asc())
+                select(ChatMessage)
+                .options(selectinload(ChatMessage.tool_usages))
+                .filter(ChatMessage.session_id == session_id)
+                .order_by(ChatMessage.created_at.asc())
             )
             db_messages = result.scalars().all()
             
@@ -44,6 +46,18 @@ class MemoryNode(BaseNode):
                     files = []
                     if db_msg.meta_payload and isinstance(db_msg.meta_payload, dict) and "attached_files" in db_msg.meta_payload:
                         files = [AttachedFile.from_dict(f) for f in db_msg.meta_payload["attached_files"] if isinstance(f, dict)]
+                    
+                    # Structured Tool Calls
+                    tool_calls = []
+                    if db_msg.tool_usages:
+                        for tu in db_msg.tool_usages:
+                            tool_calls.append(ToolCall(
+                                name=tu.name,
+                                args=tu.arguments or {},
+                                call_id=tu.call_id,
+                                result=tu.result,
+                                is_success=tu.is_success
+                            ))
                     
                     role_val = db_msg.role.lower() if db_msg.role else "user"
                     try:
@@ -56,8 +70,10 @@ class MemoryNode(BaseNode):
                         content=db_msg.content or "",
                         timestamp=db_msg.created_at or datetime.now(),
                         attached_files=files,
+                        tool_calls=tool_calls,
                         meta_info=db_msg.meta_payload.get("meta_info") if (db_msg.meta_payload and isinstance(db_msg.meta_payload, dict)) else None
                     )
+
                     history.append(msg)
                 except Exception as e:
                     print(f"[MemoryNode] Error loading message {db_msg.id}: {e}")
@@ -87,11 +103,13 @@ class MemoryNode(BaseNode):
                     "meta_info": msg.meta_info
                 }
                 
-                if msg.meta_info and isinstance(msg.meta_info, dict) and "tool_calls" in msg.meta_info:
-                    meta_payload["tool_calls"] = msg.meta_info["tool_calls"]
+                # Keep compatibility: if structured tool_calls exist, also mirror to meta_payload
+                if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                    meta_payload["tool_calls"] = [tc.to_dict() for tc in msg.tool_calls]
                 
+                message_id = str(uuid4())
                 db_msg = ChatMessage(
-                    id=str(uuid4()),
+                    id=message_id,
                     session_id=session_id,
                     role=msg.role.value,
                     content=msg.content or "",
@@ -99,6 +117,21 @@ class MemoryNode(BaseNode):
                     created_at=msg.timestamp
                 )
                 db.add(db_msg)
+                
+                # Save structured ToolUsages
+                from models.database import ToolUsage
+                if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        db_tu = ToolUsage(
+                            id=str(uuid4()),
+                            message_id=message_id,
+                            call_id=tc.call_id,
+                            name=tc.name,
+                            arguments=tc.args,
+                            result=tc.result,
+                            is_success=tc.is_success
+                        )
+                        db.add(db_tu)
                 
                 # Ingest Messages to Knowledge Core
                 if msg.content:

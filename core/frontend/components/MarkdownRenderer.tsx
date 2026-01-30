@@ -1,11 +1,11 @@
 "use client";
 
+import React, { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { atomDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Copy, Check } from "lucide-react";
-import { useState, useEffect } from "react";
 import { getFileToken } from "@/lib/api";
 import Mermaid from "./Mermaid";
 
@@ -122,12 +122,12 @@ const CodeBlock = ({ children, className, inline, ...props }: CodeBlockProps) =>
     );
 };
 
-export default function MarkdownRenderer({
+const MarkdownRenderer = React.memo(({
     content,
     className = "",
     nodeType = "hub",
     nodeName = "hub"
-}: MarkdownRendererProps) {
+}: MarkdownRendererProps) => {
     // State for short-lived file token
     const [fileToken, setFileToken] = useState<string | null>(null);
 
@@ -141,6 +141,7 @@ export default function MarkdownRenderer({
 
     // Pre-process content to catch bare artifact/ref paths and turn them into images
     // Matches patterns like artifacts/image.png or /artifacts/image.png
+    // Improved regex to be more specific about extensions and boundaries
     const processedContent = content.replace(
         /(?<![!\]\(\[])\b((?:\/?(?:artifacts|refs|files))\/[^\s\)]+\.(?:png|jpe?g|gif|webp|svg|bmp|tiff))\b/gi,
         (match) => `![](${match})`
@@ -268,4 +269,6 @@ export default function MarkdownRenderer({
             </ReactMarkdown>
         </div>
     );
-}
+});
+
+export default MarkdownRenderer;

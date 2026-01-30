@@ -13,6 +13,31 @@ class SkillUpdate(BaseModel):
     content: str
     is_active: bool
 
+class BatchActionRequest(BaseModel):
+    skill_ids: List[str]
+
+@router.post("/batch/approve")
+async def batch_approve_skills(request: BatchActionRequest, db: AsyncSession = Depends(get_async_db)):
+    """Batch approve multiple skills."""
+    from sqlalchemy import update
+    stmt = (
+        update(Skill)
+        .where(Skill.id.in_(request.skill_ids))
+        .values(is_active=True, is_draft=False)
+    )
+    await db.execute(stmt)
+    await db.commit()
+    return {"status": "success", "count": len(request.skill_ids)}
+
+@router.post("/batch/discard")
+async def batch_discard_skills(request: BatchActionRequest, db: AsyncSession = Depends(get_async_db)):
+    """Batch discard (delete) multiple skills."""
+    from sqlalchemy import delete
+    stmt = delete(Skill).where(Skill.id.in_(request.skill_ids))
+    await db.execute(stmt)
+    await db.commit()
+    return {"status": "success", "count": len(request.skill_ids)}
+
 @router.get("")
 async def list_skills(db: AsyncSession = Depends(get_async_db)):
     res = await db.execute(select(Skill).order_by(Skill.created_at.desc()))
@@ -80,44 +105,4 @@ async def update_node_skills(node_id: str, skill_ids: List[str], db: AsyncSessio
     await db.commit()
     return {"status": "success", "assigned_count": len(skill_ids)}
 
-# --- Project-Aware Skill Endpoints ---
 
-@router.get("/project/{project_id}")
-async def list_project_skills(project_id: str, db: AsyncSession = Depends(get_async_db)):
-    """List skills assigned to the main orchestrator agent of a project."""
-    # Resolve project_id to its main PROJECT node
-    stmt_node = select(Node.id).filter(Node.project_id == project_id, Node.node_type == "PROJECT")
-    res_node = await db.execute(stmt_node)
-    actual_node_id = res_node.scalar()
-
-    if not actual_node_id:
-        return []
-
-    stmt = select(Skill).join(NodeSkill).filter(NodeSkill.node_id == actual_node_id)
-    res = await db.execute(stmt)
-    return res.scalars().all()
-
-@router.put("/project/{project_id}")
-async def update_project_skills(project_id: str, skill_ids: List[str], db: AsyncSession = Depends(get_async_db)):
-    """Batch update skills for the main orchestrator agent of a project."""
-    # Resolve project_id to its main PROJECT node
-    stmt_node = select(Node.id).filter(Node.project_id == project_id, Node.node_type == "PROJECT")
-    res_node = await db.execute(stmt_node)
-    actual_node_id = res_node.scalar()
-
-    if not actual_node_id:
-        raise HTTPException(status_code=404, detail="Project or Orchestrator Node not found")
-        
-    # Remove existing associations
-    await db.execute(delete(NodeSkill).where(NodeSkill.node_id == actual_node_id))
-    
-    # Add new associations
-    for sid in skill_ids:
-        # Verify skill exists
-        skill = await db.get(Skill, sid)
-        if skill:
-            new_assoc = NodeSkill(node_id=actual_node_id, skill_id=sid)
-            db.add(new_assoc)
-            
-    await db.commit()
-    return {"status": "success", "assigned_count": len(skill_ids)}

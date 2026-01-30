@@ -7,8 +7,9 @@ from typing import List, Optional, Any, Dict
 import asyncio
 import inspect
 import json
-from .base_provider import BaseLLMProvider, Message, CompletionResponse
+from .base_provider import BaseLLMProvider, CompletionResponse
 from config import settings
+from models.message import MessageRole, Message, ToolCall
 
 
 import logging
@@ -29,52 +30,12 @@ class GeminiProvider(BaseLLMProvider):
         self.client = Client(api_key=self.api_key, http_options={'api_version': 'v1alpha', 'timeout': 600000})
         self.tools = []  # Store tools for function calling
     
-    def set_tools(self, tools: List[Any]):
-        """Set tools for function calling (supports LangChain tools or dict definitions)"""
-        self.tools = tools
-        self._tool_definitions = None  # Will be converted lazily
-    
+
     def set_tool_definitions(self, definitions: List[Dict], tool_functions: Dict = None):
         """Set tool definitions directly (dict format) with optional function map"""
         self._tool_definitions = definitions
         self._tool_functions = tool_functions or {}
-        self.tools = []  # Clear LangChain tools
-    
-    def _convert_langchain_tools_to_gemini(self, tools: List[Any]) -> List[Dict]:
-        """Convert LangChain tools to Gemini function declarations"""
-        gemini_tools = []
-        
-        for tool in tools:
-            # Get the Pydantic schema from the tool
-            schema = tool.args_schema.schema() if hasattr(tool, 'args_schema') and tool.args_schema else {}
-            
-            # Convert properties to Gemini format
-            # Gemini expects just properties and required, not a full JSON schema
-            gemini_params = {}
-            
-            if 'properties' in schema:
-                # Convert each property
-                for prop_name, prop_schema in schema['properties'].items():
-                    gemini_prop = {
-                        "type_": prop_schema.get("type", "string").upper(),  # STRING, NUMBER, etc.
-                        "description": prop_schema.get("description", "")
-                    }
-                    gemini_params[prop_name] = gemini_prop
-            
-            function_declaration = {
-                "name": tool.name,
-                "description": tool.description or "",
-                "parameters": {
-                    "type_": "OBJECT",
-                    "properties": gemini_params,
-                    "required": schema.get("required", [])
-                }
-            }
-            
-            gemini_tools.append(function_declaration)
-        
-        return gemini_tools
-    
+
     def _convert_schema(self, prop_schema: Dict) -> types.Schema:
         """Recursively convert JSON schema to Gemini Schema"""
         prop_type = prop_schema.get("type", "string").upper()
@@ -124,44 +85,76 @@ class GeminiProvider(BaseLLMProvider):
         
         return [types.Tool(function_declarations=function_declarations)]
     
-    async def complete_async(
-        self,
-        messages: List[Message],
-        temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
-        preferred_model: Optional[str] = None,
-        attached_files: List = None,
-        tool_definitions: List = None,
-        tool_functions: dict = None,
-        task_id: Optional[str] = None,
-        **kwargs
-    ) -> CompletionResponse:
-        """Asynchronously generate completion using Gemini with optional function calling"""
-        model_name = preferred_model or self.model_name
-        
-        # 1. Convert history to Gemini parts, separating system instruction
+    def _prepare_history(
+        self, 
+        messages: List[Message], 
+        system_instruction: Optional[str] = None,
+        attached_files: List = None
+    ) -> tuple[List[types.Content], Optional[types.Content]]:
+        """
+        Converts a list of Message objects into Gemini Native Content objects.
+        """
         history = []
-        system_instructions = []
+        
+        # 1. Process System Instruction
+        instruction_content = None
+        if system_instruction:
+            instruction_content = types.Content(parts=[types.Part.from_text(text=system_instruction)])
+        
         for m in messages:
             role_val = getattr(m.role, "value", m.role)
-            if role_val == "system":
-                system_instructions.append(m.content)
+            if role_val == MessageRole.SYSTEM.value:
+                # If a SYSTEM message is found in history, we still respect it but warn
+                logger.warning("[Gemini] Found SYSTEM message in conversational history. Consider using system_instruction parameter.")
+                if not instruction_content:
+                    instruction_content = types.Content(parts=[types.Part.from_text(text=m.content)])
+                else:
+                    # Append to existing
+                    instruction_content.parts.append(types.Part.from_text(text=f"\n\n{m.content}"))
+            elif role_val == MessageRole.USER.value:
+                role = "user"
+                parts = []
+                if m.content:
+                    parts.append(types.Part.from_text(text=m.content))
+                history.append(types.Content(role=role, parts=parts))
+            elif role_val == MessageRole.ASSISTANT.value:
+                # 1. Add model turn (Thoughts + Intents)
+                model_parts = []
+                if m.content:
+                    model_parts.append(types.Part.from_text(text=m.content))
+                
+                if m.tool_calls:
+                    for tc in m.tool_calls:
+                        model_parts.append(types.Part.from_function_call(
+                            name=tc.name,
+                            args=tc.args or {}
+                        ))
+                
+                history.append(types.Content(role="model", parts=model_parts))
+                
+                # 2. Add tool turn (Results) - ONLY if results exist
+                if m.tool_calls:
+                    tool_parts = []
+                    for tc in m.tool_calls:
+                        if tc.result is not None:
+                            tool_parts.append(types.Part.from_function_response(
+                                name=tc.name,
+                                response={'result': tc.result}
+                            ))
+                    
+                    if tool_parts:
+                        history.append(types.Content(role="tool", parts=tool_parts))
             else:
-                role = "user" if role_val == "user" else "model"
-                history.append(types.Content(role=role, parts=[types.Part.from_text(text=m.content)]))
+                logger.warning(f"Unknown message role: {m.role}")
         
-        system_instruction = None
-        if system_instructions:
-            system_instruction = types.Content(
-                role="system",
-                parts=[types.Part.from_text(text="\n\n".join(system_instructions))]
-            )
-        
-        # 2. Add current multimodal parts if any
+        # Add current multimodal parts to the LAST user message
         if attached_files:
             if history and history[-1].role == "user":
                 for attached_file in attached_files:
                     if hasattr(attached_file, 'gemini_file_uri') and attached_file.gemini_file_uri:
+                        # Gemini DOES NOT support application/octet-stream for multimodal parts
+                        if attached_file.file_type == "application/octet-stream":
+                            continue
                         try:
                             file_part = types.Part.from_uri(
                                 file_uri=attached_file.gemini_file_uri,
@@ -170,8 +163,34 @@ class GeminiProvider(BaseLLMProvider):
                             history[-1].parts.insert(0, file_part)
                         except Exception as e:
                             logger.error(f"[Gemini] Failed to add file part: {e}")
+
+        system_instruction_content = None
+        if system_instruction:
+            system_instruction_content = types.Content(
+                role="system",
+                parts=[types.Part.from_text(text=system_instruction)]
+            )
+            
+        return history, system_instruction_content
+
+
+    async def complete_async(
+        self,
+        messages: List[Message],
+        system_instruction: Optional[str] = None,
+        temperature: float = 0.2,
+        max_tokens: Optional[int] = None,
+        preferred_model: Optional[str] = None,
+        attached_files: List = None,
+        tool_definitions: List = None,
+        **kwargs
+    ) -> CompletionResponse:
+        """Asynchronously generate a single completion turn using Gemini."""
+        model_name = preferred_model or self.model_name
         
-        active_tool_functions = tool_functions or getattr(self, '_tool_functions', {})
+        # 1. Prepare History & Config
+        history, system_instruction_content = self._prepare_history(messages, system_instruction, attached_files)
+        
         if tool_definitions:
             tools_for_model = self._convert_dict_tools_to_gemini(tool_definitions)
         elif hasattr(self, '_tool_definitions') and self._tool_definitions:
@@ -179,14 +198,11 @@ class GeminiProvider(BaseLLMProvider):
         else:
             tools_for_model = []
         
-        tool_count = len(tools_for_model[0].function_declarations) if tools_for_model and hasattr(tools_for_model[0], 'function_declarations') else 0
-        print(f"🛠️ [Gemini] Model initialized with {tool_count} tools.")
-        
         generation_config = types.GenerateContentConfig(
             temperature=temperature,
             max_output_tokens=max_tokens,
             tools=tools_for_model if tools_for_model else None,
-            system_instruction=system_instruction
+            system_instruction=system_instruction_content
         )
         
         if tools_for_model and hasattr(tools_for_model[0], 'function_declarations') and tools_for_model[0].function_declarations:
@@ -194,229 +210,71 @@ class GeminiProvider(BaseLLMProvider):
                 function_calling_config=types.FunctionCallingConfig(mode="AUTO")
             )
 
-        # history is already initialized
-
-        turn_count = 0
-        max_turns = settings.max_tool_turns
-        accumulated_tool_results = []
+        # 2. Single Turn API Call
+        try:
+            response = await self.client.aio.models.generate_content(
+                model=model_name,
+                contents=history,
+                config=generation_config
+            )
+        except Exception as e:
+            logger.error(f"[Gemini] Async Generation error: {e}")
+            raise
         
-        while max_turns is None or turn_count < max_turns:
-            # Check for cancellation before each turn
-            if task_id:
-                from queue_system.manager import QueueManager
-                manager = QueueManager()
-                status_data = manager.get_status(task_id)
-                if status_data and status_data.get("status") == "cancelled":
-                    print(f"🛑 [Gemini] Task {task_id} cancelled by user. Interrupting.")
-                    return CompletionResponse(
-                        content="Task stopped by user.",
-                        model=model_name,
-                        usage=None,
-                        metadata={"cancelled": True},
-                        tool_calls=accumulated_tool_results if accumulated_tool_results else None
-                    )
+        if not response.candidates or not response.candidates[0].content.parts:
+            return CompletionResponse(content="", model=model_name, usage=None)
+            
+        model_content = response.candidates[0].content
+        function_calls = [p.function_call for p in model_content.parts if p.function_call]
+        text_parts = [p.text for p in model_content.parts if p.text]
+        combined_text = "".join(text_parts).strip()
 
-            turn_count += 1
-            turn_start_time = asyncio.get_event_loop().time()
-            print(f"🔄 [Gemini] Entering Turn {turn_count} (Max: {max_turns})...")
-            try:
-                # USE AWAIT and aio client!
-                response = await self.client.aio.models.generate_content(
-                    model=model_name,
-                    contents=history,
-                    config=generation_config
-                )
-                turn_elapsed = asyncio.get_event_loop().time() - turn_start_time
-                print(f"⏱️ [Gemini] Turn {turn_count} LLM response received in {turn_elapsed:.2f}s")
-            except Exception as e:
-                logger.error(f"[Gemini] Async Generation error: {e}")
-                if accumulated_tool_results:
-                    return CompletionResponse(
-                        content=f"Error during continuation: {str(e)}",
-                        model=model_name,
-                        usage=None,
-                        tool_calls=accumulated_tool_results
-                    )
-                raise
-            
-            if not response.candidates or not response.candidates[0].content.parts:
-                break
-                
-            model_content = response.candidates[0].content
-            history.append(model_content)
-            
-            function_calls = [p.function_call for p in model_content.parts if p.function_call]
-            print(f"🔍 [Gemini] Turn {turn_count}: LLM requested {len(function_calls)} tool calls.")
-            logger.info(f"[Gemini] Turn {turn_count}: Found {len(function_calls)} function calls in response. Parts: {[type(p).__name__ for p in model_content.parts]}")
-            
-            if not function_calls:
-                # Final text response
-                final_text = self._extract_response_content(response)
-                usage = None
-                if response.usage_metadata:
-                    usage = {
-                        "prompt_tokens": response.usage_metadata.prompt_token_count,
-                        "candidates_tokens": response.usage_metadata.candidates_token_count,
-                        "total_tokens": response.usage_metadata.total_token_count
-                    }
+        # Construct ToolCall objects from intents
+        intents = []
+        for fc in function_calls:
+            intents.append(ToolCall(name=fc.name, args=fc.args or {}))
 
-                return CompletionResponse(
-                    content=final_text,
-                    model=model_name,
-                    usage=usage,
-                    tool_calls=accumulated_tool_results if accumulated_tool_results else None
-                )
-            
-            # Execute tool calls
-            tool_response_parts = []
-            for fc in function_calls:
-                function_name = fc.name
-                function_args = fc.args
-                print(f"🔧 [Gemini] Tool Start: {function_name} | Args: {json.dumps(function_args, ensure_ascii=False)}")
-                logger.info(f"[Gemini] Executing function (async flow): {function_name}")
-                
-                tool_t0 = asyncio.get_event_loop().time()
-                
-                tool_result = None
-                injected_file_uri = None
-                injected_mime_type = None
+        usage = None
+        if response.usage_metadata:
+            usage = {
+                "prompt_tokens": response.usage_metadata.prompt_token_count,
+                "candidates_tokens": response.usage_metadata.candidates_token_count,
+                "total_tokens": response.usage_metadata.total_token_count
+            }
 
-                if function_name in active_tool_functions:
-                    try:
-                        import inspect
-                        tool_context = kwargs.get('tool_context') or {}
-                        func = active_tool_functions[function_name]
-                        sig = inspect.signature(func)
-                        accepted_params = set(sig.parameters.keys())
-                        accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
-                        
-                        full_args = {**function_args}
-                        for key in ['db_session', 'user_id', 'node_id', 'project_id', 'session_id', 'project_name', 'context_name', 'meta_info']:
-                            if key in tool_context:
-                                if key in accepted_params or accepts_kwargs:
-                                    full_args[key] = tool_context[key]
-                        
-                        if inspect.iscoroutinefunction(func):
-                            result = await func(**full_args)
-                        else:
-                            result = await asyncio.to_thread(func, **full_args)
-                        
-                        if inspect.isawaitable(result):
-                            result = await result
-                        
-                        # Extract tool result string
-                        if hasattr(result, 'to_dict'):
-                            tool_result = result.message
-                        else:
-                            if isinstance(result, dict):
-                                tool_result = json.dumps(result)
-                            else:
-                                tool_result = str(result)
-                        
-                        # Extract optional injected file
-                        if hasattr(result, 'data') and isinstance(result.data, dict):
-                            injected_file_uri = result.data.get('gemini_file_uri')
-                            injected_mime_type = result.data.get('mime_type')
-
-                    except Exception as e:
-                        import traceback
-                        traceback.print_exc()
-                        tool_result = f"Error executing {function_name}: {str(e)}"
-                
-                tool_elapsed = asyncio.get_event_loop().time() - tool_t0
-                print(f"📦 [Gemini] Tool Done: {function_name} | Time: {tool_elapsed:.2f}s")
-                
-                if tool_result is None:
-                    tool_result = f"Function {function_name} not found"
-                
-                # 1. Store in internal history
-                accumulated_tool_results.append({
-                    "name": function_name,
-                    "result": tool_result,
-                    "success": not (tool_result.startswith("Error") or tool_result.startswith("Failed"))
-                })
-                
-                # 2. Build Gemini function response part
-                tool_response_parts.append(types.Part.from_function_response(
-                    name=function_name,
-                    response={'result': tool_result}
-                ))
-
-                # 3. Build Gemini multimodal part (if tool injected a file)
-                if injected_file_uri and injected_mime_type:
-                    if injected_mime_type != "application/octet-stream":
-                        logger.info(f"[Gemini] Injecting tool-discovered file (async): {injected_file_uri} ({injected_mime_type})")
-                        tool_response_parts.append(types.Part.from_uri(
-                            file_uri=injected_file_uri,
-                            mime_type=injected_mime_type
-                        ))
-                    else:
-                        logger.warning(f"[Gemini] Skipping unsupported tool file type: {injected_mime_type} for {injected_file_uri}")
-            
-            # Append model response and tool results to history for next generate call
-            history.append(types.Content(role="tool", parts=tool_response_parts))
-            
-        return CompletionResponse(
-            content="(Reached maximum reasoning turns)" if (max_turns and turn_count >= max_turns) else "",
-            model=model_name,
-            usage={"total_turns": turn_count},
-            tool_calls=accumulated_tool_results if accumulated_tool_results else None
+        # Record this turn
+        new_msg = Message(
+            role=MessageRole.ASSISTANT,
+            content=combined_text,
+            tool_calls=intents
         )
+
+        return CompletionResponse(
+            content=combined_text,
+            model=model_name,
+            usage=usage,
+            new_messages=[new_msg]
+        )
+
+
 
     def complete(
         self,
         messages: List[Message],
-        temperature: float = 0.7,
+        system_instruction: Optional[str] = None,
+        temperature: float = 0.2,
         max_tokens: Optional[int] = None,
         preferred_model: Optional[str] = None,
-        attached_files: List = None,  # List of AttachedFile objects
-        tool_definitions: List = None,  # Agent-level tool definitions (passed directly)
-        tool_functions: dict = None,    # Agent-level tool functions (passed directly)
+        attached_files: List = None,
+        tool_definitions: List = None,
         **kwargs
     ) -> CompletionResponse:
-        """Generate completion using Gemini with optional function calling and file attachments"""
-        # Determine model to use (per-request override or default)
+        """Generate a single completion turn using Gemini."""
         model_name = preferred_model or self.model_name
         
-        # 1. Convert history to Gemini parts, separating system instruction
-        history = []
-        system_instructions = []
-        for m in messages:
-            if m.role == "system":
-                system_instructions.append(m.content)
-            else:
-                role = "user" if m.role == "user" else "model"
-                history.append(types.Content(role=role, parts=[types.Part.from_text(text=m.content)]))
+        # 1. Prepare History & Config
+        history, system_instruction_content = self._prepare_history(messages, system_instruction, attached_files)
         
-        system_instruction = None
-        if system_instructions:
-            system_instruction = types.Content(
-                role="system",
-                parts=[types.Part.from_text(text="\n\n".join(system_instructions))]
-            )
-        
-        # 2. Add current multimodal parts
-        if attached_files:
-            if history and history[-1].role == "user":
-                for attached_file in attached_files:
-                    if hasattr(attached_file, 'gemini_file_uri') and attached_file.gemini_file_uri:
-                        if attached_file.file_type == "application/octet-stream":
-                            continue
-                        try:
-                            # Use internal attribute name consistency
-                            file_uri = attached_file.gemini_file_uri
-                            file_part = types.Part.from_uri(
-                                file_uri=file_uri,
-                                mime_type=attached_file.file_type
-                            )
-                            history[-1].parts.insert(0, file_part)
-                        except Exception as e:
-                            print(f"[Gemini] Failed to add file part: {e}")
-        
-        # 1. Prepare Tools
-        active_tool_functions = tool_functions or getattr(self, '_tool_functions', {})
-        
-        # Use passed tools first (from agent level), fallback to stored tools
         if tool_definitions:
             tools_for_model = self._convert_dict_tools_to_gemini(tool_definitions)
         elif hasattr(self, '_tool_definitions') and self._tool_definitions:
@@ -424,194 +282,62 @@ class GeminiProvider(BaseLLMProvider):
         else:
             tools_for_model = []
         
-        # Generate config
         generation_config = types.GenerateContentConfig(
             temperature=temperature,
             max_output_tokens=max_tokens,
             tools=tools_for_model if tools_for_model else None,
-            system_instruction=system_instruction
+            system_instruction=system_instruction_content
         )
         
-        # Only set ToolConfig if we have actual functions to call
         if tools_for_model and hasattr(tools_for_model[0], 'function_declarations') and tools_for_model[0].function_declarations:
             generation_config.tool_config = types.ToolConfig(
-                function_calling_config=types.FunctionCallingConfig(
-                    mode="AUTO"
-                )
+                function_calling_config=types.FunctionCallingConfig(mode="AUTO")
             )
-        
-        turn_count = 0
-        max_turns = settings.max_tool_turns
-        accumulated_tool_results = []  # List of {name, result, success} dicts
-        
-        while max_turns is None or turn_count < max_turns:
-            turn_count += 1
-            
-            # Generate response
-            try:
-                response = self.client.models.generate_content(
-                    model=model_name,
-                    contents=history,
-                    config=generation_config
-                )
-            except Exception as e:
-                print(f"[Gemini] Generation error: {e}")
-                if accumulated_tool_results:
-                    return CompletionResponse(
-                        content=f"Error during continuation: {str(e)}",
-                        model=model_name,
-                        usage=None,
-                        tool_calls=accumulated_tool_results
-                    )
-                raise
-            
-            # Check if valid response
-            if not response.candidates or not response.candidates[0].content.parts:
-                break
-                
-            model_content = response.candidates[0].content
-            history.append(model_content)
-            
-            # Extract all function calls in this turn
-            function_calls = [p.function_call for p in model_content.parts if p.function_call]
-            
-            if not function_calls:
-                # Final text response
-                final_text = self._extract_response_content(response)
-                
-                # 3. Process Grounding Metadata (Search Citations)
-                # Extract token usage
-                usage = None
-                if response.usage_metadata:
-                    usage = {
-                        "prompt_tokens": response.usage_metadata.prompt_token_count,
-                        "candidates_tokens": response.usage_metadata.candidates_token_count,
-                        "total_tokens": response.usage_metadata.total_token_count
-                    }
 
-                return CompletionResponse(
-                    content=final_text,
-                    model=model_name,
-                    usage=usage,
-                    tool_calls=accumulated_tool_results if accumulated_tool_results else None
-                )
+        # 2. Single Turn API Call
+        try:
+            response = self.client.models.generate_content(
+                model=model_name,
+                contents=history,
+                config=generation_config
+            )
+        except Exception as e:
+            logger.error(f"[Gemini] Generation error: {e}")
+            raise
+        
+        if not response.candidates or not response.candidates[0].content.parts:
+            return CompletionResponse(content="", model=model_name, usage=None)
             
-            # Execute all tool calls in parallel (simulated sequentially here)
-            tool_response_parts = []
-            
-            for fc in function_calls:
-                function_name = fc.name
-                function_args = fc.args
-                
-                print(f"[Gemini] Executing function: {function_name}")
-                
-                # Find and execute the matching tool function
-                tool_result = None
-                injected_file_uri = None
-                injected_mime_type = None
-                
-                # Use passed tool functions (from agent), fallback to stored ones
-                if function_name in active_tool_functions:
-                    try:
-                        import inspect
-                        
-                        # Get execution context from kwargs
-                        tool_context = kwargs.get('tool_context') or {}
-                        func = active_tool_functions[function_name]
-                        
-                        # Get the function's signature to know what parameters it accepts
-                        sig = inspect.signature(func)
-                        accepted_params = set(sig.parameters.keys())
-                        # Check if function accepts **kwargs (VAR_KEYWORD)
-                        accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
-                        
-                        # Merge function args with only the injected context that the function accepts
-                        full_args = {**function_args}
-                        for key in ['db_session', 'user_id', 'node_id', 'project_id', 'session_id', 'project_name', 'context_name', 'meta_info']:
-                            if key in tool_context:
-                                # Inject if explicitly accepted OR if function takes **kwargs
-                                if key in accepted_params or accepts_kwargs:
-                                    full_args[key] = tool_context[key]
-                        
-                        result = func(**full_args)
-                        
-                        # Handle potential coroutine if func returned one (e.g. from async wrapper in sync context)
-                        if inspect.isawaitable(result):
-                            # This is the sync 'complete' method, but we might encounter an awaitable
-                            # Try to run it in a new event loop or just fail gracefully
-                            try:
-                                import asyncio
-                                loop = asyncio.get_event_loop()
-                                if loop.is_running():
-                                    # We are already in a loop, this is bad for sync 'complete'
-                                    result = f"Error: Tool {function_name} returned a coroutine in a sync context."
-                                else:
-                                    result = loop.run_until_complete(result)
-                            except:
-                                result = f"Error: Failed to await tool {function_name} in sync context."
+        model_content = response.candidates[0].content
+        function_calls = [p.function_call for p in model_content.parts if p.function_call]
+        text_parts = [p.text for p in model_content.parts if p.text]
+        combined_text = "".join(text_parts).strip()
 
-                        # Extract tool result string
-                        if hasattr(result, 'to_dict'):
-                            tool_result = result.message
-                        else:
-                            if isinstance(result, dict):
-                                tool_result = json.dumps(result)
-                            else:
-                                tool_result = str(result)
-                            
-                        # Extract optional injected file
-                        if hasattr(result, 'data') and isinstance(result.data, dict):
-                            injected_file_uri = result.data.get('gemini_file_uri')
-                            injected_mime_type = result.data.get('mime_type')
-                    except Exception as e:
-                        import traceback
-                        traceback.print_exc()
-                        tool_result = f"Error executing {function_name}: {str(e)}"
-                
-                if tool_result is None:
-                    tool_result = f"Function {function_name} not found"
-                
-                # 1. Store in internal history
-                is_success = not (tool_result.startswith("Error") or tool_result.startswith("Failed"))
-                accumulated_tool_results.append({
-                    "name": function_name,
-                    "result": tool_result,
-                    "success": is_success
-                })
-                
-                # 2. Build Gemini function response part
-                tool_response_parts.append(types.Part.from_function_response(
-                    name=function_name,
-                    response={'result': tool_result}
-                ))
-                
-                # 3. Build Gemini multimodal part (if tool injected a file)
-                if injected_file_uri and injected_mime_type:
-                    if injected_mime_type != "application/octet-stream":
-                        print(f"[Gemini] Injecting tool-discovered file: {injected_file_uri} ({injected_mime_type})")
-                        tool_response_parts.append(types.Part.from_uri(
-                            file_uri=injected_file_uri,
-                            mime_type=injected_mime_type
-                        ))
-                    else:
-                        print(f"[Gemini] Skipping unsupported tool file type: {injected_mime_type} for {injected_file_uri}")
-            
-            # Add tool responses and model content to history
-            history.append(types.Content(
-                role="tool",
-                parts=tool_response_parts
-            ))
-            
-        # If we exit loop due to turn count
-        final_content = ""
-        if max_turns and turn_count >= max_turns:
-            final_content = "(Reached maximum reasoning turns)"
-            
+        # Construct ToolCall objects from intents
+        intents = []
+        for fc in function_calls:
+            intents.append(ToolCall(name=fc.name, args=fc.args or {}))
+
+        usage = None
+        if response.usage_metadata:
+            usage = {
+                "prompt_tokens": response.usage_metadata.prompt_token_count,
+                "candidates_tokens": response.usage_metadata.candidates_token_count,
+                "total_tokens": response.usage_metadata.total_token_count
+            }
+
+        # Record this turn
+        new_msg = Message(
+            role=MessageRole.ASSISTANT,
+            content=combined_text,
+            tool_calls=intents
+        )
+
         return CompletionResponse(
-            content=final_content,
+            content=combined_text,
             model=model_name,
-            usage={"total_turns": turn_count},
-            tool_calls=accumulated_tool_results if accumulated_tool_results else None
+            usage=usage,
+            new_messages=[new_msg]
         )
     
     def embed(self, text: str) -> List[float]:
@@ -690,83 +416,49 @@ class GeminiProvider(BaseLLMProvider):
         **kwargs
     ) -> CompletionResponse:
         """Generate completion with uploaded files included in context"""
-        model_name = preferred_model or self.model_name
+        # Wrap references as objects compatible with _prepare_history
+        class FileRef:
+            def __init__(self, uri):
+                self.gemini_file_uri = uri
+                self.file_type = "image/jpeg" # Default to image for safety
+
+        attached_files = [FileRef(ref) for ref in file_references]
         
-        # Build content parts with files
-        content_parts = []
-        
-        # Add files first
-        for file_ref in file_references:
-            try:
-                # In new SDK, we can use Part.from_uri
-                content_parts.append(types.Part.from_uri(file_uri=file_ref, mime_type=None))
-            except Exception as e:
-                print(f"[Gemini] Warning: Could not retrieve file {file_ref}: {e}")
-        
-        # Add text prompt  
-        full_prompt = self._build_prompt(messages)
-        content_parts.append(types.Part.from_text(text=full_prompt))
-        
-        response = self.client.models.generate_content(
-            model=model_name,
-            contents=[types.Content(role='user', parts=content_parts)],
-            config=types.GenerateContentConfig(temperature=temperature)
-        )
-        
-        return CompletionResponse(
-            content=self._extract_response_content(response),
-            model=model_name,
-            usage=None
+        return self.complete(
+            messages=messages,
+            temperature=temperature,
+            preferred_model=preferred_model,
+            attached_files=attached_files,
+            **kwargs
         )
     
     async def stream_chat_async(
         self,
         messages: List[Message],
+        system_instruction: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         preferred_model: Optional[str] = None,
         attached_files: List = None,
         tool_definitions: List = None,
         tool_functions: dict = None,
+        task_id: Optional[str] = None,
         **kwargs
     ):
         """Asynchronously stream chat events including status updates during function calling."""
         model_name = preferred_model or self.model_name
-        # 1. Convert history to Gemini parts, separating system instruction
-        history = []
-        system_instructions = []
-        for m in messages:
-            role_val = getattr(m.role, "value", m.role)
-            if role_val == "system":
-                system_instructions.append(m.content)
-            else:
-                role = "user" if role_val == "user" else "model"
-                history.append(types.Content(role=role, parts=[types.Part.from_text(text=m.content)]))
         
-        system_instruction = None
-        if system_instructions:
-            system_instruction = types.Content(
-                role="system",
-                parts=[types.Part.from_text(text="\n\n".join(system_instructions))]
-            )
-        
-        # 2. Add current multimodal parts
-        if attached_files:
-            if history and history[-1].role == "user":
-                for attached_file in attached_files:
-                    if hasattr(attached_file, 'gemini_file_uri') and attached_file.gemini_file_uri:
-                        # Gemini DOES NOT support application/octet-stream for multimodal parts
-                        if attached_file.file_type == "application/octet-stream":
-                            continue
-                            
-                        try:
-                            file_part = types.Part.from_uri(
-                                file_uri=attached_file.gemini_file_uri,
-                                mime_type=attached_file.file_type
-                            )
-                            history[-1].parts.insert(0, file_part)
-                        except Exception as e:
-                            print(f"[Gemini] Failed to add file part: {e}")
+        # Helper: Status mapping
+        status_map = {
+            "search_knowledge": "Searching facts & memories...",
+            "google_search": "Searching Google...",
+            "create_task": "Adding task to schedule...",
+            "get_lbs_schedule": "Checking workload...",
+            "ask_node": lambda args: f"Messaging Node/Project: {args.get('target')}..."
+        }
+
+        # 1. Prepare History & Config
+        history, system_instruction_content = self._prepare_history(messages, system_instruction, attached_files)
         
         active_tool_functions = tool_functions or getattr(self, '_tool_functions', {})
         if tool_definitions:
@@ -788,28 +480,24 @@ class GeminiProvider(BaseLLMProvider):
                 function_calling_config=types.FunctionCallingConfig(mode="AUTO")
             )
 
-        # history is already initialized
-
         turn_count = 0
         max_turns = settings.max_tool_turns
         accumulated_tool_results = []
+        newly_generated_messages = []
         
         yield {"type": "status", "data": "Thinking..."}
         
         while max_turns is None or turn_count < max_turns:
-            # Check for cancellation
             if task_id:
                 from queue_system.manager import QueueManager
                 manager = QueueManager()
                 status_data = manager.get_status(task_id)
                 if status_data and status_data.get("status") == "cancelled":
-                    print(f"🛑 [Gemini] Task {task_id} cancelled by user. Interrupting stream.")
                     yield {"type": "status", "data": "Stopped by user."}
                     yield {
                         "type": "final_response",
                         "data": {
                             "content": "Task stopped by user.",
-                            "tool_calls": accumulated_tool_results,
                             "usage": None,
                             "metadata": {"cancelled": True}
                         }
@@ -820,10 +508,6 @@ class GeminiProvider(BaseLLMProvider):
             yield {"type": "status", "data": f"Thinking (Turn {turn_count})..."}
             
             try:
-                # Debug: Log the history length and model
-                print(f"[Gemini] stream_chat_async: model={model_name}, history_len={len(history)}, tools_count={len(tools_for_model) if tools_for_model else 0}")
-                
-                # USE AWAIT and aio client!
                 response = await self.client.aio.models.generate_content(
                     model=model_name,
                     contents=history,
@@ -831,150 +515,88 @@ class GeminiProvider(BaseLLMProvider):
                 )
                 
                 if not response.candidates or not response.candidates[0].content.parts:
+                    # If no content, it might be an empty response or an error, break the loop
                     break
                     
                 model_content = response.candidates[0].content
                 history.append(model_content)
                 
                 function_calls = [p.function_call for p in model_content.parts if p.function_call]
+                combined_text = "".join([p.text for p in model_content.parts if p.text]).strip()
+
+                # Record Model Turn
+                current_tool_calls = []
+                if function_calls:
+                    current_tool_calls = [ToolCall(name=fc.name, args=fc.args) for fc in function_calls]
                 
                 if not function_calls:
-                    final_text = self._extract_response_content(response)
-                    yield {"type": "content", "data": final_text}
+                    # Final content
+                    yield {"type": "content", "data": combined_text}
+                    
+                    # Record final turn
+                    new_msg = Message(
+                        role=MessageRole.ASSISTANT,
+                        content=combined_text,
+                        tool_calls=[]
+                    )
+                    newly_generated_messages.append(new_msg)
+
                     yield {
-                        "type": "final_response",
+                        "type": "final_response", 
                         "data": {
-                            "content": final_text,
-                            "tool_calls": accumulated_tool_results,
-                            "usage": None
+                            "content": combined_text, 
+                            "new_messages": newly_generated_messages
                         }
                     }
                     return
-                
+
+                # Execute tool calls
                 tool_response_parts = []
+                turn_tool_results = []
+                
+                tool_context = kwargs.get('tool_context') or {}
                 for fc in function_calls:
-                    function_name = fc.name
-                    function_args = fc.args
+                    # Status yield
+                    mapped = status_map.get(fc.name, f"Executing: {fc.name}...")
+                    status_text = mapped(fc.args) if callable(mapped) else mapped
+                    yield {"type": "status", "data": status_text}
                     
-                    status_msg = f"Executing: {function_name}..."
-                    if function_name == "search_knowledge": status_msg = "Searching facts & memories..."
-                    elif function_name == "google_search": status_msg = "Searching Google..."
-                    elif function_name == "create_task": status_msg = "Adding task to schedule..."
-                    elif function_name == "get_lbs_schedule": status_msg = "Checking workload..."
-                    elif function_name == "ask_node": status_msg = f"Messaging Node/Project: {function_args.get('target')}..."
+                    tool_result, file_uri, mime_type = await self._execute_tool_async(
+                        fc, active_tool_functions, tool_context
+                    )
                     
-                    yield {"type": "status", "data": status_msg}
+                    res_entry = ToolCall(
+                        name=fc.name,
+                        args=fc.args or {},
+                        result=tool_result,
+                        is_success=not (tool_result.startswith("Error") or tool_result.startswith("Failed"))
+                    )
+                    accumulated_tool_results.append(res_entry)
+                    turn_tool_results.append(res_entry)
                     
-                    tool_result = None
-                    injected_file_uri = None
-                    injected_mime_type = None
-
-                    if function_name in active_tool_functions:
-                        try:
-                            tool_context = kwargs.get('tool_context') or {}
-                            func = active_tool_functions[function_name]
-                            sig = inspect.signature(func)
-                            accepted_params = set(sig.parameters.keys())
-                            # Check if function accepts **kwargs (VAR_KEYWORD)
-                            accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
-                            
-                            full_args = {**function_args}
-                            for key in ['db_session', 'user_id', 'node_id', 'project_id', 'session_id', 'project_name', 'context_name', 'meta_info']:
-                                if key in tool_context:
-                                    # Inject if explicitly accepted OR if function takes **kwargs
-                                    if key in accepted_params or accepts_kwargs:
-                                        full_args[key] = tool_context[key]
-                            
-                            if inspect.iscoroutinefunction(func):
-                                result = await func(**full_args)
-                            else:
-                                result = await asyncio.to_thread(func, **full_args)
-                                
-                            # Fix: If result is an awaitable, await it
-                            if inspect.isawaitable(result):
-                                result = await result
-                                
-                            # Extract tool result string
-                            if hasattr(result, 'to_dict'):
-                                tool_result = result.message
-                            else:
-                                if isinstance(result, dict):
-                                    tool_result = json.dumps(result)
-                                else:
-                                    tool_result = str(result)
-                                
-                            # Extract optional injected file
-                            if hasattr(result, 'data') and isinstance(result.data, dict):
-                                injected_file_uri = result.data.get('gemini_file_uri')
-                                injected_mime_type = result.data.get('mime_type')
-
-                        except Exception as e:
-                            import traceback
-                            traceback.print_exc()
-                            tool_result = f"Error executing {function_name}: {str(e)}"
-                    
-                    if tool_result is None:
-                        tool_result = f"Function {function_name} not found"
-                    
-                    # 1. Store in internal history
-                    accumulated_tool_results.append({
-                        "name": function_name,
-                        "result": tool_result,
-                        "success": not (tool_result.startswith("Error") or tool_result.startswith("Failed"))
-                    })
-                    
-                    # 2. Build Gemini function response part
                     tool_response_parts.append(types.Part.from_function_response(
-                        name=function_name,
+                        name=fc.name,
                         response={'result': tool_result}
                     ))
 
-                    # 3. Build Gemini multimodal part (if tool injected a file)
-                    if injected_file_uri and injected_mime_type:
-                        if injected_mime_type != "application/octet-stream":
-                            print(f"[Gemini] Injecting tool-discovered file (stream async): {injected_file_uri} ({injected_mime_type})")
-                            tool_response_parts.append(types.Part.from_uri(
-                                file_uri=injected_file_uri,
-                                mime_type=injected_mime_type
-                            ))
-                        else:
-                            print(f"[Gemini] Skipping unsupported tool file type: {injected_mime_type} for {injected_file_uri}")
+                    if file_uri and mime_type and mime_type != "application/octet-stream":
+                        tool_response_parts.append(types.Part.from_uri(file_uri=file_uri, mime_type=mime_type))
                 
-                
+                # Record Bundled Turn (Model Thought + Tool Execution)
+                bundled_msg = Message(
+                    role=MessageRole.ASSISTANT,
+                    content=combined_text,
+                    tool_calls=turn_tool_results
+                )
+                newly_generated_messages.append(bundled_msg)
+
                 history.append(types.Content(role="tool", parts=tool_response_parts))
                 yield {"type": "status", "data": "Synthesizing result..."}
 
             except Exception as e:
-                import traceback
-                traceback.print_exc()
+                logger.error(f"[Gemini] Stream chat error: {e}")
                 yield {"type": "error", "data": str(e)}
                 return
-
-    def stream_complete(
-        self,
-        messages: List[Message],
-        temperature: float = 0.7,
-        **kwargs
-    ):
-        """
-        Stream completion tokens as they are generated.
-        Yields string chunks.
-        """
-        model_name = kwargs.get('preferred_model') or self.model_name
-        full_prompt = self._build_prompt(messages)
-        
-        try:
-            stream = self.client.models.generate_content_stream(
-                model=model_name,
-                contents=full_prompt,
-                config=types.GenerateContentConfig(temperature=temperature)
-            )
-            for chunk in stream:
-                if chunk.text:
-                    yield chunk.text
-        except Exception as e:
-            print(f"[Gemini] stream_complete error: {e}")
-            yield f"Error: {str(e)}"
 
     def stream_chat(
         self,
@@ -987,44 +609,20 @@ class GeminiProvider(BaseLLMProvider):
         tool_functions: dict = None,
         **kwargs
     ):
-        """
-        Stream chat events including status updates during function calling.
-        """
+        """Synchronously stream chat events including status updates during function calling."""
         model_name = preferred_model or self.model_name
-        # 1. Convert history to Gemini parts, separating system instruction
-        history = []
-        system_instructions = []
-        for m in messages:
-            if m.role == "system":
-                system_instructions.append(m.content)
-            else:
-                role = "user" if m.role == "user" else "model"
-                history.append(types.Content(role=role, parts=[types.Part.from_text(text=m.content)]))
         
-        system_instruction = None
-        if system_instructions:
-            system_instruction = types.Content(
-                role="system",
-                parts=[types.Part.from_text(text="\n\n".join(system_instructions))]
-            )
-        
-        # 2. Add current multimodal parts
-        if attached_files:
-            if history and history[-1].role == "user":
-                for attached_file in attached_files:
-                    if hasattr(attached_file, 'gemini_file_uri') and attached_file.gemini_file_uri:
-                        # Gemini DOES NOT support application/octet-stream for multimodal parts
-                        if attached_file.file_type == "application/octet-stream":
-                            continue
-                            
-                        try:
-                            file_part = types.Part.from_uri(
-                                file_uri=attached_file.gemini_file_uri,
-                                mime_type=attached_file.file_type
-                            )
-                            history[-1].parts.insert(0, file_part)
-                        except Exception as e:
-                            print(f"[Gemini] Failed to add file part: {e}")
+        # Helper: Status mapping
+        status_map = {
+            "search_knowledge": "Searching facts & memories...",
+            "google_search": "Searching Google...",
+            "create_task": "Adding task to schedule...",
+            "get_lbs_schedule": "Checking workload...",
+            "ask_node": lambda args: f"Messaging Node/Project: {args.get('target')}..."
+        }
+
+        # 1. Prepare History & Config
+        history, system_instruction = self._prepare_history(messages, attached_files)
         
         active_tool_functions = tool_functions or getattr(self, '_tool_functions', {})
         if tool_definitions:
@@ -1045,12 +643,11 @@ class GeminiProvider(BaseLLMProvider):
             generation_config.tool_config = types.ToolConfig(
                 function_calling_config=types.FunctionCallingConfig(mode="AUTO")
             )
- 
-        # history is already initialized
 
         turn_count = 0
         max_turns = settings.max_tool_turns
         accumulated_tool_results = []
+        newly_generated_messages = []
         
         yield {"type": "status", "data": "Thinking..."}
         
@@ -1059,123 +656,120 @@ class GeminiProvider(BaseLLMProvider):
             yield {"type": "status", "data": f"Thinking (Turn {turn_count})..."}
             
             try:
-                # DEBUG: Log the API call attempt
-                print(f"[DEBUG stream_chat] Calling Gemini API: model={model_name}, history_len={len(history)}")
-                
-                # Synchronous call (stream_chat is NOT async, use sync client)
                 response = self.client.models.generate_content(
                     model=model_name,
                     contents=history,
                     config=generation_config
                 )
                 
-                # DEBUG: Log response status
-                print(f"[DEBUG stream_chat] Response received: candidates={len(response.candidates) if response.candidates else 0}")
-                
-                # Check if valid response
                 if not response.candidates or not response.candidates[0].content.parts:
-                    print(f"[DEBUG stream_chat] Empty response - no candidates or parts")
+                    # If no content, it might be an empty response or an error, break the loop
                     break
                     
                 model_content = response.candidates[0].content
                 history.append(model_content)
                 
-                # Extract all function calls in this turn
                 function_calls = [p.function_call for p in model_content.parts if p.function_call]
+                combined_text = "".join([p.text for p in model_content.parts if p.text]).strip()
+
+                # Record Model Turn
+                current_tool_calls = []
+                if function_calls:
+                    current_tool_calls = [ToolCall(name=fc.name, args=fc.args) for fc in function_calls]
                 
                 if not function_calls:
-                    # Final response reached
-                    final_text = self._extract_response_content(response)
-                    print(f"[DEBUG stream_chat] Final text length: {len(final_text) if final_text else 0}")
+                    final_text = combined_text
                     yield {"type": "content", "data": final_text}
                     
+                    # Record final turn
+                    new_msg = Message(
+                        role=MessageRole.ASSISTANT,
+                        content=final_text,
+                        tool_calls=[]
+                    )
+                    newly_generated_messages.append(new_msg)
+
                     yield {
                         "type": "final_response",
                         "data": {
                             "content": final_text,
-                            "tool_calls": accumulated_tool_results,
-                            "usage": None # Usage can be added if needed
+                            "new_messages": newly_generated_messages
                         }
                     }
                     return
                 
-                # Process tool calls
+                tool_context = kwargs.get('tool_context') or {}
                 tool_response_parts = []
+                turn_tool_results = []
                 for fc in function_calls:
-                    function_name = fc.name
-                    function_args = fc.args
+                    # Status yield
+                    mapped = status_map.get(fc.name, f"Executing: {fc.name}...")
+                    status_text = mapped(fc.args) if callable(mapped) else mapped
+                    yield {"type": "status", "data": status_text}
                     
-                    # Emit status update for the tool call
-                    status_msg = f"Executing: {function_name}..."
-                    if function_name == "search_knowledge": status_msg = "Searching facts & memories..."
-                    elif function_name == "google_search": status_msg = "Searching Google..."
-                    elif function_name == "create_task": status_msg = "Adding task to schedule..."
-                    elif function_name == "get_lbs_schedule": status_msg = "Checking workload..."
-                    elif function_name == "ask_node": status_msg = f"Messaging Node/Project: {function_args.get('target')}..."
+                    tool_result, file_uri, mime_type = self._execute_tool_sync(
+                        fc, active_tool_functions, tool_context
+                    )
                     
-                    yield {"type": "status", "data": status_msg}
-                    
-                    tool_result = None
-                    if function_name in active_tool_functions:
-                        try:
-                            import inspect
-                            tool_context = kwargs.get('tool_context') or {}
-                            func = active_tool_functions[function_name]
-                            sig = inspect.signature(func)
-                            accepted_params = set(sig.parameters.keys())
-                            
-                            full_args = {**function_args}
-                            for key in ['db_session', 'user_id', 'node_id', 'project_id', 'session_id', 'project_name', 'context_name', 'meta_info']:
-                                if key in tool_context:
-                                    # Fix: Check for both accepted_params and accepts_kwargs (consistent with other methods)
-                                    if key in accepted_params or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
-                                        full_args[key] = tool_context[key]
-                            
-                            result = func(**full_args)
-                            if hasattr(result, 'to_dict'):
-                                tool_result = result.message
-                            else:
-                                tool_result = str(result)
-                        except Exception as e:
-                            import traceback
-                            traceback.print_exc()
-                            tool_result = f"Error executing {function_name}: {str(e)}"
-                    
-                    if tool_result is None:
-                        tool_result = f"Function {function_name} not found"
-                    
-                    accumulated_tool_results.append({
-                        "name": function_name,
-                        "result": tool_result,
-                        "success": not (tool_result.startswith("Error") or tool_result.startswith("Failed"))
-                    })
+                    res_entry = ToolCall(
+                        name=fc.name,
+                        args=fc.args or {},
+                        result=tool_result,
+                        is_success=not (tool_result.startswith("Error") or tool_result.startswith("Failed"))
+                    )
+                    accumulated_tool_results.append(res_entry)
+                    turn_tool_results.append(res_entry)
                     
                     tool_response_parts.append(types.Part.from_function_response(
-                        name=function_name,
+                        name=fc.name,
                         response={'result': tool_result}
                     ))
-                    
-                    if hasattr(result, 'data') and isinstance(result.data, dict):
-                        file_uri = result.data.get('gemini_file_uri')
-                        if file_uri:
-                            mime_type = result.data.get('mime_type')
-                            if mime_type and mime_type != "application/octet-stream":
-                                print(f"[Gemini] Injecting tool-discovered file in stream: {file_uri} ({mime_type})")
-                                tool_response_parts.append(types.Part.from_uri(
-                                    file_uri=file_uri,
-                                    mime_type=mime_type
-                                ))
-                            else:
-                                print(f"[Gemini] Skipping unsupported tool file type: {mime_type} for {file_uri}")
+
+                    if file_uri and mime_type and mime_type != "application/octet-stream":
+                        tool_response_parts.append(types.Part.from_uri(file_uri=file_uri, mime_type=mime_type))
                 
-                # Add responses to history for next turn
+                # Record Bundled Turn (Model Thought + Tool Execution)
+                bundled_msg = Message(
+                    role=MessageRole.ASSISTANT,
+                    content=combined_text,
+                    tool_calls=turn_tool_results
+                )
+                newly_generated_messages.append(bundled_msg)
+
                 history.append(types.Content(role="tool", parts=tool_response_parts))
                 yield {"type": "status", "data": "Synthesizing result..."}
 
             except Exception as e:
-                import traceback
-                traceback.print_exc()
+                logger.error(f"[Gemini] Stream chat error: {e}")
                 yield {"type": "error", "data": str(e)}
                 return
 
-    # Removed _build_prompt in favor of structured Content list
+    def stream_complete(
+        self,
+        messages: List[Message],
+        system_instruction: Optional[str] = None,
+        temperature: float = 0.7,
+        **kwargs
+    ):
+        """
+        Stream completion tokens as they are generated.
+        Yields string chunks.
+        """
+        model_name = kwargs.get('preferred_model') or self.model_name
+        history, system_instruction_content = self._prepare_history(messages, system_instruction)
+        
+        try:
+            stream = self.client.models.generate_content_stream(
+                model=model_name,
+                contents=history,
+                config=types.GenerateContentConfig(
+                    temperature=temperature,
+                    system_instruction=system_instruction_content
+                )
+            )
+            for chunk in stream:
+                if chunk.text:
+                    yield chunk.text
+        except Exception as e:
+            logger.error(f"[Gemini] stream_complete error: {e}")
+            yield f"Error: {str(e)}"

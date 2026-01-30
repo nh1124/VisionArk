@@ -66,14 +66,14 @@ class FileService:
             self.client = Client(api_key=self.api_key, http_options={'api_version': 'v1alpha'})
         return self.client
     
-    def get_files_dir(self, project_id: str) -> Path:
-        """Get files directory (refs) based on project ID"""
+    def get_files_dir(self, project_id: str, directory: str = "refs") -> Path:
+        """Get files directory based on project ID and type (refs/artifacts/files)"""
         # Map legacy 'root' to 'hub' for project ID
         p_id = project_id
         
         base = get_project_dir(self.user_id, p_id)
         
-        path = base / "refs"  # Default to refs for library uploads
+        path = base / directory
         path.mkdir(parents=True, exist_ok=True)
         return path
     
@@ -90,7 +90,8 @@ class FileService:
         content: bytes,
         filename: str,
         mime_type: str,
-        project_id: str
+        project_id: str,
+        directory: str = "refs"
     ) -> UploadedFile:
         """
         Save file to filesystem and database.
@@ -107,7 +108,7 @@ class FileService:
         safe_filename = f"{file_id}{ext}"
         
         # Save to filesystem
-        files_dir = self.get_files_dir(project_id)
+        files_dir = self.get_files_dir(project_id, directory)
         file_path = files_dir / safe_filename
         await asyncio.to_thread(file_path.write_bytes, content)
         
@@ -116,6 +117,7 @@ class FileService:
             id=file_id,
             project_id=proj.id,
             filename=filename,
+            directory=directory,
             storage_path=str(file_path),
             mime_type=mime_type,
             size_bytes=len(content),
@@ -260,7 +262,7 @@ class FileService:
 
     async def delete_file(self, file_id: str) -> bool:
         """
-        Delete a file from disk, database, and Gemini if exists.
+        Delete a file or directory from disk and database by UUID.
         """
         result = await self.db.execute(select(UploadedFile).filter(
             UploadedFile.id == file_id
@@ -270,15 +272,37 @@ class FileService:
         if not file_record:
             return False
         
-        # Delete from filesystem
-        file_path = Path(file_record.storage_path)
-        if file_path.exists():
-            file_path.unlink()
-        
-        # Delete from database
-        await self.db.delete(file_record)
-        await self.db.commit()
-        return True
+        try:
+            # 1. Physical Deletion
+            path = Path(file_record.storage_path)
+            if path.exists():
+                if file_record.is_directory:
+                    import shutil
+                    await asyncio.to_thread(shutil.rmtree, str(path))
+                else:
+                    path.unlink()
+            
+            # 2. Database Deletion (Recursive if Directory)
+            if file_record.is_directory:
+                # Find all logical children
+                prefix = f"{file_record.filename}/"
+                stmt = select(UploadedFile).filter(
+                    UploadedFile.project_id == file_record.project_id,
+                    UploadedFile.directory == file_record.directory,
+                    UploadedFile.filename.like(f"{prefix}%")
+                )
+                child_results = await self.db.execute(stmt)
+                children = child_results.scalars().all()
+                for child in children:
+                    await self.db.delete(child)
+            
+            await self.db.delete(file_record)
+            await self.db.commit()
+            return True
+        except Exception as e:
+            print(f"[FileService] delete_file failed for {file_id}: {e}")
+            await self.db.rollback()
+            return False
 
     async def delete_path(self, project_id: str, directory_type: str, rel_path: str) -> bool:
         """
@@ -382,66 +406,114 @@ class FileService:
         if not proj:
             return {"added": 0, "removed": 0, "updated": 0}
 
-        refs_dir = self.get_files_dir(project_id)
-        if not refs_dir.exists():
+        proj_dir = get_project_dir(self.user_id, project_id)
+        if not proj_dir.exists():
             return {"added": 0, "removed": 0, "updated": 0}
 
-        # 1. Get current DB records
+        # 1. Get current DB records and build lookup maps
         result = await db.execute(select(UploadedFile).filter(UploadedFile.project_id == proj.id))
-        db_files = {f.filename: f for f in result.scalars().all()}
+        all_records = result.scalars().all()
         
+        db_by_key = {(f.directory, f.filename): f for f in all_records}
+        db_by_storage = {}
+        
+        import re
+        UUID_PATTERN = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', re.I)
+        
+        for f in all_records:
+            if not f.storage_path: continue
+            
+            # Prefer records with non-UUID filenames as the canonical logical name
+            is_uuid_filename = bool(UUID_PATTERN.match(f.filename))
+            if f.storage_path not in db_by_storage or not is_uuid_filename:
+                db_by_storage[f.storage_path] = f
+
         from mimetypes import guess_type
         stats = {"added": 0, "removed": 0, "updated": 0}
-        found_on_disk = set()
+        found_keys = set()
+        claimed_storage = set()
 
-        # 2. Scan Disk
-        def scan_disk(current_dir: Path):
-            for item in os.scandir(current_dir):
-                if item.is_dir():
+        # 2. Scan Disk (refs, artifacts, files)
+        def scan_dir(sub_dir_name: str):
+            target_dir = proj_dir / sub_dir_name
+            if not target_dir.exists():
+                return
+
+            def scan_recursive(current_dir: Path):
+                for item in os.scandir(current_dir):
                     if item.name in IGNORED_DIRS:
                         continue
-                    scan_disk(Path(item.path))
-                elif item.is_file():
+                        
                     p = Path(item.path)
+                    spath = str(p)
                     try:
-                        rel_path = p.relative_to(refs_dir).as_posix()
+                        # rel_path is relative to the directory root (refs, artifacts, etc.)
+                        rel_path = p.relative_to(target_dir).as_posix()
                     except ValueError:
-                        continue # Should not happen with get_files_dir logic
+                        continue
+
+                    # 1. Find best match in DB
+                    match = db_by_storage.get(spath)
+                    if not match:
+                        match = db_by_key.get((sub_dir_name, rel_path))
                     
-                    found_on_disk.add(rel_path)
-                    file_stat = item.stat()
+                    is_dir = item.is_dir()
                     
-                    if rel_path in db_files:
-                        # Lightweight check
-                        db_f = db_files[rel_path]
-                        # Note: UploadedFile doesn't have mtime stored currently, 
-                        # but we can compare size as a proxy or just rely on manual updates.
-                        if db_f.size_bytes != file_stat.st_size:
-                            db_f.size_bytes = file_stat.st_size
-                            stats["updated"] += 1
+                    if match:
+                        key = (match.directory, match.filename)
+                        if spath not in claimed_storage and key not in found_keys:
+                            found_keys.add(key)
+                            claimed_storage.add(spath)
+                            
+                            # Ensure is_directory is correct for existing records
+                            if match.is_directory != is_dir:
+                                match.is_directory = is_dir
+                                stats["updated"] += 1
+
+                            # Update size for files
+                            if not is_dir:
+                                file_stat = item.stat()
+                                if match.size_bytes != file_stat.st_size:
+                                    match.size_bytes = file_stat.st_size
+                                    stats["updated"] += 1
                     else:
-                        mime_type, _ = guess_type(item.name)
-                        new_file = UploadedFile(
+                        # 2. Register New Disk Item
+                        file_stat = item.stat()
+                        mime_type = None
+                        if not is_dir:
+                            mime_type, _ = guess_type(item.name)
+                            
+                        new_record = UploadedFile(
                             id=str(uuid4()),
                             project_id=proj.id,
                             filename=rel_path,
-                            storage_path=str(p),
-                            mime_type=mime_type or "application/octet-stream",
-                            size_bytes=file_stat.st_size,
+                            directory=sub_dir_name,
+                            storage_path=spath,
+                            is_directory=is_dir,
+                            mime_type=mime_type or ("inode/directory" if is_dir else "application/octet-stream"),
+                            size_bytes=0 if is_dir else file_stat.st_size,
                             uploaded_at=datetime.fromtimestamp(file_stat.st_mtime)
                         )
-                        db.add(new_file)
+                        db.add(new_record)
+                        found_keys.add((sub_dir_name, rel_path))
+                        claimed_storage.add(spath)
                         stats["added"] += 1
+                    
+                    # 3. Recurse if Directory
+                    if is_dir:
+                        scan_recursive(p)
 
-        await asyncio.to_thread(scan_disk, refs_dir)
+            scan_recursive(target_dir)
 
-        # 3. Identify removed files
-        for rel_path, db_f in db_files.items():
-            if rel_path not in found_on_disk:
-                # Extra check: Does it physically exist at storage_path?
-                if not Path(db_f.storage_path).exists():
-                    await db.delete(db_f)
-                    stats["removed"] += 1
+        await asyncio.to_thread(lambda: [scan_dir(d) for d in ["refs", "artifacts", "files"]])
+
+        # 3. Identify removed OR duplicate records
+        for f in all_records:
+            key = (f.directory, f.filename)
+            if key not in found_keys:
+                # This record no longer has a corresponding physical file (or it lost the claim due to deduplication)
+                await db.delete(f)
+                stats["removed"] += 1
         
         if stats["added"] > 0 or stats["removed"] > 0 or stats["updated"] > 0:
             await db.commit()
@@ -461,85 +533,33 @@ class FileService:
 
     async def list_files(self, project_id: str) -> List[Dict[str, Any]]:
         """
-        List all files for a project (Hybrid: DB + Disk).
-        Includes files registered in DB and those physically in the 'refs' directory.
+        List all files for a project entirely from the DB (synchronized in background).
         """
         proj = await self._get_project(project_id)
         if not proj:
             return []
         
-        # 1. Get DB-registered files
+        # Trigger background sync (Lazy Sync)
+        # Scan all directories
+        asyncio.create_task(self.sync_project_directory_background(project_id))
+
+        # 1. Get all DB-registered files
         result = await self.db.execute(select(UploadedFile).filter(
             UploadedFile.project_id == proj.id
         ).order_by(UploadedFile.uploaded_at.desc()))
         db_files = result.scalars().all()
         
-        # Trigger background sync (Lazy Sync)
-        # We don't await it to keep list_files fast
-        asyncio.create_task(self.sync_project_directory_background(project_id))
-
-        # Use filename as key since that's what we show/compare
-        db_file_names = {f.filename for f in db_files}
-        
-        # 2. Scan Disk for additional files (e.g., GitHub imports)
         final_list = []
-        
-        # Add DB files first
         for f in db_files:
             final_list.append({
                 "id": f.id,
                 "filename": f.filename,
+                "directory": f.directory or "refs",
                 "mime_type": f.mime_type,
                 "size_bytes": f.size_bytes,
                 "uploaded_at": f.uploaded_at.isoformat() if f.uploaded_at else None,
                 "source": "database"
             })
-            
-        # 3. Add Disk-only files from 'refs' directory using an optimized scan
-        try:
-            refs_dir = self.get_files_dir(project_id)
-            if refs_dir.exists():
-                from mimetypes import guess_type
-                
-                # Use class constant
-
-                def scan_recursive(current_dir: Path):
-                    results = []
-                    try:
-                        for item in os.scandir(current_dir):
-                            if item.is_dir():
-                                if item.name in IGNORED_DIRS:
-                                    continue
-                                results.extend(scan_recursive(Path(item.path)))
-                            elif item.is_file():
-                                p = Path(item.path)
-                                rel_path = p.relative_to(refs_dir).as_posix()
-                                
-                                # Skip if already in DB (to avoid duplicates)
-                                if rel_path in db_file_names or item.name in db_file_names:
-                                    continue
-                                    
-                                mime_type, _ = guess_type(item.name)
-                                stat = item.stat()
-                                
-                                results.append({
-                                    "id": f"disk:refs/{rel_path}", 
-                                    "filename": rel_path,
-                                    "mime_type": mime_type or "application/octet-stream",
-                                    "size_bytes": stat.st_size,
-                                    "uploaded_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                                    "has_gemini_ref": False,
-                                    "source": "disk"
-                                })
-                    except Exception as scan_err:
-                        print(f"Error scanning {current_dir}: {scan_err}")
-                    return results
-
-                disk_files = await asyncio.to_thread(scan_recursive, refs_dir)
-                final_list.extend(disk_files)
-                
-        except Exception as e:
-            print(f"[FileService] Error scanning disk for files: {e}")
             
         return final_list
 

@@ -750,6 +750,18 @@ async def get_project_metadata(
         "updated_at": proj.updated_at.isoformat() if proj.updated_at else None
     }
 
+@router.get("/project/{project_id}/nodes")
+async def list_project_nodes(
+    project_id: str,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """List all nodes (agents) associated with a project"""
+    stmt = select(Node).filter(Node.project_id == project_id, Node.status == "active")
+    res = await db.execute(stmt)
+    nodes = res.scalars().all()
+    return nodes
+
 @router.get("/project/{project_id}/active-task")
 async def get_project_active_task(
     project_id: str,

@@ -4,6 +4,7 @@ import time
 import traceback
 from datetime import datetime
 from llm import get_provider
+from llm.reasoning_engine import ReasoningEngine
 from models.message import Message, MessageRole, AttachedFile
 
 class BaseNode(ABC):
@@ -86,8 +87,10 @@ class BaseNode(ABC):
         
         # 3. Dynamic Tool Descriptions
         tool_text = ""
+        # Native AI Tool calling already handles declarations, but text-based 
+        # descriptions provide a vital reference for the agent to recognize capabilities.
         if self.tools:
-            tool_text = "\n## Available Tools\n"
+            tool_text = "\n## Available Tools (Native Functions)\n"
             for tool in self.tools:
                 decl = tool.declaration()
                 name = decl.get("name")
@@ -272,9 +275,9 @@ class BaseNode(ABC):
         if location:
             time_context += f"- **Location**: {location}\n"
 
-        # Format messages
-        llm_messages = [m.to_llm_message() for m in message_history]
+        # Prepare system instruction: System Prompt + Time context
         effective_system_prompt = system_prompt + time_context
+        messages = list(message_history)
 
         # Get preferred model from context
         preferred_model = self.context.get("preferred_model")
@@ -283,7 +286,6 @@ class BaseNode(ABC):
         try:
             t0 = time.time()
             print(f"💬 [{self.__class__.__name__}] LLM Call starting (preferred_model: {preferred_model})...")
-            messages = self.llm.format_messages(effective_system_prompt, llm_messages)
             
             # --- Handle Class-Based Tools ---
             # If explicit tool_definitions are passed (even []), use them.
@@ -322,11 +324,14 @@ class BaseNode(ABC):
                         current_attached_files = msg.attached_files
                     break
 
-            response = await self.llm.complete_async(
+            # Use Reasoning Engine to orchestrate turns
+            engine = ReasoningEngine(self.llm)
+            response = await engine.execute_async(
                 messages, 
-                tool_context=tool_context or {},
+                system_instruction=effective_system_prompt,
                 tool_definitions=final_tool_defs,
                 tool_functions=final_tool_funcs,
+                tool_context=tool_context or {},
                 preferred_model=preferred_model,
                 attached_files=current_attached_files if current_attached_files else None,
                 task_id=task_id or self.task_id

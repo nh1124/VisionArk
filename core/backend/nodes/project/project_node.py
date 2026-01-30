@@ -37,6 +37,8 @@ class ProjectNode(BaseNode):
         from tools.library.shell import RunSafeShellTool
         from tools.library.routing import SubscribeIntentTool
         from tools.library.canvas import UpdateCanvasTool
+        from tools.library.notes import ListNotesTool, ReadNoteTool, CreateNoteTool
+        from tools.library.governance import GetProjectRulesTool, UpdateProjectRulesTool
         
         self.tools = [
             AskNodeTool(),
@@ -73,7 +75,12 @@ class ProjectNode(BaseNode):
             UpdateUserConditionTool(),
             ResetUserConditionTool(),
             UpdateMDSectionTool(),
-            UpdateCanvasTool()
+            UpdateCanvasTool(),
+            ListNotesTool(),
+            ReadNoteTool(),
+            CreateNoteTool(),
+            GetProjectRulesTool(),
+            UpdateProjectRulesTool()
         ]
 
     async def on_enter(self):
@@ -151,10 +158,11 @@ class ProjectNode(BaseNode):
         history.append(current_msg)
         
         # 4. Chat with Tools (LLM)
-        # Load System Prompt (Project Role)
+        # [SLIMMING] Load only core Identity. 
+        # Protocols (grounding, tool_usage, formatting) are removed to prevent instruction dilution.
         system_prompt = await self.load_system_prompt(
             role_name="project",
-            components=["identity", "protocol_grounding", "protocol_tool_usage", "formatting"]
+            components=["identity", "formatting"] 
         )
         
         # Inject Profile from Context (if loaded in on_enter)
@@ -318,26 +326,48 @@ class ProjectNode(BaseNode):
         
         # Extract content and tool_calls from response
         response_text = llm_response.content or ""
-        tool_calls = llm_response.tool_calls if hasattr(llm_response, 'tool_calls') else None
         
         # Fallback for empty responses to avoid UI "No response" error
-        if not response_text.strip() and not tool_calls:
-             response_text = "I have processed your request."
-        elif not response_text.strip() and tool_calls:
-             pass 
-        
-        # Final safety net
         if not response_text.strip():
-             response_text = "Task completed."
+             # If new_messages exists, it might be a tool turn series
+             if not getattr(llm_response, 'new_messages', []):
+                 response_text = "I have processed your request."
+             else:
+                 response_text = "Task completed."
 
-        # 5. Save History (User + Assistant) with tool_calls metadata
-        assistant_msg = Message(
-            role=MessageRole.ASSISTANT,
-            content=response_text,
-            timestamp=datetime.now(),
-            meta_info={"tool_calls": tool_calls} if tool_calls else None
-        )
-        await self.memory.save_messages(self.session_id, [current_msg, assistant_msg])
+        # 5. Save History (Consolidated Final Answer)
+        # Instead of saving granular turns, we consolidate them into a single comprehensive
+        # response to keep the UI clean and group all tool history at the end.
+        all_new = getattr(llm_response, 'new_messages', [])
+        
+        if all_new:
+            # Use the last message as the container for consolidation
+            final_msg = all_new[-1]
+            all_tool_calls = []
+            all_content = []
+            
+            for m in all_new:
+                # Aggregate all tool calls from all turns
+                if m.tool_calls:
+                    all_tool_calls.extend(m.tool_calls)
+                # Aggregate unique content parts
+                if m.content and m.content.strip():
+                    if m.content.strip() not in all_content:
+                        all_content.append(m.content.strip())
+            
+            # Combine content with proper spacing
+            final_msg.content = "\n\n".join(all_content)
+            # Assign consolidated tool calls (UI renders these at the bottom)
+            final_msg.tool_calls = all_tool_calls
+            # Final message is always the "final" answer turn
+            if not final_msg.meta_info: final_msg.meta_info = {}
+            final_msg.meta_info["turn_type"] = "final"
+            
+            await self.memory.save_messages(self.session_id, [current_msg, final_msg])
+        else:
+            # Fallback for empty or single-turn responses
+            # We must ensure the user message is saved even if no AI response was generated yet
+            await self.memory.save_messages(self.session_id, [current_msg])
         
         return response_text
 

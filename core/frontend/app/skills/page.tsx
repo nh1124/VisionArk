@@ -20,6 +20,7 @@ export default function SkillsPage() {
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
     const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
+    const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(new Set());
 
     useEffect(() => {
         fetchSkills();
@@ -124,10 +125,67 @@ export default function SkillsPage() {
             });
             if (response.ok) {
                 setSkills(skills.filter(s => s.id !== skill.id));
+                const newSelected = new Set(selectedSkillIds);
+                newSelected.delete(skill.id);
+                setSelectedSkillIds(newSelected);
             }
         } catch (error) {
             console.error("Failed to reject skill:", error);
         }
+    };
+
+    const handleBatchApprove = async () => {
+        if (selectedSkillIds.size === 0) return;
+        try {
+            const response = await apiFetch("/api/skills/batch/approve", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ skill_ids: Array.from(selectedSkillIds) })
+            });
+            if (response.ok) {
+                setSkills(skills.map(s => selectedSkillIds.has(s.id) ? { ...s, is_draft: false, is_active: true } : s));
+                setSelectedSkillIds(new Set());
+            }
+        } catch (error) {
+            console.error("Failed to batch approve skills:", error);
+        }
+    };
+
+    const handleBatchDiscard = async () => {
+        if (selectedSkillIds.size === 0) return;
+        if (!confirm(`Are you sure you want to discard ${selectedSkillIds.size} selected skill candidates?`)) return;
+        try {
+            const response = await apiFetch("/api/skills/batch/discard", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ skill_ids: Array.from(selectedSkillIds) })
+            });
+            if (response.ok) {
+                setSkills(skills.filter(s => !selectedSkillIds.has(s.id)));
+                setSelectedSkillIds(new Set());
+            }
+        } catch (error) {
+            console.error("Failed to batch discard skills:", error);
+        }
+    };
+
+    const toggleSelection = (skillId: string) => {
+        const newSelected = new Set(selectedSkillIds);
+        if (newSelected.has(skillId)) {
+            newSelected.delete(skillId);
+        } else {
+            newSelected.add(skillId);
+        }
+        setSelectedSkillIds(newSelected);
+    };
+
+    const selectAllDrafts = () => {
+        const draftIds = filteredSkills.filter(s => s.is_draft).map(s => s.id);
+        setSelectedSkillIds(new Set(draftIds));
+    };
+
+    const clearSelection = () => {
+        setSelectedSkillIds(new Set());
     };
 
     const filteredSkills = skills.filter(s =>
@@ -148,15 +206,53 @@ export default function SkillsPage() {
                         <p className="text-gray-400 mt-2">Manage and train specialized domain knowledge for your agents.</p>
                     </div>
 
-                    <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
-                        <input
-                            type="text"
-                            placeholder="Search skills..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="bg-gray-900 border border-gray-800 rounded-xl py-2 pl-10 pr-4 text-sm text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 w-full md:w-64 transition-all"
-                        />
+                    <div className="flex items-center gap-4">
+                        {selectedSkillIds.size > 0 && (
+                            <div className="flex items-center gap-2 bg-gray-900 border border-gray-800 rounded-xl px-4 py-2 animate-in fade-in slide-in-from-right-4">
+                                <span className="text-sm font-medium text-gray-400">
+                                    {selectedSkillIds.size} selected
+                                </span>
+                                <div className="w-px h-4 bg-gray-800 mx-2" />
+                                <button
+                                    onClick={handleBatchApprove}
+                                    className="text-xs font-bold uppercase tracking-wider text-cyan-400 hover:text-cyan-300 transition-colors"
+                                >
+                                    Approve
+                                </button>
+                                <button
+                                    onClick={handleBatchDiscard}
+                                    className="text-xs font-bold uppercase tracking-wider text-red-400 hover:text-red-300 transition-colors"
+                                >
+                                    Discard
+                                </button>
+                                <button
+                                    onClick={clearSelection}
+                                    className="p-1 text-gray-500 hover:text-white transition-colors"
+                                >
+                                    <XCircle className="w-4 h-4" />
+                                </button>
+                            </div>
+                        )}
+
+                        <div className="relative">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
+                            <input
+                                type="text"
+                                placeholder="Search skills..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                className="bg-gray-900 border border-gray-800 rounded-xl py-2 pl-10 pr-4 text-sm text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 w-full md:w-64 transition-all"
+                            />
+                        </div>
+
+                        {filteredSkills.some(s => s.is_draft) && (
+                            <button
+                                onClick={selectAllDrafts}
+                                className="bg-amber-500/10 text-amber-500 border border-amber-500/20 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all"
+                            >
+                                Select Drafts
+                            </button>
+                        )}
                     </div>
                 </div>
 
@@ -170,8 +266,16 @@ export default function SkillsPage() {
                             <div
                                 key={skill.id}
                                 className={`group relative bg-gray-900 border rounded-2xl p-6 transition-all duration-300 hover:scale-[1.02] hover:shadow-2xl hover:shadow-cyan-500/10 ${skill.is_active ? "border-cyan-500/30" : "border-gray-800"
-                                    }`}
+                                    } ${selectedSkillIds.has(skill.id) ? "ring-2 ring-cyan-500 border-cyan-500" : ""}`}
+                                onClick={() => skill.is_draft && toggleSelection(skill.id)}
                             >
+                                {skill.is_draft && (
+                                    <div className="absolute top-4 right-4 z-10">
+                                        <div className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${selectedSkillIds.has(skill.id) ? "bg-cyan-500 border-cyan-500" : "bg-gray-800 border-gray-700 opacity-0 group-hover:opacity-100"}`}>
+                                            {selectedSkillIds.has(skill.id) && <CheckCircle className="w-3 h-3 text-white" />}
+                                        </div>
+                                    </div>
+                                )}
                                 <div className="flex items-start justify-between mb-4">
                                     <div className={`p-3 rounded-xl ${skill.is_active ? "bg-cyan-500/10 text-cyan-400" : "bg-gray-800 text-gray-500"}`}>
                                         <BookOpen w-6 h-6 />
@@ -220,13 +324,19 @@ export default function SkillsPage() {
                                         </div>
                                         <div className="flex gap-2 mt-4">
                                             <button
-                                                onClick={() => handleApproveSkill(skill)}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleApproveSkill(skill);
+                                                }}
                                                 className="flex-1 bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider hover:bg-cyan-500/20 transition-all flex items-center justify-center gap-2"
                                             >
                                                 <CheckCircle className="w-3 h-3" /> Approve
                                             </button>
                                             <button
-                                                onClick={() => handleRejectSkill(skill)}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleRejectSkill(skill);
+                                                }}
                                                 className="flex-1 bg-gray-800 text-gray-500 border border-gray-700 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/20 transition-all flex items-center justify-center gap-2"
                                             >
                                                 <XCircle className="w-3 h-3" /> Discard

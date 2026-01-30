@@ -3,21 +3,8 @@ Base LLM Provider Interface
 """
 from abc import ABC, abstractmethod
 from typing import List, Dict, Optional
-from dataclasses import dataclass
-
-
-@dataclass
-class Message:
-    """Standard message format across all providers"""
-    role: str  # "system", "user", "assistant"
-    content: str
-
-
-class SimpleMessage:
-    """Simplified message class for backward compatibility or direct attribute access"""
-    def __init__(self, role: str, content: str):
-        self.role = role
-        self.content = content
+from dataclasses import dataclass, field
+from models.message import Message, MessageRole
 
 
 @dataclass
@@ -26,8 +13,7 @@ class CompletionResponse:
     content: str
     model: str
     usage: Optional[Dict] = None  # tokens used, cost, etc.
-    metadata: Optional[Dict] = None
-    tool_calls: Optional[List[Dict]] = None  # List of tool call results
+    new_messages: List[Message] = field(default_factory=list) # List of turns (AI intents & Tool results) during this call
 
 
 class BaseLLMProvider(ABC):
@@ -42,6 +28,7 @@ class BaseLLMProvider(ABC):
     def complete(
         self,
         messages: List[Message],
+        system_instruction: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         **kwargs
@@ -51,6 +38,7 @@ class BaseLLMProvider(ABC):
         
         Args:
             messages: List of Message objects (conversation history)
+            system_instruction: Optional system instruction/prompt
             temperature: Sampling temperature (0.0 - 2.0)
             max_tokens: Maximum tokens to generate
             **kwargs: Provider-specific parameters
@@ -77,6 +65,7 @@ class BaseLLMProvider(ABC):
     def stream_complete(
         self,
         messages: List[Message],
+        system_instruction: Optional[str] = None,
         temperature: float = 0.7,
         **kwargs
     ):
@@ -85,6 +74,7 @@ class BaseLLMProvider(ABC):
         
         Args:
             messages: List of Message objects
+            system_instruction: Optional system instruction
             temperature: Sampling temperature
             **kwargs: Provider-specific parameters
         
@@ -97,6 +87,7 @@ class BaseLLMProvider(ABC):
     def stream_chat(
         self,
         messages: List[Message],
+        system_instruction: Optional[str] = None,
         temperature: float = 0.7,
         **kwargs
     ):
@@ -109,6 +100,7 @@ class BaseLLMProvider(ABC):
     async def complete_async(
         self,
         messages: List[Message],
+        system_instruction: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         **kwargs
@@ -122,6 +114,7 @@ class BaseLLMProvider(ABC):
     async def stream_chat_async(
         self,
         messages: List[Message],
+        system_instruction: Optional[str] = None,
         temperature: float = 0.7,
         **kwargs
     ):
@@ -130,18 +123,3 @@ class BaseLLMProvider(ABC):
         """
         pass
     
-    def format_messages(self, system_prompt: str, conversation: List[Dict[str, str]]) -> List[Message]:
-        """
-        Helper to convert conversation history to Message format
-        
-        Args:
-            system_prompt: System prompt text
-            conversation: List of {"role": str, "content": str} dicts
-        
-        Returns:
-            List of Message objects
-        """
-        messages = [Message(role="system", content=system_prompt)]
-        for msg in conversation:
-            messages.append(Message(role=msg["role"], content=msg["content"]))
-        return messages

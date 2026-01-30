@@ -6,13 +6,18 @@ interface MermaidProps {
     chart: string;
 }
 
-const Mermaid: React.FC<MermaidProps> = ({ chart }) => {
+const Mermaid: React.FC<MermaidProps> = React.memo(({ chart }) => {
     const ref = useRef<HTMLDivElement>(null);
+    const lastChart = useRef<string>("");
     const [libLoaded, setLibLoaded] = useState(false);
 
     useEffect(() => {
         const loadAndRender = async () => {
             if (!ref.current || !chart) return;
+
+            // Skip if the chart hasn't changed to avoid flickering
+            if (chart === lastChart.current) return;
+            lastChart.current = chart;
 
             try {
                 let mermaid: any;
@@ -61,13 +66,16 @@ const Mermaid: React.FC<MermaidProps> = ({ chart }) => {
                     });
 
                     const id = `mermaid-${Math.floor(Math.random() * 1000000)}`;
-                    ref.current.removeAttribute("data-processed");
-                    ref.current.innerHTML = "";
 
-                    // Async render for v10+
+                    // Render to a dummy container first to avoid flickering
                     const { svg } = await mermaid.render(id, chart);
+
                     if (ref.current) {
+                        // Only update if the chart version is still the latest one for this effect run
+                        // Note: Since this is inside useEffect with [chart], it's mostly safe, 
+                        // but double-checking ref.current is good practice.
                         ref.current.innerHTML = svg;
+                        ref.current.removeAttribute("data-processed");
                         setLibLoaded(true);
                     }
                 }
@@ -93,6 +101,6 @@ const Mermaid: React.FC<MermaidProps> = ({ chart }) => {
             <div ref={ref} className="mermaid transition-all duration-300 min-w-[200px] flex justify-center" />
         </div>
     );
-};
+});
 
 export default Mermaid;

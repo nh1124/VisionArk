@@ -33,14 +33,19 @@ async def _get_user_api_key(db: AsyncSession, user_id: str) -> Optional[str]:
 
 
 # --- Specific Routes (IDs or fixed paths) First to avoid shadowing ---
+@files_router.post("/project/{project_id}/{directory}/upload")
 @files_router.post("/project/{project_id}/upload")
 async def upload_node_file(
     project_id: str,
+    directory: str = "refs",
     file: UploadFile = File(...),
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
     """Upload a file to Project storage"""
+    if directory not in ["refs", "artifacts", "files", "notes"]:
+         raise HTTPException(status_code=400, detail="Directory must be 'refs', 'artifacts', 'files', or 'notes'")
+
     # Verify Project Exists
     result = await db.execute(select(Project.id).filter(
         Project.user_id == identity.user_id,
@@ -59,29 +64,31 @@ async def upload_node_file(
     # FileService handles storage and DB recording
     service = FileService(db, identity.user_id)
     
-    # FileService expects 'project_id' arg
+    # FileService now accepts directory
     db_file = await service.save_file(
         content=content,
         filename=file.filename,
         mime_type=mime_type,
-        project_id=project_id
+        project_id=project_id,
+        directory=directory
     )
     
     return {
         "id": db_file.id,
         "filename": db_file.filename,
         "size_bytes": db_file.size_bytes,
-        "mime_type": db_file.mime_type
+        "mime_type": db_file.mime_type,
+        "directory": db_file.directory
     }
 
 
-@files_router.get("/project/{project_id}")
-async def list_node_files(
+@files_router.get("/project/{project_id}/list")
+async def list_project_files(
     project_id: str,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
-    """List all files for a Project"""
+    """List all project files (refs and artifacts) using unified FileService"""
     # Verify Project Exists
     result = await db.execute(select(Project.id).filter(
         Project.user_id == identity.user_id,
@@ -90,12 +97,77 @@ async def list_node_files(
     if not result.scalars().first():
         raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
 
-    api_key = await _get_user_api_key(db, identity.user_id)
-    service = FileService(db, identity.user_id, api_key)
-    
-    files = await service.list_files(project_id)
-    return {"files": files, "count": len(files)}
+    file_service = FileService(db, identity.user_id)
+    files = await file_service.list_files(project_id)
+    return {"files": files}
 
+
+@files_router.get("/content/{file_id}")
+async def get_file_content_by_id(
+    file_id: str,
+    identity: Identity = Depends(resolve_identity_for_download),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """
+    Get text content of a file by its database ID (UUID).
+    """
+    stmt = select(UploadedFile).filter(
+        UploadedFile.id == file_id,
+        UploadedFile.project_id.in_(
+            select(Project.id).filter(Project.user_id == identity.user_id)
+        )
+    )
+    result = await db.execute(stmt)
+    file_record = result.scalars().first()
+    
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    full_path = Path(file_record.storage_path)
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail="Physical file missing")
+    
+    try:
+        content = full_path.read_text(encoding='utf-8')
+        return {
+            "content": content,
+            "path": f"{file_record.directory}/{file_record.filename}",
+            "name": file_record.filename,
+            "directory": file_record.directory
+        }
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="File is not a valid text file")
+
+@files_router.get("/download/{file_id}")
+async def download_file_by_id(
+    file_id: str,
+    identity: Identity = Depends(resolve_identity_for_download),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """
+    Download a file by its database ID (UUID).
+    """
+    stmt = select(UploadedFile).filter(
+        UploadedFile.id == file_id,
+        UploadedFile.project_id.in_(
+            select(Project.id).filter(Project.user_id == identity.user_id)
+        )
+    )
+    result = await db.execute(stmt)
+    file_record = result.scalars().first()
+    
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    full_path = Path(file_record.storage_path)
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail="Physical file missing")
+        
+    return FileResponse(
+        full_path, 
+        media_type=file_record.mime_type, 
+        filename=file_record.filename
+    )
 
 @files_router.get("/project/{project_id}/{directory}/{file_path:path}")
 async def get_node_file(
@@ -106,19 +178,19 @@ async def get_node_file(
     db: AsyncSession = Depends(get_async_db)
 ):
     """
-    Serve a file from Project directory (refs, artifacts, or files) by its path.
-    Used for image previews and artifact downloads.
+    Serve a file from Project directory by its path. 
+    Kept for backward compatibility but prefers UUIDs.
     """
-    if directory not in ["refs", "artifacts", "files"]:
-        raise HTTPException(status_code=400, detail="Directory must be 'refs', 'artifacts', or 'files'")
+    if directory not in ["refs", "artifacts", "files", "notes"]:
+        raise HTTPException(status_code=400, detail="Directory must be 'refs', 'artifacts', 'files', or 'notes'")
     
     user_id = identity.user_id
     
     try:
-        from utils.paths import get_project_dir
+        from utils.paths import get_project_dir, secure_path_join
         
         # Verify Project Exists
-        result = await db.execute(select(Project.id).filter(
+        result = await db.execute(select(Project).filter(
             Project.user_id == user_id,
             Project.id == project_id
         ))
@@ -126,10 +198,20 @@ async def get_node_file(
             raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
 
         base_dir = get_project_dir(user_id, project_id)
-        
-        from utils.paths import secure_path_join
         full_path = secure_path_join(base_dir / directory, file_path)
         
+        # Check DB for UUID mapping mapping if direct path fails (for 'refs' specifically)
+        if not full_path.exists() and directory == "refs":
+            stmt = select(UploadedFile).filter(
+                UploadedFile.project_id == project_id,
+                UploadedFile.filename == file_path,
+                UploadedFile.directory == "refs"
+            )
+            result = await db.execute(stmt)
+            file_record = result.scalars().first()
+            if file_record:
+                full_path = Path(file_record.storage_path)
+
         if not full_path.exists() or not full_path.is_file():
             raise HTTPException(status_code=404, detail="File not found")
         
@@ -139,7 +221,7 @@ async def get_node_file(
         return FileResponse(
             full_path, 
             media_type=mime_type, 
-            filename=full_path.name
+            filename=full_path.name if directory != "refs" else file_path
         )
     except HTTPException:
         raise
@@ -159,18 +241,18 @@ async def save_canvas_file(
 ):
     """
     Save content to a file in the Project directory.
-    Payload: { "path": "filename.md", "content": "...", "directory": "artifacts" }
+    Payload: { "filename": "example.md", "content": "...", "directory": "artifacts" }
     """
     user_id = identity.user_id
-    file_path = payload.get("path")
+    filename = payload.get("filename")
     content = payload.get("content")
     directory = payload.get("directory", "artifacts")
 
-    if not file_path or content is None:
-        raise HTTPException(status_code=400, detail="Path and content are required")
+    if not filename or content is None:
+        raise HTTPException(status_code=400, detail="Filename and content are required")
 
-    if directory not in ["refs", "artifacts", "files"]:
-        raise HTTPException(status_code=400, detail="Directory must be 'refs', 'artifacts', or 'files'")
+    if directory not in ["refs", "artifacts", "files", "notes"]:
+        raise HTTPException(status_code=400, detail="Directory must be 'refs', 'artifacts', 'files', or 'notes'")
 
     try:
         from utils.paths import get_project_dir, secure_path_join
@@ -184,7 +266,7 @@ async def save_canvas_file(
             raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
 
         base_dir = get_project_dir(user_id, project_id)
-        full_path = secure_path_join(base_dir / directory, file_path)
+        full_path = secure_path_join(base_dir / directory, filename)
         
         # Ensure parent directory exists
         full_path.parent.mkdir(parents=True, exist_ok=True)
@@ -193,16 +275,11 @@ async def save_canvas_file(
         content_to_write = content if isinstance(content, str) else str(content)
         await asyncio.to_thread(full_path.write_text, content_to_write, encoding="utf-8")
         
-        # --- Trigger Sync for refs ---
-        if directory == "refs":
-            try:
-                from services.file_service import FileService
-                file_svc = FileService(db, user_id)
-                await file_svc.sync_project_directory(project_id)
-            except Exception as se:
-                print(f"[FileSave] Sync trigger failed: {se}")
+        # --- Trigger Sync to record the new file in DB ---
+        file_svc = FileService(db, user_id)
+        await file_svc.sync_project_directory(project_id)
             
-        return {"message": "File saved successfully", "path": file_path}
+        return {"message": "File saved successfully", "filename": filename}
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -311,80 +388,53 @@ async def delete_file_by_id(
         raise HTTPException(status_code=500, detail="Failed to delete file")
 
 
-@files_router.delete("/project/{project_id}/{directory}/{path:path}")
-async def delete_project_path(
-    project_id: str,
-    directory: str,
-    path: str,
-    identity: Identity = Depends(resolve_identity),
-    db: AsyncSession = Depends(get_async_db)
-):
-    """Delete a file or directory from Project directory by its path."""
-    if directory not in ["refs", "artifacts", "files"]:
-        raise HTTPException(status_code=400, detail="Directory must be 'refs', 'artifacts', or 'files'")
-    
-    # 1. Verify Project Ownership
-    result = await db.execute(select(Project).filter(
-        Project.user_id == identity.user_id,
-        Project.id == project_id
-    ))
-    if not result.scalars().first():
-        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
-
-    # 2. Delete using FileService
-    api_key = await _get_user_api_key(db, identity.user_id)
-    service = FileService(db, identity.user_id, api_key)
-    
-    if await service.delete_path(project_id, directory, path):
-        return {"message": "Deleted successfully", "path": path}
-    else:
-        raise HTTPException(status_code=500, detail="Failed to delete path")
-
-
-@files_router.get("/project/{project_id}/{directory}/{path:path}/zip")
-async def download_project_path_zip(
-    project_id: str,
-    directory: str,
-    path: str,
+@files_router.get("/download/{file_id}/zip")
+async def download_file_zip_by_id(
+    file_id: str,
     background_tasks: BackgroundTasks,
     identity: Identity = Depends(resolve_identity_for_download),
     db: AsyncSession = Depends(get_async_db)
 ):
-    """Download a directory from Project as a ZIP archive."""
-    if directory not in ["refs", "artifacts", "files"]:
-        raise HTTPException(status_code=400, detail="Directory must be 'refs', 'artifacts', or 'files'")
+    """
+    Download a directory by its database ID (UUID) as a ZIP archive.
+    """
+    stmt = select(UploadedFile).filter(
+        UploadedFile.id == file_id,
+        UploadedFile.project_id.in_(
+            select(Project.id).filter(Project.user_id == identity.user_id)
+        ),
+        UploadedFile.is_directory == True
+    )
+    result = await db.execute(stmt)
+    file_record = result.scalars().first()
     
-    # 1. Verify Project Ownership
-    result = await db.execute(select(Project).filter(
-        Project.user_id == identity.user_id,
-        Project.id == project_id
-    ))
-    if not result.scalars().first():
-        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
-
-    # 2. Create ZIP using FileService
+    if not file_record:
+        raise HTTPException(status_code=404, detail="Directory not found")
+    
     api_key = await _get_user_api_key(db, identity.user_id)
     service = FileService(db, identity.user_id, api_key)
     
-    zip_path = await service.zip_directory(project_id, directory, path)
-    if not zip_path or not zip_path.exists():
-        raise HTTPException(status_code=404, detail="Directory not found or ZIP generation failed")
+    # We still need project_id, directory, and relative path for zip_directory internally
+    # but we get them from the DB record instead of the request URL.
+    zip_path = await service.zip_directory(
+        file_record.project_id, 
+        file_record.directory, 
+        file_record.filename
+    )
     
-    # 3. Schedule cleanup
+    if not zip_path or not zip_path.exists():
+        raise HTTPException(status_code=500, detail="ZIP generation failed")
+    
     def delete_temp_file(p: Path):
         try:
-            if p.exists():
-                p.unlink()
-        except Exception as e:
-            print(f"[FileAPI] Temp file cleanup failed: {e}")
+            if p.exists(): p.unlink()
+        except: pass
 
     background_tasks.add_task(delete_temp_file, zip_path)
     
-    # 4. Return file
-    folder_name = Path(path).name or project_id
     return FileResponse(
         zip_path,
         media_type="application/zip",
-        filename=f"{folder_name}.zip"
+        filename=f"{Path(file_record.filename).name or 'archive'}.zip"
     )
 

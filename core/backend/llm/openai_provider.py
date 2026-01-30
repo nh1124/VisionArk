@@ -25,16 +25,21 @@ class OpenAIProvider(BaseLLMProvider):
     def complete(
         self,
         messages: List[Message],
+        system_instruction: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         **kwargs
     ) -> CompletionResponse:
         """Generate completion using OpenAI"""
         # Convert Message objects to OpenAI format
-        openai_messages = [
+        openai_messages = []
+        if system_instruction:
+            openai_messages.append({"role": "system", "content": system_instruction})
+            
+        openai_messages.extend([
             {"role": msg.role, "content": msg.content}
             for msg in messages
-        ]
+        ])
         
         response = self.client.chat.completions.create(
             model=self.model_name,
@@ -44,14 +49,24 @@ class OpenAIProvider(BaseLLMProvider):
             **kwargs
         )
         
+        content = response.choices[0].message.content
+        
+        # Record turn
+        new_msg = Message(
+            role=MessageRole.ASSISTANT,
+            content=content,
+            tool_calls=[] # TODO: Implement OpenAI tool parsing if needed
+        )
+
         return CompletionResponse(
-            content=response.choices[0].message.content,
+            content=content,
             model=response.model,
             usage={
                 "prompt_tokens": response.usage.prompt_tokens,
                 "completion_tokens": response.usage.completion_tokens,
                 "total_tokens": response.usage.total_tokens
-            }
+            },
+            new_messages=[new_msg]
         )
     
     def embed(self, text: str) -> List[float]:
@@ -65,6 +80,7 @@ class OpenAIProvider(BaseLLMProvider):
     def stream_complete(
         self,
         messages: List[Message],
+        system_instruction: Optional[str] = None,
         temperature: float = 0.7,
         **kwargs
     ):
@@ -82,6 +98,38 @@ class OpenAIProvider(BaseLLMProvider):
             **kwargs
         )
         
-        for chunk in stream:
-            if chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
+    def stream_chat(
+        self,
+        messages: List[Message],
+        system_instruction: Optional[str] = None,
+        temperature: float = 0.7,
+        **kwargs
+    ):
+        """Streaming chat simulation (not fully implemented for OpenAI yet)"""
+        for chunk in self.stream_complete(messages, system_instruction, temperature, **kwargs):
+            yield {"type": "content", "data": chunk}
+
+    async def complete_async(
+        self,
+        messages: List[Message],
+        system_instruction: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs
+    ) -> CompletionResponse:
+        """Asynchronous completion (sync simulation)"""
+        return await asyncio.to_thread(
+            self.complete, messages, system_instruction, temperature, max_tokens, **kwargs
+        )
+
+    async def stream_chat_async(
+        self,
+        messages: List[Message],
+        system_instruction: Optional[str] = None,
+        temperature: float = 0.7,
+        **kwargs
+    ):
+        """Asynchronous streaming chat (sync simulation)"""
+        for event in self.stream_chat(messages, system_instruction, temperature, **kwargs):
+            yield event
+            await asyncio.sleep(0)

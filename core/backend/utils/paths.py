@@ -39,6 +39,10 @@ PROJECT_ROOT = get_project_root()
 DATA_DIR = PROJECT_ROOT / "data"
 USERS_DIR = DATA_DIR / "users"
 
+# Governance constants
+GOVERNANCE_DIR_NAME = ".visionark"
+PROJECT_RULES_FILENAME = "project_rules.json"
+
 
 # ============================================================
 # Name Validation
@@ -251,6 +255,16 @@ def get_project_dir(user_id: str, project_id: str) -> Path:
     # 3. Create if not exists (defaulting to display name)
     project_path.mkdir(parents=True, exist_ok=True)
     return project_path
+
+
+def get_project_governance_dir(user_id: str, project_id: str) -> Path:
+    """
+    Get the hidden governance directory for a project: project_dir/.visionark/
+    """
+    project_dir = get_project_dir(user_id, project_id)
+    governance_dir = project_dir / GOVERNANCE_DIR_NAME
+    governance_dir.mkdir(parents=True, exist_ok=True)
+    return governance_dir
 
 
 def get_user_global_assets_dir(user_id: str) -> Path:

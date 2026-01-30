@@ -50,6 +50,7 @@ from .library.members import ListMembersTool, ManageMemberTool, UpdateNodeDescri
 from .library.writer import RecursiveWriterTool
 from .library.routing import MulticastMessageTool, SubscribeIntentTool
 from .library.shell import RunSafeShellTool
+from .library.notes import ListNotesTool, ReadNoteTool, CreateNoteTool
 
 __all__ = [
     "BaseTool",
@@ -100,5 +101,8 @@ __all__ = [
     "SubscribeIntentTool",
     "RunSafeShellTool",
     "UpdateMDSectionTool",
-    "SendLineMessageTool"
+    "SendLineMessageTool",
+    "ListNotesTool",
+    "ReadNoteTool",
+    "CreateNoteTool"
 ]

@@ -360,6 +360,24 @@ class ChatMessage(Base):
     
     # Relationship
     session = relationship("ChatSession", back_populates="messages")
+    tool_usages = relationship("ToolUsage", back_populates="message", cascade="all, delete-orphan")
+
+
+class ToolUsage(Base):
+    """Structured log of tool/function execution within a message"""
+    __tablename__ = "tool_usages"
+    
+    id = Column(String(36), primary_key=True)
+    message_id = Column(String(36), ForeignKey("chat_messages.id"), nullable=False, index=True)
+    call_id = Column(String(100), nullable=True)           # LLM's internal call ID
+    name = Column(String(100), nullable=False)             # Tool name
+    arguments = Column(JSON, nullable=True)                # Input args
+    result = Column(Text, nullable=True)                   # Output string
+    is_success = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationship
+    message = relationship("ChatMessage", back_populates="tool_usages")
 
 
 class ArchivedContext(Base):
@@ -404,6 +422,8 @@ class UploadedFile(Base):
     id = Column(String(36), primary_key=True)
     project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
     filename = Column(String(255), nullable=False)
+    directory = Column(String(50), nullable=True)  # 'refs', 'artifacts', or 'files'
+    is_directory = Column(Boolean, default=False)
     storage_path = Column(String(512), nullable=False)
     mime_type = Column(String(100), nullable=False)
     size_bytes = Column(Integer, nullable=False)
@@ -416,6 +436,26 @@ class UploadedFile(Base):
     chunks = relationship("FileChunk", back_populates="file", cascade="all, delete-orphan")
 
 
+
+
+class Note(Base):
+    """Personal or project-specific notes with optional audio attachment"""
+    __tablename__ = "notes"
+    
+    id = Column(String(36), primary_key=True)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
+    title = Column(String(255), nullable=True)
+    content = Column(Text, nullable=True)
+    audio_file_id = Column(String(36), ForeignKey("uploaded_files.id"), nullable=True)
+    tags = Column(JSON, default=list)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    user = relationship("User")
+    project = relationship("Project")
+    audio_file = relationship("UploadedFile")
 
 
 class FileChunk(Base):
@@ -493,9 +533,22 @@ def _run_migrations(engine):
                 conn.commit()
                 print("✅ Migration: Added config column to service_registry")
     
-    # Migration: Add Gemini File API columns to uploaded_files if missing
-    # Remove as columns are removed from model
-    pass
+    # Migration: Add directory and is_directory columns to uploaded_files if missing
+    if 'uploaded_files' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('uploaded_files')]
+        if 'directory' not in columns:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE uploaded_files ADD COLUMN directory VARCHAR(50)"))
+                # Default existing ones to 'refs' if they look like they belong there
+                conn.execute(text("UPDATE uploaded_files SET directory = 'refs' WHERE directory IS NULL"))
+                conn.commit()
+                print("✅ Migration: Added directory column to uploaded_files")
+        
+        if 'is_directory' not in columns:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE uploaded_files ADD COLUMN is_directory BOOLEAN DEFAULT FALSE"))
+                conn.commit()
+                print("✅ Migration: Added is_directory column to uploaded_files")
 
     # Migration: Create approval_requests table is handled by create_all, but check if we need to manually add it?
     # No, Base.metadata.create_all handles new tables.
@@ -600,6 +653,15 @@ def _run_migrations(engine):
         except (AttributeError, KeyError) as e:
             # Fallback if length attribute is missing or structure is different
             print(f"[DEBUG] Migration check for Skill ID skipped or failed: {str(e)}")
+            
+    # Migration: Add tags column to notes if missing
+    if 'notes' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('notes')]
+        if 'tags' not in columns:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE notes ADD COLUMN tags JSON DEFAULT '[]'"))
+                conn.commit()
+                print("✅ Migration: Added tags column to notes")
 
 
 def get_session(engine):

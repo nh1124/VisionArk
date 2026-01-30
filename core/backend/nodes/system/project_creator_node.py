@@ -223,10 +223,11 @@ User: "Plan my thesis research on machine learning"
             (project_dir / "artifacts").mkdir(exist_ok=True)
             (project_dir / "refs").mkdir(exist_ok=True)
             
+            # Commit project first to avoid FK violation in sync
+            await session.commit()
+            
             # 3.5 Initialize Member Nodes
             await sync_member_nodes_for_project(project_id)
-            
-            await session.commit()
             
             return {
                 "success": True,

@@ -4,6 +4,7 @@ import json
 import sys
 import os
 from typing import Dict, Any, List
+from datetime import datetime, timedelta
 
 # Add core/backend to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -62,7 +63,6 @@ class Worker:
         
         # Ensure daily Router synchronization is scheduled
         try:
-            from datetime import timedelta
             async with AsyncSessionLocal() as db:
                 # We check for any pending SYNC_ROUTER_HOOKS task
                 stmt = select(ScheduledTask).filter(
@@ -172,14 +172,31 @@ class Worker:
                 asyncio.create_task(self._trigger_skill_mining(task_id, user_id))
 
     async def _trigger_skill_mining(self, task_id: str, user_id: str):
-        """Background hook for skill extraction"""
+        """Enqueue a background AES task for skill extraction (Conservative)"""
         try:
-            from services.skill_mining import SkillMiningService
+            from models.database import ScheduledTask, ScheduledTaskStatus
+            import uuid
+            
             async with AsyncSessionLocal() as db:
+                # GUARD: Issue control BEFORE enqueuing
+                from services.skill_mining import SkillMiningService
                 miner = SkillMiningService(db)
-                await miner.analyze_task_for_skills(task_id, user_id)
+                if not await miner.validate_mining_request(task_id, user_id):
+                    return # Issuance suppressed by guard logic
+                
+                new_st = ScheduledTask(
+                    id=str(uuid.uuid4()),
+                    user_id=user_id,
+                    task_type="SYSTEM_SKILL_MINING",
+                    payload={"task_id": task_id, "user_id": user_id},
+                    scheduled_at=datetime.utcnow(),
+                    status=ScheduledTaskStatus.PENDING
+                )
+                db.add(new_st)
+                await db.commit()
+                print(f"[Worker] Guard approved: Enqueued SYSTEM_SKILL_MINING for task {task_id}")
         except Exception as e:
-             print(f"[Worker] Skill mining trigger failed: {e}")
+             print(f"[Worker] Failed to enqueue skill mining task: {e}")
 
     async def _handle_node_execution(self, message: str, context: dict, db_session):
         """Logic for async node-to-node communication"""

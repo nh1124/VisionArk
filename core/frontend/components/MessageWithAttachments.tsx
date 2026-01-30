@@ -15,7 +15,7 @@ interface MessageAttachment {
 interface ToolCall {
     name: string;
     result: string;
-    success: boolean;
+    is_success: boolean;
 }
 
 interface MessageWithAttachmentsProps {
@@ -34,6 +34,38 @@ interface MessageWithAttachmentsProps {
     onEdit?: () => void;
     onDelete?: () => void;
 }
+
+const AsyncReport = ({ content, headerText, nodeType, nodeName }: { content: string, headerText: string, nodeType: string, nodeName: string }) => {
+    const [isReportExpanded, setIsReportExpanded] = useState(false);
+    return (
+        <div className="my-2 w-full max-w-full rounded-xl border border-gray-700/50 bg-gray-950/50 overflow-hidden shadow-inner">
+            <button
+                onClick={() => setIsReportExpanded(!isReportExpanded)}
+                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-900/50 transition-colors text-left group"
+            >
+                <div className="w-6 h-6 rounded-md bg-blue-500/20 border border-blue-500/30 flex items-center justify-center shrink-0">
+                    <Bot size={14} className="text-blue-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                    <h4 className="text-sm font-semibold text-gray-200 truncate group-hover:text-blue-400 transition-colors">{headerText}</h4>
+                </div>
+                <div className={`text-gray-500 transition-transform duration-200 ${isReportExpanded ? "rotate-180" : ""}`}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M6 9l6 6 6-6" />
+                    </svg>
+                </div>
+            </button>
+
+            {isReportExpanded && (
+                <div className="px-4 pb-4 border-t border-gray-800/50 pt-4 bg-black/20 w-full overflow-x-auto">
+                    <div className="max-w-full">
+                        <MarkdownRenderer content={content} nodeType={nodeType} nodeName={nodeName} />
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
 
 function MessageWithAttachmentsBase({
     role,
@@ -133,7 +165,7 @@ function MessageWithAttachmentsBase({
                         ? "bg-gradient-to-br from-purple-600 to-purple-800 text-white rounded-2xl rounded-tr-sm shadow-lg shadow-purple-900/20 p-5"
                         : type === "system"
                             ? "bg-gray-900/80 backdrop-blur-md border border-blue-500/30 text-blue-100 rounded-2xl rounded-tl-sm shadow-xl p-5"
-                            : "text-gray-100 p-2"
+                            : "text-gray-100 p-5"
                         } transition-all`}
                 >
                     {/* Message Content - AI Response */}
@@ -148,36 +180,8 @@ function MessageWithAttachmentsBase({
                                         const rawHeader = match ? match[0] : "System Report";
                                         const headerText = rawHeader.replace(/\*\*/g, "").replace(/^🤖\s*/, "");
                                         const bodyText = content.replace(match ? match[0] : "", "").trim();
-                                        const [isReportExpanded, setIsReportExpanded] = useState(false);
 
-                                        return (
-                                            <div className="my-2 w-full max-w-full rounded-xl border border-gray-700/50 bg-gray-950/50 overflow-hidden shadow-inner">
-                                                <button
-                                                    onClick={() => setIsReportExpanded(!isReportExpanded)}
-                                                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-900/50 transition-colors text-left group"
-                                                >
-                                                    <div className="w-6 h-6 rounded-md bg-blue-500/20 border border-blue-500/30 flex items-center justify-center shrink-0">
-                                                        <Bot size={14} className="text-blue-400" />
-                                                    </div>
-                                                    <div className="flex-1 min-w-0">
-                                                        <h4 className="text-sm font-semibold text-gray-200 truncate group-hover:text-blue-400 transition-colors">{headerText}</h4>
-                                                    </div>
-                                                    <div className={`text-gray-500 transition-transform duration-200 ${isReportExpanded ? "rotate-180" : ""}`}>
-                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                            <path d="M6 9l6 6 6-6" />
-                                                        </svg>
-                                                    </div>
-                                                </button>
-
-                                                {isReportExpanded && (
-                                                    <div className="px-4 pb-4 border-t border-gray-800/50 pt-4 bg-black/20 w-full overflow-x-auto">
-                                                        <div className="max-w-full">
-                                                            <MarkdownRenderer content={bodyText} nodeType={nodeType} nodeName={nodeName} />
-                                                        </div>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        );
+                                        return <AsyncReport content={bodyText} headerText={headerText} nodeType={nodeType} nodeName={nodeName} />;
                                     })()
                                 ) : (
                                     <MarkdownRenderer content={content} nodeType={nodeType} nodeName={nodeName} />
@@ -299,8 +303,8 @@ function MessageWithAttachmentsBase({
                                                     <div className="flex items-center gap-2 text-[11px] font-mono">
                                                         <span className="text-purple-500/60 font-bold">EXEC</span>
                                                         <span className="text-cyan-400 font-semibold">{tool.name}</span>
-                                                        <span className={`ml-auto px-1.5 py-0.5 rounded text-[9px] uppercase font-bold ${tool.success ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"}`}>
-                                                            {isPendingApproval ? "Approval Required" : tool.success ? "Success" : "Failed"}
+                                                        <span className={`ml-auto px-1.5 py-0.5 rounded text-[9px] uppercase font-bold ${tool.is_success ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"}`}>
+                                                            {isPendingApproval ? "Approval Required" : tool.is_success ? "Success" : "Failed"}
                                                         </span>
                                                     </div>
                                                     <div className="pl-4 border-l border-gray-800 ml-1 mt-1">

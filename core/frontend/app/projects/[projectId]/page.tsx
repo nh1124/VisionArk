@@ -18,6 +18,8 @@ import EditCommandPalette from "@/components/EditCommandPalette";
 import { useNotification } from "@/lib/NotificationContext";
 import ScheduleMessageModal from "@/components/automation/ScheduleMessageModal";
 import AutomationTab from "@/components/automation/AutomationTab";
+import ProjectNotes from "@/components/ProjectNotes";
+import { StickyNote } from "lucide-react";
 
 interface MessageAttachment {
     name: string;
@@ -63,7 +65,7 @@ export default function ProjectChatPage({
     const [canvasSelection, setCanvasSelection] = useState<string | null>(null);
     const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
     const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
-    const [sidebarMode, setSidebarMode] = useState<"files" | "automation">("files");
+    const [sidebarMode, setSidebarMode] = useState<"files" | "automation" | "notes">("files");
     const lastProcessedCanvasUpdateRef = useRef<string | null>(null);
     const { showToast } = useNotification();
 
@@ -798,11 +800,21 @@ export default function ProjectChatPage({
                     </h1>
                     <div className="flex gap-2 items-center">
                         <Link href={`/projects/${projectId}/settings`}
-                            className="p-2 text-gray-400 hover:bg-gray-800 hover:text-white rounded-lg transition-all"
-                            title="Settings"
+                            className="p-2 text-gray-500 hover:text-white transition-colors"
+                            title="Project Settings"
                         >
-                            <Settings size={18} />
+                            <Settings size={20} />
                         </Link>
+                        <button
+                            onClick={() => {
+                                setShowSidebar(true);
+                                setSidebarMode("notes");
+                            }}
+                            className={`p-2 transition-colors ${showSidebar && sidebarMode === "notes" ? "text-cyan-400" : "text-gray-500 hover:text-white"}`}
+                            title="Project Notes"
+                        >
+                            <StickyNote size={20} />
+                        </button>
                         <button
                             onClick={() => {
                                 if (showSidebar && sidebarMode === "automation") {
@@ -1054,7 +1066,7 @@ export default function ProjectChatPage({
                     <div className="w-80 h-full border-l border-gray-800 bg-gray-900/50 backdrop-blur-xl absolute right-0 top-0 z-30 shadow-2xl animate-in slide-in-from-right duration-300 flex flex-col p-4">
                         <div className="flex justify-between items-center mb-4">
                             <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">
-                                {sidebarMode === "files" ? "Files & Artifacts" : "Project Automation"}
+                                {sidebarMode === "files" ? "Files & Artifacts" : sidebarMode === "notes" ? "Project Notes" : "Project Automation"}
                             </h2>
                             <button
                                 onClick={() => setShowSidebar(false)}
@@ -1077,6 +1089,8 @@ export default function ProjectChatPage({
                                     }}
                                     onPreviewImage={(url, name) => setPreviewImage({ url, name })}
                                 />
+                            ) : sidebarMode === "notes" ? (
+                                <ProjectNotes projectId={projectId as string} />
                             ) : (
                                 <AutomationTab
                                     projectId={projectId}

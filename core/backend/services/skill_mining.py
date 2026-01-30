@@ -1,12 +1,15 @@
 import json
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Optional, Dict, Any
 from sqlalchemy import select
 from models.database import Skill, ScheduledTask, ScheduledTaskStatus, ChatMessage
 from llm import get_provider
 
 class SkillMiningService:
+    STATE_FILENAME = "mining_state.json"
+    
     def __init__(self, db_session):
         self.db = db_session
 
@@ -21,8 +24,10 @@ class SkillMiningService:
         
         # We need the session_id. Let's assume we can find it via the last message of the user/task
         # Simplified: Fetch last 10 messages for this user to get context
+        from sqlalchemy.orm import selectinload
         stmt = (
             select(ChatMessage)
+            .options(selectinload(ChatMessage.session))
             .join(ChatSession)
             .filter(ChatSession.project_id != None) # Usually tied to a project
             .order_by(desc(ChatMessage.created_at))
@@ -35,10 +40,8 @@ class SkillMiningService:
         if not messages:
             return
 
-        # 2. Heuristic: Only mine if there are tool calls (indicating a complex procedure)
-        has_tools = any(m.meta_payload and m.meta_payload.get("tool_calls") for m in messages)
-        if not has_tools:
-            print("[SkillMiningService] Task too simple for skill mining (no tool calls).")
+        # 1.5. Throttling & Complexity Check (Guard)
+        if not await self.validate_mining_request(task_id, user_id):
             return
 
         # 3. Format context for LLM
@@ -54,9 +57,9 @@ class SkillMiningService:
         analysis_context = "\n---\n".join(context_parts)
 
         # 4. Generate Draft
-        await self.generate_draft_skill(user_id, analysis_context)
+        await self.generate_draft_skill(user_id, analysis_context, task_id)
 
-    async def generate_draft_skill(self, user_id: str, analysis_context: str):
+    async def generate_draft_skill(self, user_id: str, analysis_context: str, task_id: str):
         """Use LLM to generate a SKILL.md draft from context."""
         from tools.utils import get_user_api_key
         api_key = await get_user_api_key(user_id, self.db)
@@ -79,13 +82,14 @@ class SkillMiningService:
             f"3. Do not include specific user data, keep it as a generalized template."
         )
         
-        from llm.base_provider import SimpleMessage
+        from models.message import Message, MessageRole
 
         try:
-            response = await llm.complete_async([
-                SimpleMessage(role="system", content=system_prompt),
-                SimpleMessage(role="user", content=user_prompt)
-            ], preferred_model="gemini-3-flash-preview")
+            response = await llm.complete_async(
+                [Message(role=MessageRole.USER, content=user_prompt)],
+                system_instruction=system_prompt,
+                preferred_model="gemini-2.0-flash-lite"
+            )
             
             # Extract JSON from response content (handling potential markdown blocks)
             content = response.content.strip()
@@ -96,8 +100,10 @@ class SkillMiningService:
                 
             data = json.loads(content)
             
-            # Check for duplicates (Semantic Skeleton)
-            # await self._check_duplicate_skill(data['name'])
+            # Check for duplicates (Simple Name Check for now)
+            if await self._check_duplicate_skill(data['name']):
+                print(f"[SkillMiningService] Skill with name '{data['name']}' already exists. Skipping.")
+                return
 
             # Save as Draft
             new_skill = Skill(
@@ -113,11 +119,135 @@ class SkillMiningService:
             self.db.add(new_skill)
             await self.db.commit()
             print(f"[SkillMiningService] Generated draft skill: {new_skill.id}")
+            
+            # Update Throttling State
+            # Finding project_id again for state update
+            # (Note: analyze_task_for_skills already has it, but let's be robust)
+            from sqlalchemy import select
+            from models.database import ChatSession, ChatMessage
+            stmt = select(ChatSession.project_id).join(ChatMessage).filter(ChatMessage.id == task_id)
+            res = await self.db.execute(stmt)
+            project_id = res.scalar()
+            
+            if project_id:
+                self._update_mining_state(project_id, user_id)
         except Exception as e:
             print(f"[SkillMiningService] Error generating draft: {e}")
             import traceback
             traceback.print_exc()
+
+    def is_complex_enough(self, messages: list) -> bool:
+        """
+        Evaluate if the interaction is complex enough to merit a skill.
+        Criteria:
+        - At least 3 tool calls total
+        OR
+        - Uses at least 2 distinct types of tools
+        """
+        total_tool_calls = 0
+        distinct_tools = set()
+
+        for m in messages:
+            if m.meta_payload and m.meta_payload.get("tool_calls"):
+                calls = m.meta_payload["tool_calls"]
+                if isinstance(calls, list):
+                    total_tool_calls += len(calls)
+                    for call in calls:
+                        # Depending on how tool_calls are stored, name might be in 'function' or 'name'
+                        t_name = call.get("name") or call.get("function", {}).get("name")
+                        if t_name:
+                            distinct_tools.add(t_name)
+        
+        return total_tool_calls >= 3 or len(distinct_tools) >= 2
+
+    async def _check_duplicate_skill(self, name: str) -> bool:
+        """Check if a skill with the same name already exists (Active or Draft)."""
+        stmt = select(Skill).filter(Skill.name == name)
+        res = await self.db.execute(stmt)
+        return res.scalars().first() is not None
+
+    def _get_mining_state_path(self, project_id: str, user_id: str) -> Optional[Path]:
+        """Get the path to the mining state file in .visionark/"""
+        try:
+            from utils.paths import get_project_governance_dir
+            state_dir = get_project_governance_dir(user_id, project_id)
+            state_dir.mkdir(parents=True, exist_ok=True)
+            return state_dir / self.STATE_FILENAME
+        except Exception as e:
+            print(f"[SkillMiningService] Error getting state path: {e}")
+            return None
+
+    def _check_throttling(self, project_id: str, user_id: str, interval_minutes: int = 10) -> bool:
+        """
+        Check if mining for this project should be throttled.
+        Returns True if mining is allowed.
+        """
+        state_path = self._get_mining_state_path(project_id, user_id)
+        if not state_path or not state_path.exists():
+            return True
+        
+        try:
+            state = json.loads(state_path.read_text(encoding='utf-8'))
+            last_run_str = state.get("last_analyzed_at")
+            if not last_run_str:
+                return True
             
+            last_run = datetime.fromisoformat(last_run_str)
+            elapsed = (datetime.utcnow() - last_run).total_seconds()
+            return elapsed > (interval_minutes * 60)
+        except Exception as e:
+            print(f"[SkillMiningService] Throttling check failed: {e}")
+            return True
+
+    def _update_mining_state(self, project_id: str, user_id: str):
+        """Update the mining state file with the current timestamp."""
+        state_path = self._get_mining_state_path(project_id, user_id)
+        if not state_path:
+            return
+        
+        try:
+            state = {"last_analyzed_at": datetime.utcnow().isoformat()}
+            state_path.write_text(json.dumps(state, indent=2), encoding='utf-8')
+        except Exception as e:
+            print(f"[SkillMiningService] Failed to update mining state: {e}")
+
+    async def validate_mining_request(self, task_id: str, user_id: str) -> bool:
+        """
+        Conservative check to see if we should bother enqueuing or running LLM mining.
+        Does NOT update state (that happens after drafting succeeds).
+        """
+        # 1. Fetch messages
+        from sqlalchemy import select, desc
+        from sqlalchemy.orm import selectinload
+        from models.database import ChatMessage, ChatSession
+        
+        stmt = (
+            select(ChatMessage)
+            .options(selectinload(ChatMessage.session))
+            .join(ChatSession)
+            .filter(ChatSession.project_id != None)
+            .order_by(desc(ChatMessage.created_at))
+            .limit(10)
+        )
+        res = await self.db.execute(stmt)
+        messages = res.scalars().all()
+        if not messages:
+            return False
+        
+        # 2. Throttling check
+        project_id = messages[0].session.project_id if messages[0].session else None
+        if project_id:
+            if not self._check_throttling(project_id, user_id):
+                print(f"[SkillMiningService] Throttled: Guard rejected mining for project {project_id}.")
+                return False
+        
+        # 3. Complexity check
+        if not self.is_complex_enough(messages):
+            print("[SkillMiningService] Complexity: Guard rejected mining (too simple).")
+            return False
+            
+        return True
+
     async def run_batch_mining(self, user_id: str):
         """
         Periodically analyze recent successful sessions for a specific user.

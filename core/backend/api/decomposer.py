@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from models.database import UserSettings
 from llm.provider_factory import get_provider
-from llm.base_provider import Message, SimpleMessage
+from llm.base_provider import Message, MessageRole
 from api.auth import get_current_user
 from services.auth import get_db
 import json
@@ -87,7 +87,7 @@ Example output:
         # Use Gemini to generate subtasks
         provider = get_provider(api_key=api_key)
         response = await provider.complete_async(
-            messages=[SimpleMessage(role="user", content=prompt)],
+            messages=[Message(role=MessageRole.USER, content=prompt)],
             preferred_model="gemini-2.5-flash-lite",
             temperature=0.7
         )
