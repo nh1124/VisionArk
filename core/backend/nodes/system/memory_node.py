@@ -18,65 +18,124 @@ class MemoryNode(BaseNode):
         pass
 
     async def get_history(self, session_id: str) -> List[Message]:
+        print(f"📖 [MemoryNode] Fetching history for session: {session_id}")
         """Load conversation history from DB."""
         if not session_id:
             return []
             
-        from models.database import get_async_engine, get_async_session_maker, ChatMessage
+        from models.database import AsyncSessionLocal, ChatMessage, ChatSubMessage, ToolUsage
         from sqlalchemy import select
-        from sqlalchemy.orm import selectinload
-        from models.message import Message, MessageRole, AttachedFile, ToolCall
+        from sqlalchemy.orm import selectinload, joinedload
+        from models.message import Message, MessageRole, AttachedFile, ToolCall, SubMessage
         from datetime import datetime
         
         history = []
-        engine = get_async_engine()
-        async_session = get_async_session_maker(engine)
         
-        async with async_session() as db:
-            result = await db.execute(
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select
+            from sqlalchemy.orm import load_only
+            import json
+            
+            # 1. Fetch ChatMessages (Surgical)
+            msg_stmt = (
                 select(ChatMessage)
-                .options(selectinload(ChatMessage.tool_usages))
                 .filter(ChatMessage.session_id == session_id)
                 .order_by(ChatMessage.created_at.asc())
+                .options(load_only(ChatMessage.id, ChatMessage.role, ChatMessage.content, ChatMessage.meta_payload, ChatMessage.created_at))
             )
-            db_messages = result.scalars().all()
+            msg_res = await db.execute(msg_stmt)
+            db_messages = msg_res.scalars().all()
+            if not db_messages:
+                return []
             
+            msg_ids = [m.id for m in db_messages]
+            
+            # 2. Fetch SubMessages (Surgical)
+            sub_stmt = (
+                select(ChatSubMessage)
+                .filter(ChatSubMessage.message_id.in_(msg_ids))
+                .order_by(ChatSubMessage.turn_index.asc())
+                .options(load_only(ChatSubMessage.id, ChatSubMessage.message_id, ChatSubMessage.content, ChatSubMessage.meta_payload, ChatSubMessage.created_at))
+            )
+            sub_res = await db.execute(sub_stmt)
+            db_subs = sub_res.scalars().all()
+            
+            sub_map = {}
+            for sub in db_subs:
+                if sub.message_id not in sub_map: sub_map[sub.message_id] = []
+                sub_map[sub.message_id].append(sub)
+                
+            # 3. Fetch ToolUsages (Surgical)
+            tu_stmt = (
+                select(ToolUsage)
+                .filter(ToolUsage.message_id.in_(msg_ids))
+                .options(load_only(ToolUsage.id, ToolUsage.message_id, ToolUsage.sub_message_id, ToolUsage.name, ToolUsage.args, ToolUsage.result, ToolUsage.is_success))
+            )
+            tu_res = await db.execute(tu_stmt)
+            db_tus = tu_res.scalars().all()
+            
+            tu_map = {}
+            for tu in db_tus:
+                key = (tu.message_id, tu.sub_message_id)
+                if key not in tu_map: tu_map[key] = []
+                tu_map[key].append(tu)
+            
+            # 4. Assemble
             for db_msg in db_messages:
                 try:
+                    # Attached Files
+                    meta = db_msg.meta_payload or {}
+                    if isinstance(meta, str):
+                        try:
+                            meta = json.loads(meta)
+                        except:
+                            meta = {}
+                    
                     files = []
-                    if db_msg.meta_payload and isinstance(db_msg.meta_payload, dict) and "attached_files" in db_msg.meta_payload:
-                        files = [AttachedFile.from_dict(f) for f in db_msg.meta_payload["attached_files"] if isinstance(f, dict)]
+                    if meta and isinstance(meta, dict) and "attached_files" in meta:
+                        files = [AttachedFile.from_dict(f) for f in meta["attached_files"] if isinstance(f, dict)]
                     
-                    # Structured Tool Calls
-                    tool_calls = []
-                    if db_msg.tool_usages:
-                        for tu in db_msg.tool_usages:
-                            tool_calls.append(ToolCall(
-                                name=tu.name,
-                                args=tu.arguments or {},
-                                call_id=tu.call_id,
-                                result=tu.result,
-                                is_success=tu.is_success
-                            ))
-                    
+                    # Role
                     role_val = db_msg.role.lower() if db_msg.role else "user"
                     try:
                         role_enum = MessageRole(role_val)
                     except ValueError:
                         role_enum = MessageRole.USER
-
-                    msg = Message(
+                    
+                    # SubMessages
+                    sub_messages_list = []
+                    for db_sub in sub_map.get(db_msg.id, []):
+                        # Tools
+                        tools = []
+                        sm_tus = tu_map.get((db_msg.id, db_sub.id), [])
+                        for tu in sm_tus:
+                            tools.append(ToolCall(
+                                name=tu.name,
+                                args=tu.args or {},
+                                result=tu.result,
+                                is_success=bool(tu.is_success)
+                            ))
+                        
+                        sub_messages_list.append(SubMessage(
+                            sub_id=db_sub.id,
+                            content=db_sub.content or "",
+                            tool_calls=tools,
+                            meta_info=db_sub.meta_payload or {},
+                            timestamp=db_sub.created_at or datetime.now()
+                        ))
+                    
+                    history.append(Message(
                         role=role_enum,
                         content=db_msg.content or "",
                         timestamp=db_msg.created_at or datetime.now(),
                         attached_files=files,
-                        tool_calls=tool_calls,
-                        meta_info=db_msg.meta_payload.get("meta_info") if (db_msg.meta_payload and isinstance(db_msg.meta_payload, dict)) else None
-                    )
-
-                    history.append(msg)
+                        sub_messages=sub_messages_list,
+                        meta_info=meta.get("meta_info") if (meta and isinstance(meta, dict)) else None
+                    ))
                 except Exception as e:
-                    print(f"[MemoryNode] Error loading message {db_msg.id}: {e}")
+                    print(f"[MemoryNode] Error assembling message {db_msg.id}: {e}")
+                    
+        return history
                     
         return history
 
@@ -86,6 +145,7 @@ class MemoryNode(BaseNode):
         from uuid import uuid4
         from tools.utils import get_kc_service
         from models.message import MessageRole
+        from models.database import ToolUsage, ChatSubMessage
         
         engine = get_async_engine()
         async_session = get_async_session_maker(engine)
@@ -94,6 +154,7 @@ class MemoryNode(BaseNode):
         
         async with async_session() as db:
             kc_svc = get_kc_service(self.user_id, db)
+            print(f"💾 [MemoryNode] Saving {len(messages)} messages for session {session_id}")
             
             for msg in messages:
                 files_meta = [f.to_dict() for f in msg.attached_files]
@@ -102,10 +163,6 @@ class MemoryNode(BaseNode):
                     "attached_files": files_meta,
                     "meta_info": msg.meta_info
                 }
-                
-                # Keep compatibility: if structured tool_calls exist, also mirror to meta_payload
-                if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                    meta_payload["tool_calls"] = [tc.to_dict() for tc in msg.tool_calls]
                 
                 message_id = str(uuid4())
                 db_msg = ChatMessage(
@@ -118,20 +175,39 @@ class MemoryNode(BaseNode):
                 )
                 db.add(db_msg)
                 
-                # Save structured ToolUsages
-                from models.database import ToolUsage
-                if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                    for tc in msg.tool_calls:
-                        db_tu = ToolUsage(
-                            id=str(uuid4()),
+                
+                # Save SubMessages
+                if hasattr(msg, 'sub_messages') and msg.sub_messages:
+                    num_subs = len(msg.sub_messages)
+                    print(f"  - Message ({msg.role}): {num_subs} sub_messages found.")
+                    for idx, sm in enumerate(msg.sub_messages):
+                        sub_id = sm.sub_id or str(uuid4())
+                        db_sub = ChatSubMessage(
+                            id=sub_id,
                             message_id=message_id,
-                            call_id=tc.call_id,
-                            name=tc.name,
-                            arguments=tc.args,
-                            result=tc.result,
-                            is_success=tc.is_success
+                            turn_index=idx,
+                            content=sm.content,
+                            meta_payload=sm.meta_info,
+                            created_at=sm.timestamp
                         )
-                        db.add(db_tu)
+                        db.add(db_sub)
+                        
+                        # Save ToolCalls within SubMessage
+                        if sm.tool_calls:
+                            for tc in sm.tool_calls:
+                                db_tu = ToolUsage(
+                                    id=str(uuid4()),
+                                    message_id=message_id,
+                                    sub_message_id=sub_id,
+                                    call_id=tc.call_id,
+                                    name=tc.name,
+                                    args=tc.args,
+                                    result=tc.result,
+                                    is_success=tc.is_success
+                                )
+                                print(f"    * Saved ToolCall: {tc.name}")
+                                db.add(db_tu)
+                        print(f"  - Saved SubMessage {idx}: {sm.content[:50] if sm.content else ''}... with {len(sm.tool_calls) if sm.tool_calls else 0} tool calls.")
                 
                 # Ingest Messages to Knowledge Core
                 if msg.content:

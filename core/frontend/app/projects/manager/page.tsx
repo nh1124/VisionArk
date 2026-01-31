@@ -14,6 +14,7 @@ interface Message {
     content: string;
     created_at: string;
     meta_payload?: any;
+    sub_messages?: any[];
 }
 
 export default function ProjectManagerPage() {
@@ -145,6 +146,7 @@ export default function ProjectManagerPage() {
                             content={msg.content}
                             attached_files={msg.meta_payload?.attached_files || []}
                             tool_calls={msg.meta_payload?.tool_calls || []}
+                            sub_messages={msg.sub_messages || []}
                             type={msg.role === "system" ? "system" : "llm"}
                             nodeType="system"
                             nodeName="project_manager"

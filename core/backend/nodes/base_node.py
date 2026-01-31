@@ -345,6 +345,9 @@ class BaseNode(ABC):
         except Exception as e:
             print(f"[{self.__class__.__name__}] LLM Error: {e}")
             traceback.print_exc()
-            # Return a minimal response object on error
-            from llm.base_provider import CompletionResponse
-            return CompletionResponse(content=f"Error: {str(e)}", model="error")
+            # Return a minimal Message object on error
+            return Message(
+                role=MessageRole.ASSISTANT,
+                content=f"Error: {str(e)}",
+                meta_info={"error": True}
+            )

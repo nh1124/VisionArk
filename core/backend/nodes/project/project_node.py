@@ -311,65 +311,32 @@ class ProjectNode(BaseNode):
         if not self.context.get("api_key"):
             return "❌ No API Key found. Please configure your Gemini API Key in Settings > AI Config."
 
-        llm_response = await self.chat_with_tools(
+        # 4. Chat with Tools (LLM)
+        reasoning_msg = await self.chat_with_tools(
             system_prompt=system_prompt,
             message_history=history,
             tool_context={
                 'user_id': self.user_id,
-                'db_session': self.context.get('db_session'),  # For tools that need DB access
+                'db_session': self.context.get('db_session'),
                 'session_id': self.session_id,
                 'node_id': self.node_id,
                 'project_id': self.project_id,
-                'context_data': self.context_data  # Pass full context data if needed
+                'context_data': self.context_data
             }
         )
         
-        # Extract content and tool_calls from response
-        response_text = llm_response.content or ""
+        # Extract content for return
+        response_text = reasoning_msg.content or ""
         
-        # Fallback for empty responses to avoid UI "No response" error
+        # Fallback for empty responses
         if not response_text.strip():
-             # If new_messages exists, it might be a tool turn series
-             if not getattr(llm_response, 'new_messages', []):
-                 response_text = "I have processed your request."
-             else:
-                 response_text = "Task completed."
+             response_text = "Task completed."
+             reasoning_msg.content = response_text
 
-        # 5. Save History (Consolidated Final Answer)
-        # Instead of saving granular turns, we consolidate them into a single comprehensive
-        # response to keep the UI clean and group all tool history at the end.
-        all_new = getattr(llm_response, 'new_messages', [])
+        # 5. Save History (Structured)
+        await self.memory.save_messages(self.session_id, [current_msg, reasoning_msg])
         
-        if all_new:
-            # Use the last message as the container for consolidation
-            final_msg = all_new[-1]
-            all_tool_calls = []
-            all_content = []
-            
-            for m in all_new:
-                # Aggregate all tool calls from all turns
-                if m.tool_calls:
-                    all_tool_calls.extend(m.tool_calls)
-                # Aggregate unique content parts
-                if m.content and m.content.strip():
-                    if m.content.strip() not in all_content:
-                        all_content.append(m.content.strip())
-            
-            # Combine content with proper spacing
-            final_msg.content = "\n\n".join(all_content)
-            # Assign consolidated tool calls (UI renders these at the bottom)
-            final_msg.tool_calls = all_tool_calls
-            # Final message is always the "final" answer turn
-            if not final_msg.meta_info: final_msg.meta_info = {}
-            final_msg.meta_info["turn_type"] = "final"
-            
-            await self.memory.save_messages(self.session_id, [current_msg, final_msg])
-        else:
-            # Fallback for empty or single-turn responses
-            # We must ensure the user message is saved even if no AI response was generated yet
-            await self.memory.save_messages(self.session_id, [current_msg])
-        
-        return response_text
+        return reasoning_msg
 
     async def on_exit(self, result: Any):
         # Advocate is now handled by System AI Router for deep analysis.

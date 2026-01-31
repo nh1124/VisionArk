@@ -2,8 +2,14 @@
 OpenAI LLM Provider
 Supports GPT-4, GPT-3.5, and embedding models
 """
-from typing import List, Optional
-from .base_provider import BaseLLMProvider, Message, CompletionResponse
+from typing import List, Optional, Any, Dict
+from .base_provider import BaseLLMProvider, CompletionResponse
+from models.message import MessageRole, Message, ToolCall, SubMessage
+import asyncio
+import uuid
+
+import logging
+logger = logging.getLogger(__name__)
 
 try:
     from openai import OpenAI
@@ -28,6 +34,7 @@ class OpenAIProvider(BaseLLMProvider):
         system_instruction: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        native_context: Optional[Any] = None,
         **kwargs
     ) -> CompletionResponse:
         """Generate completion using OpenAI"""
@@ -36,10 +43,9 @@ class OpenAIProvider(BaseLLMProvider):
         if system_instruction:
             openai_messages.append({"role": "system", "content": system_instruction})
             
-        openai_messages.extend([
-            {"role": msg.role, "content": msg.content}
-            for msg in messages
-        ])
+        for msg in messages:
+            role_val = getattr(msg.role, "value", msg.role)
+            openai_messages.append({"role": role_val, "content": msg.content})
         
         response = self.client.chat.completions.create(
             model=self.model_name,
@@ -49,11 +55,11 @@ class OpenAIProvider(BaseLLMProvider):
             **kwargs
         )
         
-        content = response.choices[0].message.content
+        content = response.choices[0].message.content or ""
         
-        # Record turn
-        new_msg = Message(
-            role=MessageRole.ASSISTANT,
+        # Create a SubMessage for this turn
+        step = SubMessage(
+            sub_id=str(uuid.uuid4()),
             content=content,
             tool_calls=[] # TODO: Implement OpenAI tool parsing if needed
         )
@@ -66,7 +72,7 @@ class OpenAIProvider(BaseLLMProvider):
                 "completion_tokens": response.usage.completion_tokens,
                 "total_tokens": response.usage.total_tokens
             },
-            new_messages=[new_msg]
+            step=step
         )
     
     def embed(self, text: str) -> List[float]:
@@ -85,10 +91,13 @@ class OpenAIProvider(BaseLLMProvider):
         **kwargs
     ):
         """Stream completion tokens"""
-        openai_messages = [
-            {"role": msg.role, "content": msg.content}
-            for msg in messages
-        ]
+        openai_messages = []
+        if system_instruction:
+            openai_messages.append({"role": "system", "content": system_instruction})
+            
+        for msg in messages:
+            role_val = getattr(msg.role, "value", msg.role)
+            openai_messages.append({"role": role_val, "content": msg.content})
         
         stream = self.client.chat.completions.create(
             model=self.model_name,
@@ -98,6 +107,10 @@ class OpenAIProvider(BaseLLMProvider):
             **kwargs
         )
         
+        for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+
     def stream_chat(
         self,
         messages: List[Message],
@@ -115,11 +128,12 @@ class OpenAIProvider(BaseLLMProvider):
         system_instruction: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        native_context: Optional[Any] = None,
         **kwargs
     ) -> CompletionResponse:
         """Asynchronous completion (sync simulation)"""
         return await asyncio.to_thread(
-            self.complete, messages, system_instruction, temperature, max_tokens, **kwargs
+            self.complete, messages, system_instruction, temperature, max_tokens, native_context, **kwargs
         )
 
     async def stream_chat_async(

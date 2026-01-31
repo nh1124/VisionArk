@@ -32,7 +32,7 @@ async def format_chat_history(messages: list) -> str:
         if msg.meta_payload and "tool_calls" in msg.meta_payload:
             for tool in msg.meta_payload["tool_calls"]:
                 lines.append(f"> **Tool Call**: `{tool.get('name')}`")
-                lines.append(f"> **Arguments**: `{tool.get('arguments')}`")
+                lines.append(f"> **Arguments**: `{tool.get('args', tool.get('arguments'))}`")
                 lines.append("")
     return "\n".join(lines)
 

@@ -385,24 +385,41 @@ class ChatMessage(Base):
     
     # Relationship
     session = relationship("ChatSession", back_populates="messages")
-    tool_usages = relationship("ToolUsage", back_populates="message", cascade="all, delete-orphan")
+    sub_messages = relationship("ChatSubMessage", back_populates="message", cascade="all, delete-orphan")
+
+
+class ChatSubMessage(Base):
+    """Structured sub-messages for intermediate thinking turns and tool calls"""
+    __tablename__ = "chat_sub_messages"
+    
+    id = Column(String(36), primary_key=True)
+    message_id = Column(String(36), ForeignKey("chat_messages.id"), nullable=False, index=True)
+    turn_index = Column(Integer, nullable=False)
+    content = Column(Text, nullable=True)                  # Thought/Text
+    meta_payload = Column(JSON, nullable=True)              # Tool calls, usage, metadata
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationship
+    message = relationship("ChatMessage", back_populates="sub_messages")
+    tool_calls = relationship("ToolUsage", back_populates="sub_message", cascade="all, delete-orphan")
 
 
 class ToolUsage(Base):
-    """Structured log of tool/function execution within a message"""
+    """Structured log of tool/function execution within a message or sub-message"""
     __tablename__ = "tool_usages"
     
     id = Column(String(36), primary_key=True)
     message_id = Column(String(36), ForeignKey("chat_messages.id"), nullable=False, index=True)
+    sub_message_id = Column(String(36), ForeignKey("chat_sub_messages.id"), nullable=True, index=True)
     call_id = Column(String(100), nullable=True)           # LLM's internal call ID
     name = Column(String(100), nullable=False)             # Tool name
-    arguments = Column(JSON, nullable=True)                # Input args
+    args = Column(JSON, nullable=True)                # Input args
     result = Column(Text, nullable=True)                   # Output string
     is_success = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationship
-    message = relationship("ChatMessage", back_populates="tool_usages")
+    sub_message = relationship("ChatSubMessage", back_populates="tool_calls")
 
 
 class ArchivedContext(Base):
@@ -687,6 +704,33 @@ def _run_migrations(engine):
                 conn.execute(text("ALTER TABLE notes ADD COLUMN tags JSON DEFAULT '[]'"))
                 conn.commit()
                 print("✅ Migration: Added tags column to notes")
+
+    # Migration: Add sub_message_id to tool_usages if missing
+    if 'tool_usages' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('tool_usages')]
+        if 'sub_message_id' not in columns:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE tool_usages ADD COLUMN sub_message_id VARCHAR(36) REFERENCES chat_sub_messages(id)"))
+                conn.commit()
+                print("✅ Migration: Added sub_message_id column to tool_usages")
+        
+        if 'arguments' in columns and 'args' not in columns:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE tool_usages RENAME COLUMN arguments TO args"))
+                conn.commit()
+                print("✅ Migration: Renamed tool_usages.arguments to tool_usages.args")
+        elif 'args' not in columns:
+             # Just in case it's newly created but without args? Unlikely but safer.
+             with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE tool_usages ADD COLUMN args JSON"))
+                conn.commit()
+                print("✅ Migration: Added args column to tool_usages")
+
+        if 'call_id' not in columns:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE tool_usages ADD COLUMN call_id VARCHAR(100)"))
+                conn.commit()
+                print("✅ Migration: Added call_id column to tool_usages")
 
 
 def get_session(engine):

@@ -3,7 +3,7 @@ Message models for structured conversation handling
 Separates LLM format, log format, and display format
 """
 from dataclasses import dataclass, field
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict
 from datetime import datetime
 from enum import Enum
 
@@ -148,6 +148,39 @@ class ToolCall:
 
 
 @dataclass
+class SubMessage:
+    """Structured record of an intermediate thinking turn and its tools"""
+    sub_id: str
+    content: str  # Thought/Text
+    tool_calls: List[ToolCall] = field(default_factory=list)
+    meta_info: Dict[str, Any] = field(default_factory=dict)
+    timestamp: datetime = field(default_factory=datetime.now)
+
+    def to_dict(self) -> dict:
+        return {
+            "sub_id": self.sub_id,
+            "content": self.content,
+            "tool_calls": [tc.to_dict() for tc in self.tool_calls],
+            "meta_info": self.meta_info,
+            "timestamp": self.timestamp.isoformat()
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'SubMessage':
+        if not data: return None
+        ts = data.get("timestamp")
+        if isinstance(ts, str): ts = datetime.fromisoformat(ts)
+        
+        return cls(
+            sub_id=data.get("sub_id"),
+            content=data.get("content") or "",
+            tool_calls=[ToolCall.from_dict(tc) for tc in data.get("tool_calls", [])],
+            meta_info=data.get("meta_info") or {},
+            timestamp=ts or datetime.now()
+        )
+
+
+@dataclass
 class Message:
     """
     Structured message with clean separation of concerns
@@ -159,7 +192,7 @@ class Message:
     content: str
     timestamp: datetime = field(default_factory=datetime.now)
     attached_files: List[AttachedFile] = field(default_factory=list)
-    tool_calls: List[ToolCall] = field(default_factory=list)
+    sub_messages: List[SubMessage] = field(default_factory=list) # Structured history
     meta_info: Optional[Any] = None  # Can be string or dict for tool metadata
     
     def format_for_chat(self) -> str:
@@ -203,9 +236,38 @@ class Message:
             "role": self.role.value,
             "content": self.content,
             "timestamp": self.timestamp.isoformat(),
-            "attached_files": [f.format_for_display() for f in self.attached_files]
+            "attached_files": [f.format_for_display() for f in self.attached_files],
+            "sub_messages": [sm.to_dict() for sm in self.sub_messages]
         }
     
+    def to_dict(self) -> dict:
+        """
+        Full serialization for DB persistence
+        """
+        return {
+            "role": self.role.value,
+            "content": self.content,
+            "timestamp": self.timestamp.isoformat(),
+            "attached_files": [f.to_dict() for f in self.attached_files],
+            "sub_messages": [sm.to_dict() for sm in self.sub_messages],
+            "meta_info": self.meta_info
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'Message':
+        if not data: return None
+        ts = data.get("timestamp")
+        if isinstance(ts, str): ts = datetime.fromisoformat(ts)
+        
+        return cls(
+            role=MessageRole(data.get("role", "user")),
+            content=data.get("content") or "",
+            timestamp=ts or datetime.now(),
+            attached_files=[AttachedFile.from_dict(f) for f in data.get("attached_files", [])],
+            sub_messages=[SubMessage.from_dict(sm) for sm in data.get("sub_messages", [])],
+            meta_info=data.get("meta_info")
+        )
+
     def to_llm_message(self) -> dict:
         """
         Convert to LLM provider format

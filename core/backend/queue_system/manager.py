@@ -6,6 +6,24 @@ from typing import Optional, Dict, Any
 from config import settings
 from models.database import TaskType
 
+from datetime import datetime, date
+
+class CustomEncoder(json.JSONEncoder):
+    """Robust JSON encoder for internal objects"""
+    def default(self, obj):
+        if hasattr(obj, "format_for_display") and callable(obj.format_for_display):
+            return obj.format_for_display()
+        if hasattr(obj, "to_dict") and callable(obj.to_dict):
+            return obj.to_dict()
+        if isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        # Pydantic support
+        if hasattr(obj, "model_dump") and callable(obj.model_dump):
+            return obj.model_dump()
+        if hasattr(obj, "dict") and callable(obj.dict) and not isinstance(obj, dict):
+            return obj.dict()
+        return super().default(obj)
+
 class QueueManager:
     _instance = None
 
@@ -32,7 +50,7 @@ class QueueManager:
         }
         
         # Add to list
-        self.client.rpush("task_queue", json.dumps(payload))
+        self.client.rpush("task_queue", json.dumps(payload, cls=CustomEncoder))
         
         project_id = (context or {}).get("project_id")
 
@@ -45,7 +63,7 @@ class QueueManager:
                 "result": None, 
                 "task_type": task_type,
                 "project_id": project_id
-            })
+            }, cls=CustomEncoder)
         )
 
         # Track active task for project recovery if project_id is present
@@ -85,7 +103,7 @@ class QueueManager:
         self.client.setex(
             f"task:{task_id}",
             3600, 
-            json.dumps(payload)
+            json.dumps(payload, cls=CustomEncoder)
         )
 
         # If terminal state, clear project mapping if it exists

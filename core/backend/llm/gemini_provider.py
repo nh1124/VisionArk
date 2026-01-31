@@ -9,10 +9,11 @@ import inspect
 import json
 from .base_provider import BaseLLMProvider, CompletionResponse
 from config import settings
-from models.message import MessageRole, Message, ToolCall
+from models.message import MessageRole, Message, ToolCall, SubMessage
 
 
 import logging
+import uuid
 logger = logging.getLogger(__name__)
 
 class GeminiProvider(BaseLLMProvider):
@@ -118,32 +119,43 @@ class GeminiProvider(BaseLLMProvider):
                     parts.append(types.Part.from_text(text=m.content))
                 history.append(types.Content(role=role, parts=parts))
             elif role_val == MessageRole.ASSISTANT.value:
-                # 1. Add model turn (Thoughts + Intents)
-                model_parts = []
-                if m.content:
-                    model_parts.append(types.Part.from_text(text=m.content))
-                
-                if m.tool_calls:
-                    for tc in m.tool_calls:
-                        model_parts.append(types.Part.from_function_call(
-                            name=tc.name,
-                            args=tc.args or {}
-                        ))
-                
-                history.append(types.Content(role="model", parts=model_parts))
-                
-                # 2. Add tool turn (Results) - ONLY if results exist
-                if m.tool_calls:
-                    tool_parts = []
-                    for tc in m.tool_calls:
-                        if tc.result is not None:
-                            tool_parts.append(types.Part.from_function_response(
-                                name=tc.name,
-                                response={'result': tc.result}
-                            ))
-                    
-                    if tool_parts:
-                        history.append(types.Content(role="tool", parts=tool_parts))
+                # Iterate through SubMessages to extract thoughts and tool calls
+                if m.sub_messages:
+                    for sub in m.sub_messages:
+                        # 1. Model turn (Thought + Function Call intents)
+                        model_parts = []
+                        if sub.content:
+                            model_parts.append(types.Part.from_text(text=sub.content))
+                        
+                        if sub.tool_calls:
+                            for tc in sub.tool_calls:
+                                model_parts.append(types.Part.from_function_call(
+                                    name=tc.name,
+                                    args=tc.args or {}
+                                ))
+                        
+                        if model_parts:
+                            history.append(types.Content(role="model", parts=model_parts))
+                            
+                        # 2. Tool turn (Function Responses)
+                        if sub.tool_calls:
+                            tool_parts = []
+                            for tc in sub.tool_calls:
+                                if tc.result is not None:
+                                    tool_parts.append(types.Part.from_function_response(
+                                        name=tc.name,
+                                        response={'result': tc.result}
+                                    ))
+                            
+                            if tool_parts:
+                                history.append(types.Content(role="tool", parts=tool_parts))
+                else:
+                    # Fallback for simple message without sub-messages
+                    model_parts = []
+                    if m.content:
+                        model_parts.append(types.Part.from_text(text=m.content))
+                    if model_parts:
+                        history.append(types.Content(role="model", parts=model_parts))
             else:
                 logger.warning(f"Unknown message role: {m.role}")
         
@@ -173,6 +185,30 @@ class GeminiProvider(BaseLLMProvider):
             
         return history, system_instruction_content
 
+    def _append_tool_results(self, history: List[types.Content], tool_calls: List[ToolCall]) -> List[types.Content]:
+        """
+        Appends tool results to the native Gemini history.
+        """
+        if not tool_calls:
+            return history
+            
+        tool_parts = []
+        for tc in tool_calls:
+            if tc.result is not None:
+                tool_parts.append(types.Part.from_function_response(
+                    name=tc.name,
+                    response={'result': tc.result}
+                ))
+        
+        if tool_parts:
+            # Create a copy of history to avoid side effects if needed, 
+            # though in reasoning loop we actually want to mutate or return a new one.
+            new_history = list(history)
+            new_history.append(types.Content(role="tool", parts=tool_parts))
+            return new_history
+            
+        return history
+
 
     async def complete_async(
         self,
@@ -183,13 +219,27 @@ class GeminiProvider(BaseLLMProvider):
         preferred_model: Optional[str] = None,
         attached_files: List = None,
         tool_definitions: List = None,
+        native_context: Optional[Any] = None,
         **kwargs
     ) -> CompletionResponse:
         """Asynchronously generate a single completion turn using Gemini."""
         model_name = preferred_model or self.model_name
         
         # 1. Prepare History & Config
-        history, system_instruction_content = self._prepare_history(messages, system_instruction, attached_files)
+        if native_context:
+            logger.info(f"🚀 [Gemini] Using native_context pass-through ({len(native_context)} turns)")
+            history = list(native_context)
+            # Check for incremental tool results to append
+            incremental_tool_calls = kwargs.get('incremental_tool_calls')
+            if incremental_tool_calls:
+                history = self._append_tool_results(history, incremental_tool_calls)
+            
+            # Resolve system instruction for config (even if history is provided)
+            # Note: For Gemini, system instruction is usually in generation_config.
+            # If native_context is used, we assume system instruction was already set or we re-pass it.
+            _, system_instruction_content = self._prepare_history([], system_instruction)
+        else:
+            history, system_instruction_content = self._prepare_history(messages, system_instruction, attached_files)
         
         if tool_definitions:
             tools_for_model = self._convert_dict_tools_to_gemini(tool_definitions)
@@ -234,6 +284,9 @@ class GeminiProvider(BaseLLMProvider):
         for fc in function_calls:
             intents.append(ToolCall(name=fc.name, args=fc.args or {}))
 
+        if intents:
+            logger.info(f"🔮 [Gemini] Model generated {len(intents)} tool intents: {[i.name for i in intents]}")
+
         usage = None
         if response.usage_metadata:
             usage = {
@@ -242,20 +295,23 @@ class GeminiProvider(BaseLLMProvider):
                 "total_tokens": response.usage_metadata.total_token_count
             }
 
-        # Record this turn
-        new_msg = Message(
-            role=MessageRole.ASSISTANT,
+        # Create a SubMessage for this turn
+        step = SubMessage(
+            sub_id=str(uuid.uuid4()),
             content=combined_text,
             tool_calls=intents
         )
+
+        # Append the new model turn to history for optimization
+        history.append(model_content)
 
         return CompletionResponse(
             content=combined_text,
             model=model_name,
             usage=usage,
-            new_messages=[new_msg]
+            step=step,
+            native_context=history
         )
-
 
 
     def complete(
@@ -267,13 +323,22 @@ class GeminiProvider(BaseLLMProvider):
         preferred_model: Optional[str] = None,
         attached_files: List = None,
         tool_definitions: List = None,
+        native_context: Optional[Any] = None,
         **kwargs
     ) -> CompletionResponse:
         """Generate a single completion turn using Gemini."""
         model_name = preferred_model or self.model_name
         
         # 1. Prepare History & Config
-        history, system_instruction_content = self._prepare_history(messages, system_instruction, attached_files)
+        if native_context:
+            logger.info(f"🚀 [Gemini] Using native_context pass-through ({len(native_context)} turns)")
+            history = list(native_context)
+            incremental_tool_calls = kwargs.get('incremental_tool_calls')
+            if incremental_tool_calls:
+                history = self._append_tool_results(history, incremental_tool_calls)
+            _, system_instruction_content = self._prepare_history([], system_instruction)
+        else:
+            history, system_instruction_content = self._prepare_history(messages, system_instruction, attached_files)
         
         if tool_definitions:
             tools_for_model = self._convert_dict_tools_to_gemini(tool_definitions)
@@ -317,6 +382,9 @@ class GeminiProvider(BaseLLMProvider):
         intents = []
         for fc in function_calls:
             intents.append(ToolCall(name=fc.name, args=fc.args or {}))
+            
+        if intents:
+            logger.info(f"🔮 [Gemini] Model generated {len(intents)} tool intents: {[i.name for i in intents]}")
 
         usage = None
         if response.usage_metadata:
@@ -326,18 +394,22 @@ class GeminiProvider(BaseLLMProvider):
                 "total_tokens": response.usage_metadata.total_token_count
             }
 
-        # Record this turn
-        new_msg = Message(
-            role=MessageRole.ASSISTANT,
+        # Create a SubMessage for this turn
+        step = SubMessage(
+            sub_id=str(uuid.uuid4()),
             content=combined_text,
             tool_calls=intents
         )
+
+        # Append the new model turn to history for optimization
+        history.append(model_content)
 
         return CompletionResponse(
             content=combined_text,
             model=model_name,
             usage=usage,
-            new_messages=[new_msg]
+            step=step,
+            native_context=history
         )
     
     def embed(self, text: str) -> List[float]:
@@ -366,11 +438,11 @@ class GeminiProvider(BaseLLMProvider):
             elif part.executable_code:
                 code = part.executable_code.code
                 language = part.executable_code.language or "python"
-                full_text.append(f"\n```{language}\n{code}\n```\n")
+                full_text.append(f"\\n```{language}\\n{code}\\n```\\n")
             elif part.code_execution_result:
                 outcome = part.code_execution_result.outcome
                 output = part.code_execution_result.output
-                full_text.append(f"\n> **Code Execution {outcome}**\n> ```\n> {output}\n> ```\n")
+                full_text.append(f"\\n> **Code Execution {outcome}**\\n> ```\\n> {output}\\n> ```\\n")
                 
         return "".join(full_text).strip()
     

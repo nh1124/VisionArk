@@ -33,6 +33,7 @@ interface Message {
     content: string;
     attached_files?: MessageAttachment[];
     tool_calls?: any[];
+    sub_messages?: any[];
 }
 
 export default function ProjectChatPage({
@@ -161,7 +162,8 @@ export default function ProjectChatPage({
                     role: m.role,
                     content: m.content,
                     attached_files: m.meta_payload?.attached_files || [],
-                    tool_calls: m.meta_payload?.tool_calls || []
+                    tool_calls: m.meta_payload?.tool_calls || [],
+                    sub_messages: m.sub_messages || []
                 }));
 
                 setMessages((prev) => {
@@ -347,7 +349,8 @@ export default function ProjectChatPage({
                                 role: m.role,
                                 content: m.content,
                                 attached_files: m.meta_payload?.attached_files || [],
-                                tool_calls: m.meta_payload?.tool_calls || []
+                                tool_calls: m.meta_payload?.tool_calls || [],
+                                sub_messages: m.sub_messages || []
                             }));
                             setMessages(newMessages);
 
@@ -882,6 +885,7 @@ export default function ProjectChatPage({
                                 content={msg.content}
                                 attached_files={msg.attached_files}
                                 tool_calls={msg.tool_calls}
+                                sub_messages={msg.sub_messages}
                                 nodeType="project"
                                 nodeName={projectId}
                                 approvalStatuses={approvalStatuses}

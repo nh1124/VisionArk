@@ -17,7 +17,7 @@ from typing import Optional, List, Dict
 
 
 from services.auth import resolve_identity, Identity, resolve_identity_for_download
-from models.database import Node, Project, ChatSession, ChatMessage, UploadedFile, get_async_db
+from models.database import Node, Project, ChatSession, ChatMessage, ChatSubMessage, UploadedFile, get_async_db
 from utils.paths import get_project_dir, get_user_projects_dir, validate_name, secure_path_join, update_project_name_cache as update_cache
 from uuid import uuid4
 from datetime import datetime, timedelta
@@ -263,19 +263,50 @@ async def get_project_history(
         if not active_session:
             return {"history": [], "message_count": 0}
         
-        # Query messages
-        result = await db.execute(select(ChatMessage).filter(
-            ChatMessage.session_id == active_session.id
-        ).order_by(ChatMessage.created_at.asc()))
-        messages = result.scalars().all()
+        # Query messages with sub_messages and tool_calls
+        from sqlalchemy.orm import selectinload
+        result = await db.execute(
+            select(ChatMessage)
+            .filter(ChatMessage.session_id == active_session.id)
+            .options(
+                selectinload(ChatMessage.sub_messages).selectinload(ChatSubMessage.tool_calls)
+            )
+            .order_by(ChatMessage.created_at.asc())
+        )
+        messages = result.scalars().unique().all()
+        print(f"📖 [History API] Found {len(messages)} messages for project {project_id}")
         
         history = []
         for msg in messages:
+            # Convert sub_messages to dicts
+            sub_messages_data = []
+            if msg.sub_messages:
+                for sub in msg.sub_messages:
+                    tool_calls_data = []
+                    if sub.tool_calls:
+                        for tc in sub.tool_calls:
+                            tool_calls_data.append({
+                                "name": tc.name,
+                                "args": tc.args,
+                                "result": tc.result,
+                                "is_success": tc.is_success
+                            })
+                    
+                    sub_messages_data.append({
+                        "sub_id": sub.id,
+                        "content": sub.content,
+                        "tool_calls": tool_calls_data,
+                        "meta_info": sub.meta_payload or {},
+                        "timestamp": sub.created_at.isoformat() if sub.created_at else None
+                    })
+
+            print(f"  - Msg ({msg.role}): {len(sub_messages_data)} sub_messages.")
             history.append({
                 "role": msg.role,
                 "content": msg.content,
                 "timestamp": msg.created_at.isoformat() if msg.created_at else None,
-                "meta_payload": msg.meta_payload or {}
+                "meta_payload": msg.meta_payload or {},
+                "sub_messages": sub_messages_data
             })
         
         return {"history": history, "message_count": len(history)}

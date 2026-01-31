@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
 from sqlalchemy import select
-from models.database import Skill, ScheduledTask, ScheduledTaskStatus, ChatMessage
+from models.database import Skill, ScheduledTask, ScheduledTaskStatus, ChatMessage, ChatSubMessage, ToolUsage
 from llm import get_provider
 
 class SkillMiningService:
@@ -27,14 +27,17 @@ class SkillMiningService:
         from sqlalchemy.orm import selectinload
         stmt = (
             select(ChatMessage)
-            .options(selectinload(ChatMessage.session))
+            .options(
+                selectinload(ChatMessage.session),
+                selectinload(ChatMessage.sub_messages).selectinload(ChatSubMessage.tool_calls)
+            )
             .join(ChatSession)
             .filter(ChatSession.project_id != None) # Usually tied to a project
             .order_by(desc(ChatMessage.created_at))
             .limit(10)
         )
         res = await self.db.execute(stmt)
-        messages = res.scalars().all()
+        messages = res.scalars().unique().all()
         messages.reverse() # Chronological order
 
         if not messages:
@@ -50,8 +53,26 @@ class SkillMiningService:
             role = m.role.upper()
             content = m.content
             tool_info = ""
+            
+            # 1. Check legacy tool calls
             if m.meta_payload and m.meta_payload.get("tool_calls"):
-                tool_info = f"\n[TOOLS USED: {json.dumps(m.meta_payload['tool_calls'])}]"
+                tool_info = f"\n[LEGACY TOOLS: {json.dumps(m.meta_payload['tool_calls'])}]"
+                
+            # 2. Check new structured tool calls
+            sub_actions = []
+            if m.sub_messages:
+                for sub in m.sub_messages:
+                    if sub.tool_calls:
+                        for tu in sub.tool_calls:
+                            sub_actions.append({
+                                "name": tu.name,
+                                "args": tu.args,
+                                "is_success": tu.is_success
+                            })
+            
+            if sub_actions:
+                tool_info += f"\n[STRUCTURED ACTIONS: {json.dumps(sub_actions)}]"
+                
             context_parts.append(f"{role}: {content}{tool_info}")
 
         analysis_context = "\n---\n".join(context_parts)
@@ -88,7 +109,7 @@ class SkillMiningService:
             response = await llm.complete_async(
                 [Message(role=MessageRole.USER, content=user_prompt)],
                 system_instruction=system_prompt,
-                preferred_model="gemini-2.0-flash-lite"
+                preferred_model="gemini-2.5-flash-lite"
             )
             
             # Extract JSON from response content (handling potential markdown blocks)
@@ -148,15 +169,24 @@ class SkillMiningService:
         distinct_tools = set()
 
         for m in messages:
+            # Legacy Check
             if m.meta_payload and m.meta_payload.get("tool_calls"):
                 calls = m.meta_payload["tool_calls"]
                 if isinstance(calls, list):
                     total_tool_calls += len(calls)
                     for call in calls:
-                        # Depending on how tool_calls are stored, name might be in 'function' or 'name'
                         t_name = call.get("name") or call.get("function", {}).get("name")
                         if t_name:
                             distinct_tools.add(t_name)
+            
+            # New Structure Check
+            if m.sub_messages:
+                for sub in m.sub_messages:
+                    if sub.tool_calls:
+                        total_tool_calls += len(sub.tool_calls)
+                        for tu in sub.tool_calls:
+                            if tu.name:
+                                distinct_tools.add(tu.name)
         
         return total_tool_calls >= 3 or len(distinct_tools) >= 2
 
@@ -223,14 +253,17 @@ class SkillMiningService:
         
         stmt = (
             select(ChatMessage)
-            .options(selectinload(ChatMessage.session))
+            .options(
+                selectinload(ChatMessage.session),
+                selectinload(ChatMessage.sub_messages).selectinload(ChatSubMessage.tool_calls)
+            )
             .join(ChatSession)
             .filter(ChatSession.project_id != None)
             .order_by(desc(ChatMessage.created_at))
             .limit(10)
         )
         res = await self.db.execute(stmt)
-        messages = res.scalars().all()
+        messages = res.scalars().unique().all()
         if not messages:
             return False
         
