@@ -36,13 +36,10 @@ The `ReasoningEngine` (in `core/backend/llm/reasoning_engine.py`) is the central
 
 ### Responsibilities
 - **Reasoning Loop**: Manages the `while turn < max_turns` loop required for tool-calling agents.
+- **Thought Accumulation**: Captures each intermediate turn (thoughts + tool actions) as a structured `SubMessage`.
 - **Tool Execution**: Dispatches and executes Python functions requested by the model.
-- **State Management**: Appends messages and tool results to the conversation history for subsequent turns.
-- **Status Orchestration**: Provides user-facing status updates (e.g., "Searching...", "Computing...") during the loop.
-
-### Why this separation exists
-- **Provider Consistency**: Connectors for Gemini, OpenAI, and Anthropic remain simple and interchangeable. The complex logic of "how to call a tool and feed the result back" is written once in the Engine.
-- **Responsibility Isolation**: Low-level communication logic is separated from high-level application logic (tool execution, task cancellation, database sessions).
+- **Consolidation**: Merges multi-turn reasoning into a single `assistant` message containing a list of `sub_messages` for frontend display.
+- **Native Context Optimization**: Passes provider-specific state (e.g. Gemini `Content` objects) between turns to ensure $O(1)$ history growth and avoid repetitive tokenization.
 
 ---
 
@@ -57,13 +54,21 @@ Modern models distinguish between **System Instructions** (static persona/direct
 
 ---
 
-## 4. Message Model
+## 4. Message & SubMessage Model
 
-The `Message` dataclass (in `models/message.py`) serves as the unified transport for all layers.
+VisionArk uses a two-tier message structure (defined in `models/message.py`) to separate logical turns from intermediate thinking steps.
 
-- **`role`**: `USER`, `ASSISTANT`, `SYSTEM`, or `TOOL`.
-- **`content`**: The text payload.
-- **`tool_calls`**: A list of `ToolCall` objects representing either intents (from the model) or results (from the Engine).
+### Message
+The high-level transport for the conversation.
+- **`role`**: `USER` or `ASSISTANT`.
+- **`content`**: The final consolidated text response.
+- **`sub_messages`**: A list of `SubMessage` objects representing the "Thinking Process".
+
+### SubMessage
+A discrete unit of reasoning within a single assistant turn.
+- **`content`**: The model's reasoning/thought text for that specific turn.
+- **`tool_calls`**: A list of `ToolCall` objects (intents + results).
+- **`timestamp`**: Accurate timing for each intermediate step.
 
 ---
 
@@ -71,9 +76,11 @@ The `Message` dataclass (in `models/message.py`) serves as the unified transport
 
 1. **Agent Node** calls `chat_with_tools`.
 2. **BaseNode** instantiates `ReasoningEngine`.
-3. **ReasoningEngine** calls **LLM Provider** for turn 1.
-4. **LLM Provider** returns a "Function Call" intent.
-5. **ReasoningEngine** executes the Python function.
-6. **ReasoningEngine** passes the result back to **LLM Provider** for turn 2.
-7. **LLM Provider** returns the final text response.
-8. **ReasoningEngine** returns the unified history to the **Agent Node**.
+3. **ReasoningEngine** enters reasoning loop:
+    a. Calls **LLM Provider** with `native_context` (if available).
+    b. Model returns reasoning text and/or `tool_calls`.
+    c. Engine executes tools and captures results.
+    d. Engine appends a new **SubMessage** to the current turn's history.
+4. **ReasoningEngine** constructs a final **Message** (ASSISTANT role) containing all collected `sub_messages`.
+5. **MemoryNode** persists the message, creating `ChatSubMessage` and `ToolUsage` records in the database.
+6. **Frontend** renders the chat message with a collapsible "**Thinking Process**" section.

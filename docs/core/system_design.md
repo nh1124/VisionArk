@@ -170,11 +170,13 @@ AIとの対話における「待ち時間」を、単なる静止時間から「
 
 * **Real-time Status Updates (リアルタイム・ステータス表示):**
   * エージェントがメッセージ処理中に、内部で行っている具体的な動作（例：「KnowledgeCoreを検索中...」「Google検索を実行中...」「LBSのスケジュールを調整中...」）をテキスト形式でリアルタイムに表示する。
-  * これにより、ユーザーはAIの進捗を視覚的に把握でき、長い処理時間（ツール実行等）に対する許容度と透明性が向上する。
+
+* **Thinking History (思考履歴の永続化):**
+  * 生成完了後、各ターンの「思考（Thoughts）」および「ツール実行詳細（Tool Calls）」を `sub_messages` として保存。
+  * UI上で「**Thinking Process**」セクションとして折りたたみ表示し、後からAIの判断根拠を詳細にトレース可能にする。
 
 * **Streaming Response (ストリーミング応答):**
   * 生成された回答を即座にUIに反映するストリーミング出力をサポート。
-  * 思考プロセス（ステータス）を表示した後に、スムーズに回答の生成を開始することで、ユーザー体験のシームレスな連続性を確保する。
 
 ## **非機能要件 (Non-Functional Requirements)**
 
@@ -680,13 +682,12 @@ erDiagram
   * `system_prompt`: 命令文
   * `is_active`: 有効フラグ
 
-#### **7. CHAT_SESSIONS / CHAT_MESSAGES (対話履歴)**
-* **役割:** ユーザーとAI、またはAI同士の会話ログ。
-* **主要カラム:**
-  * `session_id`: 会話のグループID
-  * `role`: "user", "assistant", "system"
-  * `content`: メッセージ本文
-  * `meta_payload`: JSON (ツール実行結果など)
+#### **7. CHAT_SESSIONS / CHAT_MESSAGES / CHAT_SUB_MESSAGES (対話履歴)**
+* **役割:** ユーザーとAI、またはAI同士の会話ログ。構造化された思考ステップを保持する。
+* **主要テーブル:**
+  * **CHAT_MESSAGES**: メッセージ本体 (`role`, `content`)
+  * **CHAT_SUB_MESSAGES**: 中間思考ステップ (`sub_id`, `content`)
+  * **TOOL_USAGES**: サブメッセージに紐づくツール実行履歴 (`tool_name`, `args`, `result`)
 
 #### **8. UPLOADED_FILES (ファイル管理)**
 * **役割:** RAGやGemini解析に使用するファイルのメタデータ。
