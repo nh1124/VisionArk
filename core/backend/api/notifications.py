@@ -12,7 +12,7 @@ from config import settings
 
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 
-@router.get("/")
+@router.get("")
 async def list_notifications(
     limit: int = 50,
     offset: int = 0,
@@ -20,8 +20,8 @@ async def list_notifications(
     current_user = Depends(get_current_user)
 ):
     service = NotificationService(db)
-    notifications = await service.list_notifications(current_user.id, limit=limit, offset=offset)
-    unread_count = await service.get_unread_count(current_user.id)
+    notifications = await service.list_notifications(current_user.user_id, limit=limit, offset=offset)
+    unread_count = await service.get_unread_count(current_user.user_id)
     return {
         "notifications": notifications,
         "unread_count": unread_count
@@ -34,7 +34,7 @@ async def mark_as_read(
     current_user = Depends(get_current_user)
 ):
     service = NotificationService(db)
-    success = await service.mark_as_read(notification_id, current_user.id)
+    success = await service.mark_as_read(notification_id, current_user.user_id)
     return {"success": success}
 
 @router.post("/read-all")
@@ -43,7 +43,7 @@ async def mark_all_as_read(
     current_user = Depends(get_current_user)
 ):
     service = NotificationService(db)
-    success = await service.mark_all_as_read(current_user.id)
+    success = await service.mark_all_as_read(current_user.user_id)
     return {"success": success}
 
 # WebSocket Manager for real-time delivery

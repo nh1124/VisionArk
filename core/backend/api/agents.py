@@ -469,14 +469,19 @@ async def branch_project_chat(
             db.add(new_msg)
         
         # 9. Create project directory
-        project_dir = get_project_dir(identity.user_id, new_node_id)
+        project_dir = get_project_dir(identity.user_id, new_project_id)
         project_dir.mkdir(parents=True, exist_ok=True)
         (project_dir / "files").mkdir(exist_ok=True)
         (project_dir / "artifacts").mkdir(exist_ok=True)
         (project_dir / "refs").mkdir(exist_ok=True)
         
         await db.commit()
-        return {"success": True, "new_project_name": new_project_name, "new_node_id": new_node_id}
+        return {
+            "success": True, 
+            "new_project_id": new_project_id,
+            "new_project_name": new_project_name, 
+            "new_node_id": new_node_id
+        }
         
     except HTTPException:
         raise
@@ -1182,14 +1187,14 @@ async def clone_project(
                 id=new_file_id,
                 project_id=new_project_id,
                 filename=f.filename,
+                directory=f.directory,
+                is_directory=f.is_directory,
                 mime_type=f.mime_type,
                 size_bytes=f.size_bytes,
                 storage_path=new_storage_path,
-                gemini_file_uri=f.gemini_file_uri,
-                gemini_file_name=f.gemini_file_name,
+                uploaded_at=f.uploaded_at,
                 vector_status=f.vector_status,
-                kc_sync_status=f.kc_sync_status,
-                uploaded_at=f.uploaded_at
+                kc_sync_status=f.kc_sync_status
             )
             db.add(new_file)
             

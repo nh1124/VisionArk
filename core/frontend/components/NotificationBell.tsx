@@ -20,21 +20,26 @@ export function NotificationBell() {
     const [isOpen, setIsOpen] = useState(false);
     const [notifications, setNotifications] = useState<NotificationItem[]>([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
 
     const fetchNotifications = async () => {
         setIsLoading(true);
+        setError(null);
         try {
             const token = localStorage.getItem("atmos_access_token");
-            const res = await fetch("/api/notifications/", {
+            const res = await fetch("/api/notifications", {
                 headers: { "Authorization": `Bearer ${token}` }
             });
             if (res.ok) {
                 const data = await res.json();
-                setNotifications(data.notifications);
+                setNotifications(data.notifications || []);
+            } else {
+                setError("Failed to load notifications");
             }
         } catch (err) {
             console.error("Failed to fetch notifications:", err);
+            setError("Connection error");
         } finally {
             setIsLoading(false);
         }
@@ -128,6 +133,10 @@ export function NotificationBell() {
                         {isLoading ? (
                             <div className="p-8 text-center text-slate-500 text-sm">
                                 Loading notifications...
+                            </div>
+                        ) : error ? (
+                            <div className="p-8 text-center text-rose-500 text-sm">
+                                {error}
                             </div>
                         ) : notifications.length === 0 ? (
                             <div className="p-8 text-center text-slate-500 text-sm">

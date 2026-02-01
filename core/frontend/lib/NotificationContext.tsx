@@ -79,7 +79,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         if (!isAuthenticated) return;
         try {
             const token = localStorage.getItem("atmos_access_token");
-            const res = await fetch("/api/notifications/", {
+            const res = await fetch("/api/notifications", {
                 headers: { "Authorization": `Bearer ${token}` }
             });
             if (res.ok) {
