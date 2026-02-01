@@ -4,6 +4,7 @@ Orchestrates multi-turn LLM execution, tool calling, and history management.
 Decouples execution logic from LLM connectivity.
 """
 import asyncio
+import os
 import time
 import logging
 import json
@@ -24,6 +25,20 @@ class ReasoningEngine:
     """
     def __init__(self, provider: BaseLLMProvider):
         self.provider = provider
+
+    def _load_prompt_component(self, name: str) -> str:
+        """Helper to load a prompt component from the assets directory."""
+        import os
+        base_dir = r"C:\Users\nh112\programming\project\VisionArk\core\backend\assets\prompts\components"
+        path = os.path.join(base_dir, f"{name}.md")
+
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return f.read()
+            except Exception as e:
+                logger.error(f"Error loading prompt component {name}: {e}")
+        return ""
 
     async def execute_async(
         self,
@@ -114,7 +129,7 @@ class ReasoningEngine:
 
             # 3. Execute tools
             if not tool_functions:
-                logger.warning(f"[ReasoningEngine] Model requested tools { [tc.name for tc in tool_calls] } but no functions provided.")
+                print(f"[ReasoningEngine] Model requested tools { [tc.name for tc in tool_calls] } but no functions provided.")
                 # We can't proceed with execution, so break
                 break
 
@@ -163,7 +178,49 @@ class ReasoningEngine:
         # Consolidated Result
         final_content = steps[-1].content if steps else ""
         
+        # If we had multiple turns or tool calls, run one final summarization to get a clean result
+        if len(steps) > 1 or any(s.tool_calls for s in steps):
+            if status_callback:
+                await status_callback("Summarizing results...", "processing")
+            
+            print("📝 [ReasoningEngine] Performing summarization turn...")
+            
+            # Load custom instructions for formatting and identity
+            formatting_instr = self._load_prompt_component("formatting")
+            identity_instr = self._load_prompt_component("identity")
+            
+            summary_prompt = identity_instr + "\n\n" + formatting_instr + "\n\n" + (
+                "Based on the actions taken and results obtained in the 'Thinking Process' above, "
+                "please provide a helpful and natural final response to the user's original request. "
+                "Maintain your persona as a proactive assistant, explain what was accomplished, "
+                "and suggest any relevant next steps. Respond in the same language as the user."
+            )
+
+            # Create a virtual assistant message representing the context so far
+            context_msg = Message(
+                role=MessageRole.ASSISTANT,
+                content="Reasoning complete.",
+                sub_messages=steps
+            )
+            
+            # Send the summary prompt to the provider
+            # We provide the last user message for context + the full reasoning trace (context_msg)
+            # This prevents the model from summarizing the entire conversation history.
+            last_user_msg = next((m for m in reversed(messages) if m.role == MessageRole.USER), messages[-1])
+            
+            summary_response = await self.provider.complete_async(
+                messages=[last_user_msg, context_msg, Message(role=MessageRole.USER, content=summary_prompt)],
+                system_instruction=system_instruction,
+                temperature=0.3,
+                **kwargs
+            )
+
+            if summary_response and summary_response.step and summary_response.step.content:
+                final_content = summary_response.step.content
+                print("✅ [ReasoningEngine] Summarization successful.")
+
         return Message(
+
             role=MessageRole.ASSISTANT,
             content=final_content,
             sub_messages=steps,

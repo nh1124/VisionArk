@@ -167,9 +167,36 @@ function MessageWithAttachmentsBase({
                         : "text-gray-100 p-5"
                     } transition-all`}
                 >
-                    {/* Collapsible Thinking Steps */}
+                    {/* Final Response Content */}
+                    <div className="prose prose-invert max-w-none prose-p:leading-relaxed prose-pre:bg-gray-950 prose-pre:border prose-pre:border-gray-800 break-words">
+                        {role === "assistant" ? (
+                            content ? (
+                                content.match(/^(?:🤖|SYSTEM|Node)? ?(.+) has completed background work:/i) ? (
+                                    (() => {
+                                        const match = content.match(/^(?:🤖|SYSTEM|Node)? ?(.+) has completed background work:/i);
+                                        const rawHeader = match ? match[0] : "System Report";
+                                        const headerText = rawHeader.replace(/\*\*/g, "").replace(/^🤖\s*/, "");
+                                        const bodyText = content.replace(match ? match[0] : "", "").trim();
+                                        return <AsyncReport content={bodyText} headerText={headerText} nodeType={nodeType} nodeName={nodeName} />;
+                                    })()
+                                ) : (
+                                    <MarkdownRenderer content={content} nodeType={nodeType} nodeName={nodeName} />
+                                )
+                            ) : sub_messages.length === 0 ? (
+                                <span className="text-gray-500 italic font-medium flex items-center gap-2"><Bot size={14} /> Waiting for response...</span>
+                            ) : null
+                        ) : (
+                            <div className="whitespace-pre-wrap break-words leading-relaxed text-[15px] font-medium tracking-tight">
+                                {content.includes("[CANVAS_CONTEXT_START]")
+                                    ? content.split("[CANVAS_CONTEXT_START]")[0].trim()
+                                    : content}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Collapsible Thinking Steps - Moved to bottom */}
                     {role === "assistant" && sub_messages.length > 0 && (
-                        <div className="mb-4">
+                        <div className="mt-4">
                             <div className="rounded-2xl border border-gray-800/40 bg-gray-950/40 overflow-hidden shadow-sm transition-all hover:border-gray-700/40">
                                 <button
                                     onClick={() => setStepsExpanded(!stepsExpanded)}
@@ -201,6 +228,8 @@ function MessageWithAttachmentsBase({
                                                         <MarkdownRenderer content={step.content} nodeType={nodeType} nodeName={nodeName} />
                                                     </div>
                                                 )}
+
+
 
                                                 {step.tool_calls.length > 0 && (
                                                     <div className="space-y-3 ml-2">
@@ -271,32 +300,6 @@ function MessageWithAttachmentsBase({
                         </div>
                     )}
 
-                    {/* Final Response Content */}
-                    <div className="prose prose-invert max-w-none prose-p:leading-relaxed prose-pre:bg-gray-950 prose-pre:border prose-pre:border-gray-800 break-words">
-                        {role === "assistant" ? (
-                            content ? (
-                                content.match(/^(?:🤖|SYSTEM|Node)? ?(.+) has completed background work:/i) ? (
-                                    (() => {
-                                        const match = content.match(/^(?:🤖|SYSTEM|Node)? ?(.+) has completed background work:/i);
-                                        const rawHeader = match ? match[0] : "System Report";
-                                        const headerText = rawHeader.replace(/\*\*/g, "").replace(/^🤖\s*/, "");
-                                        const bodyText = content.replace(match ? match[0] : "", "").trim();
-                                        return <AsyncReport content={bodyText} headerText={headerText} nodeType={nodeType} nodeName={nodeName} />;
-                                    })()
-                                ) : (
-                                    <MarkdownRenderer content={content} nodeType={nodeType} nodeName={nodeName} />
-                                )
-                            ) : sub_messages.length === 0 ? (
-                                <span className="text-gray-500 italic font-medium flex items-center gap-2"><Bot size={14} /> Waiting for response...</span>
-                            ) : null
-                        ) : (
-                            <div className="whitespace-pre-wrap break-words leading-relaxed text-[15px] font-medium tracking-tight">
-                                {content.includes("[CANVAS_CONTEXT_START]")
-                                    ? content.split("[CANVAS_CONTEXT_START]")[0].trim()
-                                    : content}
-                            </div>
-                        )}
-                    </div>
 
                     {/* Legacy Tool Calls Section */}
                     {role === "assistant" && sub_messages.length === 0 && tool_calls.length > 0 && (
