@@ -20,9 +20,10 @@ class MulticastMessageTool(BaseTool):
     )
     args_schema = MulticastMessageArgs
 
-    async def run(self, target_ids: List[str], message: str, force: bool = False, **kwargs) -> str:
+    async def run(self, target_ids: List[str], message: str, force: bool = False, **kwargs) -> Any:
+        from tools.base import ToolResult
         if not target_ids:
-            return "Error: No target IDs provided."
+            return ToolResult(content="Error: No target IDs provided.", is_success=False)
 
         db_session = self.context.get("db_session")
         user_id = self.context.get("user_id")
@@ -31,9 +32,9 @@ class MulticastMessageTool(BaseTool):
         already_triggered = self.context.get("already_triggered_node_ids", [])
 
         if not user_id:
-            return "Error: No user_id in context."
+            return ToolResult(content="Error: No user_id in context.", is_success=False)
         if not db_session:
-            return "Error: No db_session in context."
+            return ToolResult(content="Error: No db_session in context.", is_success=False)
 
         # 1. Validation and Filtering
         from models.database import Node
@@ -59,12 +60,12 @@ class MulticastMessageTool(BaseTool):
             filtered_targets.append(tid)
 
         if invalid_ids:
-            return f"Error: The following Target IDs do not exist: {', '.join(invalid_ids)}. Please check the PROJECT ROSTER and try again with correct IDs."
+            return ToolResult(content=f"Error: The following Target IDs do not exist: {', '.join(invalid_ids)}. Please check the PROJECT ROSTER and try again with correct IDs.", is_success=False)
 
         if not filtered_targets:
             if skipped_redundant:
-                return f"Multicast cancelled: All targets ({', '.join(skipped_redundant)}) were already notified via Tier 1 hooks. Use 'force=True' if a redundant call is intentional."
-            return "Error: No valid targets identified for multicast."
+                return ToolResult(content=f"Multicast cancelled: All targets ({', '.join(skipped_redundant)}) were already notified via Tier 1 hooks. Use 'force=True' if a redundant call is intentional.", is_success=False)
+            return ToolResult(content="Error: No valid targets identified for multicast.", is_success=False)
 
         # 2. Enqueue Tasks
         manager = QueueManager()
@@ -95,7 +96,7 @@ class MulticastMessageTool(BaseTool):
         if skipped_redundant:
             status_msg += f" (Note: {len(skipped_redundant)} nodes were skipped as they were already triggered by Regex hooks)."
         
-        return status_msg
+        return ToolResult(content=status_msg)
 
 class SubscribeIntentArgs(BaseModel):
     pattern: Optional[str] = Field(None, description="Regex pattern for immediate matching (e.g., '.*urgent.*').")
@@ -117,16 +118,17 @@ class SubscribeIntentTool(BaseTool):
     )
     args_schema = SubscribeIntentArgs
 
-    async def run(self, pattern: Optional[str] = None, intent_description: Optional[str] = None, description: Optional[str] = None, session_bound: bool = True, **kwargs) -> str:
+    async def run(self, pattern: Optional[str] = None, intent_description: Optional[str] = None, description: Optional[str] = None, session_bound: bool = True, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session = self.context.get("db_session")
         node_id = self.context.get("node_id")
         session_id = self.context.get("session_id") if session_bound else None
         
         if not db_session or not node_id:
-            return "Error: Database session or Node ID missing from context."
+            return ToolResult(content="Error: Database session or Node ID missing from context.", is_success=False)
 
         if not pattern and not intent_description:
-            return "Error: Either 'pattern' or 'intent_description' must be provided."
+            return ToolResult(content="Error: Either 'pattern' or 'intent_description' must be provided.", is_success=False)
 
         from models.database import Node
         from sqlalchemy import select
@@ -139,7 +141,7 @@ class SubscribeIntentTool(BaseTool):
             node = res.scalars().first()
             
             if not node:
-                return f"Error: Node record {node_id} not found."
+                return ToolResult(content=f"Error: Node record {node_id} not found.", is_success=False)
 
             import copy
             meta = copy.deepcopy(node.meta_payload or {})
@@ -197,10 +199,10 @@ class SubscribeIntentTool(BaseTool):
                 elif intent_description: added_id = meta["semantic_interests"][-1]["id"]
                 msg += f" (Subscription ID: {added_id})"
             
-            return msg
+            return ToolResult(content=msg)
         except Exception as e:
             await db_session.rollback()
-            return f"Error registering subscription: {e}"
+            return ToolResult(content=f"Error registering subscription: {e}", is_success=False)
 
 class UnsubscribeIntentArgs(BaseModel):
     subscription_id: Optional[str] = Field(None, description="The unique ID of the subscription to remove (e.g., 'sub_abcd1234'). Preferred.")
@@ -219,15 +221,16 @@ class UnsubscribeIntentTool(BaseTool):
     )
     args_schema = UnsubscribeIntentArgs
 
-    async def run(self, subscription_id: Optional[str] = None, pattern: Optional[str] = None, intent_description: Optional[str] = None, **kwargs) -> str:
+    async def run(self, subscription_id: Optional[str] = None, pattern: Optional[str] = None, intent_description: Optional[str] = None, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session = self.context.get("db_session")
         node_id = self.context.get("node_id")
         
         if not db_session or not node_id:
-            return "Error: Database session or Node ID missing from context."
+            return ToolResult(content="Error: Database session or Node ID missing from context.", is_success=False)
 
         if not subscription_id and not pattern and not intent_description:
-            return "Error: Either 'subscription_id', 'pattern', or 'intent_description' must be provided."
+            return ToolResult(content="Error: Either 'subscription_id', 'pattern', or 'intent_description' must be provided.", is_success=False)
 
         from models.database import Node
         from sqlalchemy import select
@@ -238,7 +241,7 @@ class UnsubscribeIntentTool(BaseTool):
             node = res.scalars().first()
             
             if not node:
-                return f"Error: Node record {node_id} not found."
+                return ToolResult(content=f"Error: Node record {node_id} not found.", is_success=False)
 
             import copy
             meta = copy.deepcopy(node.meta_payload or {})
@@ -288,12 +291,12 @@ class UnsubscribeIntentTool(BaseTool):
                 from services.router import Router
                 await Router.initialize_default_hooks()
                 
-                return "Successfully unsubscribed."
+                return ToolResult(content="Successfully unsubscribed.")
             
-            return "No matching subscription found to remove."
+            return ToolResult(content="No matching subscription found to remove.", is_success=False)
         except Exception as e:
             await db_session.rollback()
-            return f"Error removing subscription: {e}"
+            return ToolResult(content=f"Error removing subscription: {e}", is_success=False)
 
 class ListSubscriptionsTool(BaseTool):
     """
@@ -304,12 +307,13 @@ class ListSubscriptionsTool(BaseTool):
     description = "List all active subscriptions (intents and regex hooks) for your node."
     args_schema = NoArgs
 
-    async def run(self, **kwargs) -> str:
+    async def run(self, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session = self.context.get("db_session")
         node_id = self.context.get("node_id")
         
         if not db_session or not node_id:
-            return "Error: Database session or Node ID missing from context."
+            return ToolResult(content="Error: Database session or Node ID missing from context.", is_success=False)
 
         from models.database import Node
         from sqlalchemy import select
@@ -319,14 +323,14 @@ class ListSubscriptionsTool(BaseTool):
             res = await db_session.execute(stmt)
             node = res.scalars().first()
             
-            if not node: return "Error: Node not found."
+            if not node: return ToolResult(content="Error: Node not found.", is_success=False)
 
             meta = node.meta_payload or {}
             patterns = meta.get("trigger_patterns", [])
             interests = meta.get("semantic_interests", [])
 
             if not patterns and not interests:
-                return "You have no active subscriptions."
+                return ToolResult(content="You have no active subscriptions.")
 
             lines = ["### Your Active Subscriptions:"]
             
@@ -346,6 +350,6 @@ class ListSubscriptionsTool(BaseTool):
                     desc = f" - {i.get('description')}" if i.get('description') else ""
                     lines.append(f"- ID: `{i.get('id')}` | Intent: `{i.get('value')}`{bound}{desc}")
 
-            return "\n".join(lines)
+            return ToolResult(content="\n".join(lines))
         except Exception as e:
-            return f"Error listing subscriptions: {e}"
+            return ToolResult(content=f"Error listing subscriptions: {e}", is_success=False)

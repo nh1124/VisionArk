@@ -14,6 +14,7 @@ class ListCalendarEventsTool(BaseTool):
     args_schema = ListCalendarEventsArgs
     
     async def run(self, **kwargs) -> Any:
+        from va_sdk import ToolResult
         user_id = kwargs.get("user_id")
         db = kwargs.get("db_session")
         calendar_id = kwargs.get("calendar_id", "primary")
@@ -24,7 +25,11 @@ class ListCalendarEventsTool(BaseTool):
         from datetime import timedelta
         time_max = time_min + timedelta(days=days)
         
-        return await client.list_events(calendar_id, time_min=time_min, time_max=time_max)
+        events = await client.list_events(calendar_id, time_min=time_min, time_max=time_max)
+        return ToolResult(
+            content=f"Found {len(events)} events in calendar {calendar_id}.",
+            data={"events": events}
+        )
 
 class CreateCalendarEventArgs(BaseModel):
     summary: str
@@ -40,6 +45,7 @@ class CreateCalendarEventTool(BaseTool):
     args_schema = CreateCalendarEventArgs
     
     async def run(self, **kwargs) -> Any:
+        from va_sdk import ToolResult
         user_id = kwargs.get("user_id")
         db = kwargs.get("db_session")
         summary = kwargs.get("summary")
@@ -55,4 +61,8 @@ class CreateCalendarEventTool(BaseTool):
             "start": {"dateTime": f"{start_time}Z"},
             "end": {"dateTime": f"{end_time}Z"},
         }
-        return await client.create_event(calendar_id, event_data)
+        event = await client.create_event(calendar_id, event_data)
+        return ToolResult(
+            content=f"Created event '{summary}' in calendar {calendar_id}.",
+            data={"event": event}
+        )

@@ -121,17 +121,17 @@ class ToolCall:
     """Structured record of a tool/function call and its result"""
     name: str
     args: dict
-    call_id: Optional[str] = None
     result: Optional[str] = None
     is_success: bool = True
+    attachments: List[Dict] = field(default_factory=list) # Multimodal data (e.g. Gemini URIs)
 
     def to_dict(self) -> dict:
         return {
             "name": self.name,
             "args": self.args,
-            "call_id": self.call_id,
             "result": self.result,
-            "is_success": self.is_success
+            "is_success": self.is_success,
+            "attachments": self.attachments
         }
 
     @classmethod
@@ -141,9 +141,9 @@ class ToolCall:
         return cls(
             name=data.get("name"),
             args=data.get("args") or {},
-            call_id=data.get("call_id"),
             result=data.get("result"),
-            is_success=data.get("is_success", True)
+            is_success=data.get("is_success", True),
+            attachments=data.get("attachments") or []
         )
 
 

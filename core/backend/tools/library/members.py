@@ -12,10 +12,11 @@ class ListMembersTool(BaseTool):
     args_schema = NoArgs
 
     async def run(self, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         project_id: str = kwargs.get("project_id")
         if not db_session or not project_id:
-            return {"success": False, "message": "Missing context (session or project_id)"}
+            return ToolResult(content="Missing context (session or project_id)", is_success=False)
         
         try:
             result = await db_session.execute(select(Node).where(
@@ -26,7 +27,7 @@ class ListMembersTool(BaseTool):
             member_nodes = result.scalars().all()
             
             if not member_nodes:
-                return {"success": True, "message": "No dynamic members found for this project.", "data": {"members": []}}
+                return ToolResult(content="No dynamic members found for this project.", data={"members": []})
 
             members_list = []
             for n in member_nodes:
@@ -42,9 +43,9 @@ class ListMembersTool(BaseTool):
             for m in members_list:
                 msg += f"- {m['role_name']} ({m['display_name']}): tools={m['tools']}\n"
             
-            return {"success": True, "message": msg, "data": {"members": members_list}}
+            return ToolResult(content=msg, data={"members": members_list})
         except Exception as e:
-            return {"success": False, "message": f"Failed to list members: {e}"}
+            return ToolResult(content=f"Failed to list members: {e}", is_success=False)
 
 class ManageMemberArgs(BaseModel):
     action: Literal["create", "update", "delete"] = Field(..., description="Action to perform")
@@ -60,10 +61,11 @@ class ManageMemberTool(BaseTool):
     args_schema = ManageMemberArgs
 
     async def run(self, action: str, role_name: str, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         project_id: str = kwargs.get("project_id")
         if not db_session or not project_id:
-            return {"success": False, "message": "Missing context (session or project_id)"}
+            return ToolResult(content="Missing context (session or project_id)", is_success=False)
 
         role_name = role_name.lower().strip()
         
@@ -76,7 +78,7 @@ class ManageMemberTool(BaseTool):
                     Node.node_type == "MEMBER"
                 ))
                 if res.scalars().first():
-                    return {"success": False, "message": f"Member '{role_name}' already exists. Use 'update' instead."}
+                    return ToolResult(content=f"Member '{role_name}' already exists. Use 'update' instead.", is_success=False)
                 
                 new_node = Node(
                     id=str(uuid.uuid4()),
@@ -92,7 +94,7 @@ class ManageMemberTool(BaseTool):
                 )
                 db_session.add(new_node)
                 await db_session.commit()
-                return {"success": True, "message": f"✅ Created member: {role_name}"}
+                return ToolResult(content=f"✅ Created member: {role_name}")
 
             elif action == "update":
                 res = await db_session.execute(select(Node).where(
@@ -102,7 +104,7 @@ class ManageMemberTool(BaseTool):
                 ))
                 node = res.scalars().first()
                 if not node:
-                    return {"success": False, "message": f"Member '{role_name}' not found."}
+                    return ToolResult(content=f"Member '{role_name}' not found.", is_success=False)
                 
                 if "display_name" in kwargs and kwargs["display_name"]:
                     node.display_name = kwargs["display_name"]
@@ -114,7 +116,7 @@ class ManageMemberTool(BaseTool):
                     node.tools = kwargs["tools"]
                 
                 await db_session.commit()
-                return {"success": True, "message": f"✅ Updated member: {role_name}"}
+                return ToolResult(content=f"✅ Updated member: {role_name}")
 
             elif action == "delete":
                 res = await db_session.execute(select(Node).where(
@@ -124,15 +126,15 @@ class ManageMemberTool(BaseTool):
                 ))
                 node = res.scalars().first()
                 if not node:
-                    return {"success": False, "message": f"Member '{role_name}' not found."}
+                    return ToolResult(content=f"Member '{role_name}' not found.", is_success=False)
                 
                 await db_session.delete(node)
                 await db_session.commit()
-                return {"success": True, "message": f"🗑️ Deleted member: {role_name}"}
+                return ToolResult(content=f"🗑️ Deleted member: {role_name}")
 
         except Exception as e:
             if db_session: await db_session.rollback()
-            return {"success": False, "message": f"Operation failed: {e}"}
+            return ToolResult(content=f"Operation failed: {e}", is_success=False)
 
 class UpdateNodeDescriptionArgs(BaseModel):
     description: str = Field(..., description="The new 1-2 sentence description for this node")
@@ -148,12 +150,13 @@ class UpdateNodeDescriptionTool(BaseTool):
     args_schema = UpdateNodeDescriptionArgs
 
     async def run(self, description: str, target_id: Optional[str] = None, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         project_id: str = kwargs.get("project_id")
         current_node_id: str = kwargs.get("node_id")
         
         if not db_session or not project_id:
-            return {"success": False, "message": "Missing context (session or project_id)"}
+            return ToolResult(content="Missing context (session or project_id)", is_success=False)
 
         try:
             if target_id:
@@ -161,20 +164,20 @@ class UpdateNodeDescriptionTool(BaseTool):
                 res = await db_session.execute(select(Node).where(Node.id == target_id))
                 node = res.scalars().first()
                 if not node:
-                    return {"success": False, "message": f"Node with ID '{target_id}' not found."}
+                    return ToolResult(content=f"Node with ID '{target_id}' not found.", is_success=False)
             else:
                 # Update self
                 if not current_node_id:
-                    return {"success": False, "message": "Missing node_id to update self."}
+                    return ToolResult(content="Missing node_id to update self.", is_success=False)
                 res = await db_session.execute(select(Node).where(Node.id == current_node_id))
                 node = res.scalars().first()
                 if not node:
-                    return {"success": False, "message": "Current node record not found."}
+                    return ToolResult(content="Current node record not found.", is_success=False)
 
             node.description = description
             await db_session.commit()
-            return {"success": True, "message": f"✅ Updated description for {node.display_name or node.role_name or 'unnamed node'}."}
+            return ToolResult(content=f"✅ Updated description for {node.display_name or node.role_name or 'unnamed node'}.")
 
         except Exception as e:
             if db_session: await db_session.rollback()
-            return {"success": False, "message": f"Failed to update description: {e}"}
+            return ToolResult(content=f"Failed to update description: {e}", is_success=False)

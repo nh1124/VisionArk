@@ -33,29 +33,31 @@ class ListNotesTool(BaseTool):
     args_schema = ListNotesArgs
 
     async def run(self, project_id: Optional[str] = None, **kwargs) -> Any:
+        from tools.base import ToolResult
         user_id = kwargs.get("user_id")
         db_session = kwargs.get("db_session")
         if not user_id or not db_session:
-            return {"success": False, "message": "Context error: Missing user_id or db_session"}
+            return ToolResult(content="Context error: Missing user_id or db_session", is_success=False)
 
         note_svc = NoteService(db_session, user_id)
         target_project = project_id or kwargs.get("project_id")
         
         notes = await note_svc.list_notes(project_id=target_project)
+        notes_data = [
+            {
+                "id": n.id,
+                "title": n.title,
+                "created_at": n.created_at.isoformat(),
+                "project_id": n.project_id,
+                "tags": n.tags,
+                "has_audio": n.audio_file_id is not None
+            } for n in notes
+        ]
         
-        return {
-            "success": True,
-            "notes": [
-                {
-                    "id": n.id,
-                    "title": n.title,
-                    "created_at": n.created_at.isoformat(),
-                    "project_id": n.project_id,
-                    "tags": n.tags,
-                    "has_audio": n.audio_file_id is not None
-                } for n in notes
-            ]
-        }
+        return ToolResult(
+            content=f"Found {len(notes)} notes." if notes else "No notes found.",
+            data={"notes": notes_data}
+        )
 
 class ReadNoteTool(BaseTool):
     name = "read_note"
@@ -66,19 +68,20 @@ class ReadNoteTool(BaseTool):
     args_schema = ReadNoteArgs
 
     async def run(self, note_id: str, **kwargs) -> Any:
+        from tools.base import ToolResult, ToolAttachment
         user_id = kwargs.get("user_id")
         db_session = kwargs.get("db_session")
         api_key = kwargs.get("api_key")
         if not user_id or not db_session:
-            return {"success": False, "message": "Context error: Missing user_id or db_session"}
+            return ToolResult(content="Context error: Missing user_id or db_session", is_success=False)
 
         note_svc = NoteService(db_session, user_id)
         note = await note_svc.get_note(note_id)
         
         if not note:
-            return {"success": False, "message": f"Note {note_id} not found."}
+            return ToolResult(content=f"Note {note_id} not found.", is_success=False)
 
-        result = {
+        note_data = {
             "id": note.id,
             "title": note.title,
             "content": note.content,
@@ -87,16 +90,14 @@ class ReadNoteTool(BaseTool):
             "project_id": note.project_id
         }
 
+        attachments = []
         # Handle Audio
         if note.audio_file_id:
-            # We need to get the Gemini URI for this audio file
-            # Use FileService to ensure it's uploaded to Gemini
             file_stmt = select(UploadedFile).filter(UploadedFile.id == note.audio_file_id)
             file_res = await db_session.execute(file_stmt)
             file_record = file_res.scalars().first()
             
             if file_record:
-                # Resolve Gemini API Key if missing
                 if not api_key:
                     from tools.utils import get_user_api_key
                     api_key = await get_user_api_key(user_id, db_session)
@@ -109,13 +110,21 @@ class ReadNoteTool(BaseTool):
                         mime_type=file_record.mime_type
                     )
                     if gemini_upload.get("gemini_file_uri"):
-                        result["audio_file"] = {
-                            "uri": gemini_upload["gemini_file_uri"],
-                            "mime_type": file_record.mime_type
-                        }
-                        result["instruction"] = "This note includes an audio file. You can process its content using the provided Gemini URI."
+                        attachments.append(ToolAttachment(
+                            type="gemini_file_uri",
+                            value=gemini_upload["gemini_file_uri"],
+                            mime_type=file_record.mime_type
+                        ))
 
-        return {"success": True, "note": result}
+        content = f"# {note.title}\n\n{note.content}"
+        if attachments:
+            content += "\n\n(This note includes an audio attachment for multimodal analysis)"
+
+        return ToolResult(
+            content=content,
+            data={"note": note_data},
+            attachments=attachments
+        )
 
 class CreateNoteTool(BaseTool):
     name = "create_note"
@@ -123,10 +132,11 @@ class CreateNoteTool(BaseTool):
     args_schema = CreateNoteArgs
 
     async def run(self, title: str, content: str, project_id: Optional[str] = None, tags: Optional[List[str]] = None, **kwargs) -> Any:
+        from tools.base import ToolResult
         user_id = kwargs.get("user_id")
         db_session = kwargs.get("db_session")
         if not user_id or not db_session:
-            return {"success": False, "message": "Context error: Missing user_id or db_session"}
+            return ToolResult(content="Context error: Missing user_id or db_session", is_success=False)
 
         note_svc = NoteService(db_session, user_id)
         target_project = project_id or kwargs.get("project_id")
@@ -138,8 +148,7 @@ class CreateNoteTool(BaseTool):
             tags=tags
         )
         
-        return {
-            "success": True,
-            "message": f"Note '{title}' created successfully.",
-            "note_id": note.id
-        }
+        return ToolResult(
+            content=f"Note '{title}' created successfully.",
+            data={"note_id": note.id}
+        )

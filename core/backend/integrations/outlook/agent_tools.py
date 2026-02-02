@@ -13,6 +13,7 @@ class ListOutlookEventsTool(BaseTool):
     args_schema = ListOutlookEventsArgs
     
     async def run(self, **kwargs) -> Any:
+        from tools.base import ToolResult
         user_id = kwargs.get("user_id")
         db = kwargs.get("db_session")
         days = kwargs.get("days", 7)
@@ -20,4 +21,8 @@ class ListOutlookEventsTool(BaseTool):
         client = await get_outlook_client(user_id, db)
         time_min = datetime.utcnow()
         time_max = time_min + timedelta(days=days)
-        return await client.list_events(time_min=time_min, time_max=time_max)
+        events = await client.list_events(time_min=time_min, time_max=time_max)
+        return ToolResult(
+            content=f"Found {len(events)} events in Outlook calendar.",
+            data={"events": events}
+        )

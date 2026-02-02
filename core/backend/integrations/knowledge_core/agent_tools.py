@@ -17,19 +17,20 @@ class SearchKnowledgeTool(BaseTool):
     args_schema = SearchKnowledgeArgs
 
     async def run(self, query: str, limit: int = 5, **kwargs) -> Any:
+        from tools.base import ToolResult
         user_id: str = kwargs.get("user_id")
         db_session: AsyncSession = kwargs.get("db_session")
         context_name: str = kwargs.get("context_name", "general")
-        if not user_id or not db_session: return {"success": False, "message": "Context error"}
+        if not user_id or not db_session: return ToolResult(content="Context error", is_success=False)
         
         try:
             service = KnowledgeCoreService(db_session, user_id)
             ctx = await service.get_context(query=query, agent_id=context_name)
             if not ctx:
-                return {"success": True, "message": "No knowledge found for the query."}
-            return {"success": True, "message": ctx.get("summary", "Found context."), "data": ctx}
+                return ToolResult(content="No knowledge found for the query.")
+            return ToolResult(content=ctx.get("summary", "Found context."), data=ctx)
         except Exception as e:
-            return {"success": False, "message": f"Knowledge search failed: {e}"}
+            return ToolResult(content=f"Knowledge search failed: {e}", is_success=False)
 
 class IngestKnowledgeArgs(BaseModel):
     content: str = Field(..., description="The fact or information to save")
@@ -45,15 +46,16 @@ class IngestKnowledgeTool(BaseTool):
     args_schema = IngestKnowledgeArgs
 
     async def run(self, content: str, label: Optional[str] = None, **kwargs) -> Any:
+        from tools.base import ToolResult
         user_id: str = kwargs.get("user_id")
         db_session: AsyncSession = kwargs.get("db_session")
         context_name: str = kwargs.get("context_name", "general")
-        if not user_id or not db_session: return {"success": False, "message": "Context error"}
+        if not user_id or not db_session: return ToolResult(content="Context error", is_success=False)
         
         try:
             service = KnowledgeCoreService(db_session, user_id)
             txt = f"[{label}] {content}" if label else content
             record_id = await service.ingest_message(txt, "assistant", "global", context_name)
-            return {"success": True, "message": f"Successfully ingested knowledge with ID: {record_id}"}
+            return ToolResult(content=f"Successfully ingested knowledge with ID: {record_id}")
         except Exception as e:
-            return {"success": False, "message": f"Knowledge ingestion failed: {e}"}
+            return ToolResult(content=f"Knowledge ingestion failed: {e}", is_success=False)

@@ -555,6 +555,7 @@ class FileService:
                 "id": f.id,
                 "filename": f.filename,
                 "directory": f.directory or "refs",
+                "is_directory": f.is_directory,
                 "mime_type": f.mime_type,
                 "size_bytes": f.size_bytes,
                 "uploaded_at": f.uploaded_at.isoformat() if f.uploaded_at else None,

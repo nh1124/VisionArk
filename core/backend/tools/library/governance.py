@@ -15,10 +15,11 @@ class GetProjectRulesTool(BaseTool):
     args_schema = NoArgs
 
     async def run(self, **kwargs) -> Any:
+        from tools.base import ToolResult
         user_id: str = kwargs.get("user_id")
         project_id: str = kwargs.get("project_id")
         if not user_id or not project_id:
-            return {"success": False, "message": "Context error"}
+            return ToolResult(content="Context error", is_success=False)
 
         try:
             from utils.paths import get_project_governance_dir, PROJECT_RULES_FILENAME
@@ -26,20 +27,18 @@ class GetProjectRulesTool(BaseTool):
             rules_path = governance_dir / PROJECT_RULES_FILENAME
             
             if not rules_path.exists():
-                return {
-                    "success": True, 
-                    "message": "No project-specific rules found. Using system defaults.",
-                    "data": {"rules": None}
-                }
+                return ToolResult(
+                    content="No project-specific rules found. Using system defaults.",
+                    data={"rules": None}
+                )
             
             rules = json.loads(rules_path.read_text(encoding='utf-8'))
-            return {
-                "success": True, 
-                "message": "Rules loaded successfully.",
-                "data": {"rules": rules}
-            }
+            return ToolResult(
+                content="Rules loaded successfully.",
+                data={"rules": rules}
+            )
         except Exception as e:
-            return {"success": False, "message": f"Failed to load project rules: {e}"}
+            return ToolResult(content=f"Failed to load project rules: {e}", is_success=False)
 
 class UpdateProjectRulesArgs(BaseModel):
     rules: Dict[str, Any] = Field(..., description="The complete rules object to save.")
@@ -53,10 +52,11 @@ class UpdateProjectRulesTool(BaseTool):
     args_schema = UpdateProjectRulesArgs
 
     async def run(self, rules: Dict[str, Any], **kwargs) -> Any:
+        from tools.base import ToolResult
         user_id: str = kwargs.get("user_id")
         project_id: str = kwargs.get("project_id")
         if not user_id or not project_id:
-            return {"success": False, "message": "Context error"}
+            return ToolResult(content="Context error", is_success=False)
 
         try:
             # 1. Validate against schema
@@ -73,12 +73,11 @@ class UpdateProjectRulesTool(BaseTool):
             rules_path = governance_dir / PROJECT_RULES_FILENAME
             rules_path.write_text(json.dumps(rules, indent=2), encoding='utf-8')
             
-            return {
-                "success": True, 
-                "message": "Project rules updated successfully.",
-                "data": {"path": ".visionark/project_rules.json"}
-            }
+            return ToolResult(
+                content="Project rules updated successfully.",
+                data={"path": ".visionark/project_rules.json"}
+            )
         except jsonschema.exceptions.ValidationError as ve:
-            return {"success": False, "message": f"Rule validation failed: {ve.message}"}
+            return ToolResult(content=f"Rule validation failed: {ve.message}", is_success=False)
         except Exception as e:
-            return {"success": False, "message": f"Failed to update project rules: {e}"}
+            return ToolResult(content=f"Failed to update project rules: {e}", is_success=False)

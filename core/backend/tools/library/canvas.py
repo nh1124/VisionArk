@@ -18,21 +18,23 @@ class UpdateCanvasTool(BaseTool):
     args_schema = UpdateCanvasArgs
 
     async def run(self, content: str, file_path: Optional[str] = None, format: str = "markdown", **kwargs) -> Any:
+        from tools.base import ToolResult
         # 1. Save as an artifact if file_path is provided
         if file_path:
             saver = SaveArtifactTool()
             artifact_res = await saver.run(file_path=file_path, content=content, overwrite=True, **kwargs)
-            if not artifact_res.get("success"):
+            if not artifact_res.is_success:
                 return artifact_res
             # Update file_path to the official relative path (e.g. artifacts/roadmap.md)
-            file_path = artifact_res.get("data", {}).get("path", file_path)
+            if artifact_res.data:
+                file_path = artifact_res.data.get("path", file_path)
 
-        # 2. Return the result which will be captured in tool_calls for the frontend
-        # The frontend will look for 'update_canvas' in tool_calls and update the state.
-        return {
-            "success": True, 
-            "content": content, 
-            "format": format, 
-            "file_path": file_path,
-            "message": f"Canvas updated with {format} content."
-        }
+        # 2. Return ToolResult
+        return ToolResult(
+            content=f"Canvas updated with {format} content.",
+            data={
+                "content": content, 
+                "format": format, 
+                "file_path": file_path
+            }
+        )

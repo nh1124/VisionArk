@@ -19,11 +19,12 @@ class ListTasksTool(BaseTool):
     args_schema = ListTasksArgs
 
     async def run(self, context: Optional[str] = None, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         context_name: str = kwargs.get("context_name", "general")
         if not db_session or not user_id:
-            return {"success": False, "message": "Context error"}
+            return ToolResult(content="Context error", is_success=False)
         
         try:
             client = await get_lbs_client(user_id, db_session)
@@ -33,7 +34,10 @@ class ListTasksTool(BaseTool):
                 target_date=target_date
             )
             if not tasks:
-                return {"success": True, "message": f"No tasks for {context or context_name}.", "data": {"tasks": []}}
+                return ToolResult(
+                    content=f"No tasks for {context or context_name}.",
+                    data={"tasks": []}
+                )
             
             lines = []
             for t in tasks:
@@ -42,9 +46,12 @@ class ListTasksTool(BaseTool):
                 exc = " [OVERWRITTEN]" if t.get("has_exception") else ""
                 lines.append(f"• [{t['task_id']}] {t['task_name']} ({t.get('rule_type')}){status}{locked}{exc}")
             
-            return {"success": True, "message": "Tasks:\n" + "\n".join(lines), "data": {"tasks": tasks}}
+            return ToolResult(
+                content="Tasks:\n" + "\n".join(lines),
+                data={"tasks": tasks}
+            )
         except Exception as e:
-            return {"success": False, "message": f"Failed to list tasks: {e}"}
+            return ToolResult(content=f"Failed to list tasks: {e}", is_success=False)
 
 class CreateTaskArgs(BaseModel):
     task_name: str = Field(..., description="Name of the task")
@@ -71,11 +78,12 @@ class CreateTaskTool(BaseTool):
     args_schema = CreateTaskArgs
 
     async def run(self, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.pop("db_session", None)
         user_id: str = kwargs.pop("user_id", None)
         context_name: str = kwargs.pop("context_name", "general")
         if not db_session or not user_id:
-            return {"success": False, "message": "Context error"}
+            return ToolResult(content="Context error", is_success=False)
         
         try:
             client = await get_lbs_client(user_id, db_session)
@@ -111,9 +119,9 @@ class CreateTaskTool(BaseTool):
             res = await client.create_task(data)
             # Trigger Export
             await SyncCoordinator.trigger_export(db_session, user_id, reason="AI task creation")
-            return {"success": True, "message": f"✅ Created task {task_name}", "data": res}
+            return ToolResult(content=f"✅ Created task {task_name}", data=res)
         except Exception as e:
-            return {"success": False, "message": f"Failed to create task: {e}"}
+            return ToolResult(content=f"Failed to create task: {e}", is_success=False)
 
 class UpdateTaskArgs(BaseModel):
     task_id: str = Field(..., description="ID of the task to update")
@@ -135,10 +143,11 @@ class UpdateTaskTool(BaseTool):
     args_schema = UpdateTaskArgs
 
     async def run(self, task_id: str, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.pop("db_session", None)
         user_id: str = kwargs.pop("user_id", None)
         if not db_session or not user_id:
-            return {"success": False, "message": "Context error"}
+            return ToolResult(content="Context error", is_success=False)
         
         try:
             client = await get_lbs_client(user_id, db_session)
@@ -146,14 +155,14 @@ class UpdateTaskTool(BaseTool):
             if 'workload' in upd: upd['base_load_score'] = float(upd.pop('workload'))
             
             if not upd:
-                return {"success": False, "message": "No changes provided"}
+                return ToolResult(content="No changes provided", is_success=False)
                 
             await client.update_task(task_id, upd)
             # Trigger Export
             await SyncCoordinator.trigger_export(db_session, user_id, reason="AI task update")
-            return {"success": True, "message": f"Updated task {task_id}"}
+            return ToolResult(content=f"Updated task {task_id}")
         except Exception as e:
-            return {"success": False, "message": f"Failed to update task: {e}"}
+            return ToolResult(content=f"Failed to update task: {e}", is_success=False)
 
 class DeleteTaskArgs(BaseModel):
     task_id: str = Field(..., description="ID of the task to delete")
@@ -167,19 +176,20 @@ class DeleteTaskTool(BaseTool):
     args_schema = DeleteTaskArgs
 
     async def run(self, task_id: str, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         if not db_session or not user_id:
-            return {"success": False, "message": "Context error"}
+            return ToolResult(content="Context error", is_success=False)
         
         try:
             client = await get_lbs_client(user_id, db_session)
             await client.delete_task(task_id)
             # Trigger Export
             await SyncCoordinator.trigger_export(db_session, user_id, reason="AI task deletion")
-            return {"success": True, "message": f"Deleted task {task_id}"}
+            return ToolResult(content=f"Deleted task {task_id}")
         except Exception as e:
-            return {"success": False, "message": f"Failed to delete task: {e}"}
+            return ToolResult(content=f"Failed to delete task: {e}", is_success=False)
 
 class CompleteLBSTaskArgs(BaseModel):
     task_id: str = Field(..., description="ID of the task")
@@ -195,19 +205,20 @@ class CompleteLBSTaskTool(BaseTool):
     args_schema = CompleteLBSTaskArgs
 
     async def run(self, task_id: str, target_date: str, status: str = "done", **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         if not db_session or not user_id:
-            return {"success": False, "message": "Context error"}
+            return ToolResult(content="Context error", is_success=False)
         
         try:
             client = await get_lbs_client(user_id, db_session)
             await client.toggle_task_completion(task_id, date.fromisoformat(target_date), TaskStatus(status))
             # Trigger Export
             await SyncCoordinator.trigger_export(db_session, user_id, reason="AI task completion update")
-            return {"success": True, "message": f"Marked {task_id} as {status} for {target_date}"}
+            return ToolResult(content=f"Marked {task_id} as {status} for {target_date}")
         except Exception as e:
-            return {"success": False, "message": f"Failed to complete task: {e}"}
+            return ToolResult(content=f"Failed to complete task: {e}", is_success=False)
 
 class GetLBSScheduleArgs(BaseModel):
     start_date: str = Field(..., description="YYYY-MM-DD")
@@ -219,17 +230,18 @@ class GetLBSScheduleTool(BaseTool):
     args_schema = GetLBSScheduleArgs
 
     async def run(self, start_date: str, end_date: str, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         if not db_session or not user_id:
-            return {"success": False, "message": "Context error"}
+            return ToolResult(content="Context error", is_success=False)
         
         try:
             client = await get_lbs_client(user_id, db_session)
             sch = await client.get_schedule(date.fromisoformat(start_date), date.fromisoformat(end_date))
-            return {"success": True, "message": f"Schedule found ({len(sch)} days)", "data": {"schedule": sch}}
+            return ToolResult(content=f"Schedule found ({len(sch)} days)", data={"schedule": sch})
         except Exception as e:
-            return {"success": False, "message": f"Failed to get schedule: {e}"}
+            return ToolResult(content=f"Failed to get schedule: {e}", is_success=False)
 
 class GetLoadOnDayArgs(BaseModel):
     target_date: str = Field(..., description="YYYY-MM-DD")
@@ -240,17 +252,18 @@ class GetLoadOnDayTool(BaseTool):
     args_schema = GetLoadOnDayArgs
 
     async def run(self, target_date: str, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         if not db_session or not user_id:
-            return {"success": False, "message": "Context error"}
+            return ToolResult(content="Context error", is_success=False)
         
         try:
             client = await get_lbs_client(user_id, db_session)
             res = await client.calculate_load(date.fromisoformat(target_date))
-            return {"success": True, "message": f"Load: {res.get('adjusted_load')}", "data": res}
+            return ToolResult(content=f"Load: {res.get('adjusted_load')}", data=res)
         except Exception as e:
-            return {"success": False, "message": f"Failed to get load: {e}"}
+            return ToolResult(content=f"Failed to get load: {e}", is_success=False)
 
 class GetLoadInPeriodArgs(BaseModel):
     start_date: str = Field(..., description="YYYY-MM-DD")
@@ -268,11 +281,12 @@ class GetLoadInPeriodTool(BaseTool):
             return {"success": False, "message": "Context error"}
         
         try:
+            from tools.base import ToolResult
             client = await get_lbs_client(user_id, db_session)
             hm = await client.get_heatmap(date.fromisoformat(start_date), date.fromisoformat(end_date))
-            return {"success": True, "message": f"Heatmap: {len(hm)} days", "data": {"heatmap": hm}}
+            return ToolResult(content=f"Heatmap: {len(hm)} days", data={"heatmap": hm})
         except Exception as e:
-            return {"success": False, "message": f"Failed to get heatmap: {e}"}
+            return ToolResult(content=f"Failed to get heatmap: {e}", is_success=False)
 
 class ManageTaskExceptionArgs(BaseModel):
     task_id: str = Field(..., description="ID of the task")
@@ -294,10 +308,11 @@ class ManageTaskExceptionTool(BaseTool):
     args_schema = ManageTaskExceptionArgs
 
     async def run(self, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.pop("db_session", None)
         user_id: str = kwargs.pop("user_id", None)
         if not db_session or not user_id:
-            return {"success": False, "message": "Context error"}
+            return ToolResult(content="Context error", is_success=False)
         
         try:
             client = await get_lbs_client(user_id, db_session)
@@ -308,28 +323,28 @@ class ManageTaskExceptionTool(BaseTool):
             if action == "create":
                 data = {k: v for k, v in kwargs.items() if v is not None}
                 res = await client.create_exception(data)
-                return {"success": True, "message": f"Created exception for {task_id} on {target_date}", "data": res}
+                return ToolResult(content=f"Created exception for {task_id} on {target_date}", data=res)
             
             excs = await client.get_exceptions(target_date, target_date)
             exc = next((e for e in excs if e.get("task_id") == task_id), None)
             
             if not exc:
-                return {"success": False, "message": f"No exception found for {task_id} on {target_date}"}
+                return ToolResult(content=f"No exception found for {task_id} on {target_date}", is_success=False)
             
             exc_id = exc["id"]
             
             if action == "update":
                 data = {k: v for k, v in kwargs.items() if v is not None}
                 await client.update_exception(exc_id, data)
-                return {"success": True, "message": f"Updated exception {exc_id} for {task_id}"}
+                return ToolResult(content=f"Updated exception {exc_id} for {task_id}")
             elif action == "delete":
                 await client.delete_exception(exc_id)
-                return {"success": True, "message": f"Deleted exception {exc_id} for {task_id}"}
+                return ToolResult(content=f"Deleted exception {exc_id} for {task_id}")
             else:
-                return {"success": False, "message": f"Unknown action: {action}"}
+                return ToolResult(content=f"Unknown action: {action}", is_success=False)
                 
         except Exception as e:
-            return {"success": False, "message": f"Failed to manage exception: {e}"}
+            return ToolResult(content=f"Failed to manage exception: {e}", is_success=False)
 
 class ListExceptionsArgs(BaseModel):
     start_date: str = Field(..., description="YYYY-MM-DD")
@@ -342,10 +357,11 @@ class ListExceptionsTool(BaseTool):
     args_schema = ListExceptionsArgs
 
     async def run(self, start_date: str, end_date: str, task_id: Optional[str] = None, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         if not db_session or not user_id:
-            return {"success": False, "message": "Context error"}
+            return ToolResult(content="Context error", is_success=False)
         
         try:
             client = await get_lbs_client(user_id, db_session)
@@ -353,9 +369,9 @@ class ListExceptionsTool(BaseTool):
             if task_id:
                 excs = [e for e in excs if e.get("task_id") == task_id]
             
-            return {"success": True, "message": f"Found {len(excs)} exceptions.", "data": {"exceptions": excs}}
+            return ToolResult(content=f"Found {len(excs)} exceptions.", data={"exceptions": excs})
         except Exception as e:
-            return {"success": False, "message": f"Failed to list exceptions: {e}"}
+            return ToolResult(content=f"Failed to list exceptions: {e}", is_success=False)
 
 # --- Condition Tools ---
 
@@ -368,17 +384,18 @@ class GetCurrentConditionTool(BaseTool):
     args_schema = GetCurrentConditionArgs
 
     async def run(self, target_date: Optional[str] = None, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
-        if not db_session or not user_id: return {"success": False, "message": "Context error"}
+        if not db_session or not user_id: return ToolResult(content="Context error", is_success=False)
         try:
             d = date.fromisoformat(target_date) if target_date else date.today()
             client = await get_lbs_client(user_id, db_session)
             async with client:
                 res = await client.get_condition(d)
-                return {"success": True, "message": f"Condition for {d}: {res}", "data": res}
+                return ToolResult(content=f"Condition for {d}: {res}", data=res)
         except Exception as e:
-            return {"success": False, "message": f"Failed to get condition: {e}"}
+            return ToolResult(content=f"Failed to get condition: {e}", is_success=False)
 
 class UpdateUserConditionArgs(BaseModel):
     cognitive_fatigue: int = Field(..., description="Cognitive fatigue level (1-10, where 10 is max fatigue)")
@@ -391,18 +408,19 @@ class UpdateUserConditionTool(BaseTool):
     args_schema = UpdateUserConditionArgs
 
     async def run(self, cognitive_fatigue: int, target_date: Optional[str] = None, notes: Optional[str] = None, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
-        if not db_session or not user_id: return {"success": False, "message": "Context error"}
+        if not db_session or not user_id: return ToolResult(content="Context error", is_success=False)
         
         try:
             d = date.fromisoformat(target_date) if target_date else date.today()
             client = await get_lbs_client(user_id, db_session)
             async with client:
                 res = await client.update_condition(d, cognitive_fatigue, notes)
-                return {"success": True, "message": f"✅ Condition updated for {d}.", "data": res}
+                return ToolResult(content=f"✅ Condition updated for {d}.", data=res)
         except Exception as e:
-            return {"success": False, "message": f"Failed to update condition: {e}"}
+            return ToolResult(content=f"Failed to update condition: {e}", is_success=False)
 
 class GetTaskHistoryArgs(BaseModel):
     task_id: str = Field(..., description="ID of the task")
@@ -415,17 +433,18 @@ class GetTaskHistoryTool(BaseTool):
     args_schema = GetTaskHistoryArgs
 
     async def run(self, task_id: str, start_date: str, end_date: str, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         if not db_session or not user_id:
-            return {"success": False, "message": "Context error"}
+            return ToolResult(content="Context error", is_success=False)
         
         try:
             client = await get_lbs_client(user_id, db_session)
             history = await client.get_task_history(task_id, date.fromisoformat(start_date), date.fromisoformat(end_date))
-            return {"success": True, "message": f"Found {len(history)} records.", "data": {"history": history}}
+            return ToolResult(content=f"Found {len(history)} records.", data={"history": history})
         except Exception as e:
-            return {"success": False, "message": f"Failed to get history: {e}"}
+            return ToolResult(content=f"Failed to get history: {e}", is_success=False)
 
 class ResetUserConditionArgs(BaseModel):
     target_date: Optional[str] = Field(None, description="YYYY-MM-DD. Defaults to today.")
@@ -436,15 +455,16 @@ class ResetUserConditionTool(BaseTool):
     args_schema = ResetUserConditionArgs
 
     async def run(self, target_date: Optional[str] = None, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
-        if not db_session or not user_id: return {"success": False, "message": "Context error"}
+        if not db_session or not user_id: return ToolResult(content="Context error", is_success=False)
         
         try:
             d = date.fromisoformat(target_date) if target_date else date.today()
             client = await get_lbs_client(user_id, db_session)
             async with client:
                 await client.delete_condition(d)
-                return {"success": True, "message": f"Reset condition for {d}."}
+                return ToolResult(content=f"Reset condition for {d}.")
         except Exception as e:
-            return {"success": False, "message": f"Failed to reset condition: {e}"}
+            return ToolResult(content=f"Failed to reset condition: {e}", is_success=False)

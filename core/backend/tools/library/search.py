@@ -19,9 +19,10 @@ class GoogleSearchTool(BaseTool):
     args_schema = GoogleSearchArgs
 
     async def run(self, query: str, **kwargs) -> Any:
+        from tools.base import ToolResult
         user_id: str = kwargs.get("user_id")
         db_session: AsyncSession = kwargs.get("db_session")
-        if not user_id or not db_session: return {"success": False, "message": "Context error"}
+        if not user_id or not db_session: return ToolResult(content="Context error", is_success=False)
         
         try:
             client = await get_gemini_client(user_id, db_session)
@@ -30,9 +31,9 @@ class GoogleSearchTool(BaseTool):
                 contents=query, 
                 config=types.GenerateContentConfig(tools=[types.Tool(google_search=types.GoogleSearch())])
             )
-            return {"success": True, "message": resp.text or "No result from Google Search"}
+            return ToolResult(content=resp.text or "No result from Google Search")
         except Exception as e:
-            return {"success": False, "message": f"Google Search failed: {e}"}
+            return ToolResult(content=f"Google Search failed: {e}", is_success=False)
 
 class ResearchURLArgs(BaseModel):
     urls: List[str] = Field(..., description="List of URLs to research")
@@ -48,9 +49,10 @@ class ResearchURLTool(BaseTool):
     args_schema = ResearchURLArgs
 
     async def run(self, urls: List[str], query: str, **kwargs) -> Any:
+        from tools.base import ToolResult
         user_id: str = kwargs.get("user_id")
         db_session: AsyncSession = kwargs.get("db_session")
-        if not user_id or not db_session: return {"success": False, "message": "Context error"}
+        if not user_id or not db_session: return ToolResult(content="Context error", is_success=False)
         
         try:
             client = await get_gemini_client(user_id, db_session)
@@ -74,11 +76,11 @@ class ResearchURLTool(BaseTool):
                             result_text += part.text
             
             if not result_text:
-                return {"success": False, "message": "No content retrieved from URLs"}
+                return ToolResult(content="No content retrieved from URLs", is_success=False)
             
-            return {"success": True, "message": result_text}
+            return ToolResult(content=result_text)
         except Exception as e:
-            return {"success": False, "message": f"URL research failed: {e}"}
+            return ToolResult(content=f"URL research failed: {e}", is_success=False)
 
 class SearchPlacesArgs(BaseModel):
     query: str = Field(..., description="The place search query")
@@ -92,9 +94,10 @@ class SearchPlacesTool(BaseTool):
     args_schema = SearchPlacesArgs
 
     async def run(self, query: str, **kwargs) -> Any:
+        from tools.base import ToolResult
         user_id: str = kwargs.get("user_id")
         db_session: AsyncSession = kwargs.get("db_session")
-        if not user_id or not db_session: return {"success": False, "message": "Context error"}
+        if not user_id or not db_session: return ToolResult(content="Context error", is_success=False)
         
         try:
             client = await get_gemini_client(user_id, db_session)
@@ -103,9 +106,9 @@ class SearchPlacesTool(BaseTool):
                 contents=query, 
                 config=types.GenerateContentConfig(tools=[types.Tool(google_maps=types.GoogleMaps())])
             )
-            return {"success": True, "message": resp.text or "No result from Google Maps"}
+            return ToolResult(content=resp.text or "No result from Google Maps")
         except Exception as e:
-            return {"success": False, "message": f"Search places failed: {e}"}
+            return ToolResult(content=f"Search places failed: {e}", is_success=False)
 
 class DeepResearchArgs(BaseModel):
     query: str = Field(..., description="The complex research query or topic to investigate deeply")
@@ -121,10 +124,11 @@ class DeepResearchTool(BaseTool):
     args_schema = DeepResearchArgs
 
     async def run(self, query: str, **kwargs) -> Any:
+        from tools.base import ToolResult
         user_id: str = kwargs.get("user_id")
         db_session: AsyncSession = kwargs.get("db_session")
         project_id: str = kwargs.get("project_id")
-        if not user_id or not db_session: return {"success": False, "message": "Context error"}
+        if not user_id or not db_session: return ToolResult(content="Context error", is_success=False)
         
         try:
             client = await get_gemini_client(user_id, db_session)
@@ -155,13 +159,12 @@ class DeepResearchTool(BaseTool):
             root_dir = get_project_dir(user_id, project_id)
             actual_rel = p.relative_to(root_dir).as_posix()
             
-            return {
-                "success": True, 
-                "message": f"Deep Research completed. Report saved to {actual_rel}", 
-                "data": {
+            return ToolResult(
+                content=f"Deep Research completed. Report saved to {actual_rel}", 
+                data={
                     "path": actual_rel,
                     "content": report_content
                 }
-            }
+            )
         except Exception as e:
-            return {"success": False, "message": f"Deep Research failed: {e}"}
+            return ToolResult(content=f"Deep Research failed: {e}", is_success=False)

@@ -23,16 +23,14 @@ class RunSafeShellTool(BaseTool):
     args_schema = RunSafeShellArgs
 
     async def run(self, command: str, cwd: Optional[str] = None, timeout: int = 30, **kwargs) -> Any:
+        from tools.base import ToolResult
         # Context extraction (assuming injected by BaseNode)
         user_id = kwargs.get("user_id")
         project_id = kwargs.get("project_id")
         
         if not user_id or not project_id:
              # Fallback/Error if context is missing
-             return {
-                 "success": False, 
-                 "error": "Missing execution context (user_id/project_id). Cannot queue approval."
-             }
+             return ToolResult(content="Missing execution context (user_id/project_id). Cannot queue approval.", is_success=False)
 
         engine = get_engine()
         db = get_session(engine)
@@ -53,24 +51,22 @@ class RunSafeShellTool(BaseTool):
                 payload
             )
             
-            return {
-                "success": True,
-                "status": "pending_approval",
-                "request_id": request.id,
-                "command": command,
-                "message": (
+            return ToolResult(
+                content=(
                     "COMMAND QUEUED FOR APPROVAL:\n\n"
                     f"**Command:** `{command}`\n"
                     f"**Request ID:** `{request.id}`\n\n"
                     "Please approve this action in the UI to proceed with execution."
-                )
-            }
+                ),
+                data={
+                    "status": "pending_approval",
+                    "request_id": request.id,
+                    "command": command
+                }
+            )
             
         except Exception as e:
             logger.error(f"Failed to queue shell command: {e}")
-            return {
-                "success": False,
-                "error": f"Failed to queue command: {str(e)}"
-            }
+            return ToolResult(content=f"Failed to queue command: {str(e)}", is_success=False)
         finally:
             db.close()

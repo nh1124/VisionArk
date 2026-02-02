@@ -146,15 +146,21 @@ class ReasoningEngine:
                                 if k not in full_kwargs:
                                     full_kwargs[k] = v
                                     
+                        # Execute tool
                         result = await func(**full_kwargs)
-                                    
-                        # Format result as JSON string if it's a dict/list
-                        if isinstance(result, (dict, list)):
-                            tc.result = json.dumps(result)
-                        else:
-                            tc.result = str(result) if result is not None else ""
+
+                        tc.result = result.content
+                        tc.is_success = result.is_success
                         
-                        tc.is_success = True
+                        # Standardized attachments (Provider-Agnostic)
+                        if result.attachments:
+                            for att in result.attachments:
+                                tc.attachments.append({
+                                    "type": att.type,
+                                    "value": att.value,
+                                    "mime_type": att.mime_type,
+                                    "metadata": att.metadata
+                                })
                     except Exception as e:
                         logger.error(f"[ReasoningEngine] Error executing {tc.name}: {e}")
                         tc.result = f"Error: {str(e)}"

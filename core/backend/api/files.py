@@ -78,7 +78,8 @@ async def upload_node_file(
         "filename": db_file.filename,
         "size_bytes": db_file.size_bytes,
         "mime_type": db_file.mime_type,
-        "directory": db_file.directory
+        "directory": db_file.directory,
+        "is_directory": db_file.is_directory
     }
 
 
@@ -315,6 +316,7 @@ async def get_file_info(
         "filename": file_record.filename,
         "mime_type": file_record.mime_type,
         "size_bytes": file_record.size_bytes,
+        "is_directory": file_record.is_directory,
         "uploaded_at": file_record.uploaded_at,
         "has_gemini_ref": file_record.gemini_file_uri is not None
     }

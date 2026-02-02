@@ -14,13 +14,14 @@ class ListNodesTool(BaseTool):
     args_schema = NoArgs
 
     async def run(self, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         project_id: str = kwargs.get("project_id")
         current_node_id: str = kwargs.get("node_id")
 
         if not db_session or not user_id:
-            return {"success": False, "message": "Context error"}
+            return ToolResult(content="Context error", is_success=False)
 
         try:
             from models.database import Node, Project
@@ -55,9 +56,12 @@ class ListNodesTool(BaseTool):
                     "description": n.description or "No description available."
                 })
 
-            return {"success": True, "message": f"Found {len(nodes)} available nodes.", "data": {"nodes": nodes}}
+            return ToolResult(
+                content=f"Found {len(nodes)} available nodes.",
+                data={"nodes": nodes}
+            )
         except Exception as e:
-            return {"success": False, "message": f"Failed to list nodes: {e}"}
+            return ToolResult(content=f"Failed to list nodes: {e}", is_success=False)
 
 class GetNodeProfileArgs(BaseModel):
     node_id: str = Field(..., description="The UUID of the node to inspect")
@@ -68,9 +72,10 @@ class GetNodeProfileTool(BaseTool):
     args_schema = GetNodeProfileArgs
 
     async def run(self, node_id: str, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         if not db_session:
-            return {"success": False, "message": "Context error"}
+            return ToolResult(content="Context error", is_success=False)
         
         try:
             from models.database import Node
@@ -79,11 +84,11 @@ class GetNodeProfileTool(BaseTool):
             res = await db_session.execute(select(Node).filter(Node.id == node_id))
             node = res.scalars().first()
             if not node:
-                return {"success": False, "message": f"Node {node_id} not found."}
+                return ToolResult(content=f"Node {node_id} not found.", is_success=False)
             
-            return {
-                "success": True,
-                "data": {
+            return ToolResult(
+                content=f"Capabilities for {node.display_name or node.role_name}.",
+                data={
                     "id": node.id,
                     "type": node.node_type,
                     "role": node.role_name,
@@ -92,9 +97,9 @@ class GetNodeProfileTool(BaseTool):
                     "tools": node.tools or [],
                     "status": node.status
                 }
-            }
+            )
         except Exception as e:
-            return {"success": False, "message": f"Failed to get profile: {e}"}
+            return ToolResult(content=f"Failed to get profile: {e}", is_success=False)
 
 class AskNodeArgs(BaseModel):
     target_id: str = Field(..., description="The UUID (node_id) of the target node. Obtained via 'list_nodes' or active roster.")
@@ -112,18 +117,19 @@ class AskNodeTool(BaseTool):
     args_schema = AskNodeArgs
 
     async def run(self, target_id: str, message: str, blocking: bool = True, include_history: bool = False, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         project_id: str = kwargs.get("project_id")
         session_id: str = kwargs.get("session_id")
 
         if not db_session or not user_id:
-            return {"success": False, "message": "Context error: session or user_id missing"}
+            return ToolResult(content="Context error: session or user_id missing", is_success=False)
         
         # Prevent self-recursion
         current_node_id = kwargs.get("node_id")
         if target_id == current_node_id:
-            return {"success": False, "message": "Error: You cannot call 'ask_node' on yourself to prevent infinite loops."}
+            return ToolResult(content="Error: You cannot call 'ask_node' on yourself to prevent infinite loops.", is_success=False)
         
         try:
             from models.database import Node
@@ -136,7 +142,7 @@ class AskNodeTool(BaseTool):
             node_record = result.scalars().first()
             
             if not node_record:
-                return {"success": False, "message": f"Target node ID '{target_id}' not found or inactive. Always use UUIDs from list_nodes."}
+                return ToolResult(content=f"Target node ID '{target_id}' not found or inactive. Always use UUIDs from list_nodes.", is_success=False)
 
             # 1.5. Prepare message with history if requested
             final_message = message
@@ -171,11 +177,10 @@ class AskNodeTool(BaseTool):
                     }
                 )
                 
-                return {
-                    "success": True, 
-                    "message": f"Request sent to {node_record.display_name} for background processing.",
-                    "data": {"task_id": task_id, "status": "queued"}
-                }
+                return ToolResult(
+                    content=f"Request sent to {node_record.display_name} for background processing.",
+                    data={"task_id": task_id, "status": "queued"}
+                )
 
             # 3. Blocking Mode (Use NodeFactory)
             from services.node_factory import NodeFactory
@@ -191,14 +196,17 @@ class AskNodeTool(BaseTool):
             target_node = NodeFactory.get_node(node_record, ctx)
             
             if not target_node:
-                return {"success": False, "message": f"Failed to instantiate node: {node_record.display_name}"}
+                return ToolResult(content=f"Failed to instantiate node: {node_record.display_name}", is_success=False)
 
             # 4. Process message
             resp = await target_node.process(final_message)
-            return {"success": True, "message": f"Response from {node_record.display_name}: {resp}", "data": {"response": resp}}
+            return ToolResult(
+                content=f"Response from {node_record.display_name}: {resp}",
+                data={"response": resp}
+            )
             
         except Exception as e:
-            return {"success": False, "message": f"Failed to call node {target_id}: {e}"}
+            return ToolResult(content=f"Failed to call node {target_id}: {e}", is_success=False)
 
 
 
@@ -215,10 +223,11 @@ class BroadcastSystemMessageTool(BaseTool):
     args_schema = BroadcastMessageArgs
 
     async def run(self, message: str, target_project_ids: Optional[list[str]] = None, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         if not db_session or not user_id:
-            return {"success": False, "message": "Context error"}
+            return ToolResult(content="Context error", is_success=False)
         
         try:
             from models.database import Project, ChatSession, ChatMessage
@@ -266,9 +275,9 @@ class BroadcastSystemMessageTool(BaseTool):
                 count += 1
             
             await db_session.commit()
-            return {"success": True, "message": f"Broadcasted alert to {count} projects via System Alerts session."}
+            return ToolResult(content=f"Broadcasted alert to {count} projects via System Alerts session.")
         except Exception as e:
-            return {"success": False, "message": f"Failed to broadcast message: {e}"}
+            return ToolResult(content=f"Failed to broadcast message: {e}", is_success=False)
 
 class ListUserProjectsTool(BaseTool):
     name = "list_user_projects"
@@ -276,10 +285,11 @@ class ListUserProjectsTool(BaseTool):
     args_schema = NoArgs
 
     async def run(self, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         if not db_session or not user_id:
-            return {"success": False, "message": "Context error"}
+            return ToolResult(content="Context error", is_success=False)
 
         try:
             from models.database import Project
@@ -300,9 +310,12 @@ class ListUserProjectsTool(BaseTool):
                     "created_at": p.created_at.isoformat() if p.created_at else None
                 })
 
-            return {"success": True, "message": f"Found {len(data)} projects.", "data": {"projects": data}}
+            return ToolResult(
+                content=f"Found {len(data)} projects.",
+                data={"projects": data}
+            )
         except Exception as e:
-            return {"success": False, "message": f"Failed to list projects: {e}"}
+            return ToolResult(content=f"Failed to list projects: {e}", is_success=False)
 
 class UpdateProjectArgs(BaseModel):
     project_id: str = Field(..., description="The UUID of the project to update")
@@ -316,10 +329,11 @@ class UpdateProjectTool(BaseTool):
     args_schema = UpdateProjectArgs
 
     async def run(self, project_id: str, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         if not db_session or not user_id:
-            return {"success": False, "message": "Context error"}
+            return ToolResult(content="Context error", is_success=False)
 
         try:
             from models.database import Project
@@ -331,7 +345,7 @@ class UpdateProjectTool(BaseTool):
             project = result.scalars().first()
 
             if not project:
-                return {"success": False, "message": f"Project {project_id} not found."}
+                return ToolResult(content=f"Project {project_id} not found.", is_success=False)
 
             if "name" in kwargs and kwargs["name"]:
                 project.name = kwargs["name"]
@@ -341,10 +355,10 @@ class UpdateProjectTool(BaseTool):
                 project.priority = kwargs["priority"]
 
             await db_session.commit()
-            return {"success": True, "message": f"Project '{project.name}' updated successfully."}
+            return ToolResult(content=f"Project '{project.name}' updated successfully.")
         except Exception as e:
             if db_session: await db_session.rollback()
-            return {"success": False, "message": f"Failed to update project: {e}"}
+            return ToolResult(content=f"Failed to update project: {e}", is_success=False)
 
 class GetProjectHealthArgs(BaseModel):
     project_id: str = Field(..., description="The UUID of the project to inspect")
@@ -355,10 +369,11 @@ class GetProjectHealthTool(BaseTool):
     args_schema = GetProjectHealthArgs
 
     async def run(self, project_id: str, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         if not db_session or not user_id:
-            return {"success": False, "message": "Context error"}
+            return ToolResult(content="Context error", is_success=False)
 
         try:
             from models.database import Project, ChatMessage, ChatSession, NodeType, Node
@@ -368,7 +383,7 @@ class GetProjectHealthTool(BaseTool):
             res_p = await db_session.execute(select(Project).filter(Project.id == project_id, Project.user_id == user_id))
             project = res_p.scalars().first()
             if not project:
-                return {"success": False, "message": "Project not found."}
+                return ToolResult(content="Project not found.", is_success=False)
 
             # 2. Basic Stats
             # Count active nodes
@@ -425,10 +440,9 @@ class GetProjectHealthTool(BaseTool):
             if issues:
                 summary += "\nAlerts:\n" + "\n".join([f"- {i}" for i in issues])
 
-            return {
-                "success": True,
-                "message": summary,
-                "data": {
+            return ToolResult(
+                content=summary,
+                data={
                     "health_score": health_score,
                     "node_count": node_count,
                     "msg_count": msg_count,
@@ -436,9 +450,9 @@ class GetProjectHealthTool(BaseTool):
                     "task_stats": task_stats,
                     "issues": issues
                 }
-            }
+            )
         except Exception as e:
-            return {"success": False, "message": f"Failed to analyze health: {e}"}
+            return ToolResult(content=f"Failed to analyze health: {e}", is_success=False)
 
 class SetTimerArgs(BaseModel):
     minutes: int = Field(..., description="Duration from now in minutes until the timer expires.")
@@ -450,12 +464,13 @@ class SetTimerTool(BaseTool):
     args_schema = SetTimerArgs
 
     async def run(self, minutes: int, message: str, **kwargs) -> Any:
+        from tools.base import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         project_id: str = kwargs.get("project_id")
         
         if not db_session or not user_id:
-            return {"success": False, "message": "Context error: user_id or db_session missing"}
+            return ToolResult(content="Context error: user_id or db_session missing", is_success=False)
         
         try:
             from services.aes_dispatcher import AESDispatcher
@@ -477,10 +492,9 @@ class SetTimerTool(BaseTool):
                 }
             )
             
-            return {
-                "success": True, 
-                "message": f"Timer set for {minutes} minutes from now (Expires at {scheduled_at.strftime('%H:%M:%S')} UTC).",
-                "data": {"task_id": task_id, "scheduled_at": scheduled_at.isoformat()}
-            }
+            return ToolResult(
+                content=f"Timer set for {minutes} minutes from now (Expires at {scheduled_at.strftime('%H:%M:%S')} UTC).",
+                data={"task_id": task_id, "scheduled_at": scheduled_at.isoformat()}
+            )
         except Exception as e:
-            return {"success": False, "message": f"Failed to set timer: {e}"}
+            return ToolResult(content=f"Failed to set timer: {e}", is_success=False)

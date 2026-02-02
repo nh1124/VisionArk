@@ -31,13 +31,13 @@ async def lifespan(app: FastAPI):
     from services.system_node_registry import sync_system_nodes
     await sync_system_nodes()
 
-    # Sync Agent Skills
-    from skills import init_skills
-    await init_skills()
-
     # Sync Member Nodes
     from services.member_node_registry import sync_member_nodes
     await sync_member_nodes()
+    
+    # Sync Agent Skills
+    from skills import init_skills
+    await init_skills()
     
     yield
     print("Shutting down...")

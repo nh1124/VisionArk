@@ -2,6 +2,30 @@ from abc import ABC, abstractmethod
 from typing import Type, Dict, Any, Optional
 from pydantic import BaseModel
 
+
+from dataclasses import dataclass, field
+from typing import List
+
+@dataclass
+class ToolAttachment:
+    """Standardized multimodal attachment for tool results"""
+    type: str  # e.g., "gemini_file_uri", "image_path", etc.
+    value: str
+    mime_type: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class ToolResult:
+    """Standardized result object for all Agent Tools"""
+    content: str                          # Text message for the LLM
+    data: Optional[Dict[str, Any]] = None  # Raw programmatic data
+    attachments: List[ToolAttachment] = field(default_factory=list)
+    is_success: bool = True
+
+    def to_log_result(self) -> str:
+        """Convert content to a string format suitable for ToolCall.result"""
+        return self.content
+
 class NoArgs(BaseModel):
     """Fallback model for tools with no arguments to avoid calling model_json_schema on BaseModel directly."""
     pass

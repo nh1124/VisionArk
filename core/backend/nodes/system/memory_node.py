@@ -69,7 +69,7 @@ class MemoryNode(BaseNode):
             tu_stmt = (
                 select(ToolUsage)
                 .filter(ToolUsage.message_id.in_(msg_ids))
-                .options(load_only(ToolUsage.id, ToolUsage.message_id, ToolUsage.sub_message_id, ToolUsage.name, ToolUsage.args, ToolUsage.result, ToolUsage.is_success))
+                .options(load_only(ToolUsage.id, ToolUsage.message_id, ToolUsage.sub_message_id, ToolUsage.name, ToolUsage.args, ToolUsage.result, ToolUsage.is_success, ToolUsage.meta_payload))
             )
             tu_res = await db.execute(tu_stmt)
             db_tus = tu_res.scalars().all()
@@ -113,7 +113,8 @@ class MemoryNode(BaseNode):
                                 name=tu.name,
                                 args=tu.args or {},
                                 result=tu.result,
-                                is_success=bool(tu.is_success)
+                                is_success=bool(tu.is_success),
+                                attachments=tu.meta_payload.get("attachments", []) if (tu.meta_payload and isinstance(tu.meta_payload, dict)) else []
                             ))
                         
                         sub_messages_list.append(SubMessage(
@@ -199,13 +200,13 @@ class MemoryNode(BaseNode):
                                     id=str(uuid4()),
                                     message_id=message_id,
                                     sub_message_id=sub_id,
-                                    call_id=tc.call_id,
                                     name=tc.name,
                                     args=tc.args,
                                     result=tc.result,
-                                    is_success=tc.is_success
+                                    is_success=tc.is_success,
+                                    meta_payload={"attachments": tc.attachments} if tc.attachments else {}
                                 )
-                                print(f"    * Saved ToolCall: {tc.name}")
+                                print(f"    * Saved ToolCall: {tc.name} (with {len(tc.attachments) if tc.attachments else 0} attachments)")
                                 db.add(db_tu)
                         print(f"  - Saved SubMessage {idx}: {sm.content[:50] if sm.content else ''}... with {len(sm.tool_calls) if sm.tool_calls else 0} tool calls.")
                 

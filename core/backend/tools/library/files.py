@@ -19,15 +19,17 @@ class SaveArtifactTool(BaseTool):
     description = (
         "Save content to a file in the project's artifacts directory. "
         "ATTENTION: Overwriting is disabled by default (overwrite=False). If True, existing file content will be replaced. "
+        "ORGANIZATION: Use subdirectories to keep artifacts organized (e.g., 'reports/analysis.md' or 'plans/v1.md'). "
         "HOW TO USE: 'save_artifact(file_path=\"docs/analysis.md\", content=\"...\", overwrite=True\")'."
     )
     args_schema = SaveArtifactArgs
 
     async def run(self, file_path: str, content: str, overwrite: bool = False, **kwargs) -> Any:
+        from tools.base import ToolResult
         user_id: str = kwargs.get("user_id")
         db_session: AsyncSession = kwargs.get("db_session")
         project_id: str = kwargs.get("project_id")
-        if not user_id: return {"success": False, "message": "Context error"}
+        if not user_id: return ToolResult(content="Context error", is_success=False)
         
         try:
             root_dir = get_project_dir(user_id, project_id)
@@ -40,11 +42,9 @@ class SaveArtifactTool(BaseTool):
             
             p.parent.mkdir(parents=True, exist_ok=True)
             if p.exists() and not overwrite:
-                return {"success": False, "message": f"File {file_path} already exists and overwrite is False"}
+                return ToolResult(content=f"File {file_path} already exists and overwrite is False", is_success=False)
             p.write_text(content, encoding='utf-8')
             
-            # Return path relative to project root
-            rel_path = f"artifacts/{p.name}" if not file_path.startswith("artifacts/") else file_path
             # Better: get actual relative path to root
             actual_rel = p.relative_to(root_dir).as_posix()
             
@@ -56,9 +56,12 @@ class SaveArtifactTool(BaseTool):
             except Exception as se:
                 print(f"[SaveArtifactTool] Sync trigger failed: {se}")
             
-            return {"success": True, "message": f"Saved artifact to {actual_rel}", "data": {"path": actual_rel}}
+            return ToolResult(
+                content=f"Saved artifact to {actual_rel}", 
+                data={"path": actual_rel}
+            )
         except Exception as e:
-            return {"success": False, "message": f"Failed to save artifact: {e}"}
+            return ToolResult(content=f"Failed to save artifact: {e}", is_success=False)
 
 class ReadReferenceArgs(BaseModel):
     file_path: str = Field(..., description="Relative path to the file to read")
@@ -75,9 +78,10 @@ class ReadReferenceTool(BaseTool):
         user_id: str = kwargs.get("user_id")
         db_session: AsyncSession = kwargs.get("db_session")
         project_id: str = kwargs.get("project_id")
-        if not user_id: return {"success": False, "message": "Context error"}
+        if not user_id: return ToolResult(content="Context error", is_success=False)
         
         try:
+            from tools.base import ToolResult, ToolAttachment
             d = get_project_dir(user_id, project_id)
             p = secure_path_join(d, file_path)
             if not p.exists(): 
@@ -92,6 +96,7 @@ class ReadReferenceTool(BaseTool):
                 text_content = p.read_text(encoding='utf-8', errors='ignore')
                 
                 # --- Gemini Upload Integration ---
+                attachments = []
                 data = {}
                 try:
                     from services.file_service import FileService
@@ -108,24 +113,31 @@ class ReadReferenceTool(BaseTool):
                             filename=p.name,
                             project_id=project_id
                         )
-                        if gemini_info:
+                        if gemini_info and gemini_info.get("gemini_file_uri"):
+                            uri = gemini_info.get("gemini_file_uri")
+                            mime = gemini_info.get("mime_type")
+                            attachments.append(ToolAttachment(
+                                type="gemini_file_uri",
+                                value=uri,
+                                mime_type=mime
+                            ))
                             data.update(gemini_info)
                 except Exception as upload_err:
                     print(f"[ReadReferenceTool] Quietly failed gemini upload: {upload_err}")
                 
-                if data.get("gemini_file_uri"):
-                    message = f"File '{p.name}' is available via Gemini File API for multimodal analysis. (Full text omitted to save context tokens)"
+                if attachments:
+                    message = f"File '{p.name}' is available for multimodal analysis. (Full text omitted to save context tokens)"
                 else:
                     message = text_content
                 
-                return {
-                    "success": True, 
-                    "message": message,
-                    "data": data
-                }
-            return {"success": False, "message": f"File {file_path} not found"}
+                return ToolResult(
+                    content=message,
+                    data={"path": p.as_posix(), **data},
+                    attachments=attachments
+                )
+            return ToolResult(content=f"File {file_path} not found", is_success=False)
         except Exception as e:
-            return {"success": False, "message": f"Failed to read file: {e}"}
+            return ToolResult(content=f"Failed to read file: {e}", is_success=False)
 
 class ListFilesArgs(BaseModel):
     sub_dir: str = Field("refs", description="Subdirectory name to list (default 'refs')")
@@ -139,22 +151,29 @@ class ListFilesTool(BaseTool):
     args_schema = ListFilesArgs
 
     async def run(self, sub_dir: str = "refs", **kwargs) -> Any:
+        from tools.base import ToolResult
         user_id: str = kwargs.get("user_id")
         db_session: AsyncSession = kwargs.get("db_session")
         project_id: str = kwargs.get("project_id")
-        if not user_id: return {"success": False, "message": "Context error"}
+        if not user_id: return ToolResult(content="Context error", is_success=False)
         
         try:
             root_dir = get_project_dir(user_id, project_id)
             d = root_dir / sub_dir
             if not d.exists():
-                return {"success": True, "message": f"Subdirectory {sub_dir} is empty or doesn't exist.", "data": {"files": []}}
+                return ToolResult(
+                    content=f"Subdirectory {sub_dir} is empty or doesn't exist.", 
+                    data={"files": []}
+                )
             
             # Return paths relative to project root
             files = [f.relative_to(root_dir).as_posix() for f in d.rglob('*') if f.is_file()]
-            return {"success": True, "message": "\n".join(files), "data": {"files": files}}
+            return ToolResult(
+                content="\n".join(files) if files else "(No files found)", 
+                data={"files": files}
+            )
         except Exception as e:
-            return {"success": False, "message": f"Failed to list files: {e}"}
+            return ToolResult(content=f"Failed to list files: {e}", is_success=False)
 
 class DeleteArtifactArgs(BaseModel):
     file_path: str = Field(..., description="Relative path to the artifact to delete")
@@ -169,10 +188,11 @@ class DeleteArtifactTool(BaseTool):
     args_schema = DeleteArtifactArgs
 
     async def run(self, file_path: str, **kwargs) -> Any:
+        from tools.base import ToolResult
         user_id: str = kwargs.get("user_id")
         db_session: AsyncSession = kwargs.get("db_session")
         project_id: str = kwargs.get("project_id")
-        if not user_id: return {"success": False, "message": "Context error"}
+        if not user_id: return ToolResult(content="Context error", is_success=False)
         
         try:
             root_dir = get_project_dir(user_id, project_id)
@@ -185,10 +205,10 @@ class DeleteArtifactTool(BaseTool):
             if p.exists():
                 p.unlink()
                 rel_path = p.relative_to(root_dir).as_posix()
-                return {"success": True, "message": f"Deleted artifact {rel_path}"}
-            return {"success": False, "message": f"Artifact {file_path} not found"}
+                return ToolResult(content=f"Deleted artifact {rel_path}")
+            return ToolResult(content=f"Artifact {file_path} not found", is_success=False)
         except Exception as e:
-            return {"success": False, "message": f"Failed to delete artifact: {e}"}
+            return ToolResult(content=f"Failed to delete artifact: {e}", is_success=False)
 
 class ImportGitHubRepoArgs(BaseModel):
     repo_url: str = Field(..., description="The HTTPS URL of the GitHub repository to clone")
@@ -207,18 +227,18 @@ class ImportGitHubRepoTool(BaseTool):
     args_schema = ImportGitHubRepoArgs
 
     async def run(self, repo_url: str, branch: Optional[str] = None, token: Optional[str] = None, **kwargs) -> Any:
+        from tools.base import ToolResult
         user_id: str = kwargs.get("user_id")
         project_id: str = kwargs.get("project_id")
         force_update: bool = kwargs.get("force_update", False)
-        if not user_id: return {"success": False, "message": "Context error"}
+        if not user_id: return ToolResult(content="Context error", is_success=False)
 
         try:
             # 1. Clean URL and extract owner/repo
-            # e.g. https://github.com/google/benchmark.git -> google/benchmark
             clean_url = repo_url.rstrip('/').replace('.git', '')
             parts = clean_url.split('/')
             if len(parts) < 2:
-                return {"success": False, "message": f"Invalid repo URL: {repo_url}"}
+                return ToolResult(content=f"Invalid repo URL: {repo_url}", is_success=False)
             
             owner = parts[-2]
             repo_name = parts[-1]
@@ -233,11 +253,10 @@ class ImportGitHubRepoTool(BaseTool):
             import subprocess
             if target_abs.exists():
                 if not force_update:
-                    return {
-                        "success": True, 
-                        "message": f"Repository already exists at {target_rel.as_posix()}",
-                        "data": {"path": target_rel.as_posix()}
-                    }
+                    return ToolResult(
+                        content=f"Repository already exists at {target_rel.as_posix()}",
+                        data={"path": target_rel.as_posix()}
+                    )
                 
                 # Perform git pull
                 print(f"[ImportGitHubRepoTool] Updating existing repo at {target_abs}")
@@ -245,16 +264,14 @@ class ImportGitHubRepoTool(BaseTool):
                 process = subprocess.run(pull_cmd, capture_output=True, text=True)
                 
                 if process.returncode != 0:
-                    return {"success": False, "message": f"Git pull failed: {process.stderr}"}
+                    return ToolResult(content=f"Git pull failed: {process.stderr}", is_success=False)
                 
-                return {
-                    "success": True, 
-                    "message": f"Successfully updated (pulled) {owner}/{repo_name} at {target_rel.as_posix()}",
-                    "data": {"path": target_rel.as_posix()}
-                }
+                return ToolResult(
+                    content=f"Successfully updated (pulled) {owner}/{repo_name} at {target_rel.as_posix()}",
+                    data={"path": target_rel.as_posix()}
+                )
 
             # 4. Construct clone command
-            # Handle token for auth if provided
             if token:
                 auth_url = repo_url.replace("https://", f"https://{token}@")
             else:
@@ -270,7 +287,7 @@ class ImportGitHubRepoTool(BaseTool):
             process = subprocess.run(cmd, capture_output=True, text=True)
             
             if process.returncode != 0:
-                return {"success": False, "message": f"Git clone failed: {process.stderr}"}
+                return ToolResult(content=f"Git clone failed: {process.stderr}", is_success=False)
             
             # --- Trigger Sync ---
             try:
@@ -283,11 +300,10 @@ class ImportGitHubRepoTool(BaseTool):
             except Exception as se:
                 print(f"[ImportGitHubRepoTool] Sync trigger failed: {se}")
 
-            return {
-                "success": True, 
-                "message": f"Successfully imported {owner}/{repo_name} to {target_rel.as_posix()}",
-                "data": {"path": target_rel.as_posix()}
-            }
+            return ToolResult(
+                content=f"Successfully imported {owner}/{repo_name} to {target_rel.as_posix()}",
+                data={"path": target_rel.as_posix()}
+            )
             
         except Exception as e:
-            return {"success": False, "message": f"Import failed: {str(e)}"}
+            return ToolResult(content=f"Import failed: {str(e)}", is_success=False)

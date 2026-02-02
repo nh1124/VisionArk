@@ -72,6 +72,24 @@ A discrete unit of reasoning within a single assistant turn.
 
 ---
 
+## 5. Tool Result Processing & Multimodal Handling
+
+VisionArk supports **model-agnostic tool execution**, where tools (like `read_reference`) return structured data that providers can interpret to enhance the conversation context.
+
+### Processing Flow
+1. **Tool Execution**: A tool returns a dictionary or JSON string containing results (e.g., file metadata, API data).
+2. **Provider-Side Interpretation**: During the next turn's history preparation (`_prepare_history`), the specific **LLM Provider** inspects the tool results.
+3. **Multimodal Enrichment**:
+   - If a provider (like `GeminiProvider`) detects specific keys such as `gemini_file_uri`, it automatically attaches these as **native multimodal parts** (e.g., `types.Part.from_uri`) to the conversation history.
+   - This allows the model to "see" and analyze the content (PDFs, images, etc.) without the tool needing to know about provider-specific APIs.
+
+### Design Principles
+- **Separation of Concerns**: The `ReasoningEngine` remains agnostic to what the tool results contain. The **Provider** is responsible for specialized "multimodal hydration".
+- **Deduplication**: Providers ensure that if a file is attached both explicitly (via `ToolCall.attachments`) and implicitly (via tool result JSON), it is only sent once to the model API.
+- **Persistence**: Tool results and their associated multimodal metadata are stored in the database's `ToolUsage` table (`meta_payload` column), ensuring that history reconstruction preserves full multimodal context.
+
+---
+
 ## Summary of Execution Flow
 
 1. **Agent Node** calls `chat_with_tools`.

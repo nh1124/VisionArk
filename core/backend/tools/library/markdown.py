@@ -18,12 +18,13 @@ class ReadMDSectionTool(BaseTool):
     args_schema = ReadMDSectionArgs
 
     async def run(self, file_path: str, section_title: str, **kwargs) -> Any:
+        from tools.base import ToolResult
         # Reuse ReadReferenceTool logic
         reader = ReadReferenceTool()
         res = await reader.run(file_path=file_path, **kwargs)
-        if not res.get("success"): return res
+        if not res.is_success: return res
         
-        content = res.get("message", "")
+        content = res.content
         lines = content.splitlines()
         found = []
         capture = False
@@ -40,9 +41,9 @@ class ReadMDSectionTool(BaseTool):
                 found.append(line)
         
         if not found:
-            return {"success": False, "message": f"Section '{section_title}' not found in {file_path}"}
+            return ToolResult(content=f"Section '{section_title}' not found in {file_path}", is_success=False)
             
-        return {"success": True, "message": "\n".join(found)}
+        return ToolResult(content="\n".join(found))
 
 class InitPlanArgs(BaseModel):
     goal: str = Field(..., description="The main goal of the plan")
@@ -58,6 +59,7 @@ class InitPlanTool(BaseTool):
     args_schema = InitPlanArgs
 
     async def run(self, goal: str, strategy: str, **kwargs) -> Any:
+        from tools.base import ToolResult
         from utils.paths import get_plan_template_path
         
         template_path = get_plan_template_path()
@@ -89,15 +91,14 @@ class UpdatePlanProgressTool(BaseTool):
     args_schema = UpdatePlanProgressArgs
 
     async def run(self, summary: str, **kwargs) -> Any:
+        from tools.base import ToolResult
         # Simple append to end of file for now, or append to # Log section
-        # For simplicity, we'll use a simplified version of update_artifact
         reader = ReadReferenceTool()
         res = await reader.run(file_path=CURRENT_PLAN_FILE, **kwargs)
-        if not res.get("success"):
-            # If PLAN.md doesn't exist, maybe they should init_plan first
-            return {"success": False, "message": "PLAN.md not found. Use init_plan first."}
+        if not res.is_success:
+            return ToolResult(content="PLAN.md not found. Use init_plan first.", is_success=False)
             
-        content = res.get("message", "")
+        content = res.content
         new_content = content + f"\n- {summary}"
         
         saver = SaveArtifactTool()
@@ -112,6 +113,7 @@ class GetCurrentStatusTool(BaseTool):
     args_schema = NoArgs # No args
 
     async def run(self, **kwargs) -> Any:
+        from tools.base import ToolResult
         reader = ReadMDSectionTool()
         return await reader.run(file_path=CURRENT_PLAN_FILE, section_title="Current Status", **kwargs)
 
@@ -131,12 +133,13 @@ class UpdateMDSectionTool(BaseTool):
     args_schema = UpdateMDSectionArgs
 
     async def run(self, file_path: str, section_title: str, content: str, mode: str = "overwrite", **kwargs) -> Any:
+        from tools.base import ToolResult
         reader = ReadReferenceTool()
         res = await reader.run(file_path=file_path, **kwargs)
         
         full_content = ""
-        if res.get("success"):
-            full_content = res.get("message", "")
+        if res.is_success:
+            full_content = res.content
         
         lines = full_content.splitlines() if full_content else []
         new_lines = []

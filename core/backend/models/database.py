@@ -412,11 +412,11 @@ class ToolUsage(Base):
     id = Column(String(36), primary_key=True)
     message_id = Column(String(36), ForeignKey("chat_messages.id"), nullable=False, index=True)
     sub_message_id = Column(String(36), ForeignKey("chat_sub_messages.id"), nullable=True, index=True)
-    call_id = Column(String(100), nullable=True)           # LLM's internal call ID
     name = Column(String(100), nullable=False)             # Tool name
-    args = Column(JSON, nullable=True)                # Input args
+    args = Column(JSON, nullable=True)                     # Input args
     result = Column(Text, nullable=True)                   # Output string
     is_success = Column(Boolean, default=True)
+    meta_payload = Column(JSON, nullable=True)             # Additional metadata (attachments, etc.)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationship
@@ -727,11 +727,17 @@ def _run_migrations(engine):
                 conn.commit()
                 print("✅ Migration: Added args column to tool_usages")
 
-        if 'call_id' not in columns:
+        if 'call_id' in columns:
             with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE tool_usages ADD COLUMN call_id VARCHAR(100)"))
+                conn.execute(text("ALTER TABLE tool_usages DROP COLUMN call_id"))
                 conn.commit()
-                print("✅ Migration: Added call_id column to tool_usages")
+                print("✅ Migration: Dropped call_id column from tool_usages")
+        
+        if 'meta_payload' not in columns:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE tool_usages ADD COLUMN meta_payload JSON"))
+                conn.commit()
+                print("✅ Migration: Added meta_payload column to tool_usages")
 
 
 def get_session(engine):
