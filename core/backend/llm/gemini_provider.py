@@ -7,6 +7,7 @@ from typing import List, Optional, Any, Dict
 import asyncio
 import inspect
 import json
+import time
 from .base_provider import BaseLLMProvider, CompletionResponse
 from config import settings
 from models.message import MessageRole, Message, ToolCall, SubMessage
@@ -86,31 +87,30 @@ class GeminiProvider(BaseLLMProvider):
         
         return [types.Tool(function_declarations=function_declarations)]
     
-    def _prepare_history(
-        self, 
-        messages: List[Message], 
-        system_instruction: Optional[str] = None
-    ) -> tuple[List[types.Content], Optional[types.Content]]:
+    def _make_system_instruction(self, instruction: Optional[str]) -> Optional[types.Content]:
+        """Convert a string system instruction into a Gemini Content object."""
+        if not instruction:
+            return None
+        return types.Content(
+            role="system",
+            parts=[types.Part.from_text(text=instruction)]
+        )
+
+    def _prepare_history(self, messages: List[Message]) -> List[types.Content]:
         """
         Converts a list of Message objects into Gemini Native Content objects.
         """
         history = []
         
-        # 1. Process System Instruction
-        instruction_content = None
-        if system_instruction:
-            instruction_content = types.Content(parts=[types.Part.from_text(text=system_instruction)])
-        
         for m in messages:
             role_val = getattr(m.role, "value", m.role)
             if role_val == MessageRole.SYSTEM.value:
-                # If a SYSTEM message is found in history, we still respect it but warn
-                logger.warning("[Gemini] Found SYSTEM message in conversational history. Consider using system_instruction parameter.")
-                if not instruction_content:
-                    instruction_content = types.Content(parts=[types.Part.from_text(text=m.content)])
-                else:
-                    # Append to existing
-                    instruction_content.parts.append(types.Part.from_text(text=f"\n\n{m.content}"))
+                # Option A: Convert system message to a user message with a prefix in history
+                # This ensures we don't break the SDK's role restrictions while preserving context
+                history.append(types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=f"**[SYSTEM NOTIFICATION]**:\n{m.content}")]
+                ))
             elif role_val == MessageRole.USER.value:
                 role = "user"
                 parts = []
@@ -173,14 +173,7 @@ class GeminiProvider(BaseLLMProvider):
             else:
                 logger.warning(f"Unknown message role: {m.role}")
         
-        system_instruction_content = None
-        if system_instruction:
-            system_instruction_content = types.Content(
-                role="system",
-                parts=[types.Part.from_text(text=system_instruction)]
-            )
-            
-        return history, system_instruction_content
+        return history
 
     def _append_tool_results(self, history: List[types.Content], tool_calls: List[ToolCall]) -> List[types.Content]:
         """
@@ -233,9 +226,10 @@ class GeminiProvider(BaseLLMProvider):
             # Resolve system instruction for config (even if history is provided)
             # Note: For Gemini, system instruction is usually in generation_config.
             # If native_context is used, we assume system instruction was already set or we re-pass it.
-            _, system_instruction_content = self._prepare_history([], system_instruction)
+            system_instruction_content = self._make_system_instruction(system_instruction)
         else:
-            history, system_instruction_content = self._prepare_history(messages, system_instruction)
+            history = self._prepare_history(messages)
+            system_instruction_content = self._make_system_instruction(system_instruction)
         
         if tool_definitions:
             tools_for_model = self._convert_dict_tools_to_gemini(tool_definitions)
@@ -258,11 +252,15 @@ class GeminiProvider(BaseLLMProvider):
 
         # 2. Single Turn API Call
         try:
+            t0 = time.time()
+            logger.info(f"📡 [Gemini] Calling generate_content for model {model_name} (History: {len(history)} turns, Tools: {len(tool_definitions) if tool_definitions else 0})")
             response = await self.client.aio.models.generate_content(
                 model=model_name,
                 contents=history,
                 config=generation_config
             )
+            elapsed = time.time() - t0
+            logger.info(f"✅ [Gemini] Generation complete in {elapsed:.2f}s")
         except Exception as e:
             logger.error(f"[Gemini] Async Generation error: {e}")
             raise
@@ -331,9 +329,10 @@ class GeminiProvider(BaseLLMProvider):
             incremental_tool_calls = kwargs.get('incremental_tool_calls')
             if incremental_tool_calls:
                 history = self._append_tool_results(history, incremental_tool_calls)
-            _, system_instruction_content = self._prepare_history([], system_instruction)
+            system_instruction_content = self._make_system_instruction(system_instruction)
         else:
-            history, system_instruction_content = self._prepare_history(messages, system_instruction)
+            history = self._prepare_history(messages)
+            system_instruction_content = self._make_system_instruction(system_instruction)
         
         if tool_definitions:
             tools_for_model = self._convert_dict_tools_to_gemini(tool_definitions)
@@ -525,7 +524,8 @@ class GeminiProvider(BaseLLMProvider):
         }
 
         # 1. Prepare History & Config
-        history, system_instruction_content = self._prepare_history(messages, system_instruction, attached_files)
+        history = self._prepare_history(messages)
+        system_instruction_content = self._make_system_instruction(system_instruction)
         
         active_tool_functions = tool_functions or getattr(self, '_tool_functions', {})
         if tool_definitions:
@@ -539,7 +539,7 @@ class GeminiProvider(BaseLLMProvider):
             temperature=temperature,
             max_output_tokens=max_tokens,
             tools=tools_for_model if tools_for_model else None,
-            system_instruction=system_instruction
+            system_instruction=system_instruction_content
         )
         
         if tools_for_model and hasattr(tools_for_model[0], 'function_declarations') and tools_for_model[0].function_declarations:
@@ -689,7 +689,8 @@ class GeminiProvider(BaseLLMProvider):
         }
 
         # 1. Prepare History & Config
-        history, system_instruction = self._prepare_history(messages, attached_files)
+        history = self._prepare_history(messages)
+        system_instruction_content = self._make_system_instruction(system_instruction)
         
         active_tool_functions = tool_functions or getattr(self, '_tool_functions', {})
         if tool_definitions:
@@ -703,7 +704,7 @@ class GeminiProvider(BaseLLMProvider):
             temperature=temperature,
             max_output_tokens=max_tokens,
             tools=tools_for_model if tools_for_model else None,
-            system_instruction=system_instruction
+            system_instruction=system_instruction_content
         )
         
         if tools_for_model and hasattr(tools_for_model[0], 'function_declarations') and tools_for_model[0].function_declarations:
@@ -823,7 +824,8 @@ class GeminiProvider(BaseLLMProvider):
         Yields string chunks.
         """
         model_name = kwargs.get('preferred_model') or self.model_name
-        history, system_instruction_content = self._prepare_history(messages, system_instruction)
+        history = self._prepare_history(messages)
+        system_instruction_content = self._make_system_instruction(system_instruction)
         
         try:
             stream = self.client.models.generate_content_stream(
