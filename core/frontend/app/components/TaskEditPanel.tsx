@@ -52,6 +52,7 @@ interface TaskEditPanelProps {
     onClose: () => void;
     onSave: (task: Task) => void;
     onDelete: (taskId: string) => void;
+    availableProjects?: string[];
 }
 
 export default function TaskEditPanel({
@@ -59,9 +60,11 @@ export default function TaskEditPanel({
     isOpen,
     onClose,
     onSave,
-    onDelete
+    onDelete,
+    availableProjects = []
 }: TaskEditPanelProps) {
     const [editedTask, setEditedTask] = useState<Task | null>(null);
+    const [isNewProject, setIsNewProject] = useState(false);
     const [loading, setLoading] = useState(false);
     const [status, setStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
@@ -89,6 +92,7 @@ export default function TaskEditPanel({
     useEffect(() => {
         if (task && isOpen) {
             setLoading(true);
+            setIsNewProject(false);
             const today = new Date().toISOString().split('T')[0];
             // Fetch full task details including today's status
             apiFetch(`/api/lbs/tasks/${task.task_id}?target_date=${today}`)
@@ -112,8 +116,23 @@ export default function TaskEditPanel({
     if (!isOpen || !editedTask) return null;
 
     const handleSave = async () => {
+        if (!editedTask) return;
         setLoading(true);
         try {
+            // Auto-create project if it's a new one
+            if (isNewProject && editedTask.context && !availableProjects.includes(editedTask.context)) {
+                setStatus({ type: "success", message: `Creating project "${editedTask.context}"...` });
+                try {
+                    await apiFetch("/api/agents/project/create", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ project_name: editedTask.context })
+                    });
+                } catch (err) {
+                    console.error("Failed to create project:", err);
+                }
+            }
+
             const payload: any = {
                 task_name: editedTask.task_name,
                 context: editedTask.context,
@@ -319,18 +338,56 @@ export default function TaskEditPanel({
                         <label className="block text-sm font-medium text-gray-400 mb-2">
                             Project *
                         </label>
-                        <input
-                            type="text"
-                            value={editedTask.context}
-                            onChange={(e) =>
-                                setEditedTask({ ...editedTask, context: e.target.value })
-                            }
-                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500"
-                            style={{
-                                borderLeftWidth: "4px",
-                                borderLeftColor: spokeColor,
-                            }}
-                        />
+                        {isNewProject || availableProjects.length === 0 ? (
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    value={editedTask.context}
+                                    onChange={(e) =>
+                                        setEditedTask({ ...editedTask, context: e.target.value })
+                                    }
+                                    className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500"
+                                    style={{
+                                        borderLeftWidth: "4px",
+                                        borderLeftColor: spokeColor,
+                                    }}
+                                />
+                                {availableProjects.length > 0 && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsNewProject(false)}
+                                        className="px-4 bg-gray-800 border border-gray-700 rounded-lg text-xs font-bold uppercase tracking-widest text-gray-500 hover:text-white transition-colors"
+                                    >
+                                        Use Existing
+                                    </button>
+                                )}
+                            </div>
+                        ) : (
+                            <select
+                                value={editedTask.context}
+                                onChange={(e) => {
+                                    if (e.target.value === "NEW_PROJECT") {
+                                        setIsNewProject(true);
+                                        setEditedTask({ ...editedTask, context: "" });
+                                    } else {
+                                        setEditedTask({ ...editedTask, context: e.target.value });
+                                    }
+                                }}
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500 appearance-none"
+                                style={{
+                                    borderLeftWidth: "4px",
+                                    borderLeftColor: spokeColor,
+                                }}
+                            >
+                                {availableProjects.map((s) => (
+                                    <option key={s} value={s}>{s}</option>
+                                ))}
+                                {!availableProjects.includes(editedTask.context) && (
+                                    <option value={editedTask.context}>{editedTask.context}</option>
+                                )}
+                                <option value="NEW_PROJECT" className="text-purple-400 font-bold">+ Create New Project...</option>
+                            </select>
+                        )}
                     </div>
 
                     {/* Workload */}
