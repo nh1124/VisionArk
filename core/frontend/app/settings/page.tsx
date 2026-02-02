@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { apiFetch, apiJson } from "@/lib/api";
+import { useNotification } from "@/lib/NotificationContext";
 
 type Tab = "account" | "general" | "services" | "integrations" | "ai";
 
@@ -22,6 +23,7 @@ interface Integration {
 }
 
 export default function SettingsPage() {
+    const { refreshSettings } = useNotification();
     const [activeTab, setActiveTab] = useState<Tab>("account");
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false); // Used for loading state during saves
@@ -30,10 +32,11 @@ export default function SettingsPage() {
     // Data states
     const [profile, setProfile] = useState({ id: "", username: "", email: "" });
     const [aiConfig, setAiConfig] = useState({ gemini_api_key: "" });
-    const [generalSettings, setGeneralSettings] = useState({ language: "en", timezone: "UTC", location: "" });
+    const [generalSettings, setGeneralSettings] = useState({ language: "en", timezone: "UTC", location: "", notification_sound: "timer" });
     const [services, setServices] = useState<Service[]>([]);
     const [integrations, setIntegrations] = useState<Integration[]>([]);
     const [hubCatalog, setHubCatalog] = useState<any[]>([]);
+    const [availableSounds, setAvailableSounds] = useState<{ id: string, label: string }[]>([]);
 
     // Form states
     const [passForm, setPassForm] = useState({ current: "", new: "", confirm: "" });
@@ -52,13 +55,23 @@ export default function SettingsPage() {
             const data = await apiJson<any>("/api/settings");
             setProfile(data.profile || { id: "", username: "", email: "" });
             setAiConfig({ gemini_api_key: data.ai_config?.gemini_api_key || "" });
-            setGeneralSettings(data.general_settings || { language: "en", timezone: "UTC", location: "" });
+            const g = data.general_settings || {};
+            setGeneralSettings({
+                language: g.language || "en",
+                timezone: g.timezone || "UTC",
+                location: g.location || "",
+                notification_sound: g.notification_sound || "timer"
+            });
             setServices(data.services || []);
             setIntegrations(data.integrations || []);
 
             // Also load dynamic hub catalog
             const catalog = await apiJson<any[]>("/api/settings/integrations/hub");
             setHubCatalog(catalog || []);
+
+            // Load available notification sounds
+            const sounds = await apiJson<any[]>("/api/settings/sounds");
+            setAvailableSounds(sounds || []);
         } catch (err) {
             console.error("Failed to load settings:", err);
             showMessage("error", "Failed to load settings");
@@ -70,6 +83,15 @@ export default function SettingsPage() {
     const showMessage = (type: "success" | "error", text: string) => {
         setMessage({ type, text });
         setTimeout(() => setMessage(null), 5000);
+    };
+
+    const playPreviewSound = (soundName: string) => {
+        const audio = new Audio(`/assets/sounds/${soundName || 'timer'}.mp3`);
+        audio.volume = 0.5;
+        audio.play().catch(err => {
+            console.warn("Preview sound blocked:", err);
+            showMessage("error", "Click on the page first to enable sound preview");
+        });
     };
 
     const handlePasswordChange = async (e: React.FormEvent) => {
@@ -120,7 +142,8 @@ export default function SettingsPage() {
                 method: "PATCH",
                 body: JSON.stringify(generalSettings)
             });
-            showMessage("success", "Localization settings saved");
+            showMessage("success", "Localization & Alert settings saved");
+            await refreshSettings();
         } catch (err: any) {
             showMessage("error", err.message || "Failed to save localization settings");
         } finally {
@@ -582,7 +605,53 @@ export default function SettingsPage() {
                                         disabled={saving}
                                         className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50"
                                     >
-                                        {saving ? "Saving..." : "Save Preferences"}
+                                        {saving ? "Saving..." : "Save Localization"}
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="bg-gray-900 border border-gray-800 rounded-xl p-8">
+                                <h2 className="text-xl font-bold mb-4">Notification Sounds</h2>
+                                <p className="text-gray-400 text-sm mb-6">Choose how you want to be alerted when a timer or event triggers.</p>
+
+                                <div className="space-y-6 max-w-md">
+                                    <div>
+                                        <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Timer Notification Sound</label>
+                                        <div className="flex gap-2">
+                                            <select
+                                                value={generalSettings.notification_sound || 'timer'}
+                                                onChange={(e) => setGeneralSettings({ ...generalSettings, notification_sound: e.target.value })}
+                                                className="flex-1 bg-gray-950 border border-gray-800 rounded-lg px-4 py-2 text-gray-200 outline-none focus:border-blue-500"
+                                            >
+                                                {availableSounds.length > 0 ? (
+                                                    availableSounds.map(s => (
+                                                        <option key={s.id} value={s.id}>{s.label}</option>
+                                                    ))
+                                                ) : (
+                                                    <>
+                                                        <option value="timer">Standard Beep</option>
+                                                        <option value="bell">Ringing Bell</option>
+                                                        <option value="chime">Soft Chime</option>
+                                                        <option value="digital">Digital Alert</option>
+                                                    </>
+                                                )}
+                                            </select>
+                                            <button
+                                                type="button"
+                                                onClick={() => playPreviewSound(generalSettings.notification_sound)}
+                                                className="bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 py-2 rounded-lg text-sm font-medium transition-colors border border-gray-700"
+                                            >
+                                                Test
+                                            </button>
+                                        </div>
+                                        <p className="mt-1 text-[10px] text-gray-600">Select the sound to play when a timer expires.</p>
+                                    </div>
+                                    <button
+                                        onClick={saveGeneralSettings}
+                                        disabled={saving}
+                                        className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50"
+                                    >
+                                        {saving ? "Saving..." : "Save Sound Settings"}
                                     </button>
                                 </div>
                             </div>

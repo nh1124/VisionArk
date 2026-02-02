@@ -17,6 +17,8 @@ class GenericMemberNode(BaseNode):
         # Load tools from profile
         from tools.tool_utils import get_tool_by_name
         self.tools = []
+        registered_names = set()
+
         if node.tools:
             import json
             tools_list = node.tools
@@ -31,12 +33,14 @@ class GenericMemberNode(BaseNode):
                 tool = get_tool_by_name(tool_name)
                 if tool:
                     self.tools.append(tool)
+                    registered_names.add(tool.name)
                 else:
                     print(f"[GenericMemberNode] Warning: Tool '{tool_name}' not found for member node '{self.role_name}'")
         
         # Always allow agents to register routing hooks
-        from tools import SubscribeIntentTool
-        self.tools.append(SubscribeIntentTool())
+        if "subscribe_intent" not in registered_names:
+            from tools import SubscribeIntentTool
+            self.tools.append(SubscribeIntentTool())
 
     async def load_system_prompt(self, role_name: Optional[str] = None, components: Optional[List[str]] = None) -> str:
         """

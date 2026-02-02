@@ -60,6 +60,13 @@ The `NotificationProvider` (`core/frontend/lib/NotificationContext.tsx`) manages
 - **Unread Counter**: State-tracked count of unread notifications.
 - **Dispatching Toasts**: Real-time popups when new messages arrive.
 
+### Audio Alerts & Customization
+VisionArk supports customizable audio alerts for notifications, specifically for timers and critical events.
+- **Dynamic Selection**: Users can choose from multiple sound presets in the **Settings > General** tab.
+- **Preview**: The UI allows testing sounds before saving.
+- **Context-Aware Playback**: The `NotificationContext` handles sound resolution based on user preferences stored in `general_settings`.
+- **Backend discovery**: Audio files are dynamically loaded from `assets/static/sounds`.
+
 ### Notification Bell
 The `NotificationBell` component is integrated into:
 - The global `Navbar`.

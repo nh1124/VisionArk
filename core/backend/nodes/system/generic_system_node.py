@@ -21,19 +21,23 @@ class GenericSystemNode(SystemNode):
         self.role_name = node.role_name
         self.display_name = node.display_name or self.role_name.title()
         
-        # Load tools from profile
+        # 1. Load tools from profile
         self.tools = []
+        registered_names = set()
+
         if node.tools:
             for tool_name in node.tools:
                 tool = get_tool_by_name(tool_name)
                 if tool:
                     self.tools.append(tool)
+                    registered_names.add(tool.name)
                 else:
                     print(f"[GenericSystemNode] Warning: Tool '{tool_name}' not found for system node '{self.role_name}'")
         
-        # System nodes might need specific core tools too
-        from tools.library.system import AskNodeTool
-        self.tools.append(AskNodeTool())
+        # 2. Add core 'ask_node' tool if not already present
+        if "ask_node" not in registered_names:
+            from tools.library.system import AskNodeTool
+            self.tools.append(AskNodeTool())
 
     async def load_system_prompt(self, role_name: Optional[str] = None, components: Optional[List[str]] = None) -> str:
         """

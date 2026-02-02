@@ -284,9 +284,12 @@ def get_default_assets_dir() -> Path:
     Depending on environment, this is either in app/backend/assets or /app/assets.
     """
     current_file = Path(__file__).resolve()
-    # In Docker: /app/utils/paths.py -> /app/assets
-    # Locally: .../app/backend/utils/paths.py -> .../app/backend/assets
-    return current_file.parent.parent / "assets"
+    # In Docker: /app/utils/paths.py -> /app/assets (Mounted top-level assets directory)
+    # Locally: .../app/backend/utils/paths.py -> .../VisionArk/assets
+    if current_file.parts and 'app' in current_file.parts:
+        return Path("/app/assets")
+    
+    return get_project_root() / "assets"
 
 
 def get_prompts_dir() -> Path:

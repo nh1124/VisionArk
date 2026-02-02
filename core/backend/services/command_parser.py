@@ -43,7 +43,7 @@ def _get_command_map() -> Dict[str, Type[BaseCommand]]:
     # Import here to avoid circular dependencies
     from commands.library import (
         ArchiveCommand, MoveCommand, CreateProjectCommand, DeleteProjectCommand, CloneProjectCommand,
-        SendMessageCommand, ResendCommand, UndoCommand
+        SendMessageCommand, ResendCommand, UndoCommand, TimerCommand
     )
     
     return {
@@ -57,6 +57,7 @@ def _get_command_map() -> Dict[str, Type[BaseCommand]]:
         "send_message": SendMessageCommand,
         "resend": ResendCommand,
         "undo": UndoCommand,
+        "timer": TimerCommand,
     }
 
 

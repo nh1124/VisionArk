@@ -19,7 +19,7 @@ class ProjectNode(BaseNode):
         self.node_id = None
         
         # New Class-Based Tools
-        from tools.library.system import AskNodeTool, ListNodesTool, GetNodeProfileTool
+        from tools.library.system import AskNodeTool, ListNodesTool, GetNodeProfileTool, SetTimerTool
         from integrations.lbs.agent_tools import (
             ListTasksTool, CreateTaskTool, UpdateTaskTool, DeleteTaskTool,
             CompleteLBSTaskTool, GetLBSScheduleTool, GetLoadOnDayTool, GetLoadInPeriodTool,
@@ -49,6 +49,7 @@ class ProjectNode(BaseNode):
             UpdateNodeDescriptionTool(),
             SubscribeIntentTool(),
             RecursiveWriterTool(),
+            SetTimerTool(),
 
             ListTasksTool(),
             CompleteLBSTaskTool(),

@@ -32,6 +32,7 @@ class GeneralSettingsUpdate(BaseModel):
     language: Optional[str] = None
     timezone: Optional[str] = None
     location: Optional[str] = None
+    notification_sound: Optional[str] = None
 
 class ServiceRegister(BaseModel):
     service_name: str
@@ -117,6 +118,41 @@ async def get_settings(
         "integrations": integration_list
     }
 
+@router.get("/sounds")
+async def get_available_sounds():
+    """List available notification sound files in the assets directory."""
+    from utils.paths import Path
+    # In Docker, this is /app/assets/static/sounds
+    # Locally, it's VisionArk/assets/static/sounds
+    current_file = Path(__file__).resolve()
+    if current_file.parts and 'app' in current_file.parts:
+        sounds_dir = Path("/app/assets/static/sounds")
+    else:
+        # Local development path resolution
+        from utils.paths import PROJECT_ROOT
+        sounds_dir = PROJECT_ROOT / "assets" / "static" / "sounds"
+    
+    sounds = []
+    if sounds_dir.exists():
+        for f in sounds_dir.iterdir():
+            if f.suffix.lower() in [".mp3", ".wav", ".ogg"]:
+                # name is the key for settings, display_name is for UI
+                name = f.stem
+                display_name = name.replace("_", " ").replace("-", " ").title()
+                sounds.append({"id": name, "label": display_name})
+    
+    # Fallback to defaults if directory is empty or missing
+    if not sounds:
+        sounds = [
+            {"id": "timer", "label": "Standard Beep"},
+            {"id": "bell", "label": "Ringing Bell"},
+            {"id": "chime", "label": "Soft Chime"},
+            {"id": "digital", "label": "Digital Alert"}
+        ]
+        
+    return sorted(sounds, key=lambda x: x["label"])
+
+
 @router.patch("/general")
 async def update_general_settings(
     update: GeneralSettingsUpdate,
@@ -145,6 +181,8 @@ async def update_general_settings(
         current_general["timezone"] = update.timezone
     if update.location is not None:
         current_general["location"] = update.location
+    if update.notification_sound is not None:
+        current_general["notification_sound"] = update.notification_sound
         
     settings_obj.general_settings = current_general
     flag_modified(settings_obj, "general_settings")

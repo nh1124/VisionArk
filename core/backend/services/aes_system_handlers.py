@@ -303,6 +303,26 @@ class RouterSyncHandler(BaseAESHandler):
         await Router.initialize_default_hooks()
         print("[AES] Router synchronization complete.")
 
+@register_aes_handler("SYSTEM_TIMER")
+class TimerHandler(BaseAESHandler):
+    """
+    Timer handler that triggers a notification when a scheduled timer expires.
+    """
+    async def run(self, context: Dict[str, Any]):
+        from services.notification_service import NotificationService
+        from models.database import NotificationType
+        
+        print(f"[AES] Executing SYSTEM_TIMER for user {self.user_id}")
+        
+        service = NotificationService(self.db)
+        await service.create_notification(
+            user_id=self.user_id,
+            title=context.get("title", "Timer Expired"),
+            content=context.get("content", "Your timer has finished."),
+            type=NotificationType.TIMER,
+            link=context.get("link")
+        )
+
 class AESSystemHandlers:
     """
     Dispatcher for AES handlers.

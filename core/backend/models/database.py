@@ -74,6 +74,7 @@ class NotificationType(str, Enum):
     SUCCESS = "success"
     WARNING = "warning"
     ERROR = "error"
+    TIMER = "timer"
 
 
 class TaskType(str, Enum):

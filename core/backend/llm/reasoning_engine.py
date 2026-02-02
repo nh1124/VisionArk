@@ -28,14 +28,13 @@ class ReasoningEngine:
 
     def _load_prompt_component(self, name: str) -> str:
         """Helper to load a prompt component from the assets directory."""
-        import os
-        base_dir = r"C:\Users\nh112\programming\project\VisionArk\core\backend\assets\prompts\components"
-        path = os.path.join(base_dir, f"{name}.md")
+        from utils.paths import get_prompts_dir
+        prompts_dir = get_prompts_dir()
+        path = prompts_dir / "components" / f"{name}.md"
 
-        if os.path.exists(path):
+        if path.exists():
             try:
-                with open(path, "r", encoding="utf-8") as f:
-                    return f.read()
+                return path.read_text(encoding="utf-8")
             except Exception as e:
                 logger.error(f"Error loading prompt component {name}: {e}")
         return ""

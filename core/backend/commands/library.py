@@ -1,7 +1,7 @@
 import uuid
 import shutil
 from datetime import datetime, timedelta
-from typing import List, Any
+from typing import List, Any, Optional
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -436,3 +436,72 @@ class UndoCommand(BaseCommand):
         except Exception as e:
             if db_session: await db_session.rollback()
             return CommandResult(success=False, message=f"Failed to undo: {str(e)}")
+
+class TimerCommand(BaseCommand):
+    name = "timer"
+    description = "Set a timer to receive a notification after a specified duration."
+    usage = "/timer <duration> [message]"
+    arg_names = ["duration", "message"]
+
+    @staticmethod
+    def parse_duration(duration_str: str) -> Optional[timedelta]:
+        """Parse duration string like '10m', '1h', '30s'"""
+        import re
+        match = re.match(r"^(\d+)([smhd])$", duration_str.lower())
+        if not match:
+            return None
+        
+        value, unit = match.groups()
+        value = int(value)
+        
+        if unit == 's': return timedelta(seconds=value)
+        if unit == 'm': return timedelta(minutes=value)
+        if unit == 'h': return timedelta(hours=value)
+        if unit == 'd': return timedelta(days=value)
+        return None
+
+    async def run(self, raw_args: List[str], **kwargs) -> CommandResult:
+        args = self.parse_args(raw_args)
+        duration_str = args.get("duration")
+        message = args.get("message") or "Timer expired!"
+        
+        if not duration_str:
+            return CommandResult(success=False, message="Duration is required (e.g., 10m, 1h).")
+
+        delta = self.parse_duration(duration_str)
+        if not delta:
+            return CommandResult(success=False, message=f"Invalid duration format: '{duration_str}'. Use 10s, 5m, 1h, etc.")
+
+        db_session: AsyncSession = kwargs.get("db_session")
+        user_id: str = kwargs.get("user_id")
+        project_id: str = kwargs.get("project_id")
+        
+        if not db_session or not user_id:
+            return CommandResult(success=False, message="Missing required IDs")
+
+        try:
+            from services.aes_dispatcher import AESDispatcher
+            from models.database import AsyncSessionLocal
+            
+            scheduled_at = datetime.utcnow() + delta
+            dispatcher = AESDispatcher(AsyncSessionLocal)
+            
+            task_id = await dispatcher.schedule_task(
+                user_id=user_id,
+                task_type="SYSTEM_TIMER",
+                scheduled_at=scheduled_at,
+                project_id=project_id,
+                payload={
+                    "title": "Timer",
+                    "content": message,
+                    "link": f"/projects/{project_id}" if project_id else None
+                }
+            )
+            
+            return CommandResult(
+                success=True, 
+                message=f"⏲️ Timer set for {duration_str} from now ({scheduled_at.strftime('%H:%M:%S')} UTC).",
+                data={"task_id": task_id, "scheduled_at": scheduled_at.isoformat()}
+            )
+        except Exception as e:
+            return CommandResult(success=False, message=f"Failed to set timer: {str(e)}")

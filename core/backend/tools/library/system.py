@@ -435,3 +435,48 @@ class GetProjectHealthTool(BaseTool):
             }
         except Exception as e:
             return {"success": False, "message": f"Failed to analyze health: {e}"}
+
+class SetTimerArgs(BaseModel):
+    minutes: int = Field(..., description="Duration from now in minutes until the timer expires.")
+    message: str = Field(..., description="The message to show in the notification when the timer expires.")
+
+class SetTimerTool(BaseTool):
+    name = "set_timer"
+    description = "Set a timer to notify the user after a specified number of minutes."
+    args_schema = SetTimerArgs
+
+    async def run(self, minutes: int, message: str, **kwargs) -> Any:
+        db_session: AsyncSession = kwargs.get("db_session")
+        user_id: str = kwargs.get("user_id")
+        project_id: str = kwargs.get("project_id")
+        
+        if not db_session or not user_id:
+            return {"success": False, "message": "Context error: user_id or db_session missing"}
+        
+        try:
+            from services.aes_dispatcher import AESDispatcher
+            from models.database import AsyncSessionLocal
+            from datetime import timedelta
+            
+            scheduled_at = datetime.utcnow() + timedelta(minutes=minutes)
+            dispatcher = AESDispatcher(AsyncSessionLocal)
+            
+            task_id = await dispatcher.schedule_task(
+                user_id=user_id,
+                task_type="SYSTEM_TIMER",
+                scheduled_at=scheduled_at,
+                project_id=project_id,
+                payload={
+                    "title": "Agent Timer",
+                    "content": message,
+                    "link": f"/projects/{project_id}" if project_id else None
+                }
+            )
+            
+            return {
+                "success": True, 
+                "message": f"Timer set for {minutes} minutes from now (Expires at {scheduled_at.strftime('%H:%M:%S')} UTC).",
+                "data": {"task_id": task_id, "scheduled_at": scheduled_at.isoformat()}
+            }
+        except Exception as e:
+            return {"success": False, "message": f"Failed to set timer: {e}"}

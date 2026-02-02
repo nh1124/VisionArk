@@ -19,6 +19,7 @@ An AI-powered personal task management system built on a Project-Node architectu
 - **Agent-to-Agent Communication**: Nodes can collaborate via `ask_node` tools with recursion depth limiting.
 - **Asynchronous Processing**: Chat requests are enqueued and processed by background workers, supporting long-running tool executions.
 - **Artifacts System**: Agents create and manage artifacts (documents, notes, plans) in their workspace.
+- **Customizable Alerts**: User-configurable notification sounds for timers and events.
 
 ### 🧠 Agent Capabilities (Native Tools)
 | Category | Tools |
@@ -64,10 +65,13 @@ An AI-powered personal task management system built on a Project-Node architectu
 │              └───────────┘    └─────────────┘                   │
 └─────────────────────────────────────────────────────────────────┘
 
-Data Structure:
 data/users/{user_id}/
-├── {project_id}/      # Per-project files, artifacts, refs
-└── global_assets/
+└── {project_id}/      # Per-project files, artifacts, refs
+
+assets/
+├── static/            # Static assets (sounds, images)
+├── templates/         # Prompt components
+└── schemas/           # Tool validation schemas
 ```
 
 ---
@@ -165,6 +169,7 @@ VisionArk/
 │   └── frontend/          # Next.js application
 │       ├── app/           # Pages (dashboard, projects, tasks)
 │       └── components/    # UI components
+├── assets/                # Unified static & template assets
 ├── data/                  # User data (gitignored)
 ├── docs/                  # System design and blueprints
 ├── infra/                 # Docker configs
@@ -194,4 +199,4 @@ This project is licensed under the [Apache License 2.0](LICENSE).
 
 ---
 
-**Version**: 0.3.0 (Phase 3)
+**Version**: 0.4.0 (Phase 4: Unified Assets)

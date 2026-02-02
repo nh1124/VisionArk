@@ -2,7 +2,7 @@
 from .base import BaseTool
 from .library.system import (
     AskNodeTool, ListNodesTool, GetNodeProfileTool, BroadcastSystemMessageTool,
-    ListUserProjectsTool, UpdateProjectTool, GetProjectHealthTool
+    ListUserProjectsTool, UpdateProjectTool, GetProjectHealthTool, SetTimerTool
 )
 from integrations.lbs.agent_tools import (
     ListTasksTool, CreateTaskTool, UpdateTaskTool, DeleteTaskTool, 
@@ -104,5 +104,6 @@ __all__ = [
     "SendLineMessageTool",
     "ListNotesTool",
     "ReadNoteTool",
-    "CreateNoteTool"
+    "CreateNoteTool",
+    "SetTimerTool"
 ]

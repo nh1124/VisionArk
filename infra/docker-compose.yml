@@ -48,6 +48,7 @@ services:
     volumes:
       - ../core/backend:/app
       - ../data:/app/data # Full data directory (spokes, hub_data, users, etc.)
+      - ../assets:/app/assets
     networks:
       - atmos-network
     restart: unless-stopped
@@ -74,6 +75,7 @@ services:
     volumes:
       - ../core/backend:/app
       - ../data:/app/data
+      - ../assets:/app/assets
     depends_on:
       db:
         condition: service_healthy
@@ -101,6 +103,7 @@ services:
     volumes:
       - ../core/frontend:/app
       - /app/node_modules
+      - ../assets/static:/app/public/assets
     command: npm run dev -- -H 0.0.0.0
     depends_on:
       - backend
