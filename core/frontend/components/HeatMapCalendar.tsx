@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { apiFetch } from "@/lib/api";
+import { useTaskStore } from "../store/useTaskStore";
 
 interface TaskSummary {
     task_id: string;
@@ -24,15 +25,18 @@ interface HeatMapCalendarProps {
     onDayClick?: (date: string) => void;
     refreshKey?: number;
     includeCompleted?: boolean;
+    activeProject?: string | null;
 }
 
 export default function HeatMapCalendar({
     month,
     onDayClick,
     refreshKey = 0,
-    includeCompleted = true
+    includeCompleted = true,
+    activeProject: activeProjectProp
 }: HeatMapCalendarProps) {
-    const { activeProject } = useTaskStore();
+    const store = useTaskStore();
+    const activeProject = activeProjectProp !== undefined ? activeProjectProp : store.activeProject;
     const [daysData, setDaysData] = useState<DayData[]>([]);
     const [loading, setLoading] = useState(true);
 

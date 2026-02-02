@@ -240,6 +240,7 @@ export default function DashboardPage() {
                         month={currentMonth}
                         refreshKey={refreshKey}
                         includeCompleted={true}
+                        activeProject={null}
                         onDayClick={(date) => setSelectedDate(date)}
                     />
                 </div>
