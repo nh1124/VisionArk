@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { apiFetch } from "@/lib/api";
 import { ChevronLeft, ChevronRight, Clock, MoreVertical, Lock, AlertCircle } from "lucide-react";
 import { getSpokeColor } from "@/lib/colors";
+import { useTaskStore } from "../store/useTaskStore";
 
 interface TimelineTask {
     task_id: string;
@@ -33,6 +34,7 @@ const HOURS = Array.from({ length: 17 }, (_, i) => i + 7); // 07:00 to 23:00
 const HOUR_HEIGHT = 80; // pixels per hour
 
 export default function TimelineCalendar({ targetDate, refreshKey = 0, onTaskClick }: TimelineCalendarProps) {
+    const { activeProject } = useTaskStore();
     const [schedule, setSchedule] = useState<DaySchedule[]>([]);
     const [loading, setLoading] = useState(true);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -132,7 +134,9 @@ export default function TimelineCalendar({ targetDate, refreshKey = 0, onTaskCli
                 <div className="grid grid-cols-7 divide-x divide-gray-800/30">
                     {weekDays.map(dateStr => {
                         const dayData = schedule.find(d => d.date === dateStr);
-                        const allDayTasks = dayData?.tasks.filter(t => !t.start_time) || [];
+                        const allDayTasks = (dayData?.tasks || [])
+                            .filter(t => !t.start_time)
+                            .filter(t => !activeProject || t.context === activeProject);
                         return (
                             <div key={dateStr} className="min-h-[48px] p-1 flex flex-col gap-1 bg-white/[0.01]">
                                 {allDayTasks.map(task => (
@@ -180,9 +184,12 @@ export default function TimelineCalendar({ targetDate, refreshKey = 0, onTaskCli
                     {/* Task Slots for each day */}
                     {weekDays.map(dateStr => {
                         const dayData = schedule.find(d => d.date === dateStr);
+                        const tasksToShow = (dayData?.tasks || [])
+                            .filter(t => !activeProject || t.context === activeProject);
+
                         return (
                             <div key={dateStr} className="relative h-full px-1 py-1">
-                                {dayData?.tasks.map(task => {
+                                {tasksToShow.map(task => {
                                     if (!task.start_time) return null; // Only show tasks with times on timeline
 
                                     const top = getTimePosition(task.start_time);

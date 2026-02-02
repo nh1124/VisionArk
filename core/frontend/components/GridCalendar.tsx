@@ -34,7 +34,7 @@ interface GridCalendarProps {
 }
 
 export default function GridCalendar({ month, onDayClick, includeCompleted = true }: GridCalendarProps) {
-    const { calendarTasks, rescheduleTask, fetchMonthTasks } = useTaskStore();
+    const { calendarTasks, rescheduleTask, fetchMonthTasks, activeProject } = useTaskStore();
 
     // Fetch data for the current month view
     React.useEffect(() => {
@@ -43,11 +43,17 @@ export default function GridCalendar({ month, onDayClick, includeCompleted = tru
         fetchMonthTasks(start, end);
     }, [month, fetchMonthTasks]);
 
-    // Filter tasks if includeCompleted is false
+    // Filter tasks if includeCompleted is false or if a project is selected
     const displayTasksForCalendar = useMemo(() => {
-        if (includeCompleted) return calendarTasks;
-        return calendarTasks.filter(t => t.status !== 'completed' && t.status !== 'done');
-    }, [calendarTasks, includeCompleted]);
+        let filtered = calendarTasks;
+        if (!includeCompleted) {
+            filtered = filtered.filter(t => t.status !== 'completed' && t.status !== 'done');
+        }
+        if (activeProject) {
+            filtered = filtered.filter(t => t.context === activeProject);
+        }
+        return filtered;
+    }, [calendarTasks, includeCompleted, activeProject]);
 
     // Dnd Sensors
     const sensors = useSensors(

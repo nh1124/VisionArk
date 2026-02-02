@@ -82,7 +82,7 @@ export default function UnifiedTasksPage() {
         fetchTasks(targetDate);
         fetchAllTasks();
         loadAllProjects();
-    }, [targetDate, fetchTasks, fetchAllTasks, activeFilter]); // fetchAllTasks is stable
+    }, [targetDate, fetchTasks, fetchAllTasks]); // Removed activeFilter to prevent redundant/stale fetches on view switch
 
     // Handle clicks outside quick add to hide options
     useEffect(() => {
@@ -122,7 +122,7 @@ export default function UnifiedTasksPage() {
         if (activeFilter === 'today') {
             return tasks.filter(t => t.due_date === todayStr);
         } else if (activeFilter === 'my-day') {
-            return tasks.filter(t => t.meta_payload?.is_my_day);
+            return allTasks.filter(t => t.meta_payload?.is_my_day);
         } else if (activeFilter === 'planned') {
             // "Planned" should show all future tasks from the global list
             return allTasks.filter(t => t.due_date && t.due_date >= todayStr);
@@ -198,6 +198,33 @@ export default function UnifiedTasksPage() {
         setQaDueDate(newDate);
     };
 
+    const handlePrev = () => {
+        if (viewMode === 'calendar') {
+            setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
+        } else if (viewMode === 'timeline') {
+            changeDate(-1);
+        }
+    };
+
+    const handleNext = () => {
+        if (viewMode === 'calendar') {
+            setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
+        } else if (viewMode === 'timeline') {
+            changeDate(1);
+        }
+    };
+
+    const handleToday = () => {
+        const today = new Date();
+        if (viewMode === 'calendar') {
+            setCurrentMonth(new Date(today.getFullYear(), today.getMonth(), 1));
+        } else {
+            const todayStr = today.toISOString().split('T')[0];
+            setTargetDate(todayStr);
+            setQaDueDate(todayStr);
+        }
+    };
+
     const formatDateHeader = (dateStr: string) => {
         const d = new Date(dateStr);
         return d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -225,12 +252,38 @@ export default function UnifiedTasksPage() {
                     <div className="w-full sm:w-auto flex items-center gap-3">
                         {/* Date Header and Controls */}
                         <div className="flex flex-col items-start gap-2">
-                            <h1 className={`${isMobile ? 'text-base' : 'text-lg'} font-medium text-white whitespace-nowrap min-w-[200px] sm:min-w-[300px]`}>
-                                {viewMode === 'calendar'
-                                    ? currentMonth.toLocaleString('en-US', { month: 'long', year: 'numeric' })
-                                    : formatDateHeader(targetDate)
-                                }
-                            </h1>
+                            <div className="flex items-center gap-3">
+                                {viewMode !== 'list' && (
+                                    <div className="flex items-center gap-1 bg-gray-900/60 border border-gray-800 rounded-xl p-1 shadow-lg">
+                                        <button
+                                            onClick={handlePrev}
+                                            className="p-1.5 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-white transition-all"
+                                            title="Previous"
+                                        >
+                                            <ChevronLeft className="w-4 h-4" />
+                                        </button>
+                                        <button
+                                            onClick={handleToday}
+                                            className="px-3 py-1 text-[10px] font-black uppercase text-gray-500 hover:text-white transition-all border-x border-gray-800"
+                                        >
+                                            Today
+                                        </button>
+                                        <button
+                                            onClick={handleNext}
+                                            className="p-1.5 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-white transition-all"
+                                            title="Next"
+                                        >
+                                            <ChevronRight className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                )}
+                                <h1 className={`${isMobile ? 'text-base' : 'text-lg'} font-medium text-white whitespace-nowrap min-w-[200px] sm:min-w-[300px]`}>
+                                    {viewMode === 'calendar'
+                                        ? currentMonth.toLocaleString('en-US', { month: 'long', year: 'numeric' })
+                                        : formatDateHeader(targetDate)
+                                    }
+                                </h1>
+                            </div>
                         </div>
                     </div>
 
@@ -428,88 +481,94 @@ export default function UnifiedTasksPage() {
                                 )}
                             </div>
                         ) : viewMode === "calendar" ? (
-                            <div className="flex gap-6 h-full min-h-0">
-                                <div className="flex-1 min-w-0">
-                                    <GridCalendar
-                                        month={currentMonth}
-                                        onDayClick={(date) => {
-                                            setTargetDate(date);
-                                            setDayDetailsDate(date);
-                                            setIsDayDetailsOpen(true);
-                                        }}
-                                        includeCompleted={true}
-                                    />
-                                </div>
+                            <div className="h-full relative">
+                                <GridCalendar
+                                    month={currentMonth}
+                                    onDayClick={(date) => {
+                                        setTargetDate(date);
+                                        setDayDetailsDate(date);
+                                        setIsDayDetailsOpen(true);
+                                    }}
+                                    includeCompleted={true}
+                                />
 
-                                {/* Calendar Day Details Panel */}
+                                {/* Calendar Day Details Panel - Refactored to Fixed Right Overlay */}
                                 {isDayDetailsOpen && (
-                                    <div className="w-[350px] bg-gray-900/60 border border-gray-800 rounded-2xl flex flex-col min-h-0 animate-in slide-in-from-right-4 duration-300 shadow-2xl backdrop-blur-xl">
-                                        <div className="p-4 border-b border-gray-800 flex items-center justify-between">
-                                            <div>
-                                                <h3 className="text-sm font-black uppercase tracking-widest text-blue-400">Day Details</h3>
-                                                <p className="text-xs text-gray-500 font-bold">{formatDateHeader(dayDetailsDate)}</p>
-                                            </div>
-                                            <button
-                                                onClick={() => setIsDayDetailsOpen(false)}
-                                                className="p-1.5 hover:bg-gray-800 rounded-lg text-gray-500 hover:text-white transition-all"
-                                            >
-                                                <X className="w-4 h-4" />
-                                            </button>
-                                        </div>
-
-                                        <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
-                                            {calendarTasks.filter(t => t.due_date === dayDetailsDate).length === 0 ? (
-                                                <div className="h-full flex flex-col items-center justify-center text-center p-8">
-                                                    <div className="w-12 h-12 bg-gray-800/50 rounded-full flex items-center justify-center mb-4">
-                                                        <Plus className="w-6 h-6 text-gray-600" />
-                                                    </div>
-                                                    <p className="text-xs font-bold text-gray-600 uppercase tracking-widest">No tasks for this day</p>
+                                    <>
+                                        {/* Backdrop */}
+                                        <div
+                                            className="fixed inset-0 bg-black/20 backdrop-blur-sm z-[99]"
+                                            onClick={() => setIsDayDetailsOpen(false)}
+                                        />
+                                        <div className="fixed right-4 top-24 bottom-4 w-[400px] bg-gray-900/80 border border-gray-800 rounded-2xl flex flex-col min-h-0 animate-in slide-in-from-right-full duration-300 shadow-2xl backdrop-blur-2xl z-[100]">
+                                            <div className="p-5 border-b border-gray-800/50 flex items-center justify-between bg-white/[0.02]">
+                                                <div>
+                                                    <h3 className="text-xs font-black uppercase tracking-widest text-blue-400 mb-0.5">Focus List</h3>
+                                                    <p className="text-sm text-gray-400 font-bold">{formatDateHeader(dayDetailsDate)}</p>
                                                 </div>
-                                            ) : (
-                                                calendarTasks.filter(t => t.due_date === dayDetailsDate).map(task => (
-                                                    <div
-                                                        key={task.task_id}
-                                                        onClick={async () => {
-                                                            const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}`);
-                                                            const fullTask = await resp.json();
-                                                            setSelectedTask(fullTask);
-                                                            setPanelOpen(true);
-                                                        }}
-                                                        className="group bg-gray-950/40 border border-gray-800/50 rounded-xl p-3 hover:bg-gray-900 hover:border-blue-500/30 transition-all cursor-pointer"
-                                                    >
-                                                        <div className="flex items-center gap-3 mb-1">
-                                                            <div className={task.status === 'done' || task.status === 'completed' ? 'text-blue-500' : 'text-gray-600'}>
-                                                                {task.status === 'done' || task.status === 'completed' ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4" />}
-                                                            </div>
-                                                            <span className={`text-sm font-bold truncate ${task.status === 'done' || task.status === 'completed' ? 'line-through text-gray-600' : 'text-gray-200 group-hover:text-blue-400'}`}>
-                                                                {task.task_name}
-                                                            </span>
-                                                        </div>
-                                                        <div className="flex items-center gap-2 pl-7">
-                                                            <span className="text-[10px] font-black uppercase tracking-tighter text-gray-600" style={{ color: getSpokeColor(task.context) }}>
-                                                                {task.context}
-                                                            </span>
-                                                            <span className="text-[10px] font-bold text-gray-700 bg-gray-900 rounded px-1.5 py-0.5">
-                                                                Impact: {task.base_load_score}
-                                                            </span>
-                                                        </div>
-                                                    </div>
-                                                ))
-                                            )}
-                                        </div>
+                                                <button
+                                                    onClick={() => setIsDayDetailsOpen(false)}
+                                                    className="p-2 hover:bg-gray-800 rounded-xl text-gray-500 hover:text-white transition-all bg-white/5"
+                                                >
+                                                    <X className="w-5 h-5" />
+                                                </button>
+                                            </div>
 
-                                        <div className="p-3 border-t border-gray-800">
-                                            <button
-                                                onClick={() => {
-                                                    setQaDueDate(dayDetailsDate);
-                                                    setCreateModalOpen(true);
-                                                }}
-                                                className="w-full py-2.5 bg-blue-600/10 hover:bg-blue-600 text-blue-400 hover:text-white border border-blue-600/20 rounded-xl text-xs font-black uppercase tracking-widest transition-all shadow-lg shadow-blue-500/5 active:scale-95"
-                                            >
-                                                Add Task
-                                            </button>
+                                            <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3">
+                                                {calendarTasks.filter(t => t.due_date === dayDetailsDate).length === 0 ? (
+                                                    <div className="h-full flex flex-col items-center justify-center text-center p-12 opacity-40">
+                                                        <div className="w-16 h-16 bg-gray-800/30 rounded-full flex items-center justify-center mb-6">
+                                                            <Plus className="w-8 h-8 text-gray-500" />
+                                                        </div>
+                                                        <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Clear Schedule</p>
+                                                    </div>
+                                                ) : (
+                                                    calendarTasks.filter(t => t.due_date === dayDetailsDate).map(task => (
+                                                        <div
+                                                            key={task.task_id}
+                                                            onClick={async () => {
+                                                                const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}`);
+                                                                const fullTask = await resp.json();
+                                                                setSelectedTask(fullTask);
+                                                                setIsDayDetailsOpen(false); // Close focus list before opening edit
+                                                                setPanelOpen(true);
+                                                            }}
+                                                            className="group bg-gray-950/60 border border-gray-800/40 rounded-xl p-4 hover:bg-gray-900 hover:border-blue-500/30 transition-all cursor-pointer shadow-lg"
+                                                        >
+                                                            <div className="flex items-center gap-3 mb-2">
+                                                                <div className={task.status === 'done' || task.status === 'completed' ? 'text-blue-500' : 'text-gray-600'}>
+                                                                    {task.status === 'done' || task.status === 'completed' ? <CheckCircle2 size={18} /> : <Circle size={18} />}
+                                                                </div>
+                                                                <span className={`text-[13px] font-bold truncate flex-1 ${task.status === 'done' || task.status === 'completed' ? 'line-through text-gray-600' : 'text-gray-200 group-hover:text-blue-400'}`}>
+                                                                    {task.task_name}
+                                                                </span>
+                                                            </div>
+                                                            <div className="flex items-center justify-between pl-8">
+                                                                <span className="text-[9px] font-black uppercase tracking-widest text-gray-600" style={{ color: getSpokeColor(task.context) }}>
+                                                                    {task.context}
+                                                                </span>
+                                                                <span className="text-[9px] font-black text-gray-700 bg-black/40 rounded-md px-2 py-1 uppercase tracking-tighter">
+                                                                    Impact: {task.base_load_score}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    ))
+                                                )}
+                                            </div>
+
+                                            <div className="p-4 bg-white/[0.01] border-t border-gray-800/30">
+                                                <button
+                                                    onClick={() => {
+                                                        setQaDueDate(dayDetailsDate);
+                                                        setCreateModalOpen(true);
+                                                    }}
+                                                    className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 text-white border border-blue-500/50 rounded-xl text-[11px] font-black uppercase tracking-[0.2em] transition-all shadow-xl shadow-blue-500/10 active:scale-95"
+                                                >
+                                                    Add Priority Task
+                                                </button>
+                                            </div>
                                         </div>
-                                    </div>
+                                    </>
                                 )}
                             </div>
                         ) : (
@@ -524,17 +583,29 @@ export default function UnifiedTasksPage() {
                         )}
                     </div>
                 </div>
-            </div>
+            </div >
 
             {/* Modals & Panels */}
-            <TaskEditPanel
+            < TaskEditPanel
                 task={selectedTask}
                 isOpen={panelOpen}
-                onClose={() => setPanelOpen(false)}
-                onSave={() => fetchTasks(targetDate)}
-                onDelete={() => fetchTasks(targetDate)}
+                onClose={() => {
+                    setPanelOpen(false);
+                    if (viewMode === 'calendar') {
+                        setIsDayDetailsOpen(true);
+                    }
+                }}
+                onSave={() => {
+                    fetchTasks(targetDate);
+                    fetchAllTasks();
+                }}
+                onDelete={() => {
+                    fetchTasks(targetDate);
+                    fetchAllTasks();
+                }}
+                availableProjects={availableProjects}
             />
-            <TaskCreateModal
+            < TaskCreateModal
                 isOpen={createModalOpen}
                 onClose={() => setCreateModalOpen(false)}
                 onTaskCreated={() => fetchTasks(targetDate)}
@@ -546,7 +617,7 @@ export default function UnifiedTasksPage() {
                 onImportComplete={() => fetchTasks(targetDate)}
                 existingProjects={availableProjects}
             />
-        </div>
+        </div >
     );
 }
 

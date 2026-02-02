@@ -32,12 +32,13 @@ export default function HeatMapCalendar({
     refreshKey = 0,
     includeCompleted = true
 }: HeatMapCalendarProps) {
+    const { activeProject } = useTaskStore();
     const [daysData, setDaysData] = useState<DayData[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         loadMonthData();
-    }, [month, refreshKey, includeCompleted]);
+    }, [month, refreshKey, includeCompleted, activeProject]);
 
     const loadMonthData = async () => {
         setLoading(true);
@@ -67,12 +68,14 @@ export default function HeatMapCalendar({
                     date: day.date,
                     load: load,
                     level: level,
-                    taskCount: day.tasks?.length || 0,
-                    tasks: day.tasks?.map((t: any) => ({
-                        task_id: t.task_id,
-                        task_name: t.task_name,
-                        status: t.status
-                    })) || []
+                    taskCount: day.tasks?.filter((t: any) => !activeProject || t.context === activeProject).length || 0,
+                    tasks: day.tasks
+                        ?.filter((t: any) => !activeProject || t.context === activeProject)
+                        .map((t: any) => ({
+                            task_id: t.task_id,
+                            task_name: t.task_name,
+                            status: t.status
+                        })) || []
                 };
             });
 
@@ -188,8 +191,8 @@ export default function HeatMapCalendar({
                                             <div
                                                 key={task.task_id}
                                                 className={`text-[8px] sm:text-[9px] truncate leading-none py-0.5 px-1 rounded ${task.status === 'done'
-                                                        ? 'bg-emerald-500/10 text-emerald-500/70 line-through'
-                                                        : 'bg-white/5 text-gray-400'
+                                                    ? 'bg-emerald-500/10 text-emerald-500/70 line-through'
+                                                    : 'bg-white/5 text-gray-400'
                                                     }`}
                                             >
                                                 {task.task_name}

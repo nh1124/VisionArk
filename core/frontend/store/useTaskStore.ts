@@ -51,7 +51,15 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
     setViewMode: (mode) => set({ viewMode: mode }),
 
-    setActiveFilter: (filter, project = null) => set({ activeFilter: filter, activeProject: project }),
+    setActiveFilter: (filter, project = null) => {
+        if (filter === 'today' || filter === 'my-day') {
+            const today = new Date().toISOString().split('T')[0];
+            set({ targetDate: today, activeFilter: filter, activeProject: project });
+            get().fetchTasks(today);
+        } else {
+            set({ activeFilter: filter, activeProject: project });
+        }
+    },
 
     setSelectedTaskId: (id) => set({ selectedTaskId: id }),
 
@@ -141,6 +149,12 @@ export const useTaskStore = create<TaskState>((set, get) => ({
             if (resp.ok) {
                 set((state) => ({
                     tasks: state.tasks.map((t) =>
+                        t.task_id === task.task_id ? { ...t, meta_payload } : t
+                    ),
+                    allTasks: state.allTasks.map((t) =>
+                        t.task_id === task.task_id ? { ...t, meta_payload } : t
+                    ),
+                    calendarTasks: state.calendarTasks.map((t) =>
                         t.task_id === task.task_id ? { ...t, meta_payload } : t
                     )
                 }));
