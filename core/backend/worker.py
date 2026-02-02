@@ -154,7 +154,7 @@ class Worker:
                 elif task_type == TaskType.APPROVAL_EXECUTION:
                     await self._handle_approval_task(context, db_session)
                 elif task_type == TaskType.SYSTEM_MANAGEMENT:
-                    await self._handle_user_message(message, context, db_session)
+                    await self._handle_system_management(message, context, db_session)
                 elif task_type == TaskType.USER_MESSAGE:
                     await self._handle_user_message(message, context, db_session)
                 else:
@@ -204,9 +204,8 @@ class Worker:
         session_id = context.get("session_id")
         task_id = context.get("task_id")
 
-        stmt = select(Node).filter(Node.id == target_node_id)
-        res = await db_session.execute(stmt)
-        node_record = res.scalars().first()
+        # Use primary key lookup for better performance
+        node_record = await db_session.get(Node, target_node_id)
         
         if not node_record:
             raise ValueError(f"Target node {target_node_id} not found.")
@@ -266,6 +265,38 @@ class Worker:
                  print(f"⚠️ [Worker] Real-time failure notification failed: {ne}")
 
             raise exc
+
+    async def _handle_system_management(self, message: str, context: dict, db_session):
+        """Dedicated execution for system-level management tasks (e.g. from System Chat)"""
+        target_node_id = context.get("target_node_id")
+        task_id = context.get("task_id")
+
+        if not target_node_id:
+             # Fallback for backward compatibility during migration
+             target_role = context.get("target_node_role")
+             if target_role:
+                 from sqlalchemy import select
+                 res = await db_session.execute(select(Node).filter(Node.role_name == target_role, Node.node_type == "SYSTEM"))
+                 node_record = res.scalars().first()
+             else:
+                 raise ValueError("System Management task requires target_node_id in context")
+        else:
+             # Use primary key lookup for better performance
+             node_record = await db_session.get(Node, target_node_id)
+        
+        if not node_record:
+            raise ValueError(f"System node reference (ID: {target_node_id}) not found.")
+
+        from services.node_factory import NodeFactory
+        target_node = NodeFactory.get_node(node_record, context)
+
+        print(f"Worker: Executing system management call to {node_record.display_name}")
+        try:
+            result = await target_node.process(message)
+            self.manager.update_status(task_id, "completed", result)
+        except Exception as e:
+            print(f"❌ System Management node process failed: {e}")
+            raise e
 
     async def _handle_ai_routing_task(self, message: str, context: dict, db_session):
         """Logic for Infrastructure-level AI routing analysis"""
@@ -349,23 +380,7 @@ class Worker:
         if await self._command_detection(message, context):
             return
 
-        # 3. EXPLICIT TARGETING (e.g. from System Chat)
-        target_role = context.get("target_node_role")
-        if target_role:
-             from services.system_node_registry import SystemNodeRegistry
-             from services.node_factory import NodeFactory
-             
-             # Locate the node ID for this system role
-             res = await db_session.execute(select(Node).filter(Node.role_name == target_role, Node.node_type == "SYSTEM"))
-             node_record = res.scalars().first()
-             if node_record:
-                 print(f"Worker: Explicitly targeting system node {target_role}")
-                 node = NodeFactory.get_node(node_record, context)
-                 result = await node.process(message)
-                 self.manager.update_status(task_id, "completed", result)
-                 return
-
-        # 4. GLOBAL ROUTER (Cross-project intent analysis)
+        # 3. GLOBAL ROUTER (Cross-project intent analysis)
         try:
             from services.router import Router
             router = Router()
@@ -385,7 +400,7 @@ class Worker:
         except Exception as re:
             print(f"⚠️ Router dispatch error: {re}")
             
-        # 5. DATA/PROJECT CONTEXT (Project-specific execution)
+        # 4. DATA/PROJECT CONTEXT (Project-specific execution)
         if project_id:
             target_node = ProjectNode(context)
             result = await target_node.process(message)

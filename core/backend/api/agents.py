@@ -1247,6 +1247,7 @@ async def chat_with_system_node(
         
         context = {
             "user_id": identity.user_id,
+            "target_node_id": node.id,
             "target_node_role": node_role,
             "preferred_model": x_preferred_model,
             "stream": stream
