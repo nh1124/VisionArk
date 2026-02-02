@@ -11,17 +11,25 @@ The source of truth for a project's governance. This file is hidden from the mai
 - **Naming Conventions**: `snake_case`, `PascalCase`, etc.
 - **Required Metadata**: Mandatory header fields for markdown files.
 - **Directory Structure**: Descriptions and purposes for project subdirectories.
-- **`project_rules.json`**: The source of truth for a project's governance.
+- **`project_rules.json`**: The source of truth for a project's formatting and organizational constraints.
+- **`plan_policy.json`**: Defines the update frequency and required sections for `PLAN.md`.
 - **`mining_state.json`**: Internal metadata for tracking skill mining throttling and history.
 
-### 2. Ruler Node (The Organizer)
+---
+
+### 2. Project Plan (`artifacts/PLAN.md`)
+The `PLAN.md` serves as the dynamic roadmap for the project. Unlike static rules, it is updated per-session to reflect current status and discoveries.
+- **Auto-Injection**: The content of `PLAN.md` is automatically injected into the system prompt of project member nodes and the orchestrator.
+- **Auto-Summarization**: At the end of a session, the **Project** node delegates summarization to the **Planner** to ensure `PLAN.md` remains accurate.
+
+### 3. Ruler Node (The Organizer)
 The Ruler node is responsible for enforcing these rules. It:
 - Loads rules using `get_project_rules`.
 - Validates file structure and naming.
 - Automates archiving based on project-specific lifecycles.
 - Maintains the project index (`docs/INDEX.md`).
 
-### 3. Orchestration & Delegation
+### 4. Orchestration & Delegation
 The **Project/Orchestrator** node coordinates with the Ruler:
 - **Rule Setup**: Translates user preferences into the configuration using `update_project_rules`.
 - **Delegation**: Automatically triggers the Ruler node for organizational tasks and cleanup.

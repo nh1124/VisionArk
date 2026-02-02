@@ -35,6 +35,28 @@ class BaseNode(ABC):
         component_texts = []
         if components:
             for comp in components:
+                # --- Special Component: project_plan (Dynamic Injection) ---
+                if comp == "project_plan":
+                    p_id = self.context.get("project_id")
+                    u_id = self.user_id
+                    if p_id and u_id:
+                        try:
+                            from utils.paths import get_plan_path, get_plan_injection_prompt_path
+                            plan_path = get_plan_path(u_id, p_id)
+                            if plan_path.exists():
+                                plan_content = plan_path.read_text(encoding='utf-8', errors='ignore')
+                                wrapper_path = get_plan_injection_prompt_path()
+                                if wrapper_path.exists():
+                                    wrapper = wrapper_path.read_text(encoding='utf-8')
+                                    injection_text = wrapper.replace("[PLAN_CONTENT_PLACEHOLDER]", plan_content)
+                                    component_texts.append(injection_text)
+                                else:
+                                    component_texts.append(f"## Project Plan (PLAN.md)\n{plan_content}")
+                        except Exception as e:
+                            print(f"[BaseNode] Error injecting project_plan: {e}")
+                    continue
+
+                # Standard Static Component
                 comp_path = prompts_dir / "components" / f"{comp}.md"
                 try:
                     if comp_path.exists():

@@ -49,15 +49,14 @@ class GenericMemberNode(BaseNode):
         """
         if components is None:
             # Default components for Member Nodes
-            components = ["identity", "protocol_grounding", "protocol_tool_usage", "formatting"]
+            components = ["identity", "protocol_grounding", "protocol_tool_usage", "formatting", "project_plan"]
             
         db_prompt = self.node.system_prompt
         
         if db_prompt:
             # Still load components even if DB prompt exists to ensure protocols are enforced
             base_prompt = await super().load_system_prompt(role_name=None, components=components)
-            # Remove the "Available Tools" section from super if we want to customize, 
-            # but super() handles it well. We just append the specific role prompt.
+            # We append the specific role prompt.
             return f"{base_prompt}\n\n## Your Specific Role: {self.display_name}\n{db_prompt}"
         
         return await super().load_system_prompt(role_name or self.role_name, components=components)

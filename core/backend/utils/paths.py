@@ -42,6 +42,10 @@ USERS_DIR = DATA_DIR / "users"
 # Governance constants
 GOVERNANCE_DIR_NAME = ".visionark"
 PROJECT_RULES_FILENAME = "project_rules.json"
+PLAN_POLICY_FILENAME = "plan_policy.json"
+PLAN_FILENAME = "PLAN.md"
+PLAN_TEMPLATE_FILENAME = "PLAN_TEMPLATE.md"
+PLAN_INJECTION_FILENAME = "project_plan.md"
 
 
 # ============================================================
@@ -294,9 +298,44 @@ def get_default_assets_dir() -> Path:
 
 def get_prompts_dir() -> Path:
     """
-    Get the prompts directory: core/backend/assets/prompts/
+    Get the prompts directory: assets/prompts/
     """
     return get_default_assets_dir() / "prompts"
+
+
+def get_plan_path(user_id: str, project_id: str) -> Path:
+    """
+    Get the relative path to the project's PLAN.md within artifacts.
+    """
+    return get_project_dir(user_id, project_id) / "artifacts" / PLAN_FILENAME
+
+
+def get_plan_template_path() -> Path:
+    """
+    Get the path to the PLAN.md template in assets.
+    """
+    return get_default_assets_dir() / "templates" / PLAN_TEMPLATE_FILENAME
+
+
+def get_plan_injection_prompt_path() -> Path:
+    """
+    Get the path to the plan injection prompt component.
+    """
+    return get_prompts_dir() / "components" / PLAN_INJECTION_FILENAME
+
+
+def get_plan_policy_template_path() -> Path:
+    """
+    Get the path to the default plan policy template in assets.
+    """
+    return get_default_assets_dir() / "templates" / PLAN_POLICY_FILENAME
+
+
+def get_project_plan_policy_path(user_id: str, project_id: str) -> Path:
+    """
+    Get the path to the project-specific plan policy in .visionark/
+    """
+    return get_project_governance_dir(user_id, project_id) / PLAN_POLICY_FILENAME
 
 
 # ============================================================

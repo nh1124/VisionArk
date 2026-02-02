@@ -1,0 +1,10 @@
+{
+    "update_frequency": "per_session",
+    "required_sections": [
+        "Goal / Strategy",
+        "Current Status",
+        "Log"
+    ],
+    "auto_archive_log_after_entries": 50,
+    "notification_on_deviation": true
+}

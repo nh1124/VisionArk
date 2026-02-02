@@ -58,8 +58,23 @@ class InitPlanTool(BaseTool):
     args_schema = InitPlanArgs
 
     async def run(self, goal: str, strategy: str, **kwargs) -> Any:
+        from utils.paths import get_plan_template_path
+        
+        template_path = get_plan_template_path()
+        content = ""
+        
+        if template_path.exists():
+            try:
+                template = template_path.read_text(encoding='utf-8')
+                content = template.replace("[メインゴールの記述]", goal).replace("[戦略・アプローチの記述]", strategy)
+            except Exception as e:
+                print(f"[InitPlanTool] Warning: Failed to load template: {e}")
+        
+        if not content:
+            # Fallback to hardcoded default if template fails or doesn't exist
+            content = f"# Goal\n{goal}\n\n# Strategy\n{strategy}\n\n# Current Status\nInitializing...\n\n# Log\n- Plan created at {kwargs.get('timestamp', 'unknown')}"
+            
         saver = SaveArtifactTool()
-        content = f"# Goal\n{goal}\n\n# Strategy\n{strategy}\n\n# Current Status\nInitializing...\n\n# Log\n- Plan created at {kwargs.get('timestamp', 'unknown')}"
         return await saver.run(file_path=CURRENT_PLAN_FILE, content=content, overwrite=True, **kwargs)
 
 class UpdatePlanProgressArgs(BaseModel):

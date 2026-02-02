@@ -163,7 +163,7 @@ class ProjectNode(BaseNode):
         # Protocols (grounding, tool_usage, formatting) are removed to prevent instruction dilution.
         system_prompt = await self.load_system_prompt(
             role_name="project",
-            components=["identity", "formatting"] 
+            components=["identity", "formatting", "project_plan"] 
         )
         
         # Inject Profile from Context (if loaded in on_enter)
@@ -340,7 +340,59 @@ class ProjectNode(BaseNode):
         return reasoning_msg
 
     async def on_exit(self, result: Any):
-        # Advocate is now handled by System AI Router for deep analysis.
-        # Direct trigger removed to prevent duplicate analysis.
-        pass
+        """
+        Post-session hooks:
+        1. Delegate session summarization to Planner to keep PLAN.md up to date.
+        """
+        if not self.project_id:
+            return
+
+        try:
+            from models.database import AsyncSessionLocal, Node
+            from sqlalchemy import select
+            
+            async with AsyncSessionLocal() as db:
+                # 1. Find Planner Node
+                res = await db.execute(select(Node).filter(
+                    Node.project_id == self.project_id,
+                    Node.role_name == "planner",
+                    Node.status == "active"
+                ))
+                planner = res.scalars().first()
+                
+                if planner:
+                    print(f"[ProjectNode] Found Planner {planner.id}. Requesting session summary...")
+                    
+                    # 2. Prepare delegation message
+                    # We pass the result (final response) and a command to update the plan.
+                    # In a real scenario, we might want to pass more context or history.
+                    delegation_msg = (
+                        "The current session has ended. Please summarize the key decisions, "
+                        "discoveries, and progress from this interaction and update the PLAN.md "
+                        "accordingly (Log, Status, and Recent Discoveries sections).\n\n"
+                        f"Final Response Sent to User: {result.content if hasattr(result, 'content') else str(result)}"
+                    )
+                    
+                    # 3. Use AskNodeTool logic (Direct call for efficiency in on_exit)
+                    from tools.library.system import AskNodeTool
+                    ask_tool = AskNodeTool()
+                    ask_tool.context = self.context # Inject context for DB/User access
+                    
+                    # Execute in background (fire and forget via QueueManager)
+                    # We await it because blocking=False just enqueues the task, which is fast.
+                    # This ensures the task is enqueued before the session 'db' is closed.
+                    await ask_tool.run(
+                        str(planner.id), 
+                        delegation_msg,
+                        blocking=False,
+                        db_session=db,
+                        user_id=self.user_id,
+                        project_id=self.project_id,
+                        session_id=self.context.get("session_id")
+                    )
+                else:
+                    print("[ProjectNode] No active Planner found for this project. Skipping auto-summary.")
+                    
+        except Exception as e:
+            print(f"[ProjectNode] Error in on_exit Planner delegation: {e}")
 
