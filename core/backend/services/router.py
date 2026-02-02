@@ -85,7 +85,9 @@ class Router:
                 "session_id": context.get("session_id"),
                 "project_id": context.get("project_id"),
                 "original_message": message,
-                "already_triggered_node_ids": list(set(triggered_node_ids)) # Pass de-duplicated IDs
+                "already_triggered_node_ids": list(set(triggered_node_ids)), # Pass de-duplicated IDs
+                "files": context.get("files", []),
+                "attached_files": context.get("attached_files", [])
             }
         )
 

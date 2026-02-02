@@ -159,14 +159,14 @@ async def chat_with_project(
     """Chat with a specific Project agent"""
     from queue_system.manager import QueueManager
     from services.file_service import FileService
-    import mimetypes
+    from utils.mimetype_helper import guess_mime_type
     
 
     async def upload_files(file_service: FileService, files: List[UploadFile]) -> List[UploadedFile]:
         uploaded_files = []
         for file in files:
             content = await file.read()
-            mime_type = mimetypes.guess_type(file.filename)[0]
+            mime_type = guess_mime_type(file.filename)
             
             try:
                 db_file = await file_service.save_file(

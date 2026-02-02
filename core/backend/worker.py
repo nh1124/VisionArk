@@ -339,6 +339,7 @@ class Worker:
         """Default logic for user chat and commands"""
         task_id = context.get("task_id")
         user_id = context.get("user_id")
+        project_id = context.get("project_id")
 
         # 1. Attachments
         if context.get("files"):
@@ -368,12 +369,23 @@ class Worker:
         try:
             from services.router import Router
             router = Router()
+
+            # Ensure the router doesn't re-trigger the project we're about to handle
+            if project_id:
+                res_node = await db_session.execute(
+                    select(Node).filter(Node.project_id == project_id, Node.node_type == "PROJECT")
+                )
+                proj_node = res_node.scalars().first()
+                if proj_node:
+                    already_triggered = context.get("already_triggered_node_ids", [])
+                    if proj_node.id not in already_triggered:
+                        context["already_triggered_node_ids"] = list(set(already_triggered + [proj_node.id]))
+
             await router.dispatch(message, context)
         except Exception as re:
             print(f"⚠️ Router dispatch error: {re}")
             
         # 5. DATA/PROJECT CONTEXT (Project-specific execution)
-        project_id = context.get("project_id")
         if project_id:
             target_node = ProjectNode(context)
             result = await target_node.process(message)

@@ -164,7 +164,11 @@ class AskNodeTool(BaseTool):
                     user_id=user_id,
                     target_node_id=target_id,
                     message=final_message,
-                    context=clean_context
+                    context={
+                        **clean_context,
+                        "files": kwargs.get("files", []),
+                        "attached_files": kwargs.get("attached_files", [])
+                    }
                 )
                 
                 return {

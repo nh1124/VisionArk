@@ -113,6 +113,7 @@ class FileService:
         await asyncio.to_thread(file_path.write_bytes, content)
         
         # Create database record
+        mime_type = mime_type or "application/octet-stream"
         uploaded_file = UploadedFile(
             id=file_id,
             project_id=proj.id,
@@ -230,9 +231,8 @@ class FileService:
         filename = filename or local_path.name
         
         if not mime_type:
-            from mimetypes import guess_type
-            mime_type, _ = guess_type(abs_path)
-            mime_type = mime_type or "application/octet-stream"
+            from utils.mimetype_helper import guess_mime_type
+            mime_type = guess_mime_type(filename)
 
         try:
             client = self._ensure_client()

@@ -164,10 +164,10 @@ class GeminiProvider(BaseLLMProvider):
             if history and history[-1].role == "user":
                 for attached_file in attached_files:
                     if hasattr(attached_file, 'gemini_file_uri') and attached_file.gemini_file_uri:
-                        # Gemini DOES NOT support application/octet-stream for multimodal parts
-                        if attached_file.file_type == "application/octet-stream":
-                            continue
                         try:
+                            # Allow text/plain, text/markdown, etc. 
+                            # Gemini Provider should be permissive, it's the File API that might reject.
+                            # But if it's already uploaded to Gemini, we should try to send it.
                             file_part = types.Part.from_uri(
                                 file_uri=attached_file.gemini_file_uri,
                                 mime_type=attached_file.file_type

@@ -84,7 +84,9 @@ class MulticastMessageTool(BaseTool):
                     "triggered_by_multicast": True,
                     "session_id": session_id,
                     "project_id": project_id,
-                    "original_message": message
+                    "original_message": message,
+                    "files": self.context.get("files", []),
+                    "attached_files": self.context.get("attached_files", [])
                 }
             )
             count += 1
