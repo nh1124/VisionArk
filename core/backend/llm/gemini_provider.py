@@ -89,8 +89,7 @@ class GeminiProvider(BaseLLMProvider):
     def _prepare_history(
         self, 
         messages: List[Message], 
-        system_instruction: Optional[str] = None,
-        attached_files: List = None
+        system_instruction: Optional[str] = None
     ) -> tuple[List[types.Content], Optional[types.Content]]:
         """
         Converts a list of Message objects into Gemini Native Content objects.
@@ -115,8 +114,23 @@ class GeminiProvider(BaseLLMProvider):
             elif role_val == MessageRole.USER.value:
                 role = "user"
                 parts = []
+                
+                # 1. Add multimodal files first (Gemini recommendation for context)
+                if m.attached_files:
+                    for attached_file in m.attached_files:
+                        if hasattr(attached_file, 'gemini_file_uri') and attached_file.gemini_file_uri:
+                            try:
+                                parts.append(types.Part.from_uri(
+                                    file_uri=attached_file.gemini_file_uri,
+                                    mime_type=attached_file.file_type
+                                ))
+                            except Exception as e:
+                                logger.error(f"[Gemini] Failed to add file part: {e}")
+
+                # 2. Add text content
                 if m.content:
                     parts.append(types.Part.from_text(text=m.content))
+                    
                 history.append(types.Content(role=role, parts=parts))
             elif role_val == MessageRole.ASSISTANT.value:
                 # Iterate through SubMessages to extract thoughts and tool calls
@@ -159,23 +173,6 @@ class GeminiProvider(BaseLLMProvider):
             else:
                 logger.warning(f"Unknown message role: {m.role}")
         
-        # Add current multimodal parts to the LAST user message
-        if attached_files:
-            if history and history[-1].role == "user":
-                for attached_file in attached_files:
-                    if hasattr(attached_file, 'gemini_file_uri') and attached_file.gemini_file_uri:
-                        try:
-                            # Allow text/plain, text/markdown, etc. 
-                            # Gemini Provider should be permissive, it's the File API that might reject.
-                            # But if it's already uploaded to Gemini, we should try to send it.
-                            file_part = types.Part.from_uri(
-                                file_uri=attached_file.gemini_file_uri,
-                                mime_type=attached_file.file_type
-                            )
-                            history[-1].parts.insert(0, file_part)
-                        except Exception as e:
-                            logger.error(f"[Gemini] Failed to add file part: {e}")
-
         system_instruction_content = None
         if system_instruction:
             system_instruction_content = types.Content(
@@ -217,7 +214,6 @@ class GeminiProvider(BaseLLMProvider):
         temperature: float = 0.2,
         max_tokens: Optional[int] = None,
         preferred_model: Optional[str] = None,
-        attached_files: List = None,
         tool_definitions: List = None,
         native_context: Optional[Any] = None,
         **kwargs
@@ -239,7 +235,7 @@ class GeminiProvider(BaseLLMProvider):
             # If native_context is used, we assume system instruction was already set or we re-pass it.
             _, system_instruction_content = self._prepare_history([], system_instruction)
         else:
-            history, system_instruction_content = self._prepare_history(messages, system_instruction, attached_files)
+            history, system_instruction_content = self._prepare_history(messages, system_instruction)
         
         if tool_definitions:
             tools_for_model = self._convert_dict_tools_to_gemini(tool_definitions)
@@ -321,7 +317,6 @@ class GeminiProvider(BaseLLMProvider):
         temperature: float = 0.2,
         max_tokens: Optional[int] = None,
         preferred_model: Optional[str] = None,
-        attached_files: List = None,
         tool_definitions: List = None,
         native_context: Optional[Any] = None,
         **kwargs
@@ -338,7 +333,7 @@ class GeminiProvider(BaseLLMProvider):
                 history = self._append_tool_results(history, incremental_tool_calls)
             _, system_instruction_content = self._prepare_history([], system_instruction)
         else:
-            history, system_instruction_content = self._prepare_history(messages, system_instruction, attached_files)
+            history, system_instruction_content = self._prepare_history(messages, system_instruction)
         
         if tool_definitions:
             tools_for_model = self._convert_dict_tools_to_gemini(tool_definitions)

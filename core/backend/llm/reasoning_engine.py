@@ -219,7 +219,6 @@ class ReasoningEngine:
                 print("✅ [ReasoningEngine] Summarization successful.")
 
         return Message(
-
             role=MessageRole.ASSISTANT,
             content=final_content,
             sub_messages=steps,

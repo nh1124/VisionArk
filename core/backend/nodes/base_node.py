@@ -336,16 +336,6 @@ class BaseNode(ABC):
                         return await self._execute_tool(t, **kwargs)
                     final_tool_funcs[tool.name] = wrapper
 
-            # Extract attached files from the LAST user message only (current request)
-            # Old history files are not re-sent - they were processed in their original request
-            current_attached_files = None
-            for msg in reversed(message_history):
-                msg_role = msg.role.value if hasattr(msg.role, 'value') else msg.role
-                if msg_role == "user":
-                    if msg.attached_files and msg.attached_files != []:
-                        current_attached_files = msg.attached_files
-                    break
-
             # Use Reasoning Engine to orchestrate turns
             engine = ReasoningEngine(self.llm)
             response = await engine.execute_async(
@@ -355,7 +345,6 @@ class BaseNode(ABC):
                 tool_functions=final_tool_funcs,
                 tool_context=tool_context or {},
                 preferred_model=preferred_model,
-                attached_files=current_attached_files if current_attached_files else None,
                 task_id=task_id or self.task_id
             )
             elapsed = time.time() - t0
