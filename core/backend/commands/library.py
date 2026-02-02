@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from commands.base import BaseCommand, CommandResult
 from models.database import Node, Project, ChatSession, ChatMessage
 from services.context_manager import ContextManager
+from services.note_service import NoteService
 from utils.paths import get_project_dir, validate_name
 
 class ArchiveCommand(BaseCommand):
@@ -498,10 +499,48 @@ class TimerCommand(BaseCommand):
                 }
             )
             
-            return CommandResult(
-                success=True, 
-                message=f"⏲️ Timer set for {duration_str} from now ({scheduled_at.strftime('%H:%M:%S')} UTC).",
+            return CommandResult(success=True, message=f"⏲️ Timer set for {duration_str} from now ({scheduled_at.strftime('%H:%M:%S')} UTC).",
                 data={"task_id": task_id, "scheduled_at": scheduled_at.isoformat()}
             )
         except Exception as e:
             return CommandResult(success=False, message=f"Failed to set timer: {str(e)}")
+
+class NoteCommand(BaseCommand):
+    name = "note"
+    description = "Create a project-linked note."
+    usage = "/note <title> <content>"
+    arg_names = ["title", "content"]
+
+    async def run(self, raw_args: List[str], **kwargs) -> CommandResult:
+        args = self.parse_args(raw_args)
+        title = args.get("title")
+        content = args.get("content")
+
+        if not title:
+            return CommandResult(success=False, message="Note title is required.")
+        if not content:
+            return CommandResult(success=False, message="Note content is required.")
+
+        db_session: AsyncSession = kwargs.get("db_session")
+        user_id: str = kwargs.get("user_id")
+        project_id: str = kwargs.get("project_id")
+        
+        if not db_session or not user_id:
+            return CommandResult(success=False, message="Missing required IDs")
+
+        try:
+            service = NoteService(db_session, user_id)
+            note = await service.create_note(
+                title=title,
+                content=content,
+                project_id=project_id
+            )
+            
+            return CommandResult(
+                success=True, 
+                message=f"✅ Note '{title}' created successfully.",
+                data={"note_id": note.id}
+            )
+        except Exception as e:
+            if db_session: await db_session.rollback()
+            return CommandResult(success=False, message=f"Failed to create note: {str(e)}")
