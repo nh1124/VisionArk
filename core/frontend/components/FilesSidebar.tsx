@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { apiFetch, getFileToken } from "@/lib/api";
-import { Download, FileText, Image, ExternalLink, X, Folder, File as FileIcon, RefreshCw, Trash2, Loader2, Eye, Plus, CheckSquare, Square, CheckCircle2 } from "lucide-react";
+import { Download, FileText, Image, ExternalLink, X, Folder, File as FileIcon, RefreshCw, Trash2, Loader2, Eye, Plus, CheckSquare, Square, CheckCircle2, ChevronsUp, ChevronsDown } from "lucide-react";
 import MarkdownRenderer from "./MarkdownRenderer";
 import { useNotification } from "@/lib/NotificationContext";
 
@@ -156,16 +156,16 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete, onOpe
         setSelectedIds(new Set());
     };
 
-    const loadFiles = useCallback(async () => {
+    const loadFiles = useCallback(async (silent = false) => {
         try {
-            setLoading(true);
+            if (!silent) setLoading(true);
             const response = await apiFetch(`/api/files/project/${nodeName}/list`);
             const data = await response.json();
             setFiles(data.files || []);
         } catch (error) {
             console.error("Failed to load files:", error);
         } finally {
-            setLoading(false);
+            if (!silent) setLoading(false);
         }
     }, [nodeName]);
 
@@ -183,21 +183,23 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete, onOpe
 
         if (!confirmed) return;
 
-        setLoading(true);
+        // Optimistic update
+        const remainingFiles = files.filter(f => !selectedIds.has(f.id));
+        setFiles(remainingFiles);
+        clearSelection();
+
         try {
-            for (const id of selectedIds) {
+            for (const id of Array.from(selectedIds)) {
                 await apiFetch(`/api/files/${id}`, {
                     method: "DELETE"
                 });
             }
             showToast(`Deleted ${selectedIds.size} items`, "success");
-            clearSelection();
-            await loadFiles();
+            await loadFiles(true);
         } catch (error) {
             console.error("Batch delete error:", error);
             showToast("Failed to delete some items", "error");
-        } finally {
-            setLoading(false);
+            await loadFiles(); // Revert/Reload on error
         }
     };
 
@@ -218,6 +220,14 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete, onOpe
 
         if (!confirmed) return;
 
+        // Optimistic update
+        if (id) {
+            setFiles(prev => prev.filter(f => f.id !== id));
+        } else if (isFolder) {
+            // If it's a folder, remove all files that start with this name in the current directory
+            setFiles(prev => prev.filter(f => !f.filename.startsWith(name)));
+        }
+
         try {
             setLoading(true);
             const response = await apiFetch(`/api/files/${id}`, {
@@ -226,14 +236,16 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete, onOpe
 
             if (response.ok) {
                 showToast(`${name} deleted successfully`, "success");
-                await loadFiles();
+                await loadFiles(true);
             } else {
                 const data = await response.json();
                 showToast(data.detail || "Failed to delete", "error");
+                await loadFiles(); // Reload to restore
             }
         } catch (error) {
             console.error("Delete error:", error);
             showToast("Failed to delete", "error");
+            await loadFiles(); // Reload to restore
         } finally {
             setLoading(false);
         }
@@ -241,6 +253,30 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete, onOpe
 
     const toggleDir = (path: string) => {
         setCollapsedDirs(prev => ({ ...prev, [path]: !prev[path] }));
+    };
+
+    const toggleAllFolders = () => {
+        const allFolderPaths: string[] = [];
+        const collectFolders = (nodes: TreeNode[]) => {
+            nodes.forEach(node => {
+                if (node.type === "folder") {
+                    allFolderPaths.push(node.path);
+                    collectFolders(node.children);
+                }
+            });
+        };
+        collectFolders(projectTree);
+
+        const anyExpanded = allFolderPaths.some(path => !collapsedDirs[path]);
+        if (anyExpanded) {
+            // Collapse all
+            const newCollapsed: Record<string, boolean> = {};
+            allFolderPaths.forEach(path => { newCollapsed[path] = true; });
+            setCollapsedDirs(newCollapsed);
+        } else {
+            // Expand all
+            setCollapsedDirs({});
+        }
     };
 
     const downloadFile = async (fileId: string, filename: string) => {
@@ -277,6 +313,10 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete, onOpe
 
     useEffect(() => {
         loadFiles();
+
+        // Background polling every 10 seconds
+        const interval = setInterval(() => loadFiles(true), 10000);
+        return () => clearInterval(interval);
     }, [loadFiles]);
 
     const projectTree = useMemo(() => {
@@ -441,11 +481,18 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete, onOpe
 
             if (!response.ok) throw new Error("Failed to create file");
 
+            const result = await response.json();
+            // Optimistic update: add the new file to the list
+            if (result.file) {
+                setFiles(prev => [...prev, result.file]);
+            }
+
             showToast(`File ${filename} created successfully`, "success");
-            await loadFiles();
+            await loadFiles(true);
         } catch (error) {
             console.error("Create file error:", error);
             showToast("Failed to create new file", "error");
+            await loadFiles();
         } finally {
             setLoading(false);
             setIsCreatingNewFile(false);
@@ -490,7 +537,15 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete, onOpe
                 throw new Error(errorData.detail || `Upload failed: ${response.statusText}`);
             }
 
-            await loadFiles();
+            const result = await response.json();
+            // Add uploaded files to state
+            if (result.files) {
+                setFiles(prev => [...prev, ...result.files]);
+            } else if (result.file) {
+                setFiles(prev => [...prev, result.file]);
+            }
+
+            await loadFiles(true);
             setUploadProgress(100);
             setTimeout(() => setUploadProgress(0), 1000);
         } catch (error: any) {
@@ -634,8 +689,14 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete, onOpe
                     <div className="flex items-center justify-between mb-2">
                         <span className="text-sm text-gray-400">Files</span>
                         <div className="flex items-center gap-1">
+                            <button
+                                onClick={toggleAllFolders}
+                                title="Toggle All"
+                                className="p-1 text-gray-600 hover:text-white transition-colors"
+                            >
+                                {Object.keys(collapsedDirs).length > 0 ? <ChevronsDown size={14} /> : <ChevronsUp size={14} />}
+                            </button>
                             <button onClick={() => setIsCreatingNewFile(true)} className={`flex items-center gap-1 text-xs px-2 py-1 ${nodeType === "hub" ? "bg-purple-600 hover:bg-purple-500" : "bg-cyan-600 hover:bg-cyan-500"} rounded disabled:opacity-50 transition-colors mr-1`}><Plus size={12} /><span>New</span></button>
-                            <button onClick={loadFiles} className={`flex items-center gap-1 text-xs px-2 py-1 ${nodeType === "hub" ? "bg-purple-600 hover:bg-purple-500" : "bg-cyan-600 hover:bg-cyan-500"} rounded transition-colors`}><RefreshCw size={12} /><span>Refresh</span></button>
                         </div>
                     </div>
 
@@ -656,7 +717,13 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete, onOpe
             ) : (
                 <div className="mb-2 flex items-center justify-between">
                     <span className="text-sm text-gray-400">Generated Artifacts</span>
-                    <button onClick={loadFiles} className={`flex items-center gap-1 text-xs px-2 py-1 ${nodeType === "hub" ? "bg-purple-600 hover:bg-purple-500" : "bg-cyan-600 hover:bg-cyan-500"} rounded transition-colors`}><RefreshCw size={12} /><span>Refresh</span></button>
+                    <button
+                        onClick={toggleAllFolders}
+                        title="Toggle All"
+                        className="p-1 text-gray-600 hover:text-white transition-colors"
+                    >
+                        {Object.keys(collapsedDirs).length > 0 ? <ChevronsDown size={14} /> : <ChevronsUp size={14} />}
+                    </button>
                 </div>
             )}
 
