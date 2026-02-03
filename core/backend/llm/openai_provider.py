@@ -35,6 +35,7 @@ class OpenAIProvider(BaseLLMProvider):
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         native_context: Optional[Any] = None,
+        response_format: Optional[Dict] = None,
         **kwargs
     ) -> CompletionResponse:
         """Generate completion using OpenAI"""
@@ -47,11 +48,29 @@ class OpenAIProvider(BaseLLMProvider):
             role_val = getattr(msg.role, "value", msg.role)
             openai_messages.append({"role": role_val, "content": msg.content})
         
+        # Prepare OpenAI response_format if provided
+        openai_response_format = None
+        if response_format:
+            # Check if it's already in OpenAI format or just a naked schema
+            if "type" in response_format and response_format["type"] in ["json_object", "json_schema"]:
+                openai_response_format = response_format
+            else:
+                # Wrap naked schema into OpenAI's json_schema format
+                openai_response_format = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "structured_output",
+                        "strict": True,
+                        "schema": response_format
+                    }
+                }
+
         response = self.client.chat.completions.create(
             model=self.model_name,
             messages=openai_messages,
             temperature=temperature,
             max_tokens=max_tokens,
+            response_format=openai_response_format,
             **kwargs
         )
         
@@ -129,11 +148,12 @@ class OpenAIProvider(BaseLLMProvider):
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         native_context: Optional[Any] = None,
+        response_format: Optional[Dict] = None,
         **kwargs
     ) -> CompletionResponse:
         """Asynchronous completion (sync simulation)"""
         return await asyncio.to_thread(
-            self.complete, messages, system_instruction, temperature, max_tokens, native_context, **kwargs
+            self.complete, messages, system_instruction, temperature, max_tokens, native_context, response_format, **kwargs
         )
 
     async def stream_chat_async(

@@ -85,13 +85,24 @@ class SkillMiningService:
         from tools.utils import get_user_api_key
         api_key = await get_user_api_key(user_id, self.db)
         llm = get_provider(api_key=api_key) 
+
+        # 1. Define JSON Schema for structured output
+        skill_schema = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Concise name of the skill"},
+                "description": {"type": "string", "description": "Short summary of what the skill does"},
+                "id": {"type": "string", "description": "Kebab-case unique identifier"},
+                "content": {"type": "string", "description": "Full Markdown content of the SKILL.md file"}
+            },
+            "required": ["name", "description", "id", "content"]
+        }
         
         system_prompt = (
             "You are a Skill Architect. Your job is to extract repeatable 'Agent Skills' "
             "from user interaction logs. A Skill should be a Markdown document (SKILL.md) "
             "with YAML frontmatter and clear instructions.\n\n"
-            "Focus on the PROCEDURAL DNA. What steps did the agent take to succeed?\n"
-            "Return ONLY a JSON object with: 'name', 'description', 'id' (kebab-case), and 'content' (Markdown body)."
+            "Focus on the PROCEDURAL DNA. What steps did the agent take to succeed?"
         )
         
         user_prompt = (
@@ -109,17 +120,12 @@ class SkillMiningService:
             response = await llm.complete_async(
                 [Message(role=MessageRole.USER, content=user_prompt)],
                 system_instruction=system_prompt,
-                preferred_model="gemini-2.5-flash-lite"
+                preferred_model="gemini-2.5-flash-lite", # Upgrading to a more reliable model for structured output
+                response_format=skill_schema
             )
             
-            # Extract JSON from response content (handling potential markdown blocks)
-            content = response.content.strip()
-            if content.startswith("```json"):
-                content = content[7:-3].strip()
-            elif content.startswith("```"):
-                content = content[3:-3].strip()
-                
-            data = json.loads(content)
+            # response.content is now guaranteed to be a valid JSON string
+            data = json.loads(response.content.strip())
             
             # Check for duplicates (Simple Name Check for now)
             if await self._check_duplicate_skill(data['name']):

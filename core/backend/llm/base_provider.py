@@ -33,6 +33,7 @@ class BaseLLMProvider(ABC):
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         native_context: Optional[Any] = None,
+        response_format: Optional[Dict] = None,
         **kwargs
     ) -> CompletionResponse:
         """
@@ -81,6 +82,7 @@ class BaseLLMProvider(ABC):
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         native_context: Optional[Any] = None,
+        response_format: Optional[Dict] = None,
         **kwargs
     ) -> CompletionResponse:
         """

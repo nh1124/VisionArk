@@ -245,6 +245,7 @@ class GeminiProvider(BaseLLMProvider):
         preferred_model: Optional[str] = None,
         tool_definitions: List = None,
         native_context: Optional[Any] = None,
+        response_format: Optional[Dict] = None,
         **kwargs
     ) -> CompletionResponse:
         """Asynchronously generate a single completion turn using Gemini."""
@@ -278,7 +279,9 @@ class GeminiProvider(BaseLLMProvider):
             temperature=temperature,
             max_output_tokens=max_tokens,
             tools=tools_for_model if tools_for_model else None,
-            system_instruction=system_instruction_content
+            system_instruction=system_instruction_content,
+            response_mime_type="application/json" if response_format else None,
+            response_schema=response_format
         )
         
         if tools_for_model and hasattr(tools_for_model[0], 'function_declarations') and tools_for_model[0].function_declarations:
@@ -301,7 +304,7 @@ class GeminiProvider(BaseLLMProvider):
             logger.error(f"[Gemini] Async Generation error: {e}")
             raise
         
-        if not response.candidates or not response.candidates[0].content.parts:
+        if not response.candidates or not response.candidates[0].content or not response.candidates[0].content.parts:
             return CompletionResponse(content="", model=model_name, usage=None)
             
         model_content = response.candidates[0].content
@@ -353,6 +356,7 @@ class GeminiProvider(BaseLLMProvider):
         preferred_model: Optional[str] = None,
         tool_definitions: List = None,
         native_context: Optional[Any] = None,
+        response_format: Optional[Dict] = None,
         **kwargs
     ) -> CompletionResponse:
         """Generate a single completion turn using Gemini."""
@@ -381,7 +385,9 @@ class GeminiProvider(BaseLLMProvider):
             temperature=temperature,
             max_output_tokens=max_tokens,
             tools=tools_for_model if tools_for_model else None,
-            system_instruction=system_instruction_content
+            system_instruction=system_instruction_content,
+            response_mime_type="application/json" if response_format else None,
+            response_schema=response_format
         )
         
         if tools_for_model and hasattr(tools_for_model[0], 'function_declarations') and tools_for_model[0].function_declarations:
@@ -400,7 +406,7 @@ class GeminiProvider(BaseLLMProvider):
             logger.error(f"[Gemini] Generation error: {e}")
             raise
         
-        if not response.candidates or not response.candidates[0].content.parts:
+        if not response.candidates or not response.candidates[0].content or not response.candidates[0].content.parts:
             return CompletionResponse(content="", model=model_name, usage=None)
             
         model_content = response.candidates[0].content
@@ -456,7 +462,7 @@ class GeminiProvider(BaseLLMProvider):
         Safely extracts text and other parts (like executable code) from response candidates.
         Silences the warning about non-text parts by manually iterating through them.
         """
-        if not response.candidates or not response.candidates[0].content.parts:
+        if not response.candidates or not response.candidates[0].content or not response.candidates[0].content.parts:
             return ""
         
         parts = response.candidates[0].content.parts
@@ -575,7 +581,9 @@ class GeminiProvider(BaseLLMProvider):
             temperature=temperature,
             max_output_tokens=max_tokens,
             tools=tools_for_model if tools_for_model else None,
-            system_instruction=system_instruction_content
+            system_instruction=system_instruction_content,
+            response_mime_type="application/json" if response_format else None,
+            response_schema=response_format
         )
         
         if tools_for_model and hasattr(tools_for_model[0], 'function_declarations') and tools_for_model[0].function_declarations:
@@ -617,7 +625,7 @@ class GeminiProvider(BaseLLMProvider):
                     config=generation_config
                 )
                 
-                if not response.candidates or not response.candidates[0].content.parts:
+                if not response.candidates or not response.candidates[0].content or not response.candidates[0].content.parts:
                     # If no content, it might be an empty response or an error, break the loop
                     break
                     
@@ -740,7 +748,9 @@ class GeminiProvider(BaseLLMProvider):
             temperature=temperature,
             max_output_tokens=max_tokens,
             tools=tools_for_model if tools_for_model else None,
-            system_instruction=system_instruction_content
+            system_instruction=system_instruction_content,
+            response_mime_type="application/json" if response_format else None,
+            response_schema=response_format
         )
         
         if tools_for_model and hasattr(tools_for_model[0], 'function_declarations') and tools_for_model[0].function_declarations:
@@ -766,7 +776,7 @@ class GeminiProvider(BaseLLMProvider):
                     config=generation_config
                 )
                 
-                if not response.candidates or not response.candidates[0].content.parts:
+                if not response.candidates or not response.candidates[0].content or not response.candidates[0].content.parts:
                     # If no content, it might be an empty response or an error, break the loop
                     break
                     
