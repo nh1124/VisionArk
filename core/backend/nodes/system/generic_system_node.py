@@ -67,4 +67,5 @@ class GenericSystemNode(SystemNode):
             tool_context=self.context
         )
         
-        return llm_response.content or ""
+        # Return full Message to preserve sub_messages for frontend tool history display
+        return llm_response

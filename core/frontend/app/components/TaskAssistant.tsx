@@ -1,25 +1,11 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { usePathname } from "next/navigation";
-import { Send, Loader2, X, Sparkles, Maximize2, Minimize2 } from "lucide-react";
+import { Loader2, X, Sparkles, LayoutList } from "lucide-react";
 import { apiFetch } from "@/lib/api";
-import ChatInput from "./ChatInput";
-import MessageWithAttachments from "./MessageWithAttachments";
+import ChatInput from "@/components/ChatInput";
+import MessageWithAttachments from "@/components/MessageWithAttachments";
 import { useNotification } from "@/lib/NotificationContext";
-
-interface ToolCall {
-    name: string;
-    args?: any;
-    result: string;
-    is_success: boolean;
-}
-
-interface SubMessage {
-    sub_id: string;
-    content: string;
-    tool_calls: ToolCall[];
-}
 
 interface Message {
     id: string;
@@ -27,10 +13,9 @@ interface Message {
     content: string;
     created_at: string;
     meta_payload?: any;
-    sub_messages?: SubMessage[];
 }
 
-export default function FloatingAIManager() {
+export default function TaskAssistant() {
     const [isOpen, setIsOpen] = useState(false);
     const [messages, setMessages] = useState<Message[]>([]);
     const [loading, setLoading] = useState(false);
@@ -38,31 +23,20 @@ export default function FloatingAIManager() {
     const { showToast } = useNotification();
     const pollInterval = useRef<NodeJS.Timeout | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
-    const pathname = usePathname();
 
-    // Determine which manager to use based on the current page
-    const isTaskPage = pathname === "/tasks";
-    const managerRole = isTaskPage ? "task_manager" : "project_manager";
-    const managerName = isTaskPage ? "Task Manager" : "AI Manager";
-    const initialGreeting = isTaskPage
-        ? "Hello! I am your Task Manager. I can help you plan your day, break down complex tasks, and optimize your schedule. How can I help you?"
-        : "Hello! I am your AI Manager. I can help you monitor projects, update tasks, and manage your workspace from anywhere. How can I assist you?";
-    const suggestions = isTaskPage
-        ? ["Plan my day", "Break down task", "What's my load today?"]
-        : ["Heath check", "List projects", "Recent tasks"];
-
-    // Initial greeting - reset on manager change
+    // Initial greeting
     useEffect(() => {
-        setMessages([
-            {
-                id: "initial",
-                role: "assistant",
-                content: initialGreeting,
-                created_at: new Date().toISOString()
-            }
-        ]);
-    }, [managerRole, initialGreeting]);
-
+        if (messages.length === 0) {
+            setMessages([
+                {
+                    id: "initial",
+                    role: "assistant",
+                    content: "Hello! I am your Task Assistant. I can help you plan your day, break down complex tasks, and optimize your schedule. How can I help you today?",
+                    created_at: new Date().toISOString()
+                }
+            ]);
+        }
+    }, [messages.length]);
 
     // Scroll to bottom
     useEffect(() => {
@@ -87,7 +61,7 @@ export default function FloatingAIManager() {
             const formData = new FormData();
             formData.append("message", text);
 
-            const response = await apiFetch(`/api/agents/system/${managerRole}/chat`, {
+            const response = await apiFetch("/api/agents/system/task_manager/chat", {
                 method: "POST",
                 body: formData
             });
@@ -99,7 +73,7 @@ export default function FloatingAIManager() {
             startPolling(data.task_id);
         } catch (error) {
             console.error("Error sending message:", error);
-            showToast("Failed to communicate with AI Manager", "error");
+            showToast("Failed to communicate with Task Assistant", "error");
             setLoading(false);
         }
     };
@@ -114,34 +88,11 @@ export default function FloatingAIManager() {
 
                 if (data.status === "completed") {
                     stopPolling();
-
-                    // Parse the result - it may be a Message object or a string
-                    let content = "Action completed.";
-                    let subMessages: SubMessage[] = [];
-
-                    if (data.result) {
-                        if (typeof data.result === "object") {
-                            // Message object returned by backend
-                            content = data.result.content || content;
-                            subMessages = data.result.sub_messages || [];
-                        } else if (typeof data.result === "string") {
-                            // Try to parse as JSON
-                            try {
-                                const parsed = JSON.parse(data.result);
-                                content = parsed.content || data.result;
-                                subMessages = parsed.sub_messages || [];
-                            } catch {
-                                content = data.result;
-                            }
-                        }
-                    }
-
                     const assistantMsg: Message = {
                         id: Date.now().toString(),
                         role: "assistant",
-                        content: content,
-                        created_at: new Date().toISOString(),
-                        sub_messages: subMessages
+                        content: data.result || "Action completed.",
+                        created_at: new Date().toISOString()
                     };
                     setMessages(prev => [...prev, assistantMsg]);
                     setLoading(false);
@@ -168,9 +119,10 @@ export default function FloatingAIManager() {
             {/* Floating Button */}
             <button
                 onClick={() => setIsOpen(true)}
-                className={`fixed bottom-6 right-6 w-12 h-12 rounded-full bg-gray-900/80 hover:bg-gray-800 border border-white/10 text-cyan-400 shadow-xl flex items-center justify-center transition-all hover:scale-110 active:scale-95 z-[100] backdrop-blur-md ${isOpen ? "opacity-0 scale-0 pointer-events-none" : "opacity-90 scale-100"}`}
+                className={`fixed bottom-6 right-24 w-12 h-12 rounded-full bg-blue-600/20 hover:bg-blue-600/40 border border-blue-500/30 text-blue-400 shadow-xl flex items-center justify-center transition-all hover:scale-110 active:scale-95 z-[100] backdrop-blur-md ${isOpen ? "opacity-0 scale-0 pointer-events-none" : "opacity-90 scale-100"}`}
+                title="Task Assistant"
             >
-                <Sparkles size={20} />
+                <LayoutList size={20} />
             </button>
 
             {/* Slide-over Panel */}
@@ -180,14 +132,14 @@ export default function FloatingAIManager() {
                 {/* Header */}
                 <div className="p-4 border-b border-white/10 bg-gray-900/50 flex items-center justify-between backdrop-blur-md">
                     <div className="flex items-center gap-3">
-                        <div className="p-2 bg-cyan-500/20 rounded-xl">
-                            <Sparkles size={18} className="text-cyan-400" />
+                        <div className="p-2 bg-blue-500/20 rounded-xl">
+                            <LayoutList size={18} className="text-blue-400" />
                         </div>
                         <div>
-                            <h2 className="font-bold text-white text-sm">{managerName}</h2>
+                            <h2 className="font-bold text-white text-sm">Task Assistant</h2>
                             <div className="flex items-center gap-1.5">
-                                <span className="w-1 h-1 bg-green-500 rounded-full animate-pulse"></span>
-                                <span className="text-[9px] text-green-500 font-bold uppercase tracking-widest">Active System</span>
+                                <span className="w-1 h-1 bg-blue-500 rounded-full animate-pulse"></span>
+                                <span className="text-[9px] text-blue-500 font-bold uppercase tracking-widest">Active Partner</span>
                             </div>
                         </div>
                     </div>
@@ -210,16 +162,15 @@ export default function FloatingAIManager() {
                             content={msg.content}
                             attached_files={msg.meta_payload?.attached_files || []}
                             tool_calls={msg.meta_payload?.tool_calls || []}
-                            sub_messages={msg.sub_messages || []}
                             type={msg.role === "system" ? "system" : "llm"}
                             nodeType="system"
-                            nodeName={managerRole}
+                            nodeName="task_manager"
                         />
                     ))}
                     {loading && (
-                        <div className="flex items-center gap-3 text-cyan-500/70 p-4 animate-pulse">
+                        <div className="flex items-center gap-3 text-blue-500/70 p-4 animate-pulse">
                             <Loader2 size={16} className="animate-spin" />
-                            <span className="text-xs font-medium italic">Processing your request...</span>
+                            <span className="text-xs font-medium italic">Planning...</span>
                         </div>
                     )}
                     <div ref={messagesEndRef} />
@@ -230,15 +181,15 @@ export default function FloatingAIManager() {
                     <ChatInput
                         onSend={sendMessage}
                         disabled={loading}
-                        placeholder={`Ask ${managerName}...`}
+                        placeholder="Ask Task Assistant..."
                         compact
                     />
                     <div className="mt-3 flex flex-wrap gap-1.5">
-                        {suggestions.map(suggestion => (
+                        {["Plan my day", "Break down task", "What's my load today?"].map(suggestion => (
                             <button
                                 key={suggestion}
                                 onClick={() => sendMessage(suggestion)}
-                                className="px-2.5 py-1 bg-gray-800/50 hover:bg-cyan-500/10 border border-gray-700/50 hover:border-cyan-500/30 rounded-full text-[9px] text-gray-400 hover:text-cyan-400 transition-all font-medium"
+                                className="px-2.5 py-1 bg-gray-800/50 hover:bg-blue-500/10 border border-gray-700/50 hover:border-blue-500/30 rounded-full text-[9px] text-gray-400 hover:text-blue-400 transition-all font-medium"
                             >
                                 {suggestion}
                             </button>
