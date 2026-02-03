@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete as sql_delete
+from sqlalchemy.orm import joinedload
 
 from services.auth import resolve_identity, Identity
 from services.aes_dispatcher import AESDispatcher
@@ -25,6 +26,7 @@ class ScheduleTaskRequest(BaseModel):
 class ScheduledTaskSchema(BaseModel):
     id: str
     project_id: Optional[str]
+    project_name: Optional[str] = None
     task_type: str
     payload: Dict[str, Any]
     scheduled_at: datetime
@@ -42,7 +44,11 @@ async def list_scheduled_tasks(
 ):
     """List scheduled tasks for the user/project"""
     print(f"[API] Listing tasks. exclude_system={exclude_system}")
-    stmt = select(ScheduledTask).filter(ScheduledTask.user_id == identity.user_id)
+    
+    stmt = select(ScheduledTask).options(
+        joinedload(ScheduledTask.project)
+    ).filter(ScheduledTask.user_id == identity.user_id)
+    
     if project_id:
         stmt = stmt.filter(ScheduledTask.project_id == project_id)
     
@@ -51,19 +57,21 @@ async def list_scheduled_tasks(
             "HARD_DELETE", 
             "SYNC_PROJECT_FILES", 
             "PROJECT_SNAPSHOT", 
-            "SYSTEM_SKILL_MINING"
+            "SYSTEM_SKILL_MINING",
+            "SYNC_ROUTER_HOOKS",
+            "SYSTEM_TIMER"
         ]
-        # Use simple != for each or ~in_
         stmt = stmt.filter(ScheduledTask.task_type.notin_(system_types))
 
     stmt = stmt.order_by(ScheduledTask.scheduled_at.desc())
     result = await db.execute(stmt)
-    tasks = result.scalars().all()
+    tasks = result.scalars().unique().all()
     
     return [
         ScheduledTaskSchema(
             id=t.id,
             project_id=t.project_id,
+            project_name=t.project.name if t.project else None,
             task_type=t.task_type,
             payload=t.payload,
             scheduled_at=t.scheduled_at,
