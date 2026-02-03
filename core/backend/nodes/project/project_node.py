@@ -19,7 +19,7 @@ class ProjectNode(BaseNode):
         self.node_id = None
         
         # New Class-Based Tools
-        from tools.library.system import AskNodeTool, ListNodesTool, GetNodeProfileTool, SetTimerTool
+        from tools.library.system import AskNodeTool, ListNodesTool, GetNodeProfileTool, SetTimerTool, RaiseContinueTool
         from integrations.lbs.agent_tools import (
             ListTasksTool, CreateTaskTool, UpdateTaskTool, DeleteTaskTool,
             CompleteLBSTaskTool, GetLBSScheduleTool, GetLoadOnDayTool, GetLoadInPeriodTool,
@@ -55,6 +55,7 @@ class ProjectNode(BaseNode):
             SubscribeIntentTool(),
             RecursiveWriterTool(),
             SetTimerTool(),
+            RaiseContinueTool(),
 
             ListTasksTool(),
             CompleteLBSTaskTool(),
@@ -400,4 +401,3 @@ class ProjectNode(BaseNode):
                     
         except Exception as e:
             print(f"[ProjectNode] Error in on_exit Planner delegation: {e}")
-
