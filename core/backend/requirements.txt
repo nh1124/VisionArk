@@ -20,3 +20,4 @@ python-jose[cryptography]
 google-genai
 bcrypt
 jsonschema
+playwright

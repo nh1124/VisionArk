@@ -39,8 +39,13 @@ class ProjectNode(BaseNode):
         from tools.library.canvas import UpdateCanvasTool
         from tools.library.notes import ListNotesTool, ReadNoteTool, CreateNoteTool
         from tools.library.governance import GetProjectRulesTool, UpdateProjectRulesTool
+        from tools.library.browser import BrowserOpenTool, BrowserClickTool, BrowserFillTool, BrowserScreenshotTool
         
         self.tools = [
+            BrowserOpenTool(),
+            BrowserClickTool(),
+            BrowserFillTool(),
+            BrowserScreenshotTool(),
             AskNodeTool(),
             ListNodesTool(),
             GetNodeProfileTool(),

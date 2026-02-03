@@ -476,7 +476,7 @@ class GeminiProvider(BaseLLMProvider):
                 
         return "".join(full_text).strip()
     
-    def upload_file(self, file_path: str, mime_type: str = None, display_name: str = None) -> Dict:
+    async def upload_file(self, file_path: str, mime_type: str = None, display_name: str = None) -> Dict:
         """
         Upload a file to Gemini File API for multimodal processing.
         """
@@ -487,8 +487,8 @@ class GeminiProvider(BaseLLMProvider):
             raise FileNotFoundError(f"File not found: {file_path}")
         
         try:
-            uploaded_file = self.client.files.upload(
-                path=str(path),
+            uploaded_file = await self.client.aio.files.upload(
+                file=str(path),
                 config=types.UploadFileConfig(
                     mime_type=mime_type,
                     display_name=display_name or path.name
