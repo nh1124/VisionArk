@@ -498,3 +498,15 @@ class SetTimerTool(BaseTool):
             )
         except Exception as e:
             return ToolResult(content=f"Failed to set timer: {e}", is_success=False)
+
+class RaiseContinueTool(BaseTool):
+    name = "raise_continue"
+    description = "Signal the reasoning loop to continue with another iteration."
+    args_schema = NoArgs
+
+    async def run(self, **kwargs) -> Any:
+        from tools.base import ToolResult
+        return ToolResult(
+            content="Continue requested. Proceed to the next reasoning turn.",
+            data={"continue": True}
+        )

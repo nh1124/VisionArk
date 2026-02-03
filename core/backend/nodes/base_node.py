@@ -347,6 +347,49 @@ class BaseNode(ABC):
                         return await self._execute_tool(t, **kwargs)
                     final_tool_funcs[tool.name] = wrapper
 
+            # Apply dynamic tool policies from skills (allow/deny/intent mapping)
+            tool_policy = {}
+            node_id = self.context.get("node_id")
+            if node_id:
+                try:
+                    from models.database import AsyncSessionLocal
+                    from services.skill_service import SkillService
+                    async with AsyncSessionLocal() as db:
+                        tool_policy = await SkillService.get_node_tool_policy(db, node_id)
+                except Exception as e:
+                    print(f"[BaseNode] Warning: Failed to load tool policy: {e}")
+
+            if tool_policy:
+                allowlist = tool_policy.get("allowlist")
+                denylist = set(tool_policy.get("denylist") or [])
+                intent = None
+                if tool_context:
+                    intent = tool_context.get("intent")
+                intent_map = tool_policy.get("intent_map") or {}
+
+                allowed: Optional[set[str]] = None
+                if allowlist:
+                    allowed = set(allowlist)
+                if intent and intent in intent_map:
+                    intent_allowed = set(intent_map[intent])
+                    allowed = intent_allowed if allowed is None else allowed.intersection(intent_allowed)
+                if allowed is not None:
+                    allowed = allowed.difference(denylist)
+
+                def is_allowed(tool_name: str) -> bool:
+                    if tool_name in denylist:
+                        return False
+                    if allowed is None:
+                        return True
+                    return tool_name in allowed
+
+                final_tool_defs = [d for d in (final_tool_defs or []) if is_allowed(d.get("name", ""))]
+                final_tool_funcs = {
+                    name: func
+                    for name, func in (final_tool_funcs or {}).items()
+                    if is_allowed(name)
+                }
+
             # Use Reasoning Engine to orchestrate turns
             engine = ReasoningEngine(self.llm)
             response = await engine.execute_async(
@@ -355,6 +398,7 @@ class BaseNode(ABC):
                 tool_definitions=final_tool_defs,
                 tool_functions=final_tool_funcs,
                 tool_context=tool_context or {},
+                tool_policy=tool_policy,
                 preferred_model=preferred_model,
                 task_id=task_id or self.task_id
             )

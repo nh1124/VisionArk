@@ -3,6 +3,19 @@ name: "Daily Pilot"
 description: "毎朝の業務開始前に当日の負荷状況を把握し、一日のスケジュールを最適化するスキル"
 id: "daily-pilot-v1"
 tools: ["get_load_on_day", "list_tasks", "request_coordination"]
+tool_policy:
+  allowlist:
+    - get_load_on_day
+    - get_load_in_period
+    - list_tasks
+    - request_coordination
+  denylist:
+    - delete_task
+  retry:
+    max_attempts: 2
+    fallback_tools:
+      get_load_on_day:
+        - get_load_in_period
 ---
 
 # Daily Pilot Procedure

@@ -39,6 +39,32 @@ class ReasoningEngine:
                 logger.error(f"Error loading prompt component {name}: {e}")
         return ""
 
+    @staticmethod
+    def _resolve_tool_policy(tool_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not tool_context:
+            return {}
+        return tool_context.get("tool_policy") or {}
+
+    @staticmethod
+    def _is_tool_allowed(tool_name: str, tool_policy: Dict[str, Any], intent: Optional[str]) -> bool:
+        allowlist = tool_policy.get("allowlist")
+        denylist = set(tool_policy.get("denylist") or [])
+        if tool_name in denylist:
+            return False
+
+        allowed: Optional[set[str]] = None
+        if allowlist:
+            allowed = set(allowlist)
+
+        intent_map = tool_policy.get("intent_map") or {}
+        if intent and intent in intent_map:
+            intent_allowed = set(intent_map[intent])
+            allowed = intent_allowed if allowed is None else allowed.intersection(intent_allowed)
+
+        if allowed is None:
+            return True
+        return tool_name in allowed
+
     async def execute_async(
         self,
         messages: List[Message],
@@ -48,6 +74,7 @@ class ReasoningEngine:
         tool_definitions: List[Dict] = None,
         tool_functions: Dict[str, Callable] = None,
         tool_context: Dict[str, Any] = None,
+        tool_policy: Optional[Dict[str, Any]] = None,
         task_id: Optional[str] = None,
         status_callback: Optional[Callable[[str, str], Any]] = None,
         **kwargs
@@ -67,6 +94,8 @@ class ReasoningEngine:
         
         # Resolve model name for reporting
         model_name = kwargs.get('preferred_model') or self.provider.model_name
+        resolved_tool_policy = tool_policy or self._resolve_tool_policy(tool_context)
+        policy_intent = (tool_context or {}).get("intent")
 
         while max_turns is None or turn_count < max_turns:
             # Check for cancellation
@@ -94,12 +123,20 @@ class ReasoningEngine:
             
             # 1. Call LLM for a single turn (Thinking Step)
             # Optimization: Pass native_context if available to skip conversion
+            filtered_tool_definitions = tool_definitions
+            if resolved_tool_policy and tool_definitions:
+                filtered_tool_definitions = [
+                    td
+                    for td in tool_definitions
+                    if self._is_tool_allowed(td.get("name", ""), resolved_tool_policy, policy_intent)
+                ]
+
             response = await self.provider.complete_async(
                 messages=history,
                 system_instruction=system_instruction,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                tool_definitions=tool_definitions,
+                tool_definitions=filtered_tool_definitions,
                 native_context=current_native_context,
                 incremental_tool_calls=last_tool_calls,
                 **kwargs
@@ -133,6 +170,59 @@ class ReasoningEngine:
                 break
 
             for tc in tool_calls:
+                if resolved_tool_policy and not self._is_tool_allowed(tc.name, resolved_tool_policy, policy_intent):
+                    fallback_tools = (
+                        resolved_tool_policy.get("retry", {})
+                        .get("fallback_tools", {})
+                        .get(tc.name, [])
+                    )
+                    fallback_name = next(
+                        (
+                            candidate
+                            for candidate in fallback_tools
+                            if candidate in tool_functions
+                            and self._is_tool_allowed(candidate, resolved_tool_policy, policy_intent)
+                        ),
+                        None,
+                    )
+
+                    if fallback_name:
+                        if status_callback:
+                            await status_callback(
+                                f"Executing fallback tool {fallback_name} (policy override)...",
+                                "processing",
+                            )
+                        try:
+                            func = tool_functions[fallback_name]
+                            full_kwargs = (tc.args or {}).copy()
+                            if tool_context:
+                                for k, v in tool_context.items():
+                                    if k not in full_kwargs:
+                                        full_kwargs[k] = v
+                            result = await func(**full_kwargs)
+                            tc.result = (
+                                f"Policy denied tool `{tc.name}`. "
+                                f"Executed fallback `{fallback_name}` instead.\n\n"
+                                f"{result.content}"
+                            )
+                            tc.is_success = result.is_success
+                            if result.attachments:
+                                for att in result.attachments:
+                                    tc.attachments.append({
+                                        "type": att.type,
+                                        "value": att.value,
+                                        "mime_type": att.mime_type,
+                                        "metadata": att.metadata
+                                    })
+                        except Exception as e:
+                            logger.error(f"[ReasoningEngine] Error executing fallback {fallback_name}: {e}")
+                            tc.result = f"Error: {str(e)}"
+                            tc.is_success = False
+                    else:
+                        tc.result = f"Denied by tool policy: {tc.name}"
+                        tc.is_success = False
+                    continue
+
                 if tc.name in tool_functions:
                     if status_callback:
                         await status_callback(f"Executing {tc.name}...", "processing")

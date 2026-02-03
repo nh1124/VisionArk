@@ -2,7 +2,7 @@
 from .base import BaseTool, ToolResult, ToolAttachment
 from .library.system import (
     AskNodeTool, ListNodesTool, GetNodeProfileTool, BroadcastSystemMessageTool,
-    ListUserProjectsTool, UpdateProjectTool, GetProjectHealthTool, SetTimerTool
+    ListUserProjectsTool, UpdateProjectTool, GetProjectHealthTool, SetTimerTool, RaiseContinueTool
 )
 # Integration tools removed from top-level to avoid circular imports.
 # They are loaded dynamically via get_integration_tools or directly from their modules.
@@ -86,5 +86,6 @@ __all__ = [
     "ListNotesTool",
     "ReadNoteTool",
     "CreateNoteTool",
-    "SetTimerTool"
+    "SetTimerTool",
+    "RaiseContinueTool"
 ]
