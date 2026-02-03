@@ -302,6 +302,7 @@ async def get_project_history(
 
             print(f"  - Msg ({msg.role}): {len(sub_messages_data)} sub_messages.")
             history.append({
+                "id": msg.id,
                 "role": msg.role,
                 "content": msg.content,
                 "timestamp": msg.created_at.isoformat() if msg.created_at else None,

@@ -19,8 +19,9 @@ import { useNotification } from "@/lib/NotificationContext";
 import ScheduleMessageModal from "@/components/automation/ScheduleMessageModal";
 import AutomationTab from "@/components/automation/AutomationTab";
 import ProjectNotes from "@/components/ProjectNotes";
-import { StickyNote } from "lucide-react";
+import { StickyNote, Activity as ActivityIcon } from "lucide-react";
 import { NotificationBell } from "@/components/NotificationBell";
+import ActivitySidebar from "@/components/ActivitySidebar";
 
 interface MessageAttachment {
     name: string;
@@ -34,6 +35,7 @@ interface Message {
     attached_files?: MessageAttachment[];
     tool_calls?: any[];
     sub_messages?: any[];
+    meta_payload?: any;
 }
 
 export default function ProjectChatPage({
@@ -67,7 +69,7 @@ export default function ProjectChatPage({
     const [canvasSelection, setCanvasSelection] = useState<string | null>(null);
     const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
     const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
-    const [sidebarMode, setSidebarMode] = useState<"files" | "automation" | "notes">("files");
+    const [sidebarMode, setSidebarMode] = useState<"files" | "automation" | "notes" | "activity">("files");
     const lastProcessedCanvasUpdateRef = useRef<string | null>(null);
     const { showToast } = useNotification();
 
@@ -163,7 +165,8 @@ export default function ProjectChatPage({
                     content: m.content,
                     attached_files: m.meta_payload?.attached_files || [],
                     tool_calls: m.meta_payload?.tool_calls || [],
-                    sub_messages: m.sub_messages || []
+                    sub_messages: m.sub_messages || [],
+                    meta_payload: m.meta_payload || {}
                 }));
 
                 setMessages((prev) => {
@@ -350,7 +353,8 @@ export default function ProjectChatPage({
                                 content: m.content,
                                 attached_files: m.meta_payload?.attached_files || [],
                                 tool_calls: m.meta_payload?.tool_calls || [],
-                                sub_messages: m.sub_messages || []
+                                sub_messages: m.sub_messages || [],
+                                meta_payload: m.meta_payload || {}
                             }));
                             setMessages(newMessages);
 
@@ -838,6 +842,22 @@ export default function ProjectChatPage({
                         </button>
                         <button
                             onClick={() => {
+                                if (showSidebar && sidebarMode === "activity") {
+                                    setShowSidebar(false);
+                                } else {
+                                    setSidebarMode("activity");
+                                    setShowSidebar(true);
+                                }
+                            }}
+                            className={`p-2 rounded-lg transition-all ${showSidebar && sidebarMode === "activity"
+                                ? "bg-cyan-500/20 text-cyan-400"
+                                : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
+                            title={showSidebar && sidebarMode === "activity" ? "Hide Activity" : "Show Activity"}
+                        >
+                            <ActivityIcon size={18} />
+                        </button>
+                        <button
+                            onClick={() => {
                                 if (showSidebar && sidebarMode === "files") {
                                     setShowSidebar(false);
                                 } else {
@@ -875,7 +895,11 @@ export default function ProjectChatPage({
                     )}
 
                     {messages.map((msg, idx) => {
-                        // Skip rendering the last empty assistant message while loading
+                        // 1. Skip background activity notifications in main chat
+                        const isBackgroundActivity = msg.meta_payload?.type === "node_callback" || msg.meta_payload?.type === "node_callback_failure";
+                        if (isBackgroundActivity) return null;
+
+                        // 2. Skip rendering the last empty assistant message while loading
                         const isLastEmptyAssistant = loading && idx === messages.length - 1 && msg.role === "assistant" && !msg.content && (!msg.tool_calls || msg.tool_calls.length === 0);
                         if (isLastEmptyAssistant) return null;
                         return (
@@ -1072,7 +1096,7 @@ export default function ProjectChatPage({
                     <div className="w-80 h-full border-l border-gray-800 bg-gray-900/50 backdrop-blur-xl absolute right-0 top-0 z-30 shadow-2xl animate-in slide-in-from-right duration-300 flex flex-col p-4">
                         <div className="flex justify-between items-center mb-4">
                             <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">
-                                {sidebarMode === "files" ? "Files & Artifacts" : sidebarMode === "notes" ? "Project Notes" : "Project Automation"}
+                                {sidebarMode === "files" ? "Files & Artifacts" : sidebarMode === "notes" ? "Project Notes" : sidebarMode === "activity" ? "Project Activity" : "Project Automation"}
                             </h2>
                             <button
                                 onClick={() => setShowSidebar(false)}
@@ -1097,6 +1121,8 @@ export default function ProjectChatPage({
                                 />
                             ) : sidebarMode === "notes" ? (
                                 <ProjectNotes projectId={projectId as string} />
+                            ) : sidebarMode === "activity" ? (
+                                <ActivitySidebar projectId={projectId} />
                             ) : (
                                 <AutomationTab
                                     projectId={projectId}
