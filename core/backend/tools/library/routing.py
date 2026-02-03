@@ -25,11 +25,11 @@ class MulticastMessageTool(BaseTool):
         if not target_ids:
             return ToolResult(content="Error: No target IDs provided.", is_success=False)
 
-        db_session = self.context.get("db_session")
-        user_id = self.context.get("user_id")
-        project_id = self.context.get("project_id")
-        session_id = self.context.get("session_id")
-        already_triggered = self.context.get("already_triggered_node_ids", [])
+        db_session = kwargs.get("db_session")
+        user_id = kwargs.get("user_id")
+        project_id = kwargs.get("project_id")
+        session_id = kwargs.get("session_id")
+        already_triggered = kwargs.get("already_triggered_node_ids", [])
 
         if not user_id:
             return ToolResult(content="Error: No user_id in context.", is_success=False)
@@ -69,7 +69,7 @@ class MulticastMessageTool(BaseTool):
 
         # 2. Enqueue Tasks
         manager = QueueManager()
-        current_node_id = self.context.get("node_id")
+        current_node_id = kwargs.get("node_id")
         count = 0
         
         for target_id in filtered_targets:
@@ -86,8 +86,8 @@ class MulticastMessageTool(BaseTool):
                     "session_id": session_id,
                     "project_id": project_id,
                     "original_message": message,
-                    "files": self.context.get("files", []),
-                    "attached_files": self.context.get("attached_files", [])
+                    "files": kwargs.get("files", []),
+                    "attached_files": kwargs.get("attached_files", [])
                 }
             )
             count += 1
@@ -120,9 +120,9 @@ class SubscribeIntentTool(BaseTool):
 
     async def run(self, pattern: Optional[str] = None, intent_description: Optional[str] = None, description: Optional[str] = None, session_bound: bool = True, **kwargs) -> Any:
         from tools.base import ToolResult
-        db_session = self.context.get("db_session")
-        node_id = self.context.get("node_id")
-        session_id = self.context.get("session_id") if session_bound else None
+        db_session = kwargs.get("db_session")
+        node_id = kwargs.get("node_id")
+        session_id = kwargs.get("session_id") if session_bound else None
         
         if not db_session or not node_id:
             return ToolResult(content="Error: Database session or Node ID missing from context.", is_success=False)
@@ -223,8 +223,8 @@ class UnsubscribeIntentTool(BaseTool):
 
     async def run(self, subscription_id: Optional[str] = None, pattern: Optional[str] = None, intent_description: Optional[str] = None, **kwargs) -> Any:
         from tools.base import ToolResult
-        db_session = self.context.get("db_session")
-        node_id = self.context.get("node_id")
+        db_session = kwargs.get("db_session")
+        node_id = kwargs.get("node_id")
         
         if not db_session or not node_id:
             return ToolResult(content="Error: Database session or Node ID missing from context.", is_success=False)
@@ -309,8 +309,8 @@ class ListSubscriptionsTool(BaseTool):
 
     async def run(self, **kwargs) -> Any:
         from tools.base import ToolResult
-        db_session = self.context.get("db_session")
-        node_id = self.context.get("node_id")
+        db_session = kwargs.get("db_session")
+        node_id = kwargs.get("node_id")
         
         if not db_session or not node_id:
             return ToolResult(content="Error: Database session or Node ID missing from context.", is_success=False)
