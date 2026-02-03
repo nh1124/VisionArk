@@ -1,10 +1,24 @@
 from abc import ABC, abstractmethod
-from typing import Type, Dict, Any, Optional
-from pydantic import BaseModel
-
-
+from typing import Type, Dict, Any, Optional, List
+from pydantic import BaseModel, ConfigDict
 from dataclasses import dataclass, field
-from typing import List
+from sqlalchemy.ext.asyncio import AsyncSession
+
+class IntegrationContext(BaseModel):
+    """
+    Type-safe context for tool execution and integration logic.
+    Provides structured access to common fields like user_id and db_session.
+    """
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    
+    user_id: str
+    db: AsyncSession
+    project_id: Optional[str] = None
+    task_id: Optional[str] = None
+    user_settings: Dict[str, Any] = {}
+    
+    # Allow for additional dynamic metadata
+    meta: Dict[str, Any] = {}
 
 @dataclass
 class ToolAttachment:
@@ -77,6 +91,6 @@ class BaseTool(ABC):
         return cls._declaration_cache
 
     @abstractmethod
-    async def run(self, **kwargs) -> Any:
+    async def run(self, ctx: IntegrationContext, **kwargs) -> Any:
         """Execute the tool logic."""
         pass

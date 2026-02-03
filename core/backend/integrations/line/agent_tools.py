@@ -1,8 +1,8 @@
-from typing import Any, Optional
-from pydantic import BaseModel, Field
-from tools.base import BaseTool
+from va_sdk import BaseTool, BaseModel, IntegrationContext
 from .client import get_line_client
 from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any, Optional
+from pydantic import Field
 
 class SendLineMessageArgs(BaseModel):
     text: str = Field(..., description="The message text to send to LINE")
@@ -16,13 +16,11 @@ class SendLineMessageTool(BaseTool):
     )
     args_schema = SendLineMessageArgs
 
-    async def run(self, text: str, to_user_id: Optional[str] = None, **kwargs) -> Any:
+    async def run(self, text: str, to_user_id: Optional[str] = None, ctx: IntegrationContext = None, **kwargs) -> Any:
         from tools.base import ToolResult
-        db_session: AsyncSession = kwargs.get("db_session") or getattr(self, "context", {}).get("db_session")
-        user_id: str = kwargs.get("user_id") or getattr(self, "context", {}).get("user_id")
-        
-        if not db_session or not user_id:
-            return ToolResult(content="Context error: Missing session or user_id", is_success=False)
+        if not ctx: return ToolResult(content="Context error", is_success=False)
+        db_session = ctx.db
+        user_id = ctx.user_id
             
         try:
             client = await get_line_client(user_id, db_session)

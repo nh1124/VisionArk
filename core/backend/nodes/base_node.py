@@ -220,12 +220,23 @@ class BaseNode(ABC):
         """
         Execute a tool with callback injection and status reporting.
         """
+        from va_sdk import IntegrationContext
         tool_name = tool.name
         
-        # Inject context
-        tool.context = self.context
+        # 1. Create type-safe context
+        ctx = IntegrationContext(
+            user_id=self.context.get("user_id"),
+            db=self.context.get("db_session"),
+            project_id=self.context.get("project_id"),
+            task_id=self.context.get("task_id"),
+            user_settings=self.context.get("user_settings", {}),
+            meta={
+                "api_key": self.context.get("api_key"),
+                "base_url": self.context.get("base_url")
+            }
+        )
         
-        # Inject callback
+        # 2. Inject callback
         if hasattr(tool, 'set_status_callback'):
             tool.set_status_callback(self.status_callback)
             
@@ -234,8 +245,8 @@ class BaseNode(ABC):
             await self.status_callback(f"Executing {tool_name}...", "processing")
             
         try:
-            # Run tool
-            result = await tool.run(**kwargs)
+            # 3. Run tool with ctx
+            result = await tool.run(ctx=ctx, **kwargs)
             
             # Report End
             if self.status_callback:

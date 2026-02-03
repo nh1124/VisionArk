@@ -1,18 +1,13 @@
 # New Class-Based Tool Architecture
-from .base import BaseTool
+from .base import BaseTool, ToolResult, ToolAttachment
 from .library.system import (
     AskNodeTool, ListNodesTool, GetNodeProfileTool, BroadcastSystemMessageTool,
     ListUserProjectsTool, UpdateProjectTool, GetProjectHealthTool, SetTimerTool
 )
-from integrations.lbs.agent_tools import (
-    ListTasksTool, CreateTaskTool, UpdateTaskTool, DeleteTaskTool, 
-    CompleteLBSTaskTool, GetLBSScheduleTool, GetLoadOnDayTool, 
-    GetLoadInPeriodTool, ManageTaskExceptionTool, ListExceptionsTool,
-    GetCurrentConditionTool, UpdateUserConditionTool, ResetUserConditionTool,
-    GetTaskHistoryTool
-)
+# Integration tools removed from top-level to avoid circular imports.
+# They are loaded dynamically via get_integration_tools or directly from their modules.
+
 from .library.files import SaveArtifactTool, ReadReferenceTool, ListFilesTool, DeleteArtifactTool, ImportGitHubRepoTool
-from integrations.knowledge_core.agent_tools import SearchKnowledgeTool, IngestKnowledgeTool
 
 async def get_integration_tools(user_id: str, db) -> list:
     """Helper to fetch all active integration tools for a user (dynamic discovery)."""
@@ -43,6 +38,7 @@ async def get_integration_tools(user_id: str, db) -> list:
                 print(f"❌ Error loading tools for {module_info.name}: {e}")
                 
     return tools
+
 from .library.search import GoogleSearchTool, ResearchURLTool, SearchPlacesTool, DeepResearchTool
 from .library.markdown import InitPlanTool, UpdatePlanProgressTool, GetCurrentStatusTool, ReadMDSectionTool, UpdateMDSectionTool
 from .library.ai import GenerateImageTool, MermaidVisualizerTool, ExecuteCodeTool
@@ -54,6 +50,8 @@ from .library.notes import ListNotesTool, ReadNoteTool, CreateNoteTool
 
 __all__ = [
     "BaseTool",
+    "ToolResult",
+    "ToolAttachment",
     "AskNodeTool",
     "ListNodesTool",
     "GetNodeProfileTool",
@@ -61,21 +59,11 @@ __all__ = [
     "ListUserProjectsTool",
     "UpdateProjectTool",
     "GetProjectHealthTool",
-    "ListTasksTool",
-    "CreateTaskTool",
-    "UpdateTaskTool",
-    "DeleteTaskTool",
-    "CompleteLBSTaskTool",
-    "GetLBSScheduleTool",
-    "GetLoadOnDayTool",
-    "GetLoadInPeriodTool",
     "SaveArtifactTool",
     "ReadReferenceTool",
     "ListFilesTool",
     "DeleteArtifactTool",
     "ImportGitHubRepoTool",
-    "SearchKnowledgeTool",
-    "IngestKnowledgeTool",
     "GoogleSearchTool",
     "ResearchURLTool",
     "SearchPlacesTool",
@@ -86,22 +74,15 @@ __all__ = [
     "GenerateImageTool",
     "MermaidVisualizerTool",
     "ExecuteCodeTool",
-    "GetCurrentConditionTool",
-    "UpdateUserConditionTool",
-    "ResetUserConditionTool",
-    "GetTaskHistoryTool",
     "ListMembersTool",
     "ManageMemberTool",
     "UpdateNodeDescriptionTool",
     "DeepResearchTool",
     "RecursiveWriterTool",
-    "ManageTaskExceptionTool",
-    "ListExceptionsTool",
     "MulticastMessageTool",
     "SubscribeIntentTool",
     "RunSafeShellTool",
     "UpdateMDSectionTool",
-    "SendLineMessageTool",
     "ListNotesTool",
     "ReadNoteTool",
     "CreateNoteTool",

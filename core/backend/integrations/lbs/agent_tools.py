@@ -1,10 +1,9 @@
-from typing import Any, Optional, Dict, Union, List
-from pydantic import BaseModel, Field
-from datetime import date
-from tools.base import BaseTool
+from va_sdk import BaseTool, BaseModel, IntegrationContext
 from integrations.lbs.client import get_lbs_client, TaskStatus
 from services.sync_coordinator import SyncCoordinator
 from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any, Optional, Dict
+from pydantic import Field  
 
 class ListTasksArgs(BaseModel):
     context: Optional[str] = Field(None, description="Filter by context/project name")
@@ -18,24 +17,22 @@ class ListTasksTool(BaseTool):
     )
     args_schema = ListTasksArgs
 
-    async def run(self, context: Optional[str] = None, **kwargs) -> Any:
+    async def run(self, context: Optional[str] = None, ctx: IntegrationContext = None, **kwargs) -> Any:
         from tools.base import ToolResult
-        db_session: AsyncSession = kwargs.get("db_session")
-        user_id: str = kwargs.get("user_id")
-        context_name: str = kwargs.get("context_name", "general")
-        if not db_session or not user_id:
-            return ToolResult(content="Context error", is_success=False)
+        if not ctx: return ToolResult(content="Context error", is_success=False)
+        db_session = ctx.db
+        user_id = ctx.user_id
         
         try:
             client = await get_lbs_client(user_id, db_session)
             target_date = kwargs.get("target_date")
             tasks = await client.list_tasks(
-                context=context or context_name,
+                context=context,
                 target_date=target_date
             )
             if not tasks:
                 return ToolResult(
-                    content=f"No tasks for {context or context_name}.",
+                    content=f"No tasks for {context or 'all contexts'}.",
                     data={"tasks": []}
                 )
             
@@ -77,13 +74,12 @@ class CreateTaskTool(BaseTool):
     )
     args_schema = CreateTaskArgs
 
-    async def run(self, **kwargs) -> Any:
+    async def run(self, ctx: IntegrationContext = None, **kwargs) -> Any:
         from tools.base import ToolResult
-        db_session: AsyncSession = kwargs.pop("db_session", None)
-        user_id: str = kwargs.pop("user_id", None)
-        context_name: str = kwargs.pop("context_name", "general")
-        if not db_session or not user_id:
-            return ToolResult(content="Context error", is_success=False)
+        if not ctx: return ToolResult(content="Context error", is_success=False)
+        db_session = ctx.db
+        user_id = ctx.user_id
+        context_name = ctx.user_settings.get("context_name", "general")
         
         try:
             client = await get_lbs_client(user_id, db_session)
@@ -142,12 +138,11 @@ class UpdateTaskTool(BaseTool):
     )
     args_schema = UpdateTaskArgs
 
-    async def run(self, task_id: str, **kwargs) -> Any:
+    async def run(self, task_id: str, ctx: IntegrationContext = None, **kwargs) -> Any:
         from tools.base import ToolResult
-        db_session: AsyncSession = kwargs.pop("db_session", None)
-        user_id: str = kwargs.pop("user_id", None)
-        if not db_session or not user_id:
-            return ToolResult(content="Context error", is_success=False)
+        if not ctx: return ToolResult(content="Context error", is_success=False)
+        db_session = ctx.db
+        user_id = ctx.user_id
         
         try:
             client = await get_lbs_client(user_id, db_session)
@@ -175,12 +170,11 @@ class DeleteTaskTool(BaseTool):
     )
     args_schema = DeleteTaskArgs
 
-    async def run(self, task_id: str, **kwargs) -> Any:
+    async def run(self, task_id: str, ctx: IntegrationContext = None, **kwargs) -> Any:
         from tools.base import ToolResult
-        db_session: AsyncSession = kwargs.get("db_session")
-        user_id: str = kwargs.get("user_id")
-        if not db_session or not user_id:
-            return ToolResult(content="Context error", is_success=False)
+        if not ctx: return ToolResult(content="Context error", is_success=False)
+        db_session = ctx.db
+        user_id = ctx.user_id
         
         try:
             client = await get_lbs_client(user_id, db_session)
@@ -204,12 +198,11 @@ class CompleteLBSTaskTool(BaseTool):
     )
     args_schema = CompleteLBSTaskArgs
 
-    async def run(self, task_id: str, target_date: str, status: str = "done", **kwargs) -> Any:
+    async def run(self, task_id: str, target_date: str, status: str = "done", ctx: IntegrationContext = None, **kwargs) -> Any:
         from tools.base import ToolResult
-        db_session: AsyncSession = kwargs.get("db_session")
-        user_id: str = kwargs.get("user_id")
-        if not db_session or not user_id:
-            return ToolResult(content="Context error", is_success=False)
+        if not ctx: return ToolResult(content="Context error", is_success=False)
+        db_session = ctx.db
+        user_id = ctx.user_id
         
         try:
             client = await get_lbs_client(user_id, db_session)
@@ -229,12 +222,11 @@ class GetLBSScheduleTool(BaseTool):
     description = "Get the LBS schedule for a specific date range."
     args_schema = GetLBSScheduleArgs
 
-    async def run(self, start_date: str, end_date: str, **kwargs) -> Any:
+    async def run(self, start_date: str, end_date: str, ctx: IntegrationContext = None, **kwargs) -> Any:
         from tools.base import ToolResult
-        db_session: AsyncSession = kwargs.get("db_session")
-        user_id: str = kwargs.get("user_id")
-        if not db_session or not user_id:
-            return ToolResult(content="Context error", is_success=False)
+        if not ctx: return ToolResult(content="Context error", is_success=False)
+        db_session = ctx.db
+        user_id = ctx.user_id
         
         try:
             client = await get_lbs_client(user_id, db_session)
@@ -251,10 +243,11 @@ class GetLoadOnDayTool(BaseTool):
     description = "Calculate the load score for a specific day."
     args_schema = GetLoadOnDayArgs
 
-    async def run(self, target_date: str, **kwargs) -> Any:
+    async def run(self, target_date: str, ctx: IntegrationContext = None, **kwargs) -> Any:
         from tools.base import ToolResult
-        db_session: AsyncSession = kwargs.get("db_session")
-        user_id: str = kwargs.get("user_id")
+        if not ctx: return ToolResult(content="Context error", is_success=False)
+        db_session = ctx.db
+        user_id = ctx.user_id
         if not db_session or not user_id:
             return ToolResult(content="Context error", is_success=False)
         
@@ -274,11 +267,10 @@ class GetLoadInPeriodTool(BaseTool):
     description = "Get the load heatmap for a specific date range."
     args_schema = GetLoadInPeriodArgs
 
-    async def run(self, start_date: str, end_date: str, **kwargs) -> Any:
-        db_session: AsyncSession = kwargs.get("db_session")
-        user_id: str = kwargs.get("user_id")
-        if not db_session or not user_id:
-            return {"success": False, "message": "Context error"}
+    async def run(self, start_date: str, end_date: str, ctx: IntegrationContext = None, **kwargs) -> Any:
+        if not ctx: return {"success": False, "message": "Context error"}
+        db_session = ctx.db
+        user_id = ctx.user_id
         
         try:
             from tools.base import ToolResult
@@ -307,12 +299,11 @@ class ManageTaskExceptionTool(BaseTool):
     )
     args_schema = ManageTaskExceptionArgs
 
-    async def run(self, **kwargs) -> Any:
+    async def run(self, ctx: IntegrationContext = None, **kwargs) -> Any:
         from tools.base import ToolResult
-        db_session: AsyncSession = kwargs.pop("db_session", None)
-        user_id: str = kwargs.pop("user_id", None)
-        if not db_session or not user_id:
-            return ToolResult(content="Context error", is_success=False)
+        if not ctx: return ToolResult(content="Context error", is_success=False)
+        db_session = ctx.db
+        user_id = ctx.user_id
         
         try:
             client = await get_lbs_client(user_id, db_session)
@@ -383,11 +374,11 @@ class GetCurrentConditionTool(BaseTool):
     description = "Retrieve the user's reported cognitive or physical condition for a specific date."
     args_schema = GetCurrentConditionArgs
 
-    async def run(self, target_date: Optional[str] = None, **kwargs) -> Any:
+    async def run(self, target_date: Optional[str] = None, ctx: IntegrationContext = None, **kwargs) -> Any:
         from tools.base import ToolResult
-        db_session: AsyncSession = kwargs.get("db_session")
-        user_id: str = kwargs.get("user_id")
-        if not db_session or not user_id: return ToolResult(content="Context error", is_success=False)
+        if not ctx: return ToolResult(content="Context error", is_success=False)
+        db_session = ctx.db
+        user_id = ctx.user_id
         try:
             d = date.fromisoformat(target_date) if target_date else date.today()
             client = await get_lbs_client(user_id, db_session)
@@ -407,11 +398,11 @@ class UpdateUserConditionTool(BaseTool):
     description = "Report the user's current cognitive fatigue level to LBS for dynamic load adjustment."
     args_schema = UpdateUserConditionArgs
 
-    async def run(self, cognitive_fatigue: int, target_date: Optional[str] = None, notes: Optional[str] = None, **kwargs) -> Any:
+    async def run(self, cognitive_fatigue: int, target_date: Optional[str] = None, notes: Optional[str] = None, ctx: IntegrationContext = None, **kwargs) -> Any:
         from tools.base import ToolResult
-        db_session: AsyncSession = kwargs.get("db_session")
-        user_id: str = kwargs.get("user_id")
-        if not db_session or not user_id: return ToolResult(content="Context error", is_success=False)
+        if not ctx: return ToolResult(content="Context error", is_success=False)
+        db_session = ctx.db
+        user_id = ctx.user_id
         
         try:
             d = date.fromisoformat(target_date) if target_date else date.today()
@@ -432,12 +423,11 @@ class GetTaskHistoryTool(BaseTool):
     description = "Get the historical execution records for a specific task over a date range."
     args_schema = GetTaskHistoryArgs
 
-    async def run(self, task_id: str, start_date: str, end_date: str, **kwargs) -> Any:
+    async def run(self, task_id: str, start_date: str, end_date: str, ctx: IntegrationContext = None, **kwargs) -> Any:
         from tools.base import ToolResult
-        db_session: AsyncSession = kwargs.get("db_session")
-        user_id: str = kwargs.get("user_id")
-        if not db_session or not user_id:
-            return ToolResult(content="Context error", is_success=False)
+        if not ctx: return ToolResult(content="Context error", is_success=False)
+        db_session = ctx.db
+        user_id = ctx.user_id
         
         try:
             client = await get_lbs_client(user_id, db_session)
@@ -454,11 +444,11 @@ class ResetUserConditionTool(BaseTool):
     description = "Clear the user's condition report for a specific date."
     args_schema = ResetUserConditionArgs
 
-    async def run(self, target_date: Optional[str] = None, **kwargs) -> Any:
+    async def run(self, target_date: Optional[str] = None, ctx: IntegrationContext = None, **kwargs) -> Any:
         from tools.base import ToolResult
-        db_session: AsyncSession = kwargs.get("db_session")
-        user_id: str = kwargs.get("user_id")
-        if not db_session or not user_id: return ToolResult(content="Context error", is_success=False)
+        if not ctx: return ToolResult(content="Context error", is_success=False)
+        db_session = ctx.db
+        user_id = ctx.user_id
         
         try:
             d = date.fromisoformat(target_date) if target_date else date.today()

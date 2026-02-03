@@ -1,8 +1,8 @@
-from typing import Any, Optional, Dict
-from pydantic import BaseModel, Field
-from tools.base import BaseTool
+from va_sdk import BaseTool, BaseModel, IntegrationContext
 from integrations.knowledge_core.service import KnowledgeCoreService
 from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any, Optional
+from pydantic import Field
 
 class SearchKnowledgeArgs(BaseModel):
     query: str = Field(..., description="The search query")
@@ -16,19 +16,17 @@ class SearchKnowledgeTool(BaseTool):
     )
     args_schema = SearchKnowledgeArgs
 
-    async def run(self, query: str, limit: int = 5, **kwargs) -> Any:
+    async def run(self, query: str, limit: int = 5, ctx: IntegrationContext = None, **kwargs) -> Any:
         from tools.base import ToolResult
-        user_id: str = kwargs.get("user_id")
-        db_session: AsyncSession = kwargs.get("db_session")
-        context_name: str = kwargs.get("context_name", "general")
-        if not user_id or not db_session: return ToolResult(content="Context error", is_success=False)
+        if not ctx: return ToolResult(content="Context error", is_success=False)
         
         try:
-            service = KnowledgeCoreService(db_session, user_id)
-            ctx = await service.get_context(query=query, agent_id=context_name)
-            if not ctx:
+            service = KnowledgeCoreService(ctx.db, ctx.user_id)
+            context_name = kwargs.get("context_name", "general")
+            res = await service.get_context(query=query, agent_id=context_name)
+            if not res:
                 return ToolResult(content="No knowledge found for the query.")
-            return ToolResult(content=ctx.get("summary", "Found context."), data=ctx)
+            return ToolResult(content=res.get("summary", "Found context."), data=res)
         except Exception as e:
             return ToolResult(content=f"Knowledge search failed: {e}", is_success=False)
 
@@ -45,15 +43,13 @@ class IngestKnowledgeTool(BaseTool):
     )
     args_schema = IngestKnowledgeArgs
 
-    async def run(self, content: str, label: Optional[str] = None, **kwargs) -> Any:
+    async def run(self, content: str, label: Optional[str] = None, ctx: IntegrationContext = None, **kwargs) -> Any:
         from tools.base import ToolResult
-        user_id: str = kwargs.get("user_id")
-        db_session: AsyncSession = kwargs.get("db_session")
-        context_name: str = kwargs.get("context_name", "general")
-        if not user_id or not db_session: return ToolResult(content="Context error", is_success=False)
+        if not ctx: return ToolResult(content="Context error", is_success=False)
         
         try:
-            service = KnowledgeCoreService(db_session, user_id)
+            service = KnowledgeCoreService(ctx.db, ctx.user_id)
+            context_name = kwargs.get("context_name", "general")
             txt = f"[{label}] {content}" if label else content
             record_id = await service.ingest_message(txt, "assistant", "global", context_name)
             return ToolResult(content=f"Successfully ingested knowledge with ID: {record_id}")

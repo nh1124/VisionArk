@@ -1,13 +1,10 @@
 import os
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from models.database import Node, ServiceRegistry, UserSettings
-from integrations.lbs.client import LBSClient
-from integrations.knowledge_core.service import KnowledgeCoreService
 from utils.paths import get_project_dir
 
 async def get_user_api_key(user_id: str, session: AsyncSession) -> Optional[str]:
@@ -23,11 +20,15 @@ async def get_user_api_key(user_id: str, session: AsyncSession) -> Optional[str]
         print(f"Error fetching API key for user {user_id}: {e}")
         return None
 
-from integrations.lbs.client import get_lbs_client
-from integrations.knowledge_core import KnowledgeCoreService
-
-def get_kc_service(user_id: str, session: AsyncSession) -> KnowledgeCoreService:
+def get_kc_service(user_id: str, session: AsyncSession) -> Any:
+    """Lazy import and return KnowledgeCoreService."""
+    from integrations.knowledge_core.service import KnowledgeCoreService
     return KnowledgeCoreService(session, user_id)
+
+async def get_lbs_client(user_id: str, session: AsyncSession) -> Any:
+    """Lazy import and return LBS client."""
+    from integrations.lbs.client import get_lbs_client
+    return await get_lbs_client(user_id, session)
 
 async def get_project_display_name_from_id(user_id: str, project_id: str, session: AsyncSession) -> str:
     """Get display name for a project by its ID."""
@@ -50,6 +51,7 @@ async def resolve_project_artifacts_dir(user_id: str, project_id: str, session: 
 
 async def get_file_service(user_id: str, session: AsyncSession):
     from services.file_service import FileService
+    from models.database import UserSettings
     res = await session.execute(select(UserSettings).filter(UserSettings.user_id==user_id))
     settings = res.scalars().first()
     key = settings.gemini_api_key if settings else None
@@ -57,6 +59,7 @@ async def get_file_service(user_id: str, session: AsyncSession):
 
 async def get_gemini_client(user_id: str, session: AsyncSession):
     from google.genai import Client
+    from models.database import UserSettings
     res = await session.execute(select(UserSettings).filter(UserSettings.user_id==user_id))
     settings = res.scalars().first()
     if not settings: raise ValueError("User settings not found")

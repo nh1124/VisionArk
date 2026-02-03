@@ -155,29 +155,29 @@ class GeminiProvider(BaseLLMProvider):
                         if sub.tool_calls:
                             tool_parts = []
                             for tc in sub.tool_calls:
-                                    tool_parts.append(types.Part.from_function_response(
-                                        name=tc.name,
-                                        response={'result': tc.result}
-                                    ))
+                                tool_parts.append(types.Part.from_function_response(
+                                    name=tc.name,
+                                    response={'result': tc.result}
+                                ))
+                                
+                                # --- MULTIMODAL ATTACHMENT PROCESSING ---
+                                # Convert standardized attachments (from ToolResult) to native Gemini parts.
+                                if hasattr(tc, 'attachments') and tc.attachments:
+                                    unique_uris = {}
+                                    for att in tc.attachments:
+                                        # Standardized format (new) or backward compat check
+                                        uri = None
+                                        if att.get("type") == "gemini_file_uri":
+                                            uri = att.get("value")
+                                        elif "gemini_file_uri" in att: # backward compat for old DB records
+                                            uri = att.get("gemini_file_uri")
+                                            
+                                        if uri:
+                                            unique_uris[uri] = att.get("mime_type")
                                     
-                                    # --- MULTIMODAL ATTACHMENT PROCESSING ---
-                                    # Convert standardized attachments (from ToolResult) to native Gemini parts.
-                                    if hasattr(tc, 'attachments') and tc.attachments:
-                                        unique_uris = {}
-                                        for att in tc.attachments:
-                                            # Standardized format (new) or backward compat check
-                                            uri = None
-                                            if att.get("type") == "gemini_file_uri":
-                                                uri = att.get("value")
-                                            elif "gemini_file_uri" in att: # backward compat for old DB records
-                                                uri = att.get("gemini_file_uri")
-                                                
-                                            if uri:
-                                                unique_uris[uri] = att.get("mime_type")
-                                        
-                                        for uri, mime in unique_uris.items():
-                                            if uri and mime and mime != "application/octet-stream":
-                                                tool_parts.append(types.Part.from_uri(file_uri=uri, mime_type=mime))
+                                    for uri, mime in unique_uris.items():
+                                        if uri and mime and mime != "application/octet-stream":
+                                            tool_parts.append(types.Part.from_uri(file_uri=uri, mime_type=mime))
                             
                             if tool_parts:
                                 history.append(types.Content(role="tool", parts=tool_parts))

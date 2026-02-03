@@ -1,7 +1,8 @@
-from typing import Optional, List, Dict, Any
-from va_sdk import BaseTool, BaseModel
+from va_sdk import BaseTool, ToolResult, IntegrationContext, BaseModel
 from .client import get_google_calendar_client
 from datetime import datetime
+from typing import Any, Optional
+from pydantic import Field
 
 class ListCalendarEventsArgs(BaseModel):
     calendar_id: str = "primary"
@@ -13,10 +14,10 @@ class ListCalendarEventsTool(BaseTool):
     description = "List events from a user's Google Calendar for a given time range."
     args_schema = ListCalendarEventsArgs
     
-    async def run(self, **kwargs) -> Any:
+    async def run(self, ctx: IntegrationContext, **kwargs) -> Any:
         from va_sdk import ToolResult
-        user_id = kwargs.get("user_id")
-        db = kwargs.get("db_session")
+        user_id = ctx.user_id
+        db = ctx.db
         calendar_id = kwargs.get("calendar_id", "primary")
         days = kwargs.get("days", 7)
         
@@ -44,10 +45,10 @@ class CreateCalendarEventTool(BaseTool):
     description = "Create a new event on the user's Google Calendar."
     args_schema = CreateCalendarEventArgs
     
-    async def run(self, **kwargs) -> Any:
+    async def run(self, ctx: IntegrationContext, **kwargs) -> Any:
         from va_sdk import ToolResult
-        user_id = kwargs.get("user_id")
-        db = kwargs.get("db_session")
+        user_id = ctx.user_id
+        db = ctx.db
         summary = kwargs.get("summary")
         start_time = kwargs.get("start_time")
         end_time = kwargs.get("end_time")
