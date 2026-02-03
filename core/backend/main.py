@@ -27,6 +27,10 @@ async def lifespan(app: FastAPI):
     init_database()  # Use automatic path detection
     print("Database initialized")
     
+    # Discover and register all tools
+    from services.tool_registry import ToolRegistry
+    await ToolRegistry.discover_all_tools()
+    
     # Sync System Nodes
     from services.system_node_registry import sync_system_nodes
     await sync_system_nodes()
