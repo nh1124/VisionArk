@@ -22,6 +22,7 @@
 - [Notes Feature](./features/notes_feature.md): ノート作成と管理機能。
 - [Ask Node](./features/ask_node.md): 質問回答に特化したノード。
 - [Calendar Integration](./features/external_calendar_integration.md): カレンダー同期機能の詳細。
+- [Browser Capability](./features/browser_capability.md): Playwright を使用したブラウザ操作機能。
 
 ## 🛡️ [Audits](./audits/)
 システムの安全性や品質に関する監査結果です。
@@ -38,4 +39,4 @@
 - [Legacy Tool Path Conventions](./reports/archive/tool_path_conventions.md)
 
 ---
-*Last Updated: 2026-01-29*
+*Last Updated: 2026-02-03*
