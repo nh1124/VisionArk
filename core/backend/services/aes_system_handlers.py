@@ -126,7 +126,7 @@ class PostMessageHandler(BaseAESHandler):
         from models.database import TaskType
         
         queue_manager = QueueManager()
-        queue_manager.enqueue(
+        await queue_manager.enqueue(
             user_id=self.user_id,
             message=message,
             context={
@@ -156,7 +156,7 @@ class ProjectPulseHandler(BaseAESHandler):
         # We send a special instruction to the agent to generate a pulse report
         pulse_instruction = "SYSTEM INSTRUCTION: Generate a comprehensive 'Project Pulse' summary of recent activities, artifact changes, and overall project direction. Save it as a new artifact named 'project_pulse_[TIMESTAMP].md'."
         
-        queue_manager.enqueue(
+        await queue_manager.enqueue(
             user_id=self.user_id,
             message=pulse_instruction,
             context={
@@ -188,7 +188,7 @@ class AutoResearchHandler(BaseAESHandler):
         research_message = f"SYSTEM INSTRUCTION: Conduct background research on the following topic: {topic or 'Latest updates relevant to this project'}. Update the Knowledge Summary or create a new research artifact with findings."
         
         queue_manager = QueueManager()
-        queue_manager.enqueue(
+        await queue_manager.enqueue(
             user_id=self.user_id,
             message=research_message,
             context={
@@ -220,7 +220,7 @@ class LBSReminderHandler(BaseAESHandler):
         from models.database import TaskType
         
         queue_manager = QueueManager()
-        queue_manager.enqueue(
+        await queue_manager.enqueue(
             user_id=self.user_id,
             message=f"🔔 LBS REMINDER: {message}",
             context={

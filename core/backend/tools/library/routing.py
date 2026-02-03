@@ -77,7 +77,7 @@ class MulticastMessageTool(BaseTool):
                 print(f"[MulticastMessageTool] Skipping self-recursion for node {target_id}")
                 continue
             
-            manager.enqueue_node_task(
+            await manager.enqueue_node_task(
                 user_id=user_id,
                 target_node_id=target_id,
                 message=message,

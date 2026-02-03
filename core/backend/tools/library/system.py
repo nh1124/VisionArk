@@ -166,7 +166,7 @@ class AskNodeTool(BaseTool):
                 clean_context["project_id"] = node_record.project_id or project_id
                 clean_context["session_id"] = session_id
                 
-                task_id = manager.enqueue_node_task(
+                task_id = await manager.enqueue_node_task(
                     user_id=user_id,
                     target_node_id=target_id,
                     message=final_message,

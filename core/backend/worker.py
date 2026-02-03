@@ -22,8 +22,10 @@ from integrations import * # Force load integrations to register handlers
 
 class Worker:
     def __init__(self):
+        from config import settings
         self.manager = QueueManager()
         self.dispatcher = AESDispatcher(AsyncSessionLocal)
+        self.semaphore = asyncio.Semaphore(settings.max_worker_concurrency)
 
     async def run(self):
         print("Worker starting... (V3 Router Enabled)")
@@ -97,16 +99,21 @@ class Worker:
 
         while True:
             try:
-                # Poll Redis (Blocking) in executor to stay async-friendly
-                loop = asyncio.get_running_loop()
-                task_data = await loop.run_in_executor(None, self.manager.dequeue)
+                # Poll Redis (Blocking)
+                task_data = await self.manager.dequeue()
                 
                 if task_data:
-                    await self._process_task(task_data)
+                    # Spawn task in background with semaphore control
+                    asyncio.create_task(self._process_task_with_semaphore(task_data))
                 
             except Exception as e:
                 print(f"⚠️ Worker error: {e}")
                 await asyncio.sleep(1)
+
+    async def _process_task_with_semaphore(self, task_data: dict):
+        """Wrapper to control concurrency using a semaphore"""
+        async with self.semaphore:
+            await self._process_task(task_data)
 
     async def _process_task(self, task_data: dict):
         task_id = task_data.get("task_id")
@@ -121,7 +128,7 @@ class Worker:
         context["task_type"] = task_type
         
         print(f"📦 Processing task {task_id} ({task_type}) from {user_id}")
-        self.manager.update_status(task_id, "processing")
+        await self.manager.update_status(task_id, "processing")
         
         try:
             from models.database import get_async_engine, get_async_session_maker
@@ -142,7 +149,7 @@ class Worker:
                 )
                 if await self._handle_registry_task(task_obj, db_session):
                     # If handled by registry, we are done
-                    self.manager.update_status(task_id, "completed")
+                    await self.manager.update_status(task_id, "completed")
                     return
 
                 if task_type == TaskType.NODE_EXECUTION:
@@ -159,13 +166,13 @@ class Worker:
                     await self._handle_user_message(message, context, db_session)
                 else:
                     print(f"❌ Unknown task type: {task_type}")
-                    self.manager.update_status(task_id, "failed", f"Unknown task type: {task_type}")
+                    await self.manager.update_status(task_id, "failed", f"Unknown task type: {task_type}")
             
         except Exception as e:
             print(f"❌ Task {task_id} failed: {e}")
             import traceback
             traceback.print_exc()
-            self.manager.update_status(task_id, "failed", str(e))
+            await self.manager.update_status(task_id, "failed", str(e))
         finally:
             # 6. Skill Mining (Async cleanup/analysis)
             if task_data.get("task_type") in [TaskType.USER_MESSAGE, TaskType.NODE_EXECUTION]:
@@ -241,7 +248,7 @@ class Worker:
             except Exception as ne:
                 print(f"⚠️ [Worker] Real-time notification failed: {ne}")
 
-            self.manager.update_status(task_id, "completed", result)
+            await self.manager.update_status(task_id, "completed", result)
         except Exception as exc:
             if session_id:
                 from services.callback_service import CallbackService
@@ -293,7 +300,7 @@ class Worker:
         print(f"Worker: Executing system management call to {node_record.display_name}")
         try:
             result = await target_node.process(message)
-            self.manager.update_status(task_id, "completed", result)
+            await self.manager.update_status(task_id, "completed", result)
         except Exception as e:
             print(f"❌ System Management node process failed: {e}")
             raise e
@@ -308,7 +315,7 @@ class Worker:
         print(f"Worker: Executing infrastructure-level AI routing analysis")
         try:
             result = await target_node.process(message)
-            self.manager.update_status(task_id, "completed", result)
+            await self.manager.update_status(task_id, "completed", result)
         except Exception as exc:
             print(f"❌ AI Routing Analysis failed: {exc}")
             raise exc
@@ -364,7 +371,7 @@ class Worker:
                 await self.dispatcher.reschedule_task(task_record, next_run)
 
         await db_session.commit()
-        self.manager.update_status(task_id, "completed", f"AES Task {task_record.task_type} done.")
+        await self.manager.update_status(task_id, "completed", f"AES Task {task_record.task_type} done.")
 
     async def _handle_user_message(self, message: str, context: dict, db_session):
         """Default logic for user chat and commands"""
@@ -404,13 +411,13 @@ class Worker:
         if project_id:
             target_node = ProjectNode(context)
             result = await target_node.process(message)
-            self.manager.update_status(task_id, "completed", result)
+            await self.manager.update_status(task_id, "completed", result)
             print(f"Worker: Task {task_id} completed.")
         else:
             print(f"Worker: No project_id in context. Skipping ProjectNode. (Task {task_id})")
             # If not handled by router/explicit, and no project, mark as completed but mention no context
             # (In a real system, we might want a 'failed' status if nothing happened, but router usually hits RouterNode)
-            self.manager.update_status(task_id, "completed", "Message processed by system router.")
+            await self.manager.update_status(task_id, "completed", "Message processed by system router.")
 
         # 5. External Channel Reply (LINE, etc.)
         if context.get("external_reply_channel"):
@@ -512,15 +519,14 @@ class Worker:
                 target_node = NodeFactory.get_node(target_node_record, node_context)
                 
                 if target_node:
-                    print(f"[Worker] Updating Project Node with execution result...")
                     await target_node.process(f"Execution Result: {request.response}")
             
             # NOW mark the approval task as completed
-            self.manager.update_status(task_id, "completed", request.response)
+            await self.manager.update_status(task_id, "completed", request.response)
 
         except Exception as e:
             print(f"❌ Approval Execution failed: {e}")
-            self.manager.update_status(task_id, "failed", str(e))
+            await self.manager.update_status(task_id, "failed", str(e))
             raise e
 
     async def _command_detection(self, message: str, context: dict) -> bool:
@@ -529,7 +535,7 @@ class Worker:
         if not cmd: return False
         
         result_msg = await execute_command(cmd, scope="project", project_id=context.get("project_id"), db_session=context.get("db_session"), user_id=context.get("user_id"))
-        self.manager.update_status(context.get("task_id"), "completed", result_msg.message)
+        await self.manager.update_status(context.get("task_id"), "completed", result_msg.message)
         return True
 
 if __name__ == "__main__":

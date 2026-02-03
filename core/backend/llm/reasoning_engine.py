@@ -74,7 +74,7 @@ class ReasoningEngine:
                 try:
                     from queue_system.manager import QueueManager
                     manager = QueueManager()
-                    status_data = manager.get_status(task_id)
+                    status_data = await manager.get_status(task_id)
                     if status_data and status_data.get("status") == "cancelled":
                         print(f"🛑 [ReasoningEngine] Task {task_id} cancelled by user.")
                         return Message(

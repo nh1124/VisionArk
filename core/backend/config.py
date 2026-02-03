@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"  # Default to localhost for security; set to 0.0.0.0 for Docker
     redis_host: str = "localhost" # Redis host (use 'redis' in Docker)
     redis_port: int = 6379 # Redis port
+    max_worker_concurrency: int = 10 # Maximum number of concurrent tasks per worker
+    backend_workers: int = 1         # Number of uvicorn worker processes
     lbs_service_url: str = "http://localhost:8001/api/lbs"
     knowledge_core_url: str = "http://localhost:8200"
     

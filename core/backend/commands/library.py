@@ -371,7 +371,7 @@ class ResendCommand(BaseCommand):
                 "env": "v4"
             }
             from models.database import TaskType
-            task_id = manager.enqueue(user_id, latest_user_msg.content, context, task_type=TaskType.USER_MESSAGE)
+            task_id = await manager.enqueue(user_id, latest_user_msg.content, context, task_type=TaskType.USER_MESSAGE)
 
             return CommandResult(
                 success=True, 

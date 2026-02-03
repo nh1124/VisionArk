@@ -82,7 +82,7 @@ async def outlook_callback(code: str, state: str, db: AsyncSession = Depends(get
 
         # Trigger Initial Sync
         queue = QueueManager()
-        queue.enqueue(
+        await queue.enqueue(
             user_id=user_id,
             message="Initial sync after Outlook connection",
             context={"service_name": "outlook", "triggered_by": "auth_callback"},
@@ -127,7 +127,7 @@ async def outlook_webhook(request: Request, db: AsyncSession = Depends(get_async
         )
         service = result.scalars().first()
         if service:
-            queue.enqueue(
+            await queue.enqueue(
                 user_id=service.user_id,
                 message="Sync triggered for outlook",
                 context={"service_name": "outlook", "triggered_by": "webhook"},

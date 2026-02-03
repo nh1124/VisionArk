@@ -53,7 +53,7 @@ class Router:
             print(f"Router: Found {len(matches)} fast-hook matches.")
             for match in matches:
                 target_id = match["target_node_id"]
-                manager.enqueue_node_task(
+                await manager.enqueue_node_task(
                     user_id=user_id,
                     target_node_id=target_id,
                     message=message,
@@ -76,7 +76,7 @@ class Router:
             return
 
         print(f"Router: Triggering deep AI analysis for message.")
-        manager.enqueue(
+        await manager.enqueue(
             user_id=user_id,
             message=message,
             task_type=TaskType.AI_ROUTING,

@@ -62,7 +62,7 @@ class NotificationService:
         
         # Use Redis client from QueueManager to publish
         channel = f"notifications:{notification.user_id}"
-        self.queue_manager.client.publish(channel, json.dumps(payload))
+        await self.queue_manager.client.publish(channel, json.dumps(payload))
         print(f"[NotificationService] Broadcasted to {channel}: {notification.title}")
 
     async def get_unread_count(self, user_id: str) -> int:

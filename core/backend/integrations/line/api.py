@@ -169,7 +169,7 @@ async def shared_line_webhook(
         
         from queue_system.manager import QueueManager
         manager = QueueManager()
-        manager.enqueue(
+        await manager.enqueue(
             task_type="user_message", # Use user_message to trigger AI routing/processing
             user_id=actual_user_id,
             message=message_text,
@@ -337,7 +337,7 @@ async def line_webhook(
                         project_id = None
 
                 # Enqueue task for Worker
-                queue.enqueue(
+                await queue.enqueue(
                     user_id=actual_user_id,
                     message=msg_text,
                     context={

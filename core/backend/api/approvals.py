@@ -59,7 +59,7 @@ async def approve_request(request_id: str, db: AsyncSession = Depends(get_async_
         
         # 2. Enqueue task for Worker
         manager = QueueManager()
-        task_id = manager.enqueue(
+        task_id = await manager.enqueue(
             user_id=req.user_id,
             message=f"Executing approved {req.tool_name} request",
             context={

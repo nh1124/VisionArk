@@ -602,7 +602,7 @@ class GeminiProvider(BaseLLMProvider):
             if task_id:
                 from queue_system.manager import QueueManager
                 manager = QueueManager()
-                status_data = manager.get_status(task_id)
+                status_data = await manager.get_status(task_id)
                 if status_data and status_data.get("status") == "cancelled":
                     yield {"type": "status", "data": "Stopped by user."}
                     yield {

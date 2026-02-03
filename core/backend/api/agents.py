@@ -90,7 +90,7 @@ async def get_task_status(
     from queue_system.manager import QueueManager
     
     manager = QueueManager()
-    status = manager.get_status(task_id)
+    status = await manager.get_status(task_id)
     
     if not status:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -114,7 +114,7 @@ async def get_workspace_stats(
     manager = QueueManager()
     
     # 1. AI Agents Active (Approximate by active tasks in queue)
-    active_agents = len(manager.get_all_active_tasks())
+    active_agents = len(await manager.get_all_active_tasks())
     
     # 2. Total Tasks Completed (Count completed messages/actions across all sessions)
     # For now, count assistant messages as proxy for "completed tasks"
@@ -218,7 +218,7 @@ async def chat_with_project(
         "files": [uploaded_file.id for uploaded_file in uploaded_files] if uploaded_files else []
     }
     
-    task_id = manager.enqueue(identity.user_id, message, context, task_type=TaskType.USER_MESSAGE)
+    task_id = await manager.enqueue(identity.user_id, message, context, task_type=TaskType.USER_MESSAGE)
     print(f"[Project Chat] Enqueued task {task_id} for project {project_id}")
 
     # Return placeholder response compliant with ChatResponse
@@ -615,7 +615,7 @@ async def create_project_from_prompt(
         }
         
         from models.database import TaskType
-        task_id = manager.enqueue(identity.user_id, data.prompt, queue_context, task_type=TaskType.USER_MESSAGE)
+        task_id = await manager.enqueue(identity.user_id, data.prompt, queue_context, task_type=TaskType.USER_MESSAGE)
         
         return {
             "project_name": project_name,
@@ -697,7 +697,7 @@ async def list_projects(
         from queue_system.manager import QueueManager
         manager = QueueManager()
         # Note: We don't have a per-project counter in Redis yet, but we can check if there's an active task
-        active_task = manager.get_active_task_for_project(proj.id)
+        active_task = await manager.get_active_task_for_project(proj.id)
         queue_count = 1 if active_task else 0
 
         # Enriched Data for Bento UI
@@ -808,7 +808,7 @@ async def get_project_active_task(
     from queue_system.manager import QueueManager
     
     manager = QueueManager()
-    task_id = manager.get_active_task_for_project(project_id)
+    task_id = await manager.get_active_task_for_project(project_id)
     
     return {"task_id": task_id}
 
@@ -1254,7 +1254,7 @@ async def chat_with_system_node(
             "stream": stream
         }
         
-        task_id = manager.enqueue(
+        task_id = await manager.enqueue(
             user_id=identity.user_id,
             message=message,
             context=context,

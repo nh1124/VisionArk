@@ -120,105 +120,108 @@ export default function ActivitySidebar({ projectId }: ActivitySidebarProps) {
                         </p>
                     </div>
                 ) : (
-                    activities.map((activity, idx) => (
-                        <div
-                            key={activity.id || `activity-${idx}`}
-                            className="bg-gray-800/30 border border-gray-700/50 rounded-xl overflow-hidden group hover:border-cyan-500/30 transition-all duration-300"
-                        >
-                            {/* Card Header */}
-                            <div className="p-3 border-b border-gray-700/50 bg-gray-800/20">
-                                <div className="flex items-center justify-between mb-1">
-                                    <div className="flex items-center gap-2">
-                                        {activity.meta_payload.type === "node_callback_failure" ? (
-                                            <AlertCircle size={14} className="text-rose-400" />
-                                        ) : (
-                                            <CheckCircle2 size={14} className="text-emerald-400" />
-                                        )}
-                                        <span className="text-xs font-bold text-white truncate max-w-[140px]">
-                                            {activity.meta_payload.node_name}
-                                        </span>
-                                    </div>
-                                    <span className="text-[10px] text-gray-500 flex items-center gap-1">
-                                        <Clock size={10} />
-                                        {formatDistanceToNow(safeDate(activity.created_at || activity.timestamp), { addSuffix: true })}
-                                    </span>
-                                </div>
-                                <div className="text-[10px] text-gray-400 line-clamp-1 opacity-70 italic">
-                                    {activity.content.replace(/🤖 \*\*.+\*\* has completed background work:\s*/i, "").slice(0, 100)}...
-                                </div>
-                            </div>
-
-                            {/* Thinking Process Accordion */}
-                            {activity.sub_messages && activity.sub_messages.length > 0 && (
-                                <div className="bg-gray-900/40">
-                                    <button
-                                        onClick={() => toggleStep(activity.id)}
-                                        className="w-full flex items-center justify-between p-2 text-[10px] font-black text-gray-500 uppercase tracking-[2px] bg-gray-900/20 hover:text-cyan-400 transition-colors"
-                                    >
+                    activities.map((activity, idx) => {
+                        const stableId = activity.id || `activity-${idx}`;
+                        return (
+                            <div
+                                key={stableId}
+                                className="bg-gray-800/30 border border-gray-700/50 rounded-xl overflow-hidden group hover:border-cyan-500/30 transition-all duration-300"
+                            >
+                                {/* Card Header */}
+                                <div className="p-3 border-b border-gray-700/50 bg-gray-800/20">
+                                    <div className="flex items-center justify-between mb-1">
                                         <div className="flex items-center gap-2">
-                                            <Cpu size={12} />
-                                            Thinking Process
-                                            <span className="bg-gray-800 text-gray-400 px-1.5 rounded-full text-[9px]">
-                                                {activity.sub_messages.length} steps
+                                            {activity.meta_payload.type === "node_callback_failure" ? (
+                                                <AlertCircle size={14} className="text-rose-400" />
+                                            ) : (
+                                                <CheckCircle2 size={14} className="text-emerald-400" />
+                                            )}
+                                            <span className="text-xs font-bold text-white truncate max-w-[140px]">
+                                                {activity.meta_payload.node_name}
                                             </span>
                                         </div>
-                                        {expandedSteps[activity.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                    </button>
-
-                                    {expandedSteps[activity.id] && (
-                                        <div className="p-3 space-y-4 animate-in slide-in-from-top-1 duration-200">
-                                            {activity.sub_messages.map((step, sIdx) => (
-                                                <div key={step.sub_id || sIdx} className="space-y-2 last:mb-0">
-                                                    <div className="flex items-center gap-2 text-[10px] font-mono text-cyan-500/70">
-                                                        <span className="opacity-50">#0{sIdx + 1}</span>
-                                                        <div className="h-[1px] flex-1 bg-cyan-950/50" />
-                                                    </div>
-                                                    <div className="text-xs text-gray-300 leading-relaxed pl-2 border-l border-gray-800">
-                                                        <MarkdownRenderer content={step.content} />
-                                                    </div>
-                                                    {step.tool_calls && step.tool_calls.length > 0 && (
-                                                        <div className="pl-4 space-y-1">
-                                                            {step.tool_calls.map((tc, tIdx) => (
-                                                                <div key={tIdx} className="flex flex-col gap-1.5 p-2 bg-black/20 rounded border border-gray-800/50 group/tool">
-                                                                    <div className="flex items-center justify-between">
-                                                                        <div className="flex items-center gap-1.5 text-[10px] font-mono">
-                                                                            <Terminal size={10} className="text-emerald-500" />
-                                                                            <span className="text-emerald-400 font-bold">{tc.name}</span>
-                                                                        </div>
-                                                                        {tc.is_success ? (
-                                                                            <CheckCircle2 size={10} className="text-emerald-500/50" />
-                                                                        ) : (
-                                                                            <AlertCircle size={10} className="text-rose-500/50" />
-                                                                        )}
-                                                                    </div>
-                                                                    <div className="text-[9px] text-gray-500 italic truncate font-mono">
-                                                                        {JSON.stringify(tc.args).slice(0, 60)}...
-                                                                    </div>
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
+                                        <span className="text-[10px] text-gray-500 flex items-center gap-1">
+                                            <Clock size={10} />
+                                            {formatDistanceToNow(safeDate(activity.created_at || activity.timestamp), { addSuffix: true })}
+                                        </span>
+                                    </div>
+                                    <div className="text-[10px] text-gray-400 line-clamp-1 opacity-70 italic">
+                                        {activity.content.replace(/🤖 \*\*.+\*\* has completed background work:\s*/i, "").slice(0, 100)}...
+                                    </div>
                                 </div>
-                            )}
 
-                            {/* Action Links */}
-                            <div className="p-2 flex gap-2 justify-end bg-gray-800/10">
-                                <button
-                                    className="text-[10px] font-bold text-gray-500 hover:text-white flex items-center gap-1 transition-colors"
-                                    onClick={() => {
-                                        // Scroll to message in main chat (implementation would need ref or message-id search)
-                                        console.log("Locate message:", activity.id);
-                                    }}
-                                >
-                                    <ExternalLink size={10} /> View in Chat
-                                </button>
+                                {/* Thinking Process Accordion */}
+                                {activity.sub_messages && activity.sub_messages.length > 0 && (
+                                    <div className="bg-gray-900/40">
+                                        <button
+                                            onClick={() => toggleStep(stableId)}
+                                            className="w-full flex items-center justify-between p-2 text-[10px] font-black text-gray-500 uppercase tracking-[2px] bg-gray-900/20 hover:text-cyan-400 transition-colors"
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                <Cpu size={12} />
+                                                Thinking Process
+                                                <span className="bg-gray-800 text-gray-400 px-1.5 rounded-full text-[9px]">
+                                                    {activity.sub_messages.length} steps
+                                                </span>
+                                            </div>
+                                            {expandedSteps[stableId] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                        </button>
+
+                                        {expandedSteps[stableId] && (
+                                            <div className="p-3 space-y-4 animate-in slide-in-from-top-1 duration-200">
+                                                {activity.sub_messages.map((step, sIdx) => (
+                                                    <div key={step.sub_id || sIdx} className="space-y-2 last:mb-0">
+                                                        <div className="flex items-center gap-2 text-[10px] font-mono text-cyan-500/70">
+                                                            <span className="opacity-50">#0{sIdx + 1}</span>
+                                                            <div className="h-[1px] flex-1 bg-cyan-950/50" />
+                                                        </div>
+                                                        <div className="text-xs text-gray-300 leading-relaxed pl-2 border-l border-gray-800">
+                                                            <MarkdownRenderer content={step.content} />
+                                                        </div>
+                                                        {step.tool_calls && step.tool_calls.length > 0 && (
+                                                            <div className="pl-4 space-y-1">
+                                                                {step.tool_calls.map((tc, tIdx) => (
+                                                                    <div key={tIdx} className="flex flex-col gap-1.5 p-2 bg-black/20 rounded border border-gray-800/50 group/tool">
+                                                                        <div className="flex items-center justify-between">
+                                                                            <div className="flex items-center gap-1.5 text-[10px] font-mono">
+                                                                                <Terminal size={10} className="text-emerald-500" />
+                                                                                <span className="text-emerald-400 font-bold">{tc.name}</span>
+                                                                            </div>
+                                                                            {tc.is_success ? (
+                                                                                <CheckCircle2 size={10} className="text-emerald-500/50" />
+                                                                            ) : (
+                                                                                <AlertCircle size={10} className="text-rose-500/50" />
+                                                                            )}
+                                                                        </div>
+                                                                        <div className="text-[9px] text-gray-500 italic truncate font-mono">
+                                                                            {JSON.stringify(tc.args).slice(0, 60)}...
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* Action Links */}
+                                <div className="p-2 flex gap-2 justify-end bg-gray-800/10">
+                                    <button
+                                        className="text-[10px] font-bold text-gray-500 hover:text-white flex items-center gap-1 transition-colors"
+                                        onClick={() => {
+                                            // Scroll to message in main chat (implementation would need ref or message-id search)
+                                            console.log("Locate message:", stableId);
+                                        }}
+                                    >
+                                        <ExternalLink size={10} /> View in Chat
+                                    </button>
+                                </div>
                             </div>
-                        </div>
-                    ))
+                        );
+                    })
                 )}
             </div>
 

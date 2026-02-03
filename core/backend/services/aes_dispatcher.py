@@ -62,7 +62,7 @@ class AESDispatcher:
                 }
                 
                 from models.database import TaskType
-                self.queue_manager.enqueue(
+                await self.queue_manager.enqueue(
                     user_id=task.user_id,
                     message=f"AES System Task: {task.task_type}",
                     context=context,

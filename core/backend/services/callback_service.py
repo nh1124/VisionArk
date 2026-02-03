@@ -44,7 +44,7 @@ class CallbackService:
                     "created_at": message.created_at.isoformat()
                 }
             }
-            queue_manager.client.publish(f"chat:{session_id}", json.dumps(payload))
+            await queue_manager.client.publish(f"chat:{session_id}", json.dumps(payload))
             print(f"[CallbackService] Broadcasted message to chat:{session_id}")
         except Exception as be:
             print(f"⚠️ [CallbackService] Redis broadcast failed: {be}")

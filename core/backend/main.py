@@ -106,4 +106,12 @@ def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host=settings.host, port=settings.backend_port, reload=True)
+    # If workers > 1, reload MUST be False
+    reload = settings.backend_workers == 1
+    uvicorn.run(
+        "main:app", 
+        host=settings.host, 
+        port=settings.backend_port, 
+        reload=reload,
+        workers=settings.backend_workers
+    )

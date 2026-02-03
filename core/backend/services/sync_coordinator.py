@@ -35,7 +35,7 @@ class SyncCoordinator:
         queue = QueueManager()
         for service in services:
             task_type = f"export_to_{service.service_name}"
-            queue.enqueue(
+            await queue.enqueue(
                 user_id=user_id,
                 message=f"Export triggered by {reason}",
                 context={"service_name": service.service_name, "triggered_by": "sync_coordinator"},
@@ -63,7 +63,7 @@ class SyncCoordinator:
         queue = QueueManager()
         for service in services:
             task_type = f"sync_{service.service_name}"
-            queue.enqueue(
+            await queue.enqueue(
                 user_id=user_id,
                 message=f"Sync triggered by {reason}",
                 context={"service_name": service.service_name},

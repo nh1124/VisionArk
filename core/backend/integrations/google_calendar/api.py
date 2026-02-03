@@ -86,7 +86,7 @@ async def google_callback(code: str, state: str, db: AsyncSession = Depends(get_
 
         # Trigger Initial Sync
         queue = QueueManager()
-        queue.enqueue(
+        await queue.enqueue(
             user_id=user_id,
             message="Initial sync after Google Calendar connection",
             context={"service_name": "google_calendar", "triggered_by": "auth_callback"},
@@ -130,7 +130,7 @@ async def google_webhook(request: Request, db: AsyncSession = Depends(get_async_
     
     if service:
         queue = QueueManager()
-        queue.enqueue(
+        await queue.enqueue(
             user_id=service.user_id,
             message="Sync triggered for google_calendar",
             context={"service_name": "google_calendar", "triggered_by": "webhook"},
