@@ -227,42 +227,9 @@ class ReasoningEngine:
                 final_content = summary_response.step.content
                 print("✅ [ReasoningEngine] Summarization successful.")
 
-        # Collect all attachments from sub-messages to the top-level message
-        final_attachments = []
-        seen_uris = set()
-        
-        for s in steps:
-            for tc in s.tool_calls:
-                for att in tc.attachments:
-                    val = att.get("value")
-                    if val in seen_uris:
-                        continue
-                        
-                    # Map ToolAttachment to AttachedFile
-                    a_file = None
-                    if att.get("type") == "gemini_file_uri":
-                        a_file = AttachedFile(
-                            filename=f"attachment_{len(final_attachments)+1}.png",
-                            file_type=att.get("mime_type") or "image/png",
-                            size_bytes=0,
-                            gemini_file_uri=val
-                        )
-                    elif att.get("type") == "image_path":
-                        a_file = AttachedFile(
-                            filename=os.path.basename(val),
-                            file_type=att.get("mime_type") or "image/png",
-                            size_bytes=0,
-                            storage_path=val
-                        )
-                    
-                    if a_file:
-                        final_attachments.append(a_file)
-                        seen_uris.add(val)
-
         return Message(
             role=MessageRole.ASSISTANT,
-            content=final_content or "Action completed.",
-            attached_files=final_attachments,
+            content=final_content,
             sub_messages=steps,
             meta_info={
                 "model": model_name,
