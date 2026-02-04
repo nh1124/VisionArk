@@ -125,8 +125,10 @@ class BaseNode(ABC):
         if node_id:
             try:
                 from services.skill_service import SkillService
+                # Try to extract intent from context
+                intent = self.context.get("intent")
                 async with AsyncSessionLocal() as db:
-                    skill_text = await SkillService.inject_skills_to_prompt(db, node_id, "")
+                    skill_text = await SkillService.inject_skills_to_prompt(db, node_id, "", intent=intent)
             except Exception as se:
                 print(f"[BaseNode] Error loading skills: {se}")
 
@@ -354,8 +356,10 @@ class BaseNode(ABC):
                 try:
                     from models.database import AsyncSessionLocal
                     from services.skill_service import SkillService
+                    # Use intent from tool_context if available, otherwise from main context
+                    intent = (tool_context or {}).get("intent") or self.context.get("intent")
                     async with AsyncSessionLocal() as db:
-                        tool_policy = await SkillService.get_node_tool_policy(db, node_id)
+                        tool_policy = await SkillService.get_node_tool_policy(db, node_id, intent=intent)
                 except Exception as e:
                     print(f"[BaseNode] Warning: Failed to load tool policy: {e}")
 

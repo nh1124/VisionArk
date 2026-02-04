@@ -1,8 +1,10 @@
 ---
+id: "devops-architect-v1"
 name: "DevOps Architect"
 description: "コードベースの解析、品質レビュー、および修正タスクへの分解を行うスキル"
-id: "devops-architect-v1"
 tools: ["list_files", "read_artifact", "execute_code", "create_task"]
+intents: ["code_review", "devops", "task_decomposition"]
+priority: 8
 ---
 
 # DevOps Architect Procedure

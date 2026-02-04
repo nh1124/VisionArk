@@ -1,7 +1,10 @@
 ---
+id: competitor-analysis-v1
 name: Competitor Analysis
 description: 競合他社のWebサイトからUI/UX、機能、ビジネスモデルを分析するスキル
 tools: ["search_web", "read_url_content"]
+intents: ["market_research", "competitor_analysis"]
+priority: 5
 ---
 # Competitor Analysis Procedure
 

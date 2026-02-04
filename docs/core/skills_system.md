@@ -59,23 +59,16 @@ Follow these steps for a thorough analysis:
 ## 2. Technical Architecture
 
 ### Skill Registry (`registry.py`)
-- **Discovery**: On system startup (lifespan), the `SkillRegistry` scans `core/backend/skills/`.
+- **Discovery**: On system startup (lifespan), the `SkillRegistry` scans `core/backend/skills/` and `integrations/` recursively for `SKILL.md` files.
 - **Sync**: It parses `SKILL.md` files and synchronizes them with the `skills` table in the database.
 - **Persistence**: Database entries allow for user overrides and status toggling (Active/Inactive) via the UI.
 
 ### Skill Service (`skill_service.py`)
 - **Node Association**: Skills are linked to specific agent nodes via the `node_skills` table.
-- **Prompt Injection**: Before an agent is executed, the `SkillService` (formerly in `va_sdk`) fetches all attached active skills and appends their content to the agent's system prompt.
-- **Intent Resolution**: If an intent is provided in the execution context, skills are filtered to intent-matching skills first, otherwise general skills are used.
-- **Conflict Handling**: Skills can specify `conflicts_with` and `priority` to resolve overlaps.
+- **Prompt Injection**: Before an agent is executed, the `SkillService` clones relevant active skills and appends their content to the agent's system prompt.
+- **Intent Resolution**: If an intent is provided in the execution context, skills are filtered to intent-matching skills.
+- **Conflict Handling**: Skills specify `conflicts_with` and `priority` to resolve overlaps. Higher priority skills suppress conflicting lower priority ones.
 - **Tool Policy Merge**: `tool_policy` metadata is merged across resolved skills to enforce allow/deny/intent and fallback rules.
-
-### 2. Technical Architecture
-
-The system resides entirely within the `core/backend/` logic to maintain a clean distinction between core internals and the external SDK.
-
-- **Skill Registry**: Scans `skills/` and `integrations/` recursively for `SKILL.md` files.
-- **Skill Service**: Located in `core/backend/services/skill_service.py`.
 
 ---
 

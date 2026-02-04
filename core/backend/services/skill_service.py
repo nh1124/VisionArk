@@ -5,8 +5,16 @@ from models.database import Skill, NodeSkill
 
 class SkillService:
     @staticmethod
-    async def get_node_skills(db: AsyncSession, node_id: str) -> List[Skill]:
-        """Fetch all skills attached to a specific node."""
+    async def get_node_skills(db: AsyncSession, node_id: str, intent: Optional[str] = None) -> List[Skill]:
+        """
+        Fetch and resolve skills for a node.
+        
+        Logic:
+        1. Fetch all active skills associated with the node.
+        2. Filter by intent if provided.
+        3. Sort by priority (descending).
+        4. Resolve conflicts: If a skill conflicts with another, the higher-priority one wins.
+        """
         stmt = (
             select(Skill)
             .join(NodeSkill, Skill.id == NodeSkill.skill_id)
@@ -14,7 +22,46 @@ class SkillService:
             .filter(Skill.is_active == True)
         )
         res = await db.execute(stmt)
-        return res.scalars().all()
+        skills = list(res.scalars().all())
+
+        if not skills:
+            return []
+
+        # 1. Intent Filtering
+        if intent:
+            filtered_skills = []
+            for s in skills:
+                meta = s.metadata_payload or {}
+                intents = meta.get("intents", [])
+                if intent in intents:
+                    filtered_skills.append(s)
+            
+            # If we found intent-specific skills, use them. Otherwise fallback to general skills.
+            if filtered_skills:
+                skills = filtered_skills
+
+        # 2. Priority Sorting (Higher priority first)
+        def get_priority(s: Skill) -> int:
+            return (s.metadata_payload or {}).get("priority", 0)
+        
+        skills.sort(key=get_priority, reverse=True)
+
+        # 3. Conflict Resolution
+        resolved_skills = []
+        suppressed_ids = set()
+
+        for s in skills:
+            if s.id in suppressed_ids:
+                continue
+            
+            resolved_skills.append(s)
+            
+            # Mark conflicting skills for suppression
+            conflicts = (s.metadata_payload or {}).get("conflicts_with", [])
+            if conflicts:
+                suppressed_ids.update(conflicts)
+
+        return resolved_skills
 
     @staticmethod
     def format_skill_instructions(skills: List[Skill]) -> str:
@@ -98,17 +145,17 @@ class SkillService:
         return merged
 
     @classmethod
-    async def get_node_tool_policy(cls, db: AsyncSession, node_id: str) -> Dict[str, Any]:
+    async def get_node_tool_policy(cls, db: AsyncSession, node_id: str, intent: Optional[str] = None) -> Dict[str, Any]:
         """Fetch and merge tool policies for a node."""
-        skills = await cls.get_node_skills(db, node_id)
+        skills = await cls.get_node_skills(db, node_id, intent=intent)
         if not skills:
             return {}
         return cls.merge_tool_policies(skills)
 
     @classmethod
-    async def inject_skills_to_prompt(cls, db: AsyncSession, node_id: str, original_prompt: str) -> str:
+    async def inject_skills_to_prompt(cls, db: AsyncSession, node_id: str, original_prompt: str, intent: Optional[str] = None) -> str:
         """Fetch skills and append them to the system prompt."""
-        skills = await cls.get_node_skills(db, node_id)
+        skills = await cls.get_node_skills(db, node_id, intent=intent)
         if not skills:
             return original_prompt
             

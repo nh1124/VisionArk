@@ -1,8 +1,10 @@
 ---
+id: "architectural-planner-v1"
 name: "Architectural Planner"
 description: "プロジェクト全体の現状を分析し、中長期的な計画書（plan.md）を作成・維持管理するスキル"
-id: "architectural-planner-v1"
 tools: ["list_files", "read_artifact", "save_artifact", "search_knowledge"]
+intents: ["project_planning", "architecture_review"]
+priority: 7
 ---
 
 # Architectural Planner Procedure

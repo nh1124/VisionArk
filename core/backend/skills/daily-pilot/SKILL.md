@@ -1,8 +1,10 @@
 ---
+id: "daily-pilot-v1"
 name: "Daily Pilot"
 description: "毎朝の業務開始前に当日の負荷状況を把握し、一日のスケジュールを最適化するスキル"
-id: "daily-pilot-v1"
 tools: ["get_load_on_day", "list_tasks", "request_coordination"]
+intents: ["daily_briefing", "schedule_management"]
+priority: 6
 tool_policy:
   allowlist:
     - get_load_on_day

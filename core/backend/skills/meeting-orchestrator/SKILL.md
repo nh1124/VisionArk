@@ -1,8 +1,10 @@
 ---
+id: "meeting-orchestrator-v1"
 name: "Meeting Orchestrator"
 description: "カレンダー予定の管理、会議の事前準備、および議事録のタスク化を行うスキル"
-id: "meeting-orchestrator-v1"
 tools: ["google_calendar", "search_knowledge", "save_artifact", "create_task"]
+intents: ["meeting_management", "minutes_generation"]
+priority: 5
 ---
 
 # Meeting Orchestrator Procedure

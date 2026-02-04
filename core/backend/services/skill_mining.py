@@ -93,16 +93,19 @@ class SkillMiningService:
                 "name": {"type": "string", "description": "Concise name of the skill"},
                 "description": {"type": "string", "description": "Short summary of what the skill does"},
                 "id": {"type": "string", "description": "Kebab-case unique identifier"},
-                "content": {"type": "string", "description": "Full Markdown content of the SKILL.md file"}
+                "content": {"type": "string", "description": "Full Markdown content of the SKILL.md file"},
+                "priority": {"type": "integer", "description": "Priority (1-10), 10 being highest. Default to 5."},
+                "intents": {"type": "array", "items": {"type": "string"}, "description": "List of intents where this skill is most applicable (e.g., ['market_research']"}
             },
-            "required": ["name", "description", "id", "content"]
+            "required": ["name", "description", "id", "content", "priority", "intents"]
         }
         
         system_prompt = (
             "You are a Skill Architect. Your job is to extract repeatable 'Agent Skills' "
             "from user interaction logs. A Skill should be a Markdown document (SKILL.md) "
             "with YAML frontmatter and clear instructions.\n\n"
-            "Focus on the PROCEDURAL DNA. What steps did the agent take to succeed?"
+            "Focus on the PROCEDURAL DNA. What steps did the agent take to succeed?\n"
+            "Identify SPECIFIC INTENTS (e.g., 'code_review', 'data_extraction') and assign a PRIORITY."
         )
         
         user_prompt = (
@@ -139,7 +142,12 @@ class SkillMiningService:
                 name=data['name'],
                 description=data['description'],
                 content=data['content'],
-                metadata_payload={"source": "mining", "distilled_at": datetime.utcnow().isoformat()},
+                metadata_payload={
+                    "source": "mining", 
+                    "distilled_at": datetime.utcnow().isoformat(),
+                    "priority": data.get("priority", 5),
+                    "intents": data.get("intents", [])
+                },
                 is_draft=True,
                 is_active=False 
             )

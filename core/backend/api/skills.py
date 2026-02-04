@@ -32,11 +32,14 @@ async def batch_approve_skills(request: BatchActionRequest, db: AsyncSession = D
 @router.post("/batch/discard")
 async def batch_discard_skills(request: BatchActionRequest, db: AsyncSession = Depends(get_async_db)):
     """Batch discard (delete) multiple skills."""
-    from sqlalchemy import delete
-    stmt = delete(Skill).where(Skill.id.in_(request.skill_ids))
-    await db.execute(stmt)
-    await db.commit()
-    return {"status": "success", "count": len(request.skill_ids)}
+    try:
+        stmt = delete(Skill).where(Skill.id.in_(request.skill_ids))
+        await db.execute(stmt)
+        await db.commit()
+        return {"status": "success", "count": len(request.skill_ids)}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to discard skills: {str(e)}")
 
 @router.get("")
 async def list_skills(db: AsyncSession = Depends(get_async_db)):
@@ -70,9 +73,13 @@ async def delete_skill(skill_id: str, db: AsyncSession = Depends(get_async_db)):
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
         
-    await db.delete(skill)
-    await db.commit()
-    return {"message": "Skill deleted"}
+    try:
+        await db.delete(skill)
+        await db.commit()
+        return {"message": "Skill deleted"}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete skill: {str(e)}")
 
 # --- Node-Skill Association Endpoints ---
 

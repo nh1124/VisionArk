@@ -341,16 +341,11 @@ class NodeSkill(Base):
     __tablename__ = "node_skills"
     
     node_id = Column(String(36), ForeignKey("nodes.id"), primary_key=True)
-    skill_id = Column(String(100), ForeignKey("skills.id"), primary_key=True)
+    skill_id = Column(String(100), ForeignKey("skills.id", ondelete="CASCADE"), primary_key=True)
     
     # Relationships
     node = relationship("Node", backref="attached_skills")
     skill = relationship("Skill")
-
-
-
-
-
 
 class ChatSession(Base):
     """Grouped conversation history"""
@@ -696,6 +691,25 @@ def _run_migrations(engine):
         except (AttributeError, KeyError) as e:
             # Fallback if length attribute is missing or structure is different
             print(f"[DEBUG] Migration check for Skill ID skipped or failed: {str(e)}")
+
+    # Migration: Update node_skills foreign key to use CASCADE delete
+    if 'node_skills' in inspector.get_table_names():
+        with engine.connect() as conn:
+            try:
+                # This is postgres specific syntax. For other DBs it might differ.
+                # First drop existing constraint, then add new one with CASCADE
+                # We need to find the constraint name first, but usually it's node_skills_skill_id_fkey
+                # To be safer across different environments, we can attempt to drop it if it exists.
+                conn.execute(text("""
+                    ALTER TABLE node_skills 
+                    DROP CONSTRAINT IF EXISTS node_skills_skill_id_fkey,
+                    ADD CONSTRAINT node_skills_skill_id_fkey 
+                    FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
+                """))
+                conn.commit()
+                print("✅ Migration: Updated node_skills foreign key to CASCADE delete")
+            except Exception as e:
+                print(f"[WARN] Migration failed for node_skills cascade: {str(e)}")
             
     # Migration: Add tags column to notes if missing
     if 'notes' in inspector.get_table_names():

@@ -169,6 +169,24 @@ export default function SkillsPage() {
         }
     };
 
+    const handleDeleteSkill = async (skill: Skill) => {
+        if (!confirm(`Are you sure you want to delete the skill "${skill.name}"? This action cannot be undone.`)) return;
+        try {
+            const response = await apiFetch(`/api/skills/${skill.id}`, {
+                method: "DELETE"
+            });
+            if (response.ok) {
+                setSkills(skills.filter(s => s.id !== skill.id));
+            } else {
+                const errorData = await response.json();
+                alert(`Failed to delete skill: ${errorData.detail || "Unknown error"}`);
+            }
+        } catch (error) {
+            console.error("Failed to delete skill:", error);
+            alert("Failed to delete skill due to a network or server error.");
+        }
+    };
+
     const toggleSelection = (skillId: string) => {
         const newSelected = new Set(selectedSkillIds);
         if (newSelected.has(skillId)) {
@@ -311,8 +329,14 @@ export default function SkillsPage() {
                                         >
                                             <Edit3 w-4 h-4 />
                                         </button>
-                                        <button className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors">
-                                            <Trash2 w-4 h-4 />
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleDeleteSkill(skill);
+                                            }}
+                                            className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
+                                        >
+                                            <Trash2 className="w-4 h-4" />
                                         </button>
                                     </div>
                                 </div>

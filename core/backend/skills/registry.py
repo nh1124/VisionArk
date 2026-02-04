@@ -56,6 +56,10 @@ class SkillRegistry:
 
                         try:
                             skill_data = self.parse_skill_file(md_path)
+                            
+                            # ID Resolution: YAML ID > Folder Name
+                            skill_id = skill_data.get('id', skill_id)
+                            
                             name = skill_data.get('name', skill_id)
                             description = skill_data.get('description', '')
                             content = skill_data.get('content', '')

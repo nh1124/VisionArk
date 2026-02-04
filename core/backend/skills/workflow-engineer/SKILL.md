@@ -1,8 +1,10 @@
 ---
+id: "workflow-engineer-v1"
 name: "Workflow Engineer"
 description: "抽象的な目的を具体的なタスクに分解し、LBSに最適なスケジュールでマッピングするスキル"
-id: "workflow-engineer-v1"
 tools: ["create_task", "get_load_on_day", "list_tasks"]
+intents: ["workflow_design", "task_automation"]
+priority: 6
 ---
 
 # Workflow Engineer Procedure

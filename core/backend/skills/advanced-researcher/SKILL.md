@@ -1,8 +1,10 @@
 ---
+id: "advanced-researcher-v1"
 name: "Advanced Researcher"
 description: "多角的な検索とWebコンテンツの解析を行い、構造化された調査レポートを作成するスキル"
-id: "advanced-researcher-v1"
 tools: ["google_search", "read_url_content", "save_artifact"]
+intents: ["comprehensive_research", "deep_dive"]
+priority: 8
 ---
 
 # Advanced Researcher Procedure
