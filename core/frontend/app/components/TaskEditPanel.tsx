@@ -118,10 +118,10 @@ export default function TaskEditPanel({
     const handleSave = async () => {
         if (!editedTask) return;
         setLoading(true);
+        setStatus(null);
         try {
             // Auto-create project if it's a new one
             if (isNewProject && editedTask.context && !availableProjects.includes(editedTask.context)) {
-                setStatus({ type: "success", message: `Creating project "${editedTask.context}"...` });
                 try {
                     await apiFetch("/api/agents/project/create", {
                         method: "POST",
@@ -133,44 +133,12 @@ export default function TaskEditPanel({
                 }
             }
 
-            const payload: any = {
-                task_name: editedTask.task_name,
-                context: editedTask.context,
-                base_load_score: editedTask.base_load_score,
-                active: editedTask.active,
-                notes: editedTask.notes,
-                rule_type: editedTask.rule_type,
-                is_locked: editedTask.is_locked,
-                start_time: editedTask.start_time || null,
-                end_time: editedTask.end_time || null,
-                meta_payload: editedTask.meta_payload || {},
-            };
-
-            // Add rule-specific fields based on current rule_type
-            if (editedTask.rule_type === "ONCE") {
-                payload.due_date = editedTask.due_date;
-            } else if (editedTask.rule_type === "WEEKLY") {
-                payload.mon = editedTask.mon;
-                payload.tue = editedTask.tue;
-                payload.wed = editedTask.wed;
-                payload.thu = editedTask.thu;
-                payload.fri = editedTask.fri;
-                payload.sat = editedTask.sat;
-                payload.sun = editedTask.sun;
-            } else if (editedTask.rule_type === "EVERY_N_DAYS") {
-                payload.interval_days = editedTask.interval_days;
-                payload.anchor_date = editedTask.anchor_date;
-            } else if (editedTask.rule_type === "MONTHLY_DAY") {
-                payload.month_day = editedTask.month_day;
-            } else if (editedTask.rule_type === "MONTHLY_NTH_WEEKDAY") {
-                payload.nth_in_month = editedTask.nth_in_month;
-                payload.weekday_mon1 = editedTask.weekday_mon1;
-            }
-
-            const response = await apiFetch(`/api/lbs/tasks/${editedTask.task_id}`, {
+            // Manual edits from the TaskEditPanel always use force_override=true to ensure changes are applied
+            const url = `/api/lbs/tasks/${editedTask.task_id}?force_override=true`;
+            const response = await apiFetch(url, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload),
+                body: JSON.stringify(editedTask),
             });
 
             if (response.ok) {
@@ -193,17 +161,23 @@ export default function TaskEditPanel({
     };
 
     const handleDelete = async () => {
-        if (!confirm(`Delete task "${editedTask.task_name}"?`)) return;
+        if (!editedTask) return;
+        const confirmed = window.confirm(`Delete task "${editedTask.task_name}"?`);
+        if (!confirmed) return;
 
         setLoading(true);
         try {
-            const response = await apiFetch(`/api/lbs/tasks/${editedTask.task_id}`, {
+            const url = `/api/lbs/tasks/${editedTask.task_id}?force_override=true`;
+            const response = await apiFetch(url, {
                 method: "DELETE",
             });
 
             if (response.ok) {
                 onDelete(editedTask.task_id);
                 onClose();
+            } else {
+                const errorData = await response.json().catch(() => ({ detail: "Failed to delete task" }));
+                alert(errorData.detail || "Failed to delete task");
             }
         } catch (error) {
             console.error("Failed to delete task:", error);
@@ -237,8 +211,6 @@ export default function TaskEditPanel({
         }
     };
 
-    const spokeColor = getSpokeColor(editedTask.context);
-
     const handleAddStep = () => {
         if (!editedTask) return;
         const newStep: Subtask = { id: crypto.randomUUID(), text: "", done: false };
@@ -269,11 +241,15 @@ export default function TaskEditPanel({
         setEditedTask({ ...editedTask, meta_payload: { ...editedTask.meta_payload, steps } });
     };
 
-    const isMyDay = editedTask.meta_payload?.is_my_day || false;
+    const isMyDay = editedTask?.meta_payload?.is_my_day || false;
     const toggleMyDay = () => {
         const meta = editedTask.meta_payload || {};
         setEditedTask({ ...editedTask, meta_payload: { ...meta, is_my_day: !isMyDay } });
     };
+
+    const spokeColor = getSpokeColor(editedTask.context);
+
+    if (!isOpen || !editedTask) return null;
 
     return (
         <>

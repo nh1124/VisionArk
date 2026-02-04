@@ -33,7 +33,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark h-full overflow-hidden" suppressHydrationWarning={true}>
-      <body className={`${inter.variable} ${outfit.variable} font-sans bg-gray-950 text-gray-100 h-full relative overflow-hidden flex flex-col`}>
+      <body className={`${inter.variable} ${outfit.variable} font-sans bg-gray-950 text-gray-100 h-full relative overflow-hidden flex flex-col`} suppressHydrationWarning={true}>
         <AuthProvider>
           <NotificationProvider>
             <ModelProvider>

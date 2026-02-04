@@ -9,10 +9,6 @@ import TaskEditPanel from "../components/TaskEditPanel";
 import TaskCreateModal from "../components/TaskCreateModal";
 import TaskImportModal from "../components/TaskImportModal";
 import {
-    Calendar,
-    ChevronDown,
-    ChevronRight,
-    ChevronLeft,
     Plus,
     RefreshCw,
     CheckCircle2,
@@ -24,7 +20,12 @@ import {
     Upload,
     List,
     CalendarDays,
-    X
+    X,
+    AlarmClock,
+    Calendar,
+    ChevronDown,
+    ChevronRight,
+    ChevronLeft
 } from "lucide-react";
 import { Task } from "./types";
 import HeatMapCalendar from "@/components/HeatMapCalendar";
@@ -45,7 +46,10 @@ export default function UnifiedTasksPage() {
         fetchAllTasks,
         updateTaskStatus,
         calendarTasks,
-        fetchTasks
+        overdueTasks,
+        fetchTasks,
+        fetchOverdueTasks,
+        fetchMonthTasks,
     } = useTaskStore();
 
     // UI Local State
@@ -81,8 +85,18 @@ export default function UnifiedTasksPage() {
     useEffect(() => {
         fetchTasks(targetDate);
         fetchAllTasks();
+        fetchOverdueTasks();
         loadAllProjects();
-    }, [targetDate, fetchTasks, fetchAllTasks]); // Removed activeFilter to prevent redundant/stale fetches on view switch
+
+        // Populate calendarTasks for Planned view
+        const start = new Date();
+        const end = new Date();
+        end.setDate(start.getDate() + 30); // Fetch next 30 days for Planned
+        fetchMonthTasks(
+            start.toISOString().split('T')[0],
+            end.toISOString().split('T')[0]
+        );
+    }, [targetDate, fetchTasks, fetchAllTasks, fetchOverdueTasks, fetchMonthTasks]);
 
     // Handle clicks outside quick add to hide options
     useEffect(() => {
@@ -123,9 +137,11 @@ export default function UnifiedTasksPage() {
             return tasks.filter(t => t.due_date === todayStr);
         } else if (activeFilter === 'my-day') {
             return allTasks.filter(t => t.meta_payload?.is_my_day);
+        } else if (activeFilter === 'overdue') {
+            return overdueTasks.filter(t => t.status !== 'done' && t.status !== 'skipped' && t.status !== 'completed');
         } else if (activeFilter === 'planned') {
-            // "Planned" should show all future tasks from the global list
-            return allTasks.filter(t => t.due_date && t.due_date >= todayStr);
+            // Planned uses calendarTasks which are pre-fetched for the next 14 days
+            return calendarTasks.filter(t => t.due_date && t.due_date > todayStr);
         } else if (activeFilter === 'completed') {
             return allTasks.filter(t => t.status === 'completed' || t.status === 'done' || t.status === 'skipped');
         } else if (activeFilter === 'project' && activeProject) {
@@ -134,7 +150,23 @@ export default function UnifiedTasksPage() {
             return allTasks;
         }
         return tasks;
-    }, [tasks, allTasks, activeFilter, activeProject]);
+    }, [tasks, allTasks, calendarTasks, overdueTasks, activeFilter, activeProject]);
+
+    const groupedTasks = useMemo(() => {
+        if (activeFilter !== 'planned' && activeFilter !== 'overdue') return null;
+
+        const groups: { [key: string]: Task[] } = {};
+        displayTasks.forEach(t => {
+            const d = t.due_date || 'No Date';
+            if (!groups[d]) groups[d] = [];
+            groups[d].push(t);
+        });
+
+        return Object.keys(groups).sort().map(date => ({
+            date,
+            tasks: groups[date]
+        }));
+    }, [displayTasks, activeFilter]);
 
     const pendingTasks = useMemo(() => {
         return displayTasks.filter(t => t.status !== 'done' && t.status !== 'skipped' && t.status !== 'completed');
@@ -152,10 +184,10 @@ export default function UnifiedTasksPage() {
     }, [displayTasks, completedTasksList]);
 
     // Handlers
-    const handleMarkDone = (taskId: string, currentStatus: string) => {
+    const handleMarkDone = (taskId: string, currentStatus: string, date?: string) => {
         const isCompleting = currentStatus !== 'done' && currentStatus !== 'completed';
         const newStatus = isCompleting ? 'done' : 'todo';
-        updateTaskStatus(taskId, newStatus, targetDate);
+        updateTaskStatus(taskId, newStatus, date || targetDate);
 
         if (isCompleting) {
             setIsCompletedCollapsed(false);
@@ -352,21 +384,50 @@ export default function UnifiedTasksPage() {
                                         <p className="text-gray-600 text-sm font-medium">Add a new task from the input below.</p>
                                     </div>
                                 ) : (
-                                    <div className="space-y-1">
-                                        {pendingTasks.map(task => (
-                                            <TaskRow
-                                                key={task.task_id}
-                                                task={task}
-                                                isMobile={!!isMobile}
-                                                onToggle={() => handleMarkDone(task.task_id, task.status || 'todo')}
-                                                onClick={async () => {
-                                                    const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}`);
-                                                    const fullTask = await resp.json();
-                                                    setSelectedTask(fullTask);
-                                                    setPanelOpen(true);
-                                                }}
-                                            />
-                                        ))}
+                                    <div className="space-y-4">
+                                        {groupedTasks ? (
+                                            groupedTasks.map(group => (
+                                                <div key={group.date} className="space-y-1">
+                                                    <div className="flex items-center gap-2 px-3 py-1">
+                                                        <Calendar className="w-3.5 h-3.5 text-gray-500" />
+                                                        <h4 className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+                                                            {group.date === todayStr ? 'Today' : group.date}
+                                                        </h4>
+                                                    </div>
+                                                    {group.tasks.map(task => (
+                                                        <TaskRow
+                                                            key={`${task.task_id}-${task.due_date}`}
+                                                            task={task}
+                                                            isMobile={!!isMobile}
+                                                            onToggle={() => handleMarkDone(task.task_id, task.status || 'todo', task.due_date)}
+                                                            onClick={async () => {
+                                                                const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}`);
+                                                                const fullTask = await resp.json();
+                                                                setSelectedTask({ ...fullTask, due_date: task.due_date });
+                                                                setPanelOpen(true);
+                                                            }}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            ))
+                                        ) : (
+                                            <div className="space-y-1">
+                                                {pendingTasks.map(task => (
+                                                    <TaskRow
+                                                        key={task.task_id}
+                                                        task={task}
+                                                        isMobile={!!isMobile}
+                                                        onToggle={() => handleMarkDone(task.task_id, task.status || 'todo', task.due_date)}
+                                                        onClick={async () => {
+                                                            const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}`);
+                                                            const fullTask = await resp.json();
+                                                            setSelectedTask({ ...fullTask, due_date: task.due_date });
+                                                            setPanelOpen(true);
+                                                        }}
+                                                    />
+                                                ))}
+                                            </div>
+                                        )}
 
                                         {/* Integrated Quick Add Row (Google/MS ToDo style) */}
                                         <div className={`mt-2 bg-gray-900/40 border border-gray-800/50 rounded-xl transition-all duration-300 ${quickAddFocused ? 'bg-gray-900/60 ring-1 ring-blue-500/50 shadow-lg shadow-blue-500/5' : 'hover:bg-gray-900/60'}`} ref={quickAddRef}>
@@ -461,14 +522,14 @@ export default function UnifiedTasksPage() {
                                                     <div className="space-y-1 animate-in fade-in slide-in-from-top-2 duration-300">
                                                         {completedTasksList.map(task => (
                                                             <TaskRow
-                                                                key={task.task_id}
+                                                                key={`${task.task_id}-${task.due_date}`}
                                                                 task={task}
                                                                 isMobile={!!isMobile}
-                                                                onToggle={() => handleMarkDone(task.task_id, task.status || 'todo')}
+                                                                onToggle={() => handleMarkDone(task.task_id, task.status || 'todo', task.due_date)}
                                                                 onClick={async () => {
                                                                     const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}`);
                                                                     const fullTask = await resp.json();
-                                                                    setSelectedTask(fullTask);
+                                                                    setSelectedTask({ ...fullTask, due_date: task.due_date });
                                                                     setPanelOpen(true);
                                                                 }}
                                                             />

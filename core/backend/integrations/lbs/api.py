@@ -234,12 +234,13 @@ async def get_task_history(
 async def update_task(
     task_id: str, 
     task: TaskUpdate, 
+    force_override: bool = Query(False),
     client: LBSClient = Depends(get_lbs_client),
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
     try:
-        res = await client.update_task(task_id, task.model_dump(mode='json', exclude_unset=True))
+        res = await client.update_task(task_id, task.model_dump(mode='json', exclude_unset=True), force_override=force_override)
         
         # Update extension metadata if provided
         task_data = task.model_dump(exclude_unset=True)
@@ -257,23 +258,34 @@ async def update_task(
         return res
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        err_str = str(e)
+        status_code = 500
+        if len(err_str) >= 3 and err_str[:3].isdigit():
+            status_code = int(err_str[:3])
+            err_str = err_str[4:] if len(err_str) > 4 else err_str
+        raise HTTPException(status_code=status_code, detail=err_str)
 
 
 @router.delete("/tasks/{task_id}")
 async def delete_task(
     task_id: str, 
+    force_override: bool = Query(False),
     client: LBSClient = Depends(get_lbs_client),
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
     try:
-        res = await client.delete_task(task_id)
+        res = await client.delete_task(task_id, force_override=force_override)
         # Trigger Export
         await SyncCoordinator.trigger_export(db, identity.user_id, reason="task deletion")
         return res
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        err_str = str(e)
+        status_code = 500
+        if len(err_str) >= 3 and err_str[:3].isdigit():
+            status_code = int(err_str[:3])
+            err_str = err_str[4:] if len(err_str) > 4 else err_str
+        raise HTTPException(status_code=status_code, detail=err_str)
 
 
 @router.post("/tasks/upload-csv")

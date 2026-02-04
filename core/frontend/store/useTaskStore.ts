@@ -2,13 +2,14 @@ import { create } from 'zustand';
 import { Task } from '../app/tasks/types';
 import { apiFetch } from '../lib/api';
 
-export type TaskFilter = 'inbox' | 'today' | 'my-day' | 'planned' | 'completed' | 'project';
+export type TaskFilter = 'inbox' | 'today' | 'my-day' | 'planned' | 'completed' | 'project' | 'overdue';
 export type ViewMode = 'list' | 'calendar' | 'timeline';
 
 interface TaskState {
     tasks: Task[]; // Current view's tasks
     allTasks: Task[]; // Global active tasks for counts
     calendarTasks: Task[]; // Separate storage for month view
+    overdueTasks: Task[]; // Tasks from the past that are still TODO
     loading: boolean;
     error: string | null;
     targetDate: string; // YYYY-MM-DD
@@ -26,6 +27,7 @@ interface TaskState {
     fetchTasks: (date: string) => Promise<void>;
     fetchAllTasks: () => Promise<void>;
     fetchMonthTasks: (startDate: string, endDate: string) => Promise<void>;
+    fetchOverdueTasks: () => Promise<void>;
     updateTaskStatus: (taskId: string, status: string, date: string) => Promise<void>;
     toggleMyDay: (task: Task) => Promise<void>;
     rescheduleTask: (taskId: string, newDate: string) => Promise<void>;
@@ -36,6 +38,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     tasks: [],
     allTasks: [],
     calendarTasks: [],
+    overdueTasks: [],
     loading: false,
     error: null,
     targetDate: new Date().toISOString().split('T')[0],
@@ -92,17 +95,55 @@ export const useTaskStore = create<TaskState>((set, get) => ({
             const resp = await apiFetch(`/api/lbs/schedule?start_date=${startDate}&end_date=${endDate}`);
             const data = await resp.json();
             // Data is Array<{ date: string, tasks: Task[] }>
-            const allTasks: Task[] = [];
+            const flattened: Task[] = [];
+            const allTasks = get().allTasks;
             if (Array.isArray(data)) {
                 data.forEach((day: any) => {
-                    day.tasks?.forEach((t: any) => {
-                        allTasks.push({ ...t, due_date: day.date }); // Ensure due_date is set from schedule day
+                    day.tasks.forEach((t: any) => {
+                        // Try to match with existing task to get full metadata (is_locked, meta_payload)
+                        const definition = allTasks.find(at => at.task_id === t.task_id);
+                        flattened.push({
+                            ...definition, // Spread definition first to get all metadata
+                            ...t,          // Overlay schedule-specific status/times
+                            due_date: day.date // Use the day's date as due_date for schedule tasks
+                        });
                     });
                 });
             }
-            set({ calendarTasks: allTasks, loading: false });
+            set({ calendarTasks: flattened, loading: false });
         } catch (err) {
             set({ error: 'Failed to fetch month tasks', loading: false });
+            console.error(err);
+        }
+    },
+
+    fetchOverdueTasks: async () => {
+        set({ loading: true, error: null });
+        try {
+            const today = new Date();
+            const start = new Date();
+            start.setDate(today.getDate() - 7); // Check last 7 days
+            const startDate = start.toISOString().split('T')[0];
+            const yesterday = new Date();
+            yesterday.setDate(today.getDate() - 1);
+            const endDate = yesterday.toISOString().split('T')[0];
+
+            const resp = await apiFetch(`/api/lbs/schedule?start_date=${startDate}&end_date=${endDate}`);
+            const data = await resp.json();
+
+            const overdue: Task[] = [];
+            if (Array.isArray(data)) {
+                data.forEach((day: any) => {
+                    day.tasks?.forEach((t: any) => {
+                        if (t.status === 'todo') {
+                            overdue.push({ ...t, due_date: day.date });
+                        }
+                    });
+                });
+            }
+            set({ overdueTasks: overdue, loading: false });
+        } catch (err) {
+            set({ error: 'Failed to fetch overdue tasks', loading: false });
             console.error(err);
         }
     },
@@ -124,7 +165,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
                         t.task_id === taskId ? { ...t, status } : t
                     ),
                     calendarTasks: state.calendarTasks.map((t) =>
-                        t.task_id === taskId ? { ...t, status } : t
+                        t.task_id === taskId && t.due_date === date ? { ...t, status } : t
+                    ),
+                    overdueTasks: state.overdueTasks.map((t) =>
+                        t.task_id === taskId && t.due_date === date ? { ...t, status } : t
                     )
                 }));
             }
@@ -135,32 +179,36 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
     toggleMyDay: async (task) => {
         const isMyDay = !task.meta_payload?.is_my_day;
-        const meta_payload = {
-            ...task.meta_payload,
-            is_my_day: isMyDay
-        };
+        const newMeta = { ...task.meta_payload, is_my_day: isMyDay };
 
         try {
-            const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ meta_payload })
+            // Always include force_override=true for pinning as it's a common operation on protected tasks
+            const url = `/api/lbs/tasks/${task.task_id}?force_override=true`;
+            const response = await apiFetch(url, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ meta_payload: newMeta })
             });
-            if (resp.ok) {
+
+            if (response.ok) {
+                // Update local state for both lists
                 set((state) => ({
                     tasks: state.tasks.map((t) =>
-                        t.task_id === task.task_id ? { ...t, meta_payload } : t
+                        t.task_id === task.task_id ? { ...t, meta_payload: { ...t.meta_payload, is_my_day: isMyDay } } : t
                     ),
                     allTasks: state.allTasks.map((t) =>
-                        t.task_id === task.task_id ? { ...t, meta_payload } : t
+                        t.task_id === task.task_id ? { ...t, meta_payload: { ...t.meta_payload, is_my_day: isMyDay } } : t
                     ),
                     calendarTasks: state.calendarTasks.map((t) =>
-                        t.task_id === task.task_id ? { ...t, meta_payload } : t
+                        t.task_id === task.task_id ? { ...t, meta_payload: { ...t.meta_payload, is_my_day: isMyDay } } : t
+                    ),
+                    overdueTasks: state.overdueTasks.map((t) =>
+                        t.task_id === task.task_id ? { ...t, meta_payload: { ...t.meta_payload, is_my_day: isMyDay } } : t
                     )
                 }));
             }
-        } catch (err) {
-            console.error('Failed to toggle My Day:', err);
+        } catch (error) {
+            console.error("Failed to toggle My Day:", error);
         }
     },
 

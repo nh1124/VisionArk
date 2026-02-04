@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { Inbox, Star, Calendar, CheckSquare, Sun, Folder } from "lucide-react";
+import { Inbox, Star, Calendar, CheckSquare, Sun, Folder, AlarmClock } from "lucide-react";
 import { useTaskStore, TaskFilter } from "../store/useTaskStore";
 import { useMemo, useEffect, ReactNode } from "react";
 
@@ -26,6 +26,7 @@ export default function TaskSidebar({ isCollapsed }: TaskSidebarProps) {
             today: pending.filter(t => t.due_date === todayStr).length,
             "my-day": pending.filter(t => t.meta_payload?.is_my_day).length,
             planned: pending.filter(t => t.due_date && t.due_date > todayStr).length,
+            overdue: pending.filter(t => t.due_date && t.due_date < todayStr).length,
         };
     }, [allTasks, todayStr]);
 
@@ -38,6 +39,7 @@ export default function TaskSidebar({ isCollapsed }: TaskSidebarProps) {
         { id: "today", label: "Today", icon: <Sun size={18} />, count: counts.today },
         { id: "my-day", label: "My Day", icon: <Star size={18} />, count: counts["my-day"] },
         { id: "planned", label: "Planned", icon: <Calendar size={18} />, count: counts.planned },
+        { id: "overdue", label: "Overdue", icon: <AlarmClock size={18} />, count: counts.overdue },
         { id: "inbox", label: "Inbox", icon: <Inbox size={18} />, count: counts.inbox },
     ];
 
