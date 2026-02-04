@@ -131,12 +131,10 @@ class Worker:
         await self.manager.update_status(task_id, "processing")
         
         try:
-            from models.database import get_async_engine, get_async_session_maker
-            engine = get_async_engine()
-            async_session_cls = get_async_session_maker(engine)
+            from models.database import AsyncSessionLocal
             
             from types import SimpleNamespace
-            async with async_session_cls() as db_session:
+            async with AsyncSessionLocal() as db_session:
                 context["db_session"] = db_session
                 
                 # Check Registry First (e.g. for "line_reply")

@@ -513,9 +513,17 @@ class FileChunk(Base):
     file = relationship("UploadedFile", back_populates="chunks")
 
 
-# Database setup utilities
+# Global engine instances (Singletons for connection pooling)
+_engine = None
+_async_engine = None
+
 def get_engine(db_url: str = None):
-    """Get database engine - requires DATABASE_URL to be set"""
+    """Get database engine - uses global singleton for connection pooling"""
+    global _engine
+    
+    if _engine is not None:
+        return _engine
+
     if db_url is None:
         from config import settings
         
@@ -526,7 +534,12 @@ def get_engine(db_url: str = None):
             )
         db_url = settings.database_url
     
-    return create_engine(db_url, echo=False)
+    # Convert async URL to sync for regular sqlalchemy engine
+    if db_url.startswith("postgresql+asyncpg://"):
+        db_url = db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+
+    _engine = create_engine(db_url, echo=False, pool_pre_ping=True)
+    return _engine
 
 
 def init_database(database_url: str = None):
@@ -754,14 +767,29 @@ def _run_migrations(engine):
                 print("✅ Migration: Added meta_payload column to tool_usages")
 
 
-def get_session(engine):
-    """Get database session"""
-    SessionLocal = sessionmaker(bind=engine)
-    return SessionLocal()
+# Global sync session maker
+_SessionLocal = None
+
+def get_session(engine=None):
+    """Get database session - uses global singleton sessionmaker"""
+    global _SessionLocal
+    if _SessionLocal is not None and engine is None:
+        return _SessionLocal()
+        
+    if engine is None:
+        engine = get_engine()
+        
+    _SessionLocal = sessionmaker(bind=engine)
+    return _SessionLocal()
 
 
 def get_async_engine(db_url: str = None):
-    """Get async database engine"""
+    """Get async database engine - uses global singleton for connection pooling"""
+    global _async_engine
+    
+    if _async_engine is not None:
+        return _async_engine
+
     if db_url is None:
         from config import settings
         db_url = settings.database_url
@@ -773,21 +801,31 @@ def get_async_engine(db_url: str = None):
     if db_url.startswith("postgresql://") and "+asyncpg" not in db_url:
         db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
         
-    return create_async_engine(db_url, echo=False)
+    _async_engine = create_async_engine(db_url, echo=False, pool_pre_ping=True)
+    return _async_engine
 
 
-def get_async_session_maker(engine):
+# Global async session maker
+_AsyncSessionLocal = None
+
+def get_async_session_maker(engine=None):
     """Get async session maker"""
-    return async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
+    global _AsyncSessionLocal
+    if _AsyncSessionLocal is not None and engine is None:
+        return _AsyncSessionLocal
+        
+    if engine is None:
+        engine = get_async_engine()
+        
+    _AsyncSessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
+    return _AsyncSessionLocal
 
 
 async def get_async_db():
     """FastAPI dependency for async database session"""
-    engine = get_async_engine()
-    async_session = get_async_session_maker(engine)
+    async_session = get_async_session_maker()
     async with async_session() as session:
         yield session
 
-# Create global async session maker for direct usage (non-FastAPI)
-async_engine_global = get_async_engine()
-AsyncSessionLocal = get_async_session_maker(async_engine_global)
+# Initialize global AsyncSessionLocal for legacy usage in worker
+AsyncSessionLocal = get_async_session_maker()

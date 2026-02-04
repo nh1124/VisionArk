@@ -46,8 +46,7 @@ class Identity:
 
 def get_db():
     """Get database session dependency"""
-    engine = get_engine()
-    session = get_session(engine)
+    session = get_session()
     try:
         yield session
     finally:
