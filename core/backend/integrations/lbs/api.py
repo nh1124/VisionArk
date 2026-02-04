@@ -113,7 +113,18 @@ class ExceptionCreate(BaseModel):
     target_date: date
     exception_type: str 
     override_load_value: Optional[float] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
     notes: Optional[str] = None
+    is_locked: bool = False
+
+class ExceptionUpdate(BaseModel):
+    exception_type: Optional[str] = None
+    override_load_value: Optional[float] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    notes: Optional[str] = None
+    is_locked: Optional[bool] = None
 
 
 # Proxy Endpoints
@@ -213,6 +224,19 @@ async def get_task_details(
             res["meta_payload"] = {}
             
         return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/tasks/{task_id}/resolved")
+async def get_resolved_task(
+    task_id: str,
+    target_date: date,
+    lbs: LBSClient = Depends(get_lbs_client)
+):
+    """Get a task instance merged with any date-specific exceptions."""
+    try:
+        return await lbs.get_resolved_task(task_id, target_date)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -330,9 +354,23 @@ async def bulk_update_active(bulk_in: TaskBulkActiveUpdate, client: LBSClient = 
 
 
 @router.post("/exceptions")
-async def create_exception(exc: ExceptionCreate, client: LBSClient = Depends(get_lbs_client)):
+async def create_exception(exc: ExceptionCreate, force_override: bool = Query(True), client: LBSClient = Depends(get_lbs_client)):
     try:
-        return await client.create_exception(exc.model_dump(mode='json'))
+        return await client.create_exception(exc.model_dump(mode='json'), force_override=force_override)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/exceptions/{exception_id}")
+async def update_exception(exception_id: int, exc: ExceptionUpdate, force_override: bool = Query(True), client: LBSClient = Depends(get_lbs_client)):
+    try:
+        return await client.update_exception(exception_id, exc.model_dump(mode='json', exclude_unset=True), force_override=force_override)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/exceptions/{exception_id}")
+async def delete_exception(exception_id: int, force_override: bool = Query(True), client: LBSClient = Depends(get_lbs_client)):
+    try:
+        return await client.delete_exception(exception_id, force_override=force_override)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

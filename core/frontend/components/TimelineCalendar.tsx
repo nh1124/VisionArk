@@ -142,7 +142,7 @@ export default function TimelineCalendar({ targetDate, refreshKey = 0, onTaskCli
                                 {allDayTasks.map(task => (
                                     <div
                                         key={task.task_id}
-                                        onClick={() => onTaskClick?.(task)}
+                                        onClick={() => onTaskClick?.({ ...task, due_date: dateStr })}
                                         className="text-[10px] font-bold px-2 py-1.5 rounded-lg border border-white/5 bg-gray-900/80 cursor-pointer hover:bg-white/10 transition-colors shadow-sm truncate flex items-center gap-2"
                                         style={{ borderLeft: `3px solid ${getSpokeColor(task.context)}` }}
                                         title={task.task_name}
@@ -199,7 +199,7 @@ export default function TimelineCalendar({ targetDate, refreshKey = 0, onTaskCli
                                     return (
                                         <div
                                             key={task.task_id}
-                                            onClick={() => onTaskClick?.(task)}
+                                            onClick={() => onTaskClick?.({ ...task, due_date: dateStr })}
                                             style={{
                                                 top: top + 4,
                                                 height: height - 8,

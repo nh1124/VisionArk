@@ -399,9 +399,9 @@ export default function UnifiedTasksPage() {
                                                             key={`${task.task_id}-${task.due_date}`}
                                                             task={task}
                                                             isMobile={!!isMobile}
-                                                            onToggle={() => handleMarkDone(task.task_id, task.status || 'todo', task.due_date)}
+                                                            onToggle={() => handleMarkDone(task.task_id, task.status || 'todo', task.due_date || undefined)}
                                                             onClick={async () => {
-                                                                const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}`);
+                                                                const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}?target_date=${task.due_date}`);
                                                                 const fullTask = await resp.json();
                                                                 setSelectedTask({ ...fullTask, due_date: task.due_date });
                                                                 setPanelOpen(true);
@@ -417,9 +417,9 @@ export default function UnifiedTasksPage() {
                                                         key={task.task_id}
                                                         task={task}
                                                         isMobile={!!isMobile}
-                                                        onToggle={() => handleMarkDone(task.task_id, task.status || 'todo', task.due_date)}
+                                                        onToggle={() => handleMarkDone(task.task_id, task.status || 'todo', task.due_date || undefined)}
                                                         onClick={async () => {
-                                                            const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}`);
+                                                            const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}?target_date=${task.due_date}`);
                                                             const fullTask = await resp.json();
                                                             setSelectedTask({ ...fullTask, due_date: task.due_date });
                                                             setPanelOpen(true);
@@ -525,9 +525,9 @@ export default function UnifiedTasksPage() {
                                                                 key={`${task.task_id}-${task.due_date}`}
                                                                 task={task}
                                                                 isMobile={!!isMobile}
-                                                                onToggle={() => handleMarkDone(task.task_id, task.status || 'todo', task.due_date)}
+                                                                onToggle={() => handleMarkDone(task.task_id, task.status || 'todo', task.due_date || undefined)}
                                                                 onClick={async () => {
-                                                                    const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}`);
+                                                                    const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}?target_date=${task.due_date}`);
                                                                     const fullTask = await resp.json();
                                                                     setSelectedTask({ ...fullTask, due_date: task.due_date });
                                                                     setPanelOpen(true);
@@ -588,9 +588,9 @@ export default function UnifiedTasksPage() {
                                                         <div
                                                             key={task.task_id}
                                                             onClick={async () => {
-                                                                const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}`);
+                                                                const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}?target_date=${dayDetailsDate}`);
                                                                 const fullTask = await resp.json();
-                                                                setSelectedTask(fullTask);
+                                                                setSelectedTask({ ...fullTask, due_date: dayDetailsDate });
                                                                 setIsDayDetailsOpen(false); // Close focus list before opening edit
                                                                 setPanelOpen(true);
                                                             }}
@@ -635,8 +635,10 @@ export default function UnifiedTasksPage() {
                         ) : (
                             <TimelineCalendar
                                 targetDate={targetDate}
-                                onTaskClick={(task) => {
-                                    setSelectedTask(task);
+                                onTaskClick={async (task) => {
+                                    const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}?target_date=${task.due_date}`);
+                                    const fullTask = await resp.json();
+                                    setSelectedTask({ ...fullTask, due_date: task.due_date });
                                     setPanelOpen(true);
                                 }}
                                 refreshKey={refreshKey}
@@ -659,10 +661,19 @@ export default function UnifiedTasksPage() {
                 onSave={() => {
                     fetchTasks(targetDate);
                     fetchAllTasks();
+                    // Refetch month tasks to update "Planned" view
+                    const start = new Date();
+                    const end = new Date();
+                    end.setDate(start.getDate() + 30);
+                    fetchMonthTasks(start.toISOString().split('T')[0], end.toISOString().split('T')[0]);
                 }}
                 onDelete={() => {
                     fetchTasks(targetDate);
                     fetchAllTasks();
+                    const start = new Date();
+                    const end = new Date();
+                    end.setDate(start.getDate() + 30);
+                    fetchMonthTasks(start.toISOString().split('T')[0], end.toISOString().split('T')[0]);
                 }}
                 availableProjects={availableProjects}
             />

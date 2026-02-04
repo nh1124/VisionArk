@@ -32,6 +32,7 @@ interface TaskState {
     toggleMyDay: (task: Task) => Promise<void>;
     rescheduleTask: (taskId: string, newDate: string) => Promise<void>;
     updateTask: (taskId: string, data: Partial<Task>) => Promise<void>;
+    createException: (taskId: string, targetDate: string, exceptionType: string, overrideData: Partial<Task>) => Promise<void>;
 }
 
 export const useTaskStore = create<TaskState>((set, get) => ({
@@ -105,6 +106,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
                         flattened.push({
                             ...definition, // Spread definition first to get all metadata
                             ...t,          // Overlay schedule-specific status/times
+                            base_load_score: t.load ?? definition?.base_load_score, // Ensure overridden load is used for UI slider
                             due_date: day.date // Use the day's date as due_date for schedule tasks
                         });
                     });
@@ -254,6 +256,44 @@ export const useTaskStore = create<TaskState>((set, get) => ({
             }
         } catch (err) {
             console.error('Failed to update task:', err);
+        }
+    },
+
+    createException: async (taskId, targetDate, exceptionType, overrideData) => {
+        try {
+            const payload = {
+                task_id: taskId,
+                target_date: targetDate,
+                exception_type: exceptionType,
+                override_load_value: overrideData.base_load_score,
+                start_time: overrideData.start_time,
+                end_time: overrideData.end_time,
+                notes: overrideData.notes
+            };
+
+            const resp = await apiFetch('/api/lbs/exceptions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (resp.ok) {
+                // After creating an exception, we should refetch the task for that date to get the "resolved" state
+                const resolveResp = await apiFetch(`/api/lbs/tasks/${taskId}/resolved?target_date=${targetDate}`);
+                if (resolveResp.ok) {
+                    const resolvedTask = await resolveResp.json();
+                    set((state) => ({
+                        tasks: state.tasks.map((t) =>
+                            t.task_id === taskId ? { ...t, ...resolvedTask } : t
+                        ),
+                        calendarTasks: state.calendarTasks.map((t) =>
+                            t.task_id === taskId ? { ...t, ...resolvedTask } : t
+                        )
+                    }));
+                }
+            }
+        } catch (err) {
+            console.error('Failed to create exception:', err);
         }
     }
 }));

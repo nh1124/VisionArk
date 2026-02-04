@@ -67,6 +67,7 @@ export default function TaskEditPanel({
     const [isNewProject, setIsNewProject] = useState(false);
     const [loading, setLoading] = useState(false);
     const [status, setStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
+    const [applyToInstanceOnly, setApplyToInstanceOnly] = useState(false);
 
     const [history, setHistory] = useState<any[]>([]);
     const [historyLoading, setHistoryLoading] = useState(false);
@@ -93,15 +94,16 @@ export default function TaskEditPanel({
         if (task && isOpen) {
             setLoading(true);
             setIsNewProject(false);
-            const today = new Date().toISOString().split('T')[0];
-            // Fetch full task details including today's status
-            apiFetch(`/api/lbs/tasks/${task.task_id}?target_date=${today}`)
+            setApplyToInstanceOnly(false); // Reset toggle when opening new task
+            const targetDate = task.due_date || new Date().toISOString().split('T')[0];
+            // Fetch full task details including the status for the specific date
+            apiFetch(`/api/lbs/tasks/${task.task_id}?target_date=${targetDate}`)
                 .then(res => {
                     if (!res.ok) throw new Error("Failed to load task details");
                     return res.json();
                 })
                 .then(data => {
-                    setEditedTask(data);
+                    setEditedTask({ ...data, due_date: data.due_date || targetDate });
                 })
                 .catch(err => {
                     console.error("Failed to load task details:", err);
@@ -134,17 +136,54 @@ export default function TaskEditPanel({
             }
 
             // Manual edits from the TaskEditPanel always use force_override=true to ensure changes are applied
-            const url = `/api/lbs/tasks/${editedTask.task_id}?force_override=true`;
-            const response = await apiFetch(url, {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(editedTask),
-            });
+            const isRecurring = editedTask.rule_type !== 'ONCE';
+
+            let response;
+            if (applyToInstanceOnly && isRecurring) {
+                // Determine exception type
+                let exceptionType = "OVERRIDE_LOAD";
+                // If only time changed, could be RESCHEDULE, but OVERRIDE_LOAD is safer for general property overrides in LBS
+
+                const targetDate = editedTask.due_date || new Date().toISOString().split('T')[0];
+                const exceptionPayload = {
+                    task_id: editedTask.task_id,
+                    target_date: targetDate,
+                    exception_type: exceptionType,
+                    override_load_value: editedTask.base_load_score,
+                    start_time: editedTask.start_time,
+                    end_time: editedTask.end_time,
+                    notes: editedTask.notes
+                };
+
+                response = await apiFetch("/api/lbs/exceptions?force_override=true", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(exceptionPayload),
+                });
+            } else {
+                const url = `/api/lbs/tasks/${editedTask.task_id}?force_override=true`;
+                response = await apiFetch(url, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(editedTask),
+                });
+            }
 
             if (response.ok) {
-                setStatus({ type: "success", message: "Task updated successfully!" });
+                setStatus({ type: "success", message: applyToInstanceOnly ? "Occurrence updated successfully!" : "Task updated successfully!" });
+
+                // If it was an exception, we might want to get the "resolved" task for the callback
+                let finalTask = editedTask;
+                if (applyToInstanceOnly && isRecurring) {
+                    const targetDate = editedTask.due_date || new Date().toISOString().split('T')[0];
+                    const resolveResp = await apiFetch(`/api/lbs/tasks/${editedTask.task_id}/resolved?target_date=${targetDate}`);
+                    if (resolveResp.ok) {
+                        finalTask = await resolveResp.json();
+                    }
+                }
+
                 setTimeout(() => {
-                    onSave(editedTask);
+                    onSave(finalTask);
                     onClose();
                     setStatus(null);
                 }, 1000);
@@ -167,14 +206,34 @@ export default function TaskEditPanel({
 
         setLoading(true);
         try {
-            const url = `/api/lbs/tasks/${editedTask.task_id}?force_override=true`;
-            const response = await apiFetch(url, {
-                method: "DELETE",
-            });
+            const isRecurring = editedTask.rule_type !== 'ONCE';
+            let response;
+
+            if (applyToInstanceOnly && isRecurring) {
+                const targetDate = editedTask.due_date || new Date().toISOString().split('T')[0];
+                const exceptionPayload = {
+                    task_id: editedTask.task_id,
+                    target_date: targetDate,
+                    exception_type: "SKIP"
+                };
+                response = await apiFetch("/api/lbs/exceptions?force_override=true", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(exceptionPayload),
+                });
+            } else {
+                const url = `/api/lbs/tasks/${editedTask.task_id}?force_override=true`;
+                response = await apiFetch(url, {
+                    method: "DELETE",
+                });
+            }
 
             if (response.ok) {
-                onDelete(editedTask.task_id);
-                onClose();
+                setStatus({ type: "success", message: applyToInstanceOnly ? "Occurrence skipped successfully!" : "Task deleted successfully!" });
+                setTimeout(() => {
+                    onDelete(editedTask.task_id);
+                    onClose();
+                }, 1000);
             } else {
                 const errorData = await response.json().catch(() => ({ detail: "Failed to delete task" }));
                 alert(errorData.detail || "Failed to delete task");
@@ -190,11 +249,11 @@ export default function TaskEditPanel({
         if (!editedTask) return;
         setLoading(true);
         try {
-            const today = new Date().toISOString().split('T')[0];
+            const targetDate = editedTask.due_date || new Date().toISOString().split('T')[0];
             const response = await apiFetch(`/api/lbs/tasks/${editedTask.task_id}/complete`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ target_date: today, status }),
+                body: JSON.stringify({ target_date: targetDate, status }),
             });
 
             if (response.ok) {
@@ -717,21 +776,42 @@ export default function TaskEditPanel({
                 </div >
 
                 {/* Footer Actions */}
-                < div className="sticky bottom-0 bg-gray-900 border-t border-gray-800 p-6 flex gap-3" >
-                    <button
-                        onClick={handleSave}
-                        disabled={loading}
-                        className="flex-1 bg-purple-500 hover:bg-purple-600 disabled:bg-gray-700 px-6 py-3 rounded-lg font-medium transition-colors"
-                    >
-                        {loading ? "Saving..." : "Save Changes"}
-                    </button>
-                    <button
-                        onClick={handleDelete}
-                        disabled={loading}
-                        className="px-6 py-3 bg-red-500/20 border border-red-500 text-red-400 hover:bg-red-500/30 rounded-lg font-medium transition-colors"
-                    >
-                        Delete
-                    </button>
+                < div className="sticky bottom-0 bg-gray-900 border-t border-gray-800 p-6 flex flex-col gap-4" >
+                    {editedTask.rule_type !== 'ONCE' && (
+                        <div className="flex items-center justify-between bg-gray-800/50 p-3 rounded-lg border border-gray-700">
+                            <div className="flex items-center gap-3">
+                                <div className={`p-1.5 rounded-md ${applyToInstanceOnly ? 'bg-purple-500/20 text-purple-400' : 'bg-gray-700 text-gray-400'}`}>
+                                    <Sparkles size={16} />
+                                </div>
+                                <div className="text-left">
+                                    <div className="text-sm font-medium text-gray-200">Apply to this occurrence only</div>
+                                    <div className="text-xs text-gray-400">Creates an exception for {editedTask.due_date}</div>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setApplyToInstanceOnly(!applyToInstanceOnly)}
+                                className={`w-10 h-5 rounded-full transition-colors relative ${applyToInstanceOnly ? 'bg-purple-500' : 'bg-gray-600'}`}
+                            >
+                                <div className={`absolute top-1 w-3 h-3 rounded-full bg-white transition-all ${applyToInstanceOnly ? 'left-6' : 'left-1'}`} />
+                            </button>
+                        </div>
+                    )}
+                    <div className="flex gap-3">
+                        <button
+                            onClick={handleSave}
+                            disabled={loading}
+                            className="flex-1 bg-purple-500 hover:bg-purple-600 disabled:bg-gray-700 px-6 py-3 rounded-lg font-medium transition-colors"
+                        >
+                            {loading ? "Saving..." : applyToInstanceOnly ? "Update Occurrence" : "Save Changes"}
+                        </button>
+                        <button
+                            onClick={handleDelete}
+                            disabled={loading}
+                            className="px-6 py-3 bg-red-500/20 border border-red-500 text-red-400 hover:bg-red-500/30 rounded-lg font-medium transition-colors"
+                        >
+                            {applyToInstanceOnly ? "Skip Instance" : "Delete"}
+                        </button>
+                    </div>
                 </div >
             </div >
         </>

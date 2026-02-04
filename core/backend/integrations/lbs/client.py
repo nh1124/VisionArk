@@ -144,6 +144,26 @@ class LBSClient:
         """Get profile details."""
         return await self._request("GET", "users/me")
 
+    def _resolve_task_mapping(self, task: Dict, overlay: Dict) -> Dict:
+        """Helper to map LBS instance fields to VisionArk task fields."""
+        if not overlay:
+            return task
+            
+        # Map instance-specific load to base_load_score for UI consistency
+        if "load" in overlay:
+            task["base_load_score"] = overlay["load"]
+            
+        # Map other common fields
+        if "status" in overlay: task["status"] = overlay["status"]
+        if "start_time" in overlay: task["start_time"] = overlay["start_time"]
+        if "end_time" in overlay: task["end_time"] = overlay["end_time"]
+        if "is_locked" in overlay: task["is_locked"] = overlay["is_locked"]
+        if "has_exception" in overlay: task["has_exception"] = overlay["has_exception"]
+        if "exception_type" in overlay: task["exception_type"] = overlay["exception_type"]
+        if "target_date" in overlay: task["due_date"] = overlay["target_date"]
+        
+        return task
+
     # --- Task Operations ---
 
     async def list_tasks(self, context: Optional[str] = None, active: Optional[bool] = None, target_date: Optional[Union[date, str]] = None) -> List[Dict]:
@@ -172,22 +192,15 @@ class LBSClient:
                                 tid = t.get("task_id")
                                 if tid:
                                     scheduled_task_ids.add(tid)
-                                    task_overlay[tid] = {
-                                        "status": t.get("status", "todo"),
-                                        "load": t.get("load"),
-                                        "start_time": t.get("start_time"),
-                                        "end_time": t.get("end_time"),
-                                        "is_locked": t.get("is_locked", False),
-                                        "has_exception": t.get("has_exception", False),
-                                        "exception_type": t.get("exception_type")
-                                    }
+                                    t["target_date"] = t_date_str
+                                    task_overlay[tid] = t
                 
                 filtered_tasks = []
                 for task in all_tasks:
                     tid = task.get("task_id")
                     if tid in scheduled_task_ids:
                         overlay = task_overlay.get(tid, {})
-                        task.update(overlay)
+                        self._resolve_task_mapping(task, overlay)
                         filtered_tasks.append(task)
                 return filtered_tasks
             except Exception as e:
@@ -205,18 +218,22 @@ class LBSClient:
         
         task = await self._request("GET", f"tasks/{task_id}", params=params)
         
-        # Compatibility: if target_date was provided but status not in response, try to fetch it
-        if target_date and "status" not in task:
+        if target_date:
             t_date_str = target_date.isoformat() if isinstance(target_date, date) else target_date
             try:
+                # Manually fetch schedule to get exception-adjusted data
                 schedule = await self.get_schedule(t_date_str, t_date_str)
-                for day_data in schedule:
-                    if day_data.get("date") == t_date_str:
-                        for t in day_data.get("tasks", []):
-                            if t.get("task_id") == task_id:
-                                task["status"] = t.get("status", "todo")
-                                break
-            except: pass
+                if schedule and isinstance(schedule, list):
+                    for day_data in schedule:
+                        if day_data.get("date") == t_date_str:
+                            for t in day_data.get("tasks", []):
+                                if t.get("task_id") == task_id:
+                                    t["target_date"] = t_date_str
+                                    self._resolve_task_mapping(task, t)
+                                    break
+            except Exception as e:
+                import logging
+                logging.warning(f"Failed to resolve task {task_id} for {t_date_str}: {e}")
             
         return task
 
@@ -348,7 +365,9 @@ class LBSClient:
         params = {
             "target_date": target_date.isoformat() if isinstance(target_date, date) else target_date
         }
-        return await self._request("GET", f"tasks/{task_id}/resolved", params=params)
+        res = await self._request("GET", f"tasks/{task_id}/resolved", params=params)
+        # Apply same mapping to the resolved response
+        return self._resolve_task_mapping(res, res)
 
     async def create_exception(self, exception_data: Dict, force_override: bool = False) -> Dict:
         """Register a task exception."""
