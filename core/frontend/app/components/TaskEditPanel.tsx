@@ -103,7 +103,11 @@ export default function TaskEditPanel({
                     return res.json();
                 })
                 .then(data => {
-                    setEditedTask({ ...data, due_date: data.due_date || targetDate });
+                    setEditedTask({
+                        ...task, // Keep original data as fallback
+                        ...data,
+                        due_date: data.due_date || targetDate
+                    });
                 })
                 .catch(err => {
                     console.error("Failed to load task details:", err);
@@ -346,7 +350,7 @@ export default function TaskEditPanel({
                         </label>
                         <input
                             type="text"
-                            value={editedTask.task_name}
+                            value={editedTask.task_name || ""}
                             onChange={(e) =>
                                 setEditedTask({ ...editedTask, task_name: e.target.value })
                             }
@@ -377,7 +381,7 @@ export default function TaskEditPanel({
                             <div className="flex gap-2">
                                 <input
                                     type="text"
-                                    value={editedTask.context}
+                                    value={editedTask.context || ""}
                                     onChange={(e) =>
                                         setEditedTask({ ...editedTask, context: e.target.value })
                                     }
@@ -435,7 +439,7 @@ export default function TaskEditPanel({
                             min="0"
                             max="10"
                             step="0.5"
-                            value={editedTask.base_load_score}
+                            value={editedTask.base_load_score ?? 1.0}
                             onChange={(e) =>
                                 setEditedTask({
                                     ...editedTask,

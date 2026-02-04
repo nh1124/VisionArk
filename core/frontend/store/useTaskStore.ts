@@ -16,23 +16,8 @@ interface TaskState {
     viewMode: ViewMode;
     activeFilter: TaskFilter;
     activeProject: string | null;
-    selectedTaskId: string | null;
-
-    // Actions
-    setTargetDate: (date: string) => void;
-    setViewMode: (mode: ViewMode) => void;
-    setActiveFilter: (filter: TaskFilter, project?: string | null) => void;
-    setSelectedTaskId: (id: string | null) => void;
-
-    fetchTasks: (date: string) => Promise<void>;
-    fetchAllTasks: () => Promise<void>;
-    fetchMonthTasks: (startDate: string, endDate: string) => Promise<void>;
-    fetchOverdueTasks: () => Promise<void>;
-    updateTaskStatus: (taskId: string, status: string, date: string) => Promise<void>;
-    toggleMyDay: (task: Task) => Promise<void>;
-    rescheduleTask: (taskId: string, newDate: string) => Promise<void>;
-    updateTask: (taskId: string, data: Partial<Task>) => Promise<void>;
-    createException: (taskId: string, targetDate: string, exceptionType: string, overrideData: Partial<Task>) => Promise<void>;
+    integrations: { id: string, label: string, active: boolean }[];
+    toggleIntegration: (id: string) => void;
 }
 
 export const useTaskStore = create<TaskState>((set, get) => ({
@@ -46,7 +31,18 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     viewMode: 'list',
     activeFilter: 'inbox',
     activeProject: null,
-    selectedTaskId: null,
+    integrations: [
+        { id: "google", label: "Google Calendar", active: true },
+        { id: "outlook", label: "Outlook", active: false },
+    ],
+
+    toggleIntegration: (id) => {
+        set((state) => ({
+            integrations: state.integrations.map(ext =>
+                ext.id === id ? { ...ext, active: !ext.active } : ext
+            )
+        }));
+    },
 
     setTargetDate: (date) => {
         set({ targetDate: date });
@@ -72,9 +68,14 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         try {
             const resp = await apiFetch(`/api/lbs/tasks?target_date=${date}&active=true`);
             const data = await resp.json();
-            set({ tasks: Array.isArray(data) ? data : [], loading: false });
-        } catch (err) {
-            set({ error: 'Failed to fetch tasks', loading: false });
+            // Backend already standardizes, but safety check here
+            const standardized = Array.isArray(data) ? data.map((t: any) => ({
+                ...t,
+                task_id: t.task_id || t.id
+            })) : [];
+            set({ tasks: standardized, loading: false });
+        } catch (err: any) {
+            set({ error: err.message, loading: false });
             console.error(err);
         }
     },
@@ -84,8 +85,12 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         try {
             const resp = await apiFetch(`/api/lbs/tasks?active=true`);
             const data = await resp.json();
-            set({ allTasks: Array.isArray(data) ? data : [] });
-        } catch (err) {
+            const standardized = Array.isArray(data) ? data.map((t: any) => ({
+                ...t,
+                task_id: t.task_id || t.id
+            })) : [];
+            set({ allTasks: standardized });
+        } catch (err: any) {
             console.error('Failed to fetch all tasks:', err);
         }
     },
@@ -99,6 +104,8 @@ export const useTaskStore = create<TaskState>((set, get) => ({
             const flattened: Task[] = [];
             const allTasks = get().allTasks;
             if (Array.isArray(data)) {
+                const fetchedDates = new Set(data.map((day: any) => day.date));
+
                 data.forEach((day: any) => {
                     day.tasks.forEach((t: any) => {
                         // Try to match with existing task to get full metadata (is_locked, meta_payload)
@@ -111,8 +118,17 @@ export const useTaskStore = create<TaskState>((set, get) => ({
                         });
                     });
                 });
+
+                set((state) => ({
+                    calendarTasks: [
+                        ...state.calendarTasks.filter(t => !fetchedDates.has(t.due_date)),
+                        ...flattened
+                    ],
+                    loading: false
+                }));
+            } else {
+                set({ loading: false });
             }
-            set({ calendarTasks: flattened, loading: false });
         } catch (err) {
             set({ error: 'Failed to fetch month tasks', loading: false });
             console.error(err);
@@ -122,31 +138,12 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     fetchOverdueTasks: async () => {
         set({ loading: true, error: null });
         try {
-            const today = new Date();
-            const start = new Date();
-            start.setDate(today.getDate() - 7); // Check last 7 days
-            const startDate = start.toISOString().split('T')[0];
-            const yesterday = new Date();
-            yesterday.setDate(today.getDate() - 1);
-            const endDate = yesterday.toISOString().split('T')[0];
-
-            const resp = await apiFetch(`/api/lbs/schedule?start_date=${startDate}&end_date=${endDate}`);
+            const resp = await apiFetch(`/api/lbs/overdue`);
             const data = await resp.json();
-
-            const overdue: Task[] = [];
-            if (Array.isArray(data)) {
-                data.forEach((day: any) => {
-                    day.tasks?.forEach((t: any) => {
-                        if (t.status === 'todo') {
-                            overdue.push({ ...t, due_date: day.date });
-                        }
-                    });
-                });
-            }
-            set({ overdueTasks: overdue, loading: false });
-        } catch (err) {
-            set({ error: 'Failed to fetch overdue tasks', loading: false });
-            console.error(err);
+            // data is now a flat list of fully merged Task objects
+            set({ overdueTasks: data, loading: false });
+        } catch (err: any) {
+            set({ error: err.message, loading: false });
         }
     },
 

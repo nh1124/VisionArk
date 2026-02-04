@@ -179,26 +179,129 @@ async def list_tasks(
     import logging
     logger = logging.getLogger(__name__)
     try:
-        logger.info(f"list_tasks called: context={context}, active={active}, target_date={target_date}")
-        result = await lbs.list_tasks(context=context, active=active, target_date=target_date)
+        # 1. Fetch task definitions
+        all_tasks = await lbs.list_tasks(context=context, active=active)
         
-        # Merge extension data
+        # 2. Optionally merge with schedule data for the target_date
+        result = all_tasks
+        if target_date:
+            t_date_str = target_date.isoformat()
+            schedule = await lbs.get_schedule(target_date, target_date)
+            
+            instance_map = {}
+            if schedule and isinstance(schedule, list):
+                for day in schedule:
+                    if day.get("date") == t_date_str:
+                        for t in day.get("tasks", []):
+                            tid = str(t.get("task_id") or t.get("id"))
+                            if tid:
+                                instance_map[tid] = t
+
+            filtered_tasks = []
+            for task in all_tasks:
+                tid = str(task.get("id") or task.get("task_id"))
+                if tid in instance_map:
+                    overlay = instance_map[tid]
+                    # Merge status and metadata
+                    if "load" in overlay: task["base_load_score"] = overlay["load"]
+                    if "status" in overlay: task["status"] = overlay["status"]
+                    if "start_time" in overlay: task["start_time"] = overlay["start_time"]
+                    if "end_time" in overlay: task["end_time"] = overlay["end_time"]
+                    if "is_locked" in overlay: task["is_locked"] = overlay["is_locked"]
+                    task["due_date"] = t_date_str
+                    # Standardize task_id for frontend
+                    task["task_id"] = tid
+                    filtered_tasks.append(task)
+            result = filtered_tasks
+        else:
+            # Standardize task_id even when not merging
+            for task in result:
+                task["task_id"] = str(task.get("id") or task.get("task_id"))
+
+        # 3. Merge VisionArk-specific extension data
         if result and isinstance(result, list):
-            task_ids = [t["id"] for t in result if "id" in t]
+            task_ids = [t.get("task_id") for t in result if t.get("task_id")]
             if task_ids:
                 ext_res = await db.execute(select(LBSTaskExtension).filter(LBSTaskExtension.lbs_task_id.in_(task_ids)))
                 ext_map = {e.lbs_task_id: e.meta_payload for e in ext_res.scalars().all()}
                 
                 for task in result:
-                    if task["id"] in ext_map:
-                        task["meta_payload"] = ext_map[task["id"]]
-                    else:
-                        task["meta_payload"] = {}
+                    task["meta_payload"] = ext_map.get(task.get("task_id"), {})
 
-        logger.info(f"list_tasks returning {len(result)} tasks")
         return result
     except Exception as e:
         logger.exception(f"list_tasks failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/overdue")
+async def get_overdue_tasks_api(
+    client: LBSClient = Depends(get_lbs_client),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """
+    Look back 60 days and return tasks that were missed (status=todo).
+    Merges with full task definitions and VisionArk extensions.
+    """
+    try:
+        from datetime import timedelta
+        end_date = date.today()
+        start_date = end_date - timedelta(days=60)
+        
+        # 1. Fetch missed instances from schedule
+        # The user confirmed get_schedule includes 'todo' status by default
+        schedule = await client.get_schedule(start_date, end_date)
+        
+        missed_instances = []
+        if schedule and isinstance(schedule, list):
+            for day in schedule:
+                d_str = day.get("date")
+                # Overdue = past tasks. Today's tasks are NOT overdue yet.
+                if d_str == end_date.isoformat():
+                    continue
+                    
+                for t in day.get("tasks", []):
+                    if t.get("status") == "todo":
+                        t["due_date"] = d_str
+                        missed_instances.append(t)
+        
+        if not missed_instances:
+            return []
+            
+        # 2. Fetch all definitions to enrich data
+        all_defs = await client.list_tasks()
+        def_map = { str(d.get("task_id") or d.get("id")): d for d in all_defs }
+        
+        # 3. Fetch extensions
+        task_ids = list(set([str(t.get("task_id") or t.get("id")) for t in missed_instances]))
+        ext_res = await db.execute(select(LBSTaskExtension).filter(LBSTaskExtension.lbs_task_id.in_(task_ids)))
+        ext_map = { e.lbs_task_id: e.meta_payload for e in ext_res.scalars().all() }
+        
+        # 4. Merge results
+        overdue_tasks = []
+        for instance in missed_instances:
+            tid = str(instance.get("task_id") or instance.get("id"))
+            definition = def_map.get(tid, {})
+            
+            # Combine: 1. Definition (base) 2. Instance (status/time) 3. Extension (VA meta)
+            merged = {
+                **definition,
+                **instance,
+                "task_id": tid,
+                "meta_payload": ext_map.get(tid, {})
+            }
+            # Instance 'load' should map to 'base_load_score' in VA frontend
+            if "load" in instance:
+                merged["base_load_score"] = instance["load"]
+            elif "base_load_score" not in merged and "load" in definition:
+                merged["base_load_score"] = definition["load"]
+                
+            overdue_tasks.append(merged)
+            
+        return overdue_tasks
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception(f"get_overdue_tasks failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -214,17 +317,41 @@ async def get_task_details(
     If target_date is provided, returns context-specific status for that date.
     """
     try:
-        res = await lbs.get_task(task_id, target_date=target_date)
+        # 1. Fetch definition
+        task = await lbs.get_task(task_id)
         
-        # Merge extension data
-        ext = await db.get(LBSTaskExtension, task_id)
-        if ext:
-            res["meta_payload"] = ext.meta_payload
-        else:
-            res["meta_payload"] = {}
+        # Ensure task has a consistent ID and basic fields to avoid frontend crashes
+        task["task_id"] = str(task.get("id") or task.get("task_id") or task_id)
+        task.setdefault("task_name", "Untitled Task")
+        task.setdefault("context", "inbox")
+        task.setdefault("status", "planned")
+        task.setdefault("base_load_score", 1.0)
+        
+        # 2. Optionally merge with date-specific details
+        if target_date:
+            t_date_str = target_date.isoformat()
+            schedule = await lbs.get_schedule(target_date, target_date)
+            if schedule and isinstance(schedule, list):
+                for day in schedule:
+                    if day.get("date") == t_date_str:
+                        # Robust matching using string conversion
+                        overlay = next((t for t in day.get("tasks", []) if (str(t.get("task_id") or t.get("id")) == str(task_id))), None)
+                        if overlay:
+                            if "load" in overlay: task["base_load_score"] = overlay["load"]
+                            if "status" in overlay: task["status"] = overlay["status"]
+                            if "start_time" in overlay: task["start_time"] = overlay["start_time"]
+                            if "end_time" in overlay: task["end_time"] = overlay["end_time"]
+                            if "is_locked" in overlay: task["is_locked"] = overlay["is_locked"]
+                            task["due_date"] = t_date_str
+        
+        # 3. Merge extension data
+        ext = await db.get(LBSTaskExtension, task["task_id"])
+        task["meta_payload"] = ext.meta_payload if ext else {}
             
-        return res
+        return task
     except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception(f"get_task_details failed for {task_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

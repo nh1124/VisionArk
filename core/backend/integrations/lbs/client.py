@@ -144,98 +144,20 @@ class LBSClient:
         """Get profile details."""
         return await self._request("GET", "users/me")
 
-    def _resolve_task_mapping(self, task: Dict, overlay: Dict) -> Dict:
-        """Helper to map LBS instance fields to VisionArk task fields."""
-        if not overlay:
-            return task
-            
-        # Map instance-specific load to base_load_score for UI consistency
-        if "load" in overlay:
-            task["base_load_score"] = overlay["load"]
-            
-        # Map other common fields
-        if "status" in overlay: task["status"] = overlay["status"]
-        if "start_time" in overlay: task["start_time"] = overlay["start_time"]
-        if "end_time" in overlay: task["end_time"] = overlay["end_time"]
-        if "is_locked" in overlay: task["is_locked"] = overlay["is_locked"]
-        if "has_exception" in overlay: task["has_exception"] = overlay["has_exception"]
-        if "exception_type" in overlay: task["exception_type"] = overlay["exception_type"]
-        if "target_date" in overlay: task["due_date"] = overlay["target_date"]
-        
-        return task
 
     # --- Task Operations ---
 
-    async def list_tasks(self, context: Optional[str] = None, active: Optional[bool] = None, target_date: Optional[Union[date, str]] = None) -> List[Dict]:
-        """
-        List task definitions.
-        If target_date is provided, merges daily status from schedule.
-        """
+    async def list_tasks(self, context: Optional[str] = None, active: Optional[bool] = None) -> List[Dict]:
+        """List task definitions."""
         params = {}
         if context: params["context"] = context
         if active is not None: params["active"] = str(active).lower()
         
-        all_tasks = await self._request("GET", "tasks", params=params)
+        return await self._request("GET", "tasks", params=params)
 
-        if target_date:
-            t_date_str = target_date.isoformat() if isinstance(target_date, date) else target_date
-            try:
-                # Fetch schedule for that specific day to get statuses and overrides
-                schedule = await self.get_schedule(t_date_str, t_date_str)
-                task_overlay = {}
-                scheduled_task_ids = set()
-                
-                if schedule and isinstance(schedule, list):
-                    for day_data in schedule:
-                        if day_data.get("date") == t_date_str:
-                            for t in day_data.get("tasks", []):
-                                tid = t.get("task_id")
-                                if tid:
-                                    scheduled_task_ids.add(tid)
-                                    t["target_date"] = t_date_str
-                                    task_overlay[tid] = t
-                
-                filtered_tasks = []
-                for task in all_tasks:
-                    tid = task.get("task_id")
-                    if tid in scheduled_task_ids:
-                        overlay = task_overlay.get(tid, {})
-                        self._resolve_task_mapping(task, overlay)
-                        filtered_tasks.append(task)
-                return filtered_tasks
-            except Exception as e:
-                import logging
-                logging.warning(f"Failed to fetch schedule for {t_date_str}: {e}")
-                return []
-        
-        return all_tasks
-
-    async def get_task(self, task_id: str, target_date: Optional[Union[date, str]] = None) -> Dict:
-        """Get task details, optionally with status for a specific date."""
-        params = {}
-        if target_date:
-            params["target_date"] = target_date.isoformat() if isinstance(target_date, date) else target_date
-        
-        task = await self._request("GET", f"tasks/{task_id}", params=params)
-        
-        if target_date:
-            t_date_str = target_date.isoformat() if isinstance(target_date, date) else target_date
-            try:
-                # Manually fetch schedule to get exception-adjusted data
-                schedule = await self.get_schedule(t_date_str, t_date_str)
-                if schedule and isinstance(schedule, list):
-                    for day_data in schedule:
-                        if day_data.get("date") == t_date_str:
-                            for t in day_data.get("tasks", []):
-                                if t.get("task_id") == task_id:
-                                    t["target_date"] = t_date_str
-                                    self._resolve_task_mapping(task, t)
-                                    break
-            except Exception as e:
-                import logging
-                logging.warning(f"Failed to resolve task {task_id} for {t_date_str}: {e}")
-            
-        return task
+    async def get_task(self, task_id: str) -> Dict:
+        """Get task details."""
+        return await self._request("GET", f"tasks/{task_id}")
 
     async def create_task(self, task_data: Dict) -> Dict:
         """Create a new task."""

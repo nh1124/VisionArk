@@ -312,7 +312,7 @@ export default function UnifiedTasksPage() {
                                 <h1 className={`${isMobile ? 'text-base' : 'text-lg'} font-medium text-white whitespace-nowrap min-w-[200px] sm:min-w-[300px]`}>
                                     {viewMode === 'calendar'
                                         ? currentMonth.toLocaleString('en-US', { month: 'long', year: 'numeric' })
-                                        : formatDateHeader(targetDate)
+                                        : activeFilter === 'today' ? formatDateHeader(targetDate) : ""
                                     }
                                 </h1>
                             </div>
@@ -362,26 +362,13 @@ export default function UnifiedTasksPage() {
 
                 {/* Main Content Area - Unified Scrollable List */}
                 <div className={`flex-1 overflow-hidden relative ${viewMode === "list" ? 'max-w-5xl mx-auto w-full' : 'w-full'}`}>
-                    <div className="absolute inset-0 overflow-y-auto custom-scrollbar px-1 pb-40">
+                    <div className={`absolute inset-0 ${(viewMode === 'list' || viewMode === 'calendar') ? 'overflow-y-auto' : 'overflow-hidden'} custom-scrollbar px-1 pb-40`}>
                         {viewMode === "list" ? (
                             // List View
                             <div className="space-y-6">
                                 {loading && displayTasks.length === 0 ? (
                                     <div className="text-center py-20 text-gray-600 font-bold animate-pulse uppercase tracking-widest text-sm">
                                         Synchronizing Tasks...
-                                    </div>
-                                ) : displayTasks.length === 0 ? (
-                                    <div className="bg-gray-900/30 border border-gray-800/50 border-dashed rounded-[2rem] py-32 text-center flex flex-col items-center justify-center group transition-all hover:bg-gray-900/40">
-                                        <div className="w-20 h-20 bg-gray-800/50 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                                            <Plus className="w-10 h-10 text-gray-600" />
-                                        </div>
-                                        <h2 className="text-xl font-bold text-gray-500 mb-2">
-                                            {activeFilter === 'today' ? "What are you planning to do Today?" :
-                                                activeFilter === 'planned' ? "No future tasks planned." :
-                                                    activeFilter === 'inbox' ? "Your inbox is empty." :
-                                                        "Nothing found here."}
-                                        </h2>
-                                        <p className="text-gray-600 text-sm font-medium">Add a new task from the input below.</p>
                                     </div>
                                 ) : (
                                     <div className="space-y-4">
@@ -429,84 +416,6 @@ export default function UnifiedTasksPage() {
                                             </div>
                                         )}
 
-                                        {/* Integrated Quick Add Row (Google/MS ToDo style) */}
-                                        <div className={`mt-2 bg-gray-900/40 border border-gray-800/50 rounded-xl transition-all duration-300 ${quickAddFocused ? 'bg-gray-900/60 ring-1 ring-blue-500/50 shadow-lg shadow-blue-500/5' : 'hover:bg-gray-900/60'}`} ref={quickAddRef}>
-                                            <div className="flex flex-col">
-                                                <div className="flex items-center gap-3 px-4 py-3">
-                                                    <Plus className={`w-5 h-5 ${quickAddFocused ? 'text-blue-500' : 'text-gray-500'}`} />
-                                                    <input
-                                                        type="text"
-                                                        placeholder="Add a task"
-                                                        value={quickAddName}
-                                                        onChange={(e) => setQuickAddName(e.target.value)}
-                                                        onFocus={() => { setQuickAddFocused(true); setActiveOptions(true); }}
-                                                        onKeyDown={(e) => e.key === 'Enter' && handleQuickAdd()}
-                                                        disabled={quickAddLoading}
-                                                        className="flex-1 bg-transparent border-none focus:ring-0 font-semibold placeholder:text-gray-600 outline-none text-sm"
-                                                    />
-                                                    {quickAddName && (
-                                                        <button
-                                                            onClick={handleQuickAdd}
-                                                            disabled={quickAddLoading}
-                                                            className="p-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg transition-all shadow-lg active:scale-95"
-                                                        >
-                                                            {quickAddLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ChevronDown className="-rotate-90 w-3.5 h-3.5" />}
-                                                        </button>
-                                                    )}
-                                                </div>
-
-                                                {/* Expanded Options */}
-                                                {(activeOptions || quickAddName) && quickAddFocused && (
-                                                    <div className="px-4 pb-3 pt-1 flex items-center gap-2 animate-in slide-in-from-top-1 duration-200 border-t border-gray-800/30 mt-1">
-                                                        <div className="relative group">
-                                                            <select
-                                                                value={qaContext}
-                                                                onChange={(e) => setQaContext(e.target.value)}
-                                                                className="absolute inset-0 opacity-0 cursor-pointer z-10"
-                                                            >
-                                                                {availableProjects.map(s => <option key={s} value={s}>{s}</option>)}
-                                                            </select>
-                                                            <button className="flex items-center gap-2 px-2.5 py-1.5 bg-gray-800/30 hover:bg-gray-800/60 rounded-lg text-[10px] font-bold uppercase tracking-wider text-gray-500 group-hover:text-blue-400 transition-all">
-                                                                <Archive className="w-3 h-3" />
-                                                                {qaContext}
-                                                            </button>
-                                                        </div>
-
-                                                        <div className="relative group">
-                                                            <select
-                                                                value={qaLoadScore}
-                                                                onChange={(e) => setQaLoadScore(parseFloat(e.target.value))}
-                                                                className="absolute inset-0 opacity-0 cursor-pointer z-10"
-                                                            >
-                                                                {[1, 2, 3, 5, 8, 10].map(n => <option key={n} value={n}>{n}</option>)}
-                                                            </select>
-                                                            <button className="flex items-center gap-2 px-2.5 py-1.5 bg-gray-800/30 hover:bg-gray-800/60 rounded-lg text-[10px] font-bold uppercase tracking-wider text-gray-500 group-hover:text-green-400 transition-all">
-                                                                <Hash className="w-3 h-3" />
-                                                                {qaLoadScore}
-                                                            </button>
-                                                        </div>
-
-                                                        <div className="relative group">
-                                                            <input
-                                                                ref={qaDateRef}
-                                                                type="date"
-                                                                value={qaDueDate}
-                                                                onChange={(e) => setQaDueDate(e.target.value)}
-                                                                className="absolute inset-0 opacity-0 pointer-events-none"
-                                                            />
-                                                            <button
-                                                                onClick={() => qaDateRef.current?.showPicker()}
-                                                                className="flex items-center gap-2 px-2.5 py-1.5 bg-gray-800/30 hover:bg-gray-800/60 rounded-lg text-[10px] font-bold uppercase tracking-wider text-gray-500 group-hover:text-amber-400 transition-all"
-                                                            >
-                                                                <Calendar className="w-3 h-3" />
-                                                                {qaDueDate === targetDate ? "Today" : qaDueDate}
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-
                                         {/* Completed Section Inline */}
                                         {completedTasksList.length > 0 && (
                                             <div className="mt-6">
@@ -540,6 +449,84 @@ export default function UnifiedTasksPage() {
                                         )}
                                     </div>
                                 )}
+
+                                {/* Integrated Quick Add Row (Google/MS ToDo style) - Always visible in List View */}
+                                <div className={`mt-4 bg-gray-900/40 border border-gray-800/50 rounded-xl transition-all duration-300 ${quickAddFocused ? 'bg-gray-900/60 ring-1 ring-blue-500/50 shadow-lg shadow-blue-500/5' : 'hover:bg-gray-900/60'}`} ref={quickAddRef}>
+                                    <div className="flex flex-col">
+                                        <div className="flex items-center gap-3 px-4 py-3">
+                                            <Plus className={`w-5 h-5 ${quickAddFocused ? 'text-blue-500' : 'text-gray-500'}`} />
+                                            <input
+                                                type="text"
+                                                placeholder="Add a task"
+                                                value={quickAddName}
+                                                onChange={(e) => setQuickAddName(e.target.value)}
+                                                onFocus={() => { setQuickAddFocused(true); setActiveOptions(true); }}
+                                                onKeyDown={(e) => e.key === 'Enter' && handleQuickAdd()}
+                                                disabled={quickAddLoading}
+                                                className="flex-1 bg-transparent border-none focus:ring-0 font-semibold placeholder:text-gray-600 outline-none text-sm"
+                                            />
+                                            {quickAddName && (
+                                                <button
+                                                    onClick={handleQuickAdd}
+                                                    disabled={quickAddLoading}
+                                                    className="p-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg transition-all shadow-lg active:scale-95"
+                                                >
+                                                    {quickAddLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ChevronDown className="-rotate-90 w-3.5 h-3.5" />}
+                                                </button>
+                                            )}
+                                        </div>
+
+                                        {/* Expanded Options */}
+                                        {(activeOptions || quickAddName) && quickAddFocused && (
+                                            <div className="px-4 pb-3 pt-1 flex items-center gap-2 animate-in slide-in-from-top-1 duration-200 border-t border-gray-800/30 mt-1">
+                                                <div className="relative group">
+                                                    <select
+                                                        value={qaContext}
+                                                        onChange={(e) => setQaContext(e.target.value)}
+                                                        className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                                                    >
+                                                        {availableProjects.map(s => <option key={s} value={s}>{s}</option>)}
+                                                    </select>
+                                                    <button className="flex items-center gap-2 px-2.5 py-1.5 bg-gray-800/30 hover:bg-gray-800/60 rounded-lg text-[10px] font-bold uppercase tracking-wider text-gray-500 group-hover:text-blue-400 transition-all">
+                                                        <Archive className="w-3 h-3" />
+                                                        {qaContext}
+                                                    </button>
+                                                </div>
+
+                                                <div className="relative group">
+                                                    <select
+                                                        value={qaLoadScore}
+                                                        onChange={(e) => setQaLoadScore(parseFloat(e.target.value))}
+                                                        className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                                                    >
+                                                        {[1, 2, 3, 5, 8, 10].map(n => <option key={n} value={n}>{n}</option>)}
+                                                    </select>
+                                                    <button className="flex items-center gap-2 px-2.5 py-1.5 bg-gray-800/30 hover:bg-gray-800/60 rounded-lg text-[10px] font-bold uppercase tracking-wider text-gray-500 group-hover:text-green-400 transition-all">
+                                                        <Hash className="w-3 h-3" />
+                                                        {qaLoadScore}
+                                                    </button>
+                                                </div>
+
+                                                <div className="relative group">
+                                                    <input
+                                                        ref={qaDateRef}
+                                                        type="date"
+                                                        value={qaDueDate}
+                                                        onChange={(e) => setQaDueDate(e.target.value)}
+                                                        className="absolute inset-0 opacity-0 pointer-events-none"
+                                                    />
+                                                    <button
+                                                        onClick={() => qaDateRef.current?.showPicker()}
+                                                        className="flex items-center gap-2 px-2.5 py-1.5 bg-gray-800/30 hover:bg-gray-800/60 rounded-lg text-[10px] font-bold uppercase tracking-wider text-gray-500 group-hover:text-amber-400 transition-all"
+                                                    >
+                                                        <Calendar className="w-3 h-3" />
+                                                        {qaDueDate === targetDate ? "Today" : qaDueDate}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
                         ) : viewMode === "calendar" ? (
                             <div className="h-full relative">
@@ -636,10 +623,18 @@ export default function UnifiedTasksPage() {
                             <TimelineCalendar
                                 targetDate={targetDate}
                                 onTaskClick={async (task) => {
-                                    const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}?target_date=${task.due_date}`);
-                                    const fullTask = await resp.json();
-                                    setSelectedTask({ ...fullTask, due_date: task.due_date });
-                                    setPanelOpen(true);
+                                    try {
+                                        const resp = await apiFetch(`/api/lbs/tasks/${task.task_id}?target_date=${task.due_date || targetDate}`);
+                                        if (!resp.ok) {
+                                            console.error("Failed to fetch task details:", await resp.text());
+                                            return;
+                                        }
+                                        const fullTask = await resp.json();
+                                        setSelectedTask({ ...fullTask, due_date: task.due_date || targetDate });
+                                        setPanelOpen(true);
+                                    } catch (err) {
+                                        console.error("Error in onTaskClick:", err);
+                                    }
                                 }}
                                 refreshKey={refreshKey}
                             />

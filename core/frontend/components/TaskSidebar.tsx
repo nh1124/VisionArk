@@ -10,7 +10,7 @@ interface TaskSidebarProps {
 }
 
 export default function TaskSidebar({ isCollapsed }: TaskSidebarProps) {
-    const { tasks, allTasks, activeFilter, setActiveFilter, activeProject, fetchAllTasks, viewMode } = useTaskStore();
+    const { tasks, allTasks, activeFilter, setActiveFilter, activeProject, fetchAllTasks, viewMode, integrations, toggleIntegration } = useTaskStore();
     const today = new Date();
     const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
@@ -43,10 +43,6 @@ export default function TaskSidebar({ isCollapsed }: TaskSidebarProps) {
         { id: "inbox", label: "Inbox", icon: <Inbox size={18} />, count: counts.inbox },
     ];
 
-    const integrations = [
-        { id: "google", label: "Google Calendar", active: true },
-        { id: "outlook", label: "Outlook", active: false },
-    ];
 
     return (
         <div className="flex flex-col gap-6 py-4 animate-in fade-in duration-300">
@@ -125,7 +121,10 @@ export default function TaskSidebar({ isCollapsed }: TaskSidebarProps) {
                             {integrations.map((ext) => (
                                 <div key={ext.id} className="flex items-center justify-between group">
                                     <span className="text-xs font-bold text-gray-500 group-hover:text-gray-400 transition-colors">{ext.label}</span>
-                                    <div className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${ext.active ? 'bg-cyan-500/50' : 'bg-gray-800'}`}>
+                                    <div
+                                        onClick={() => toggleIntegration(ext.id)}
+                                        className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${ext.active ? 'bg-cyan-500/50' : 'bg-gray-800'}`}
+                                    >
                                         <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow-sm transition-all ${ext.active ? 'right-0.5' : 'left-0.5'}`} />
                                     </div>
                                 </div>
