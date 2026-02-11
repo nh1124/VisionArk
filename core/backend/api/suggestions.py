@@ -12,7 +12,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from models.database import get_async_db, Node, Project
+from shared.database import get_async_db, Node, Project
 from integrations.lbs import LBSClient, get_lbs_client
 from api.auth import get_current_user
 

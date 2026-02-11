@@ -6,18 +6,35 @@ export type TaskFilter = 'inbox' | 'today' | 'my-day' | 'planned' | 'completed' 
 export type ViewMode = 'list' | 'calendar' | 'timeline';
 
 interface TaskState {
-    tasks: Task[]; // Current view's tasks
-    allTasks: Task[]; // Global active tasks for counts
-    calendarTasks: Task[]; // Separate storage for month view
-    overdueTasks: Task[]; // Tasks from the past that are still TODO
+    // State
+    tasks: Task[];
+    allTasks: Task[];
+    calendarTasks: Task[];
+    overdueTasks: Task[];
     loading: boolean;
     error: string | null;
-    targetDate: string; // YYYY-MM-DD
+    targetDate: string;
     viewMode: ViewMode;
     activeFilter: TaskFilter;
     activeProject: string | null;
-    integrations: { id: string, label: string, active: boolean }[];
+    selectedTaskId?: string | null;
+    integrations: { id: string; label: string; active: boolean }[];
+
+    // Actions
     toggleIntegration: (id: string) => void;
+    setTargetDate: (date: string) => void;
+    setViewMode: (mode: ViewMode) => void;
+    setActiveFilter: (filter: TaskFilter, project?: string | null) => void;
+    setSelectedTaskId: (id: string | null) => void;
+    fetchTasks: (date: string) => Promise<void>;
+    fetchAllTasks: () => Promise<void>;
+    fetchMonthTasks: (startDate: string, endDate: string) => Promise<void>;
+    fetchOverdueTasks: () => Promise<void>;
+    updateTaskStatus: (taskId: string, status: string, date: string) => Promise<void>;
+    toggleMyDay: (task: Task) => Promise<void>;
+    rescheduleTask: (taskId: string, newDate: string) => Promise<void>;
+    updateTask: (taskId: string, data: Partial<Task>) => Promise<void>;
+    createException: (taskId: string, targetDate: string, exceptionType: string, overrideData: any) => Promise<void>;
 }
 
 export const useTaskStore = create<TaskState>((set, get) => ({

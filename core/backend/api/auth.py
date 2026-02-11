@@ -10,14 +10,14 @@ from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
-from models.database import User, ServiceRegistry, UserSettings
-from config import settings
-from services.auth import get_db, resolve_identity, Identity
-from utils.password import hash_password, verify_password, MIN_PASSWORD_LENGTH
-from utils.jwt import create_access_token, decode_access_token, decode_token
+from shared.database import User, ServiceRegistry, UserSettings
+from app.config import settings
+from domains.identity.auth import get_db, resolve_identity, Identity
+from shared.password import hash_password, verify_password, MIN_PASSWORD_LENGTH
+from shared.jwt import create_access_token, decode_access_token, decode_token
 from datetime import timedelta
-from utils.paths import get_user_projects_dir, get_project_dir, get_user_global_assets_dir, get_default_assets_dir
-from utils.encryption import encrypt_string
+from shared.paths import get_user_projects_dir, get_project_dir, get_user_global_assets_dir, get_default_assets_dir
+from shared.encryption import encrypt_string
 import os
 import httpx
 

@@ -5,11 +5,11 @@ Provides RESTful API for RAG operations on Project knowledge bases
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from typing import List, Optional
-from services.rag_service import RAGService
-from services.auth import resolve_identity, Identity
-from models.database import get_async_db
+from domains.knowledge.rag_service import RAGService
+from domains.identity.auth import resolve_identity, Identity
+from shared.database import get_async_db
 from sqlalchemy.ext.asyncio import AsyncSession
-from utils.paths import get_project_dir
+from shared.paths import get_project_dir
 
 router = APIRouter(prefix="/api/rag", tags=["RAG"])
 

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from models.database import get_async_db, Skill, NodeSkill, Node
+from shared.database import get_async_db, Skill, NodeSkill, Node
 from sqlalchemy import select, delete
 from pydantic import BaseModel
 from typing import List

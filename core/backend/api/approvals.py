@@ -5,10 +5,10 @@ from sqlalchemy import select
 from typing import List, Optional
 from pydantic import BaseModel
 
-from models.database import get_async_db, ApprovalRequest, TaskType
-from services.approval import ApprovalService
-from queue_system.manager import QueueManager
-from services.auth import resolve_identity, Identity
+from shared.database import get_async_db, ApprovalRequest, TaskType
+from domains.identity.approval import ApprovalService
+from infrastructure.queue.manager import QueueManager
+from domains.identity.auth import resolve_identity, Identity
  
 logger = logging.getLogger(__name__)
 

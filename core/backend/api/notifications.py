@@ -5,10 +5,10 @@ import json
 import asyncio
 import redis.asyncio as redis
 
-from models.database import get_async_db, NotificationType
-from services.notification_service import NotificationService
+from shared.database import get_async_db, NotificationType
+from domains.workspace.notification_service import NotificationService
 from api.auth import get_current_user
-from config import settings
+from app.config import settings
 
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 

@@ -7,11 +7,11 @@ import httpx
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from models.database import User, UserSettings, ServiceRegistry, ExternalIdentity, get_async_db
-from services.auth import resolve_identity, Identity
-from utils.password import hash_password, verify_password
-from utils.encryption import encrypt_string, decrypt_string
-from config import settings
+from shared.database import User, UserSettings, ServiceRegistry, ExternalIdentity, get_async_db
+from domains.identity.auth import resolve_identity, Identity
+from shared.password import hash_password, verify_password
+from shared.encryption import encrypt_string, decrypt_string
+from app.config import settings
 from va_sdk.discovery import get_integration_catalog
 
 router = APIRouter(prefix="/api/settings", tags=["Settings"])
@@ -121,7 +121,7 @@ async def get_settings(
 @router.get("/sounds")
 async def get_available_sounds():
     """List available notification sound files in the assets directory."""
-    from utils.paths import Path
+    from shared.paths import Path
     # In Docker, this is /app/assets/static/sounds
     # Locally, it's VisionArk/assets/static/sounds
     current_file = Path(__file__).resolve()
@@ -129,7 +129,7 @@ async def get_available_sounds():
         sounds_dir = Path("/app/assets/static/sounds")
     else:
         # Local development path resolution
-        from utils.paths import PROJECT_ROOT
+        from shared.paths import PROJECT_ROOT
         sounds_dir = PROJECT_ROOT / "assets" / "static" / "sounds"
     
     sounds = []

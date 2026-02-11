@@ -15,16 +15,17 @@ from sqlalchemy import select
 
 from integrations.lbs import LBSClient
 from integrations.lbs.api import get_lbs_client
-from services.auth import resolve_identity, Identity
-from models.database import get_async_db, UserSettings
-from utils.encryption import decrypt_string
-from services.scheduler_service import (
+from domains.identity.auth import resolve_identity, Identity
+from shared.database import get_async_db, UserSettings
+from shared.encryption import decrypt_string
+from domains.automation.scheduler_service import (
     calculate_schedule_v3,
     DEFAULT_SHUTDOWN_HOUR, 
     FATIGUED_SHUTDOWN_HOUR,
     FATIGUE_HIGH_THRESHOLD
 )
 
+import httpx
 import logging
 
 logger = logging.getLogger(__name__)
@@ -117,7 +118,7 @@ async def suggest_schedule(
         today_str = today.isoformat()
         
         # Parallel fetch if possible, but sequential is fine for now
-        tasks = await lbs.list_tasks(target_date=today)
+        tasks = await lbs.list_tasks(active=True)
         exceptions = await lbs.get_exceptions(today_str, today_str)
         
         # Filter to only 'todo' status tasks

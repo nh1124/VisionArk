@@ -7,11 +7,11 @@ from pydantic import BaseModel
 from typing import List, Optional
 from sqlalchemy.orm import Session
 
-from models.database import UserSettings
-from llm.provider_factory import get_provider
-from llm.base_provider import Message, MessageRole
+from shared.database import UserSettings
+from infrastructure.llm.provider_factory import get_provider
+from infrastructure.llm.base_provider import Message, MessageRole
 from api.auth import get_current_user
-from services.auth import get_db
+from domains.identity.auth import get_db
 import json
 import re
 

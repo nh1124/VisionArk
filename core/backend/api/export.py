@@ -12,9 +12,9 @@ import io
 import urllib.parse
 from datetime import datetime
 
-from services.auth import resolve_identity_for_download, Identity
-from models.database import Node, Project, ChatSession, ChatMessage, get_async_db
-from utils.paths import validate_name
+from domains.identity.auth import resolve_identity_for_download, Identity
+from shared.database import Node, Project, ChatSession, ChatMessage, get_async_db
+from shared.paths import validate_name
 
 logger = logging.getLogger(__name__)
 

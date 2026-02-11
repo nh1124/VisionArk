@@ -3,9 +3,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime
-from models.database import get_async_db
-from services.auth import resolve_identity, Identity
-from services.note_service import NoteService
+from shared.database import get_async_db
+from domains.identity.auth import resolve_identity, Identity
+from domains.knowledge.note_service import NoteService
 
 router = APIRouter(prefix="/api/notes", tags=["Notes"])
 

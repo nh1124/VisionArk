@@ -47,6 +47,8 @@ services:
         condition: service_healthy
     volumes:
       - ../core/backend:/app
+      - ../va_sdk:/app/va_sdk
+      - ../integrations:/app/integrations
       - ../data:/app/data # Full data directory (spokes, hub_data, users, etc.)
       - ../assets:/app/assets
     networks:
@@ -74,6 +76,8 @@ services:
       - ATMOS_SERVICE_KEY=${ATMOS_SERVICE_KEY}
     volumes:
       - ../core/backend:/app
+      - ../va_sdk:/app/va_sdk
+      - ../integrations:/app/integrations
       - ../data:/app/data
       - ../assets:/app/assets
     depends_on:
@@ -84,7 +88,7 @@ services:
     networks:
       - atmos-network
     restart: unless-stopped
-    command: python worker.py
+    command: python -m app.worker
     env_file:
       - ../.env
 

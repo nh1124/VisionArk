@@ -5,9 +5,9 @@ Endpoints for managing conversation context rotation
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from services.context_manager import ContextManager
-from services.auth import resolve_identity, Identity
-from models.database import get_async_db
+from domains.workspace.context_manager import ContextManager
+from domains.identity.auth import resolve_identity, Identity
+from shared.database import get_async_db
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/context", tags=["Context Management"])

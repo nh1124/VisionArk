@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir \"C:\\\\Users\\\\nh112\\\\programming\\\\project\\\\VisionArk\\\\core\\\\backend\\\\domains\" /b)",
+      "Bash(python:*)"
+    ]
+  }
+}

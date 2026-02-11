@@ -1,0 +1,117 @@
+import re
+import asyncio
+from typing import List, Dict, Callable, Any, Optional
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from shared.database import Node, AsyncSessionLocal, TaskType
+
+class Router:
+    """
+    Central message router for VisionArk.
+    Handles message pattern matching and multicasting to registered nodes.
+    """
+    _instance = None
+    _hooks: List[Dict[str, Any]] = []
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(Router, cls).__new__(cls)
+        return cls._instance
+
+    @classmethod
+    def register_hook(cls, pattern: str, target_node_id: str, description: str = ""):
+        """Register a node's interest in a specific message pattern."""
+        cls._hooks.append({
+            "pattern": pattern,
+            "regex": re.compile(pattern, re.IGNORECASE),
+            "target_node_id": target_node_id,
+            "description": description
+        })
+        print(f"Router: Registered hook for pattern '{pattern}' -> Node {target_node_id}")
+
+    async def dispatch(self, message: str, context: Dict[str, Any]):
+        """
+        Check message against registered hooks and trigger background tasks for matches.
+        Also triggers AI-based deep analysis via the RouterNode.
+        """
+        user_id = context.get("user_id")
+        if not user_id:
+            return
+
+        # 1. FAST ROUTING: Regex Hooks
+        matches = []
+        triggered_node_ids = []
+        for hook in self._hooks:
+            if hook["regex"].search(message):
+                matches.append(hook)
+                triggered_node_ids.append(hook["target_node_id"])
+
+        from infrastructure.queue.manager import QueueManager
+        manager = QueueManager()
+
+        if matches:
+            print(f"Router: Found {len(matches)} fast-hook matches.")
+            for match in matches:
+                target_id = match["target_node_id"]
+                await manager.enqueue_node_task(
+                    user_id=user_id,
+                    target_node_id=target_id,
+                    message=message,
+                    context={
+                        "triggered_by_hook": True,
+                        "hook_pattern": match["pattern"],
+                        "original_message": message,
+                        "session_id": context.get("session_id"),
+                        "project_id": context.get("project_id")
+                    }
+                )
+
+        # 2. DEEP ROUTING: Trigger RouterNode (AI Analysis)
+        # Skip trivial messages (short or common shallow responses)
+        msg_clean = message.strip().lower()
+        is_trivial = len(msg_clean) < 5 or msg_clean in ["hi", "hello", "ok", "yes", "no", "thanks", "done", "cancel"]
+        
+        if is_trivial:
+            print(f"Router: Skipping deep analysis for trivial message.")
+            return
+
+        print(f"Router: Triggering deep AI analysis for message.")
+        await manager.enqueue(
+            user_id=user_id,
+            message=message,
+            task_type=TaskType.AI_ROUTING,
+            context={
+                "deep_analysis": True,
+                "session_id": context.get("session_id"),
+                "project_id": context.get("project_id"),
+                "original_message": message,
+                "already_triggered_node_ids": list(set(triggered_node_ids)), # Pass de-duplicated IDs
+                "files": context.get("files", []),
+                "attached_files": context.get("attached_files", [])
+            }
+        )
+
+    @classmethod
+    async def initialize_default_hooks(cls):
+        """Register hooks from database nodes metadata (trigger_patterns)."""
+        cls._hooks = [] # Reset to avoid duplicates on re-init
+        
+        try:
+            async with AsyncSessionLocal() as session:
+                # Fetch all nodes with metadata and filter in Python to avoid dialect-specific JSON query issues
+                stmt = select(Node).filter(Node.meta_payload.is_not(None))
+                res = await session.execute(stmt)
+                all_nodes = res.scalars().all()
+                
+                nodes = [n for n in all_nodes if isinstance(n.meta_payload, dict) and "trigger_patterns" in n.meta_payload]
+                
+                for node in nodes:
+                    patterns = node.meta_payload.get("trigger_patterns", [])
+                    if isinstance(patterns, list):
+                        for item in patterns:
+                            if isinstance(item, dict) and (pattern := item.get("value")):
+                                cls.register_hook(pattern, node.id, item.get("description") or f"Dynamic hook for {node.display_name}")
+                
+                print(f"Router: Initialized {len(cls._hooks)} dynamic hooks from database.")
+        except Exception as e:
+            print(f"[ERROR] Router: Dynamic hook initialization failed: {e}")

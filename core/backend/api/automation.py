@@ -9,10 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete as sql_delete
 from sqlalchemy.orm import joinedload
 
-from services.auth import resolve_identity, Identity
-from services.aes_dispatcher import AESDispatcher
+from domains.identity.auth import resolve_identity, Identity
+from domains.automation.aes_dispatcher import AESDispatcher
 import uuid
-from models.database import get_async_db, ScheduledTask, ScheduledTaskStatus
+from shared.database import get_async_db, ScheduledTask, ScheduledTaskStatus
 
 router = APIRouter(prefix="/api/automation", tags=["Automation"])
 
@@ -101,7 +101,7 @@ async def schedule_task(
 
     # Validation: project_id exists if provided
     if request.project_id:
-        from models.database import Project
+        from shared.database import Project
         res = await db.execute(select(Project).filter(Project.id == request.project_id))
         if not res.scalars().first():
             raise HTTPException(status_code=400, detail=f"Project {request.project_id} not found")
@@ -142,7 +142,7 @@ async def update_task(
         raise HTTPException(status_code=404, detail="Task not found")
         
     if task.project_id != request.project_id and request.project_id:
-        from models.database import Project
+        from shared.database import Project
         res = await db.execute(select(Project).filter(Project.id == request.project_id))
         if not res.scalars().first():
             raise HTTPException(status_code=400, detail=f"Project {request.project_id} not found")

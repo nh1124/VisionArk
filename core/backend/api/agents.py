@@ -16,12 +16,12 @@ from sqlalchemy import select, update, delete
 from typing import Optional, List, Dict
 
 
-from services.auth import resolve_identity, Identity, resolve_identity_for_download
-from models.database import Node, Project, ChatSession, ChatMessage, ChatSubMessage, UploadedFile, get_async_db
-from utils.paths import get_project_dir, get_user_projects_dir, validate_name, secure_path_join, update_project_name_cache as update_cache
+from domains.identity.auth import resolve_identity, Identity, resolve_identity_for_download
+from shared.database import Node, Project, ChatSession, ChatMessage, ChatSubMessage, UploadedFile, get_async_db
+from shared.paths import get_project_dir, get_user_projects_dir, validate_name, secure_path_join, update_project_name_cache as update_cache
 from uuid import uuid4
 from datetime import datetime, timedelta
-from services.member_node_registry import sync_member_nodes_for_project
+from domains.orchestration.member_node_registry import sync_member_nodes_for_project
 
 router = APIRouter(prefix="/api/agents", tags=["Agents"])
 
@@ -87,7 +87,7 @@ async def get_task_status(
     identity: Identity = Depends(resolve_identity),
 ):
     """Get status of an async task"""
-    from queue_system.manager import QueueManager
+    from infrastructure.queue.manager import QueueManager
     
     manager = QueueManager()
     status = await manager.get_status(task_id)
@@ -107,8 +107,8 @@ async def get_workspace_stats(
     db: AsyncSession = Depends(get_async_db)
 ):
     """Get global workspace statistics for the dashboard"""
-    from queue_system.manager import QueueManager
-    from models.database import ScheduledTask, ChatMessage
+    from infrastructure.queue.manager import QueueManager
+    from shared.database import ScheduledTask, ChatMessage
     from sqlalchemy import func
 
     manager = QueueManager()
@@ -157,9 +157,9 @@ async def chat_with_project(
     x_preferred_model: Optional[str] = Header(None, alias="X-Preferred-Model")
 ):
     """Chat with a specific Project agent"""
-    from queue_system.manager import QueueManager
-    from services.file_service import FileService
-    from utils.mimetype_helper import guess_mime_type
+    from infrastructure.queue.manager import QueueManager
+    from domains.workspace.file_service import FileService
+    from shared.mimetype_helper import guess_mime_type
     
 
     async def upload_files(file_service: FileService, files: List[UploadFile]) -> List[UploadedFile]:
@@ -209,7 +209,7 @@ async def chat_with_project(
     # 3. Enqueue Task
     manager = QueueManager()
     
-    from models.database import TaskType
+    from shared.database import TaskType
     context = {
         "user_id": identity.user_id,
         "preferred_model": x_preferred_model,
@@ -581,8 +581,8 @@ async def create_project_from_prompt(
     Create a new Project from a user prompt.
     Uses AI to generate a project name and system prompt, then enqueues the initial message.
     """
-    from nodes.system.project_creator_node import ProjectCreatorNode
-    from queue_system.manager import QueueManager
+    from domains.orchestration.nodes.system.project_creator_node import ProjectCreatorNode
+    from infrastructure.queue.manager import QueueManager
     
     if not data.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
@@ -614,7 +614,7 @@ async def create_project_from_prompt(
             "files": []
         }
         
-        from models.database import TaskType
+        from shared.database import TaskType
         task_id = await manager.enqueue(identity.user_id, data.prompt, queue_context, task_type=TaskType.USER_MESSAGE)
         
         return {
@@ -694,14 +694,14 @@ async def list_projects(
                     has_custom = True
 
         # Get Queue stats from Redis
-        from queue_system.manager import QueueManager
+        from infrastructure.queue.manager import QueueManager
         manager = QueueManager()
         # Note: We don't have a per-project counter in Redis yet, but we can check if there's an active task
         active_task = await manager.get_active_task_for_project(proj.id)
         queue_count = 1 if active_task else 0
 
         # Enriched Data for Bento UI
-        from models.database import ScheduledTask, ChatMessage, ChatSession
+        from shared.database import ScheduledTask, ChatMessage, ChatSession
         
         # 1. Latest Activity (Last message content and time)
         latest_activity = "No recent activity"
@@ -805,7 +805,7 @@ async def get_project_active_task(
     identity: Identity = Depends(resolve_identity),
 ):
     """Retrieve any active task ID for this project from Redis"""
-    from queue_system.manager import QueueManager
+    from infrastructure.queue.manager import QueueManager
     
     manager = QueueManager()
     task_id = await manager.get_active_task_for_project(project_id)
@@ -838,11 +838,11 @@ async def delete_project(
         proj.status = "archived"
         
         # Schedule HARD_DELETE in 30 days
-        from services.aes_dispatcher import AESDispatcher
+        from domains.automation.aes_dispatcher import AESDispatcher
         from datetime import datetime, timedelta
         dispatcher = AESDispatcher(lambda: db) # We pass current session in a lambda if needed, but AESDispatcher usually wants a maker. 
         # Actually, AESDispatcher.schedule_task uses its own session.
-        from models.database import AsyncSessionLocal
+        from shared.database import AsyncSessionLocal
         dispatcher = AESDispatcher(AsyncSessionLocal)
         
         # 30 days later
@@ -1225,8 +1225,8 @@ async def chat_with_system_node(
     x_preferred_model: Optional[str] = Header(None, alias="X-Preferred-Model")
 ):
     """Chat with a specialized system node (e.g. project_manager)"""
-    from queue_system.manager import QueueManager
-    from models.database import TaskType, Node
+    from infrastructure.queue.manager import QueueManager
+    from shared.database import TaskType, Node
     import uuid
 
     if not message.strip():

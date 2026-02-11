@@ -11,9 +11,9 @@ from typing import List, Optional, Dict
 import mimetypes
 from uuid import uuid4
 
-from services.auth import resolve_identity, Identity, resolve_identity_for_download
-from models.database import UploadedFile, Node, Project, get_async_db, UserSettings
-from services.file_service import FileService
+from domains.identity.auth import resolve_identity, Identity, resolve_identity_for_download
+from shared.database import UploadedFile, Node, Project, get_async_db, UserSettings
+from domains.workspace.file_service import FileService
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import asyncio
@@ -188,7 +188,7 @@ async def get_node_file(
     user_id = identity.user_id
     
     try:
-        from utils.paths import get_project_dir, secure_path_join
+        from shared.paths import get_project_dir, secure_path_join
         
         # Verify Project Exists
         result = await db.execute(select(Project).filter(
@@ -256,7 +256,7 @@ async def save_canvas_file(
         raise HTTPException(status_code=400, detail="Directory must be 'refs', 'artifacts', 'files', or 'notes'")
 
     try:
-        from utils.paths import get_project_dir, secure_path_join
+        from shared.paths import get_project_dir, secure_path_join
         
         # Verify Project Exists
         result = await db.execute(select(Project.id).filter(
