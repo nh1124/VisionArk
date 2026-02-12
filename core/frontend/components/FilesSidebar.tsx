@@ -111,6 +111,7 @@ const buildFileTree = (items: TreeItemData[]): TreeNode[] => {
 };
 
 export default function FilesSidebar({ nodeType, nodeName, onSyncComplete, onOpenFile, onPreviewImage }: FilesSidebarProps) {
+    const isMobile = useIsMobile();
     const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [files, setFiles] = useState<FileInfo[]>([]);
@@ -363,7 +364,7 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete, onOpe
             return (
                 <div className="ml-2">
                     <div
-                        className="flex items-center gap-2 p-1.5 hover:bg-gray-800 rounded cursor-pointer text-sm text-gray-300 group"
+                        className={`flex items-center gap-2 ${isMobile ? "p-3" : "p-1.5"} hover:bg-gray-800 rounded cursor-pointer text-sm text-gray-300 group`}
                     >
                         <button
                             onClick={(e) => { e.stopPropagation(); toggleSelection(node.path, node); }}
@@ -424,7 +425,7 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete, onOpe
 
         return (
             <div
-                className={`flex items-center justify-between ml-4 p-1.5 hover:bg-gray-800 rounded cursor-pointer text-sm group ${isSelected ? "bg-cyan-500/10 border-l-2 border-cyan-500" : ""}`}
+                className={`flex items-center justify-between ml-4 ${isMobile ? "p-3" : "p-1.5"} hover:bg-gray-800 rounded cursor-pointer text-sm group ${isSelected ? "bg-cyan-500/10 border-l-2 border-cyan-500" : ""}`}
                 onClick={handleClick}
             >
                 <div className="flex items-center gap-2 min-w-0">
@@ -636,16 +637,16 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete, onOpe
     return (
         <div className="h-full flex flex-col">
             {/* Tabs */}
-            <div className="flex mb-4 border-b border-gray-700">
+            <div className={`flex mb-4 border-b border-gray-700 ${isMobile ? "overflow-x-auto no-scrollbar" : ""}`}>
                 <button
                     onClick={() => { setActiveTab("refs"); clearSelection(); }}
-                    className={`px-3 py-2 text-sm ${activeTab === "refs" ? (nodeType === "hub" ? "text-purple-400 border-b-2 border-purple-400" : "text-cyan-400 border-b-2 border-cyan-400") : "text-gray-400 hover:text-gray-200"}`}
+                    className={`px-4 py-3 text-sm whitespace-nowrap ${activeTab === "refs" ? (nodeType === "hub" ? "text-purple-400 border-b-2 border-purple-400" : "text-cyan-400 border-b-2 border-cyan-400") : "text-gray-400 hover:text-gray-200"}`}
                 >
                     📁 References
                 </button>
                 <button
                     onClick={() => { setActiveTab("artifacts"); clearSelection(); }}
-                    className={`px-3 py-2 text-sm ${activeTab === "artifacts" ? (nodeType === "hub" ? "text-purple-400 border-b-2 border-purple-400" : "text-cyan-400 border-b-2 border-cyan-400") : "text-gray-400 hover:text-gray-200"}`}
+                    className={`px-4 py-3 text-sm whitespace-nowrap ${activeTab === "artifacts" ? (nodeType === "hub" ? "text-purple-400 border-b-2 border-purple-400" : "text-cyan-400 border-b-2 border-cyan-400") : "text-gray-400 hover:text-gray-200"}`}
                 >
                     📄 Artifacts
                 </button>

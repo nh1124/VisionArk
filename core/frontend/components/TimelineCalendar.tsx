@@ -113,123 +113,125 @@ export default function TimelineCalendar({ targetDate, refreshKey = 0, onTaskCli
     }
 
     return (
-        <div className="flex flex-col h-[calc(100vh-140px)] min-h-[600px] bg-gray-900/10 rounded-none border border-gray-800 overflow-hidden backdrop-blur-sm">
-            {/* Week Header */}
-            <div className="grid grid-cols-[60px_1fr] flex-shrink-0">
-                <div className="border-r border-b border-gray-800 flex items-center justify-center bg-gray-900/40">
-                    <Clock className="w-4 h-4 text-gray-600" />
-                </div>
-                <div className="grid grid-cols-7 divide-x divide-gray-800/50 bg-gray-900/20">
-                    {weekDays.map(day => (
-                        <div key={day}>{formatDayHeader(day)}</div>
-                    ))}
-                </div>
-            </div>
-
-            {/* All-day tasks section */}
-            <div className="grid grid-cols-[60px_1fr] flex-shrink-0 border-b border-gray-800/50 bg-gray-950/20">
-                <div className="border-r border-gray-800 flex items-center justify-center p-1">
-                    <span className="text-[9px] font-black uppercase text-gray-600 [writing-mode:vertical-lr] rotate-180">All Day</span>
-                </div>
-                <div className="grid grid-cols-7 divide-x divide-gray-800/30">
-                    {weekDays.map(dateStr => {
-                        const dayData = schedule.find(d => d.date === dateStr);
-                        const allDayTasks = (dayData?.tasks || [])
-                            .filter(t => !t.start_time)
-                            .filter(t => !activeProject || t.context === activeProject);
-                        return (
-                            <div key={dateStr} className="min-h-[48px] p-1 flex flex-col gap-1 bg-white/[0.01]">
-                                {allDayTasks.map(task => (
-                                    <div
-                                        key={task.task_id}
-                                        onClick={() => onTaskClick?.({ ...task, due_date: dateStr })}
-                                        className="text-[10px] font-bold px-2 py-1.5 rounded-lg border border-white/5 bg-gray-900/80 cursor-pointer hover:bg-white/10 transition-colors shadow-sm truncate flex items-center gap-2"
-                                        style={{ borderLeft: `3px solid ${getSpokeColor(task.context)}` }}
-                                        title={task.task_name}
-                                    >
-                                        <span className="truncate flex-1">{task.task_name}</span>
-                                        {task.is_locked && <Lock className="w-2.5 h-2.5 text-gray-600 flex-shrink-0" />}
-                                    </div>
-                                ))}
-                            </div>
-                        );
-                    })}
-                </div>
-            </div>
-
-            {/* Scrollable Area */}
-            <div className="grid grid-cols-[60px_1fr] flex-1 overflow-y-auto no-scrollbar relative" ref={scrollContainerRef}>
-                {/* Time Grid Y-Axis */}
-                <div className="sticky left-0 z-20 bg-gray-950/80 backdrop-blur-md border-r border-gray-800">
-                    {HOURS.map(hour => (
-                        <div key={hour} style={{ height: HOUR_HEIGHT }} className="flex justify-center pt-2">
-                            <span className="text-[10px] font-black text-gray-600 tabular-nums">
-                                {String(hour).padStart(2, '0')}:00
-                            </span>
-                        </div>
-                    ))}
+        <div className="flex flex-col h-[calc(100vh-140px)] min-h-[600px] bg-gray-900/10 rounded-none border border-gray-800 overflow-hidden backdrop-blur-sm overflow-x-auto no-scrollbar">
+            <div className="min-w-[700px] flex flex-col h-full"> {/* Force minimum width for horizontal scroll on mobile */}
+                {/* Week Header */}
+                <div className="grid grid-cols-[60px_1fr] flex-shrink-0">
+                    <div className="border-r border-b border-gray-800 flex items-center justify-center bg-gray-900/40">
+                        <Clock className="w-4 h-4 text-gray-600" />
+                    </div>
+                    <div className="grid grid-cols-7 divide-x divide-gray-800/50 bg-gray-900/20">
+                        {weekDays.map(day => (
+                            <div key={day}>{formatDayHeader(day)}</div>
+                        ))}
+                    </div>
                 </div>
 
-                {/* Timeline Grid Content */}
-                <div className="relative grid grid-cols-7 divide-x divide-gray-800/20 min-h-[1360px]">
-                    {/* Horizontal grid lines */}
-                    {HOURS.map(hour => (
-                        <div
-                            key={`line-${hour}`}
-                            style={{ top: (hour - 7) * HOUR_HEIGHT }}
-                            className="absolute left-0 right-0 border-t border-gray-800/30 pointer-events-none"
-                        />
-                    ))}
-
-                    {/* Task Slots for each day */}
-                    {weekDays.map(dateStr => {
-                        const dayData = schedule.find(d => d.date === dateStr);
-                        const tasksToShow = (dayData?.tasks || [])
-                            .filter(t => !activeProject || t.context === activeProject);
-
-                        return (
-                            <div key={dateStr} className="relative h-full px-1 py-1">
-                                {tasksToShow.map(task => {
-                                    if (!task.start_time) return null; // Only show tasks with times on timeline
-
-                                    const top = getTimePosition(task.start_time);
-                                    const height = getTaskDurationHeight(task.start_time, task.end_time);
-                                    const contextColor = getSpokeColor(task.context);
-
-                                    return (
+                {/* All-day tasks section */}
+                <div className="grid grid-cols-[60px_1fr] flex-shrink-0 border-b border-gray-800/50 bg-gray-950/20">
+                    <div className="border-r border-gray-800 flex items-center justify-center p-1">
+                        <span className="text-[9px] font-black uppercase text-gray-600 [writing-mode:vertical-lr] rotate-180">All Day</span>
+                    </div>
+                    <div className="grid grid-cols-7 divide-x divide-gray-800/30">
+                        {weekDays.map(dateStr => {
+                            const dayData = schedule.find(d => d.date === dateStr);
+                            const allDayTasks = (dayData?.tasks || [])
+                                .filter(t => !t.start_time)
+                                .filter(t => !activeProject || t.context === activeProject);
+                            return (
+                                <div key={dateStr} className="min-h-[48px] p-1 flex flex-col gap-1 bg-white/[0.01]">
+                                    {allDayTasks.map(task => (
                                         <div
                                             key={task.task_id}
                                             onClick={() => onTaskClick?.({ ...task, due_date: dateStr })}
-                                            style={{
-                                                top: top + 4,
-                                                height: height - 8,
-                                                borderColor: `${contextColor}40`,
-                                                backgroundColor: `${contextColor}15`
-                                            }}
-                                            className="absolute inset-x-1.5 p-2 rounded-xl border group cursor-pointer transition-all hover:bg-white/5 active:scale-[0.98] overflow-hidden backdrop-blur-sm z-10"
+                                            className="text-[10px] font-bold px-2 py-1.5 rounded-lg border border-white/5 bg-gray-900/80 cursor-pointer hover:bg-white/10 transition-colors shadow-sm truncate flex items-center gap-2"
+                                            style={{ borderLeft: `3px solid ${getSpokeColor(task.context)}` }}
+                                            title={task.task_name}
                                         >
-                                            <div className="flex flex-col h-full">
-                                                <div className="flex items-start justify-between gap-1 mb-1">
-                                                    <span className="text-[10px] sm:text-xs font-bold leading-tight line-clamp-2 transition-colors group-hover:text-white" style={{ color: contextColor }}>
-                                                        {task.task_name}
-                                                    </span>
-                                                    {task.is_locked && <Lock className="w-2.5 h-2.5 text-gray-500 flex-shrink-0" />}
-                                                </div>
-
-                                                <div className="mt-auto flex items-center justify-between text-[8px] font-black uppercase tracking-widest opacity-60">
-                                                    <span>{task.start_time.slice(0, 5)} - {task.end_time?.slice(0, 5)}</span>
-                                                    {task.has_exception && <AlertCircle className="w-2.5 h-2.5 text-amber-500" />}
-                                                </div>
-                                            </div>
-
-                                            {/* Accent line */}
-                                            <div className="absolute left-0 top-0 bottom-0 w-1 rounded-full" style={{ backgroundColor: contextColor }} />
+                                            <span className="truncate flex-1">{task.task_name}</span>
+                                            {task.is_locked && <Lock className="w-2.5 h-2.5 text-gray-600 flex-shrink-0" />}
                                         </div>
-                                    );
-                                })}
+                                    ))}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* Scrollable Area */}
+                <div className="grid grid-cols-[60px_1fr] flex-1 overflow-y-auto no-scrollbar relative" ref={scrollContainerRef}>
+                    {/* Time Grid Y-Axis */}
+                    <div className="sticky left-0 z-20 bg-gray-950/80 backdrop-blur-md border-r border-gray-800">
+                        {HOURS.map(hour => (
+                            <div key={hour} style={{ height: HOUR_HEIGHT }} className="flex justify-center pt-2">
+                                <span className="text-[10px] font-black text-gray-600 tabular-nums">
+                                    {String(hour).padStart(2, '0')}:00
+                                </span>
                             </div>
-                        );
-                    })}
+                        ))}
+                    </div>
+
+                    {/* Timeline Grid Content */}
+                    <div className="relative grid grid-cols-7 divide-x divide-gray-800/20 min-h-[1360px]">
+                        {/* Horizontal grid lines */}
+                        {HOURS.map(hour => (
+                            <div
+                                key={`line-${hour}`}
+                                style={{ top: (hour - 7) * HOUR_HEIGHT }}
+                                className="absolute left-0 right-0 border-t border-gray-800/30 pointer-events-none"
+                            />
+                        ))}
+
+                        {/* Task Slots for each day */}
+                        {weekDays.map(dateStr => {
+                            const dayData = schedule.find(d => d.date === dateStr);
+                            const tasksToShow = (dayData?.tasks || [])
+                                .filter(t => !activeProject || t.context === activeProject);
+
+                            return (
+                                <div key={dateStr} className="relative h-full px-1 py-1">
+                                    {tasksToShow.map(task => {
+                                        if (!task.start_time) return null; // Only show tasks with times on timeline
+
+                                        const top = getTimePosition(task.start_time);
+                                        const height = getTaskDurationHeight(task.start_time, task.end_time);
+                                        const contextColor = getSpokeColor(task.context);
+
+                                        return (
+                                            <div
+                                                key={task.task_id}
+                                                onClick={() => onTaskClick?.({ ...task, due_date: dateStr })}
+                                                style={{
+                                                    top: top + 4,
+                                                    height: height - 8,
+                                                    borderColor: `${contextColor}40`,
+                                                    backgroundColor: `${contextColor}15`
+                                                }}
+                                                className="absolute inset-x-1.5 p-2 rounded-xl border group cursor-pointer transition-all hover:bg-white/5 active:scale-[0.98] overflow-hidden backdrop-blur-sm z-10"
+                                            >
+                                                <div className="flex flex-col h-full">
+                                                    <div className="flex items-start justify-between gap-1 mb-1">
+                                                        <span className="text-[10px] sm:text-xs font-bold leading-tight line-clamp-2 transition-colors group-hover:text-white" style={{ color: contextColor }}>
+                                                            {task.task_name}
+                                                        </span>
+                                                        {task.is_locked && <Lock className="w-2.5 h-2.5 text-gray-500 flex-shrink-0" />}
+                                                    </div>
+
+                                                    <div className="mt-auto flex items-center justify-between text-[8px] font-black uppercase tracking-widest opacity-60">
+                                                        <span>{task.start_time.slice(0, 5)} - {task.end_time?.slice(0, 5)}</span>
+                                                        {task.has_exception && <AlertCircle className="w-2.5 h-2.5 text-amber-500" />}
+                                                    </div>
+                                                </div>
+
+                                                {/* Accent line */}
+                                                <div className="absolute left-0 top-0 bottom-0 w-1 rounded-full" style={{ backgroundColor: contextColor }} />
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            );
+                        })}
+                    </div>
                 </div>
             </div>
         </div>

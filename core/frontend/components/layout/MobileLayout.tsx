@@ -4,7 +4,10 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import MobileSidebar from "./MobileSidebar";
+import BottomNav from "./BottomNav";
 import { NotificationBell } from "../NotificationBell";
+import { useMobileSwipe } from "@/hooks/useMobileSwipe";
+import { Files, StickyNote, Activity as ActivityIcon } from "lucide-react";
 
 interface MobileLayoutProps {
     children: React.ReactNode;
@@ -12,7 +15,14 @@ interface MobileLayoutProps {
 
 export default function MobileLayout({ children }: MobileLayoutProps) {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+    const [isUIHidden, setIsUIHidden] = useState(false);
     const pathname = usePathname();
+
+    // Enable swipe right to open sidebar
+    useMobileSwipe({
+        onSwipeRight: () => setIsSidebarOpen(true),
+        onSwipeLeft: () => setIsSidebarOpen(false)
+    });
 
     const getPageTitle = () => {
         if (pathname === "/dashboard") return "Dashboard";
@@ -21,6 +31,12 @@ export default function MobileLayout({ children }: MobileLayoutProps) {
         if (pathname === "/settings") return "Settings";
         return "Vision Ark";
     };
+
+    React.useEffect(() => {
+        const handleToggle = (e: any) => setIsUIHidden(e.detail.hidden);
+        window.addEventListener('toggle-ui-visibility', handleToggle);
+        return () => window.removeEventListener('toggle-ui-visibility', handleToggle);
+    }, []);
 
     return (
         <div className="flex flex-col h-[100dvh] w-full bg-gray-950 overflow-hidden">
@@ -31,7 +47,7 @@ export default function MobileLayout({ children }: MobileLayoutProps) {
             />
 
             {/* Mobile Header: Simple & Focused */}
-            <header className="h-14 border-b border-gray-800 flex items-center justify-between px-4 bg-gray-950/80 backdrop-blur-xl z-20 flex-shrink-0">
+            <header className={`h-14 border-b border-gray-800 flex items-center justify-between px-4 bg-gray-950/80 backdrop-blur-xl z-20 flex-shrink-0 transition-transform duration-300 ease-in-out ${isUIHidden ? "-translate-y-full" : "translate-y-0"}`}>
                 <div className="flex items-center gap-3">
                     <Link href="/" className="flex items-center gap-2">
                         <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center font-bold text-white text-sm shadow-[0_0_15px_rgba(37,99,235,0.3)]">
@@ -43,7 +59,32 @@ export default function MobileLayout({ children }: MobileLayoutProps) {
                     </h1>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
+                    {pathname.startsWith("/projects/") && pathname.split("/").length >= 3 && (
+                        <div className="flex items-center mr-1">
+                            <button
+                                onClick={() => window.dispatchEvent(new CustomEvent('toggle-project-sidebar', { detail: { mode: 'files' } }))}
+                                className="p-2 text-gray-400 hover:text-cyan-400 transition-colors"
+                                title="Artifacts"
+                            >
+                                <Files size={18} />
+                            </button>
+                            <button
+                                onClick={() => window.dispatchEvent(new CustomEvent('toggle-project-sidebar', { detail: { mode: 'notes' } }))}
+                                className="p-2 text-gray-400 hover:text-cyan-400 transition-colors"
+                                title="Notes"
+                            >
+                                <StickyNote size={18} />
+                            </button>
+                            <button
+                                onClick={() => window.dispatchEvent(new CustomEvent('toggle-project-sidebar', { detail: { mode: 'activity' } }))}
+                                className="p-2 text-gray-400 hover:text-cyan-400 transition-colors"
+                                title="Activity"
+                            >
+                                <ActivityIcon size={18} />
+                            </button>
+                        </div>
+                    )}
                     <NotificationBell />
                     <button
                         onClick={() => setIsSidebarOpen(true)}
@@ -60,6 +101,11 @@ export default function MobileLayout({ children }: MobileLayoutProps) {
             <main className="flex-1 relative flex flex-col min-w-0 overflow-y-auto">
                 {children}
             </main>
+
+            {/* Mobile Bottom Navigation */}
+            <div className={`transition-transform duration-300 ease-in-out ${isUIHidden ? "translate-y-full" : "translate-y-0"}`}>
+                <BottomNav />
+            </div>
 
             {/* Mobile-specific global overrides */}
             <style jsx global>{`

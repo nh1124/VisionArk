@@ -73,6 +73,7 @@ export default function TaskEditPanel({
     const [historyLoading, setHistoryLoading] = useState(false);
 
     const fetchHistory = async (taskId: string) => {
+        if (!taskId || taskId === "undefined") return;
         setHistoryLoading(true);
         try {
             const end = new Date();
@@ -95,7 +96,12 @@ export default function TaskEditPanel({
             setLoading(true);
             setIsNewProject(false);
             setApplyToInstanceOnly(false); // Reset toggle when opening new task
-            const targetDate = task.due_date || new Date().toISOString().split('T')[0];
+            if (!task.task_id || task.task_id === "undefined") {
+                setEditedTask(task);
+                setLoading(false);
+                return;
+            }
+
             // Fetch full task details including the status for the specific date
             apiFetch(`/api/lbs/tasks/${task.task_id}?target_date=${targetDate}`)
                 .then(res => {

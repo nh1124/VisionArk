@@ -70,6 +70,9 @@ export default function ProjectChatPage({
     const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
     const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
     const [sidebarMode, setSidebarMode] = useState<"files" | "automation" | "notes" | "activity">("files");
+    const [isUIHidden, setIsUIHidden] = useState(false);
+    const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
     const lastProcessedCanvasUpdateRef = useRef<string | null>(null);
     const { showToast } = useNotification();
 
@@ -221,6 +224,29 @@ export default function ProjectChatPage({
         }
     }, [projectId, taskIdFromUrl]);
 
+    // Scroll listener for mobile UI hiding - hides during active scroll, restores when stop
+    const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+        if (!isMobile) return;
+
+        // Immediately hide UI if it's currently showing
+        if (!isUIHidden) {
+            setIsUIHidden(true);
+            window.dispatchEvent(new CustomEvent('toggle-ui-visibility', { detail: { hidden: true } }));
+        }
+
+        // Clear existing timeout to "debounce" the show action
+        if (scrollTimeoutRef.current) {
+            clearTimeout(scrollTimeoutRef.current);
+        }
+
+        // Set timeout to restore UI after scrolling stops (400ms is robust for momentum)
+        scrollTimeoutRef.current = setTimeout(() => {
+            setIsUIHidden(false);
+            window.dispatchEvent(new CustomEvent('toggle-ui-visibility', { detail: { hidden: false } }));
+            scrollTimeoutRef.current = null;
+        }, 400);
+    };
+
     // Load metadata and history on mount + Recover active task
     useEffect(() => {
         const loadMetadata = async () => {
@@ -249,6 +275,16 @@ export default function ProjectChatPage({
 
         loadMetadata();
 
+        // Event listener for mobile sidebar toggles from top navigation
+        const handleSidebarToggle = (e: any) => {
+            if (e.detail && e.detail.mode) {
+                setSidebarMode(e.detail.mode);
+                setShowSidebar(true);
+            }
+        };
+
+        window.addEventListener('toggle-project-sidebar', handleSidebarToggle);
+
         // Immediate recovery from sessionStorage for smooth UI
         const storageKey = `pending_prompt_${projectId}`;
         const pendingPrompt = sessionStorage.getItem(storageKey);
@@ -261,6 +297,8 @@ export default function ProjectChatPage({
 
         fetchHistory();
         recoverActiveTask();
+
+        return () => window.removeEventListener('toggle-project-sidebar', handleSidebarToggle);
     }, [projectId, fetchHistory, taskIdFromUrl, router]);
 
     // Cleanup function - only clears intervals if this component started them
@@ -877,7 +915,11 @@ export default function ProjectChatPage({
             )}
 
             {/* Messages - Scrollable area */}
-            <div className="flex-1 overflow-y-auto px-4 py-8">
+            <div
+                ref={scrollContainerRef}
+                onScroll={handleScroll}
+                className="flex-1 overflow-y-auto px-4 py-8"
+            >
                 <div className="max-w-4xl mx-auto space-y-6 min-w-0 w-full" key={`messages-${messages.length}`}>
                     {messages.length === 0 && !loading && (
                         <div className="text-center text-gray-500 py-20">
@@ -965,7 +1007,7 @@ export default function ProjectChatPage({
             )}
 
             {/* Input - Fixed at bottom */}
-            <div className="pb-4 px-4">
+            <div className={`pb-4 px-4 transition-all duration-300 ${isUIHidden && isMobile ? "opacity-0 translate-y-4 pointer-events-none" : "opacity-100 translate-y-0"}`}>
                 <div className="max-w-4xl mx-auto flex flex-col min-h-0 min-w-0">
                     {!isMobile && (
                         <div className="flex justify-between items-center mb-2 px-4">
@@ -1016,9 +1058,11 @@ export default function ProjectChatPage({
                         onScheduleMessage={() => setIsScheduleModalOpen(true)} // Added prop
                     />
                     <div className="mt-2 flex items-center justify-center gap-4">
-                        <div className="text-[10px] text-gray-600">
-                            Press <kbd className="bg-gray-800 px-1 rounded text-gray-400">/</kbd> to see available commands
-                        </div>
+                        {!isMobile && (
+                            <div className="text-[10px] text-gray-600">
+                                Press <kbd className="bg-gray-800 px-1 rounded text-gray-400">/</kbd> to see available commands
+                            </div>
+                        )}
                         {canvasContent && !showCanvas && (
                             <button
                                 onClick={() => setShowCanvas(true)}
@@ -1093,44 +1137,53 @@ export default function ProjectChatPage({
                 )}
 
                 {showSidebar && (
-                    <div className="w-80 h-full border-l border-gray-800 bg-gray-900/50 backdrop-blur-xl absolute right-0 top-0 z-30 shadow-2xl animate-in slide-in-from-right duration-300 flex flex-col p-4">
-                        <div className="flex justify-between items-center mb-4">
-                            <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">
-                                {sidebarMode === "files" ? "Files & Artifacts" : sidebarMode === "notes" ? "Project Notes" : sidebarMode === "activity" ? "Project Activity" : "Project Automation"}
-                            </h2>
-                            <button
+                    <>
+                        {/* Mobile Backdrop for Sidebar */}
+                        {isMobile && (
+                            <div
+                                className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[25] animate-in fade-in duration-300"
                                 onClick={() => setShowSidebar(false)}
-                                className="p-1 hover:bg-gray-800 rounded-md text-gray-500 hover:text-white transition-colors"
-                            >
-                                <X size={18} />
-                            </button>
+                            />
+                        )}
+                        <div className={`${isMobile ? "w-[90vw] z-[26]" : "w-80 z-30"} h-full border-l border-gray-800 bg-gray-900/50 backdrop-blur-xl absolute right-0 top-0 shadow-2xl animate-in slide-in-from-right duration-300 flex flex-col p-4`}>
+                            <div className="flex justify-between items-center mb-4">
+                                <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">
+                                    {sidebarMode === "files" ? "Files & Artifacts" : sidebarMode === "notes" ? "Project Notes" : sidebarMode === "activity" ? "Project Activity" : "Project Automation"}
+                                </h2>
+                                <button
+                                    onClick={() => setShowSidebar(false)}
+                                    className="p-1 hover:bg-gray-800 rounded-md text-gray-500 hover:text-white transition-colors"
+                                >
+                                    <X size={18} />
+                                </button>
+                            </div>
+                            <div className="flex-1 overflow-hidden">
+                                {sidebarMode === "files" ? (
+                                    <FilesSidebar
+                                        nodeType="project"
+                                        nodeName={projectId}
+                                        onOpenFile={(content, path, format) => {
+                                            setCanvasContent(content);
+                                            setCanvasFilePath(path);
+                                            setCanvasFormat(format);
+                                            setShowCanvas(true);
+                                            setShowSidebar(false);
+                                        }}
+                                        onPreviewImage={(url, name) => setPreviewImage({ url, name })}
+                                    />
+                                ) : sidebarMode === "notes" ? (
+                                    <ProjectNotes projectId={projectId as string} />
+                                ) : sidebarMode === "activity" ? (
+                                    <ActivitySidebar projectId={projectId} />
+                                ) : (
+                                    <AutomationTab
+                                        projectId={projectId}
+                                        onScheduleClick={() => setIsScheduleModalOpen(true)}
+                                    />
+                                )}
+                            </div>
                         </div>
-                        <div className="flex-1 overflow-hidden">
-                            {sidebarMode === "files" ? (
-                                <FilesSidebar
-                                    nodeType="project"
-                                    nodeName={projectId}
-                                    onOpenFile={(content, path, format) => {
-                                        setCanvasContent(content);
-                                        setCanvasFilePath(path);
-                                        setCanvasFormat(format);
-                                        setShowCanvas(true);
-                                        setShowSidebar(false);
-                                    }}
-                                    onPreviewImage={(url, name) => setPreviewImage({ url, name })}
-                                />
-                            ) : sidebarMode === "notes" ? (
-                                <ProjectNotes projectId={projectId as string} />
-                            ) : sidebarMode === "activity" ? (
-                                <ActivitySidebar projectId={projectId} />
-                            ) : (
-                                <AutomationTab
-                                    projectId={projectId}
-                                    onScheduleClick={() => setIsScheduleModalOpen(true)}
-                                />
-                            )}
-                        </div>
-                    </div>
+                    </>
                 )}
             </div>
 

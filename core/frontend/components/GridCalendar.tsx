@@ -144,7 +144,7 @@ function DayCell({ date, dayNumber, isCurrentMonth, isToday, tasks, onClick }: D
         <div
             ref={setNodeRef}
             onClick={onClick}
-            className={`min-h-[100px] sm:min-h-[120px] bg-gray-900/40 p-2 transition-all cursor-pointer relative group
+            className={`min-h-[70px] sm:min-h-[120px] bg-gray-900/40 p-1 sm:p-2 transition-all cursor-pointer relative group
                 ${!isCurrentMonth ? 'opacity-30' : ''}
                 ${isOver ? 'bg-blue-600/20 scale-[0.98] z-10' : ''}
                 ${isToday ? 'bg-blue-900/10' : ''}

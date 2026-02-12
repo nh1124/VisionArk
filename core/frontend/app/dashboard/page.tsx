@@ -6,6 +6,7 @@ import HeatMapCalendar from "@/components/HeatMapCalendar";
 import HubSuggestionBanner from "@/components/HubSuggestionBanner";
 import ScheduleView from "@/components/ScheduleView";
 import { suggestSchedule, ScheduleResult } from "@/lib/schedule";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 interface DashboardData {
     today: {
@@ -30,6 +31,7 @@ interface DashboardData {
 }
 
 export default function DashboardPage() {
+    const isMobile = useIsMobile();
     const [data, setData] = useState<DashboardData | null>(null);
     const [loading, setLoading] = useState(true);
     const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -125,41 +127,42 @@ export default function DashboardPage() {
     const recoveryStatus = getRecoveryStatus(data.weekly?.recovery_rate || 0);
 
     return (
-        <div className="min-h-screen bg-gray-950 text-white p-6 lg:p-8">
+        <div className={`min-h-screen bg-gray-950 text-white ${isMobile ? "p-4 pb-24" : "p-6 lg:p-8"}`}>
             <div className="max-w-7xl mx-auto">
                 {/* Header */}
-                <div className="flex justify-between items-center mb-8 hidden sm:flex">
-                    <div>
+                {!isMobile && (
+                    <div className="flex justify-between items-center mb-8">
                         <h1 className="text-3xl font-bold text-white tracking-tight">Dashboard</h1>
                     </div>
-                </div>
+                )}
 
                 {/* Hub Proactive Suggestions */}
                 <HubSuggestionBanner onRefresh={() => setRefreshKey(k => k + 1)} />
 
                 {/* Primary Metrics */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                <div className={`grid grid-cols-1 ${isMobile ? "gap-4" : "md:grid-cols-2 lg:grid-cols-4 gap-6"} mb-8 animate-in fade-in slide-in-from-bottom-4 duration-700`}>
                     {/* Load Capacity - Main Card */}
-                    <div className={`md:col-span-2 bg-gray-900/40 border-2 ${loadStatus.border} rounded-2xl p-8 relative overflow-hidden backdrop-blur-sm shadow-xl`}>
+                    <div className={`${isMobile ? "" : "md:col-span-2"} bg-gray-900/40 border-2 ${loadStatus.border} rounded-2xl ${isMobile ? "p-5" : "p-8"} relative overflow-hidden backdrop-blur-sm shadow-xl`}>
                         <div className="relative z-10">
-                            <div className="flex items-center justify-between mb-6">
-                                <span className="text-sm font-bold text-gray-400 uppercase tracking-widest">Current State</span>
-                                <span className={`text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-widest ${loadStatus.bg}/20 ${loadStatus.color}`}>
-                                    LBS Core
+                            <div className="flex items-center justify-between mb-4">
+                                <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Efficiency</span>
+                                <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-widest ${loadStatus.bg}/20 ${loadStatus.color} border border-current/20`}>
+                                    Dynamic Target
                                 </span>
                             </div>
-                            <div className="flex items-baseline gap-4 mb-6">
-                                <span className={`text-6xl font-bold tracking-tight ${loadStatus.color}`}>{loadStatus.label}</span>
-                                <span className="text-xs font-medium text-gray-500 tabular-nums">({loadPercentageActual.toFixed(0)}%)</span>
+                            <div className="flex items-baseline gap-2 mb-4">
+                                <span className={`${isMobile ? "text-4xl" : "text-6xl"} font-bold tracking-tight ${loadStatus.color}`}>{loadStatus.label}</span>
+                                <span className="text-[10px] font-medium text-gray-500 tabular-nums">({loadPercentageActual.toFixed(0)}%)</span>
                             </div>
-                            <div className="h-3 bg-gray-800/50 rounded-full overflow-hidden mb-4">
+                            <div className="h-2 bg-gray-800/50 rounded-full overflow-hidden mb-3">
                                 <div
-                                    className={`h-full rounded-full transition-all duration-1000 ease-out ${loadStatus.bg}`}
+                                    className={`h-full rounded-full transition-all duration-1000 ease-out ${loadStatus.bg} shadow-[0_0_15px_-3px_rgba(37,99,235,0.4)]`}
                                     style={{ width: `${Math.min(100, loadPercentageActual)}%` }}
                                 />
                             </div>
-                            <div className="flex justify-between text-[10px] font-bold text-gray-600 uppercase tracking-wider">
-                                <span>{data.today?.adjusted_load.toFixed(1)} / {data.today?.cap} load units</span>
+                            <div className="flex justify-between text-[9px] font-black text-gray-600 uppercase tracking-wider">
+                                <span>{data.today?.adjusted_load.toFixed(1)} <span className="text-[8px] opacity-50">Score</span></span>
+                                <span>{data.today?.cap} <span className="text-[8px] opacity-50">Limit</span></span>
                             </div>
                         </div>
                         {/* Decorative background glow */}
@@ -167,22 +170,25 @@ export default function DashboardPage() {
                     </div>
 
                     {/* Weekly Recovery */}
-                    <div className="md:col-span-2 bg-gray-900/40 border-2 border-gray-800 rounded-2xl p-8 backdrop-blur-sm shadow-xl">
-                        <span className="text-sm font-bold text-gray-400 uppercase tracking-widest">Recovery Level</span>
-                        <div className="mt-8 flex items-baseline gap-3">
-                            <span className={`text-5xl font-bold tracking-tight ${recoveryStatus.color}`}>{recoveryStatus.label}</span>
-                            <span className="text-sm font-medium text-gray-600 tabular-nums">{data.weekly?.recovery_rate.toFixed(0)}%</span>
+                    <div className={`${isMobile ? "" : "md:col-span-2"} bg-gray-900/40 border-2 border-gray-800 rounded-2xl ${isMobile ? "p-5" : "p-8"} backdrop-blur-sm shadow-xl relative overflow-hidden`}>
+                        <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Sustainability</span>
+                        <div className={`${isMobile ? "mt-4" : "mt-8"} flex items-baseline gap-2`}>
+                            <span className={`text-4xl font-bold tracking-tight ${recoveryStatus.color}`}>{recoveryStatus.label}</span>
+                            <span className="text-[10px] font-medium text-gray-600 tabular-nums">{data.weekly?.recovery_rate.toFixed(0)}%</span>
                         </div>
-                        <p className="text-xs font-bold text-gray-600 mt-4 uppercase">Efficiency Context</p>
-                        <div className="mt-8 flex gap-1.5">
+
+                        <div className={`${isMobile ? "mt-6" : "mt-8"} flex gap-1.5`}>
                             {[1, 2, 3, 4, 5, 6, 7].map(i => (
                                 <div
                                     key={i}
-                                    className={`h-2 flex-1 rounded-full ${i <= (data.weekly?.over_days || 0) ? 'bg-red-500/50 shadow-[0_0_10px_rgba(239,68,68,0.2)]' : 'bg-emerald-500/30'}`}
+                                    className={`h-1.5 flex-1 rounded-full ${i <= (data.weekly?.over_days || 0) ? 'bg-red-500/50' : 'bg-emerald-500/30'}`}
                                 />
                             ))}
                         </div>
-                        <p className="text-[10px] font-bold text-gray-600 mt-3 uppercase tracking-wider">Days over capacity this week</p>
+                        <p className="text-[8px] font-black text-gray-700 mt-2.5 uppercase tracking-widest flex justify-between">
+                            <span>Weekly Load Strain</span>
+                            <span className="text-red-500/80">{data.weekly?.over_days || 0} Critical Days</span>
+                        </p>
                     </div>
                 </div>
 
@@ -253,13 +259,13 @@ export default function DashboardPage() {
                         className="absolute inset-0 bg-black/80 backdrop-blur-md"
                         onClick={() => setSelectedDate(null)}
                     />
-                    <div className="relative bg-gray-900 border-2 border-gray-800 rounded-3xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
+                    <div className={`relative bg-gray-900 border-2 border-gray-800 shadow-2xl overflow-hidden flex flex-col ${isMobile ? "w-full h-[95vh] rounded-t-3xl mt-auto" : "w-full max-w-2xl max-h-[90vh] rounded-3xl"}`}>
                         {/* Modal Header */}
-                        <div className="p-8 border-b border-gray-800 flex justify-between items-start font-display">
+                        <div className={`${isMobile ? "p-6" : "p-8"} border-b border-gray-800 flex justify-between items-start font-display bg-gray-950/50`}>
                             <div>
-                                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-[0.3em] mb-2">Detailed Log</p>
-                                <h3 className="text-3xl font-bold tracking-tight">
-                                    {new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                                <p className="text-[10px] font-black text-gray-500 uppercase tracking-[0.3em] mb-2">Detailed Analytics</p>
+                                <h3 className={`${isMobile ? "text-xl" : "text-3xl"} font-bold tracking-tight text-white`}>
+                                    {new Date(selectedDate).toLocaleDateString('en-US', { weekday: isMobile ? 'short' : 'long', month: isMobile ? 'short' : 'long', day: 'numeric', year: 'numeric' })}
                                 </h3>
                             </div>
                             <button
@@ -273,24 +279,24 @@ export default function DashboardPage() {
                         </div>
 
                         {/* Modal Content */}
-                        <div className="p-8 overflow-y-auto custom-scrollbar">
+                        <div className={`${isMobile ? "p-6" : "p-8"} overflow-y-auto custom-scrollbar flex-1`}>
                             {dayDetails ? (
-                                <div className="space-y-10">
-                                    <div className="grid grid-cols-3 gap-4 font-display">
-                                        <div className="bg-gray-800/30 border border-gray-700/50 rounded-2xl p-5">
-                                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2 block">Total Load</span>
+                                <div className="space-y-8">
+                                    <div className={`grid ${isMobile ? "grid-cols-1" : "grid-cols-3"} gap-4 font-display`}>
+                                        <div className="bg-gray-800/10 border border-gray-800/50 rounded-2xl p-4 flex flex-col items-center justify-center">
+                                            <span className="text-[9px] font-black text-gray-600 uppercase tracking-widest mb-1">Total Adjusted Load</span>
                                             <span className="text-3xl font-bold text-emerald-400 tabular-nums">
                                                 {dayDetails.adjusted_load.toFixed(2)}
                                             </span>
                                         </div>
-                                        <div className="bg-gray-800/30 border border-gray-700/50 rounded-2xl p-5">
-                                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2 block">Tasks</span>
+                                        <div className="bg-gray-800/10 border border-gray-800/50 rounded-2xl p-4 flex flex-col items-center justify-center">
+                                            <span className="text-[9px] font-black text-gray-600 uppercase tracking-widest mb-1">Active Tasks</span>
                                             <span className="text-3xl font-bold text-white tabular-nums">
                                                 {dayDetails.tasks_count || dayDetails.tasks?.length || 0}
                                             </span>
                                         </div>
-                                        <div className="bg-gray-800/30 border border-gray-700/50 rounded-2xl p-5">
-                                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2 block">Contexts</span>
+                                        <div className="bg-gray-800/10 border border-gray-800/50 rounded-2xl p-4 flex flex-col items-center justify-center">
+                                            <span className="text-[9px] font-black text-gray-600 uppercase tracking-widest mb-1">Unique Hubs</span>
                                             <span className="text-3xl font-bold text-blue-400 tabular-nums">
                                                 {dayDetails.contexts_count || new Set(dayDetails.tasks?.map((t: any) => t.context)).size}
                                             </span>
@@ -300,26 +306,24 @@ export default function DashboardPage() {
                                     {/* Load Breakdown */}
                                     <div>
                                         <div className="flex items-center gap-2 mb-4">
-                                            <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                            </svg>
-                                            <h4 className="text-[10px] font-bold text-gray-500 uppercase tracking-[0.2em]">Load Calculation Breakdown</h4>
+                                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                            <h4 className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em]">Efficiency Breakdown</h4>
                                         </div>
-                                        <div className="bg-gray-950 border-2 border-emerald-500/30 rounded-2xl p-6 space-y-4">
-                                            <div className="flex justify-between items-center text-sm">
-                                                <span className="text-gray-400">Base Task Scores (Sum)</span>
-                                                <span className="font-bold tabular-nums">{(dayDetails.raw_load || 0).toFixed(2)}</span>
+                                        <div className="bg-gray-950 border border-gray-800 rounded-2xl p-6 space-y-4">
+                                            <div className="flex justify-between items-center text-xs">
+                                                <span className="text-gray-500 font-medium">Base Task Complexity (Sum)</span>
+                                                <span className="font-bold tabular-nums text-gray-300">{(dayDetails.raw_load || 0).toFixed(2)}</span>
                                             </div>
-                                            <div className="flex justify-between items-center text-sm italic">
-                                                <span className="text-gray-500">+ Task Count Multiplier (α * N^β)</span>
-                                                <span className="font-bold tabular-nums">{(dayDetails.multiplier_penalty || (dayDetails.adjusted_load - (dayDetails.raw_load || 0) - (dayDetails.context_switch_penalty || 0))).toFixed(2)}</span>
+                                            <div className="flex justify-between items-center text-xs">
+                                                <span className="text-gray-500 font-medium">Cognitive Context Switches</span>
+                                                <span className="font-bold tabular-nums text-gray-300">{(dayDetails.context_switch_penalty || 0).toFixed(2)}</span>
                                             </div>
-                                            <div className="flex justify-between items-center text-sm italic">
-                                                <span className="text-gray-500">+ Context Switch Cost (Cost * (C-1))</span>
-                                                <span className="font-bold tabular-nums">{(dayDetails.context_switch_penalty || 0).toFixed(2)}</span>
+                                            <div className="flex justify-between items-center text-xs italic">
+                                                <span className="text-gray-600 font-medium">Parallel Load Adjustment</span>
+                                                <span className="font-bold tabular-nums text-gray-500">{(dayDetails.multiplier_penalty || (dayDetails.adjusted_load - (dayDetails.raw_load || 0) - (dayDetails.context_switch_penalty || 0))).toFixed(2)}</span>
                                             </div>
-                                            <div className="pt-4 border-t border-gray-800 flex justify-between items-center font-display">
-                                                <span className="text-lg font-bold">Final Adjusted Load</span>
+                                            <div className="pt-4 border-t border-gray-800 flex justify-between items-center">
+                                                <span className="text-sm font-black uppercase text-gray-400">Net Computational Score</span>
                                                 <span className="text-2xl font-bold text-emerald-400 tabular-nums">{dayDetails.adjusted_load.toFixed(2)}</span>
                                             </div>
                                         </div>

@@ -16,14 +16,6 @@ export default function MobileSidebar({ isOpen, onClose }: MobileSidebarProps) {
     const pathname = usePathname();
     const { projects } = useProjects();
     const { selectedModel, setSelectedModel } = useModel();
-    const [showModelList, setShowModelList] = React.useState(false);
-
-    const navItems = [
-        { name: "Dashboard", path: "/dashboard", icon: <LayoutDashboard size={20} /> },
-        { name: "Tasks", path: "/tasks", icon: <ListTodo size={20} /> },
-        { name: "Projects", path: "/projects", icon: <MessageSquare size={20} /> },
-    ];
-
     if (!isOpen) return null;
 
     return (
@@ -52,29 +44,10 @@ export default function MobileSidebar({ isOpen, onClose }: MobileSidebarProps) {
                     </button>
                 </div>
 
-                {/* Navigation */}
-                <div className="flex-1 overflow-y-auto py-6 px-4 no-scrollbar">
-                    <div className="space-y-1">
-                        {navItems.map((item) => {
-                            const isActive = pathname === item.path;
-                            return (
-                                <Link
-                                    key={item.path}
-                                    href={item.path}
-                                    onClick={onClose}
-                                    className={`flex items-center gap-4 px-4 py-3 rounded-xl transition-all ${isActive
-                                        ? "bg-blue-600/10 text-blue-400 font-medium"
-                                        : "text-gray-400 hover:bg-gray-900 hover:text-gray-200"
-                                        }`}
-                                >
-                                    {item.icon}
-                                    <span>{item.name}</span>
-                                </Link>
-                            );
-                        })}
-                    </div>
-
-                    <div className="mt-8">
+                {/* Content */}
+                <div className="flex-1 overflow-y-auto pt-4 px-4 no-scrollbar">
+                    {/* Projects Section */}
+                    <div className="mb-8">
                         <div className="px-4 mb-4 flex items-center justify-between">
                             <span className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-600">
                                 Projects
@@ -110,11 +83,22 @@ export default function MobileSidebar({ isOpen, onClose }: MobileSidebarProps) {
                         </div>
                     </div>
 
-
+                    {/* Model Selection (Secondary Mobile Action) */}
+                    <div className="px-4 mb-4">
+                        <span className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-600">
+                            Current Model
+                        </span>
+                        <div className="mt-4 p-4 rounded-xl bg-gray-900/50 border border-gray-800">
+                            <div className="flex items-center gap-3 text-sm font-medium text-gray-300">
+                                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                                {getModelDisplayName(selectedModel)}
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 {/* Footer */}
-                <div className="p-4 border-t border-gray-800">
+                <div className="p-4 border-t border-gray-800 pb-safe">
                     <Link
                         href="/settings"
                         onClick={onClose}

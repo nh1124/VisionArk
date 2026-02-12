@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { apiFetch } from "@/lib/api";
 import { useTaskStore } from "../store/useTaskStore";
+import { useIsMobile } from "../hooks/useIsMobile";
 
 interface TaskSummary {
     task_id: string;
@@ -144,23 +145,25 @@ export default function HeatMapCalendar({
         weeks.push(currentWeek);
     }
 
+    const isMobile = useIsMobile();
+
     if (loading) {
-        return <div className="animate-pulse h-96 bg-gray-900/50 rounded-xl border border-gray-800"></div>;
+        return <div className="animate-pulse h-96 bg-gray-950/40 rounded-3xl border border-gray-800"></div>;
     }
 
     return (
         <div className="w-full">
-            <div className="grid grid-cols-7 gap-3 mb-4">
+            <div className={`grid grid-cols-7 ${isMobile ? 'gap-1.5' : 'gap-3'} mb-4`}>
                 {["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"].map((day) => (
-                    <div key={day} className="text-center text-[10px] font-bold text-gray-600 tracking-wider">
-                        {day}
+                    <div key={day} className="text-center text-[10px] font-black text-gray-700 tracking-widest">
+                        {isMobile ? day.charAt(0) : day}
                     </div>
                 ))}
             </div>
 
-            <div className="space-y-3">
+            <div className={isMobile ? 'space-y-1.5' : 'space-y-3'}>
                 {weeks.map((week, weekIdx) => (
-                    <div key={weekIdx} className="grid grid-cols-7 gap-3">
+                    <div key={weekIdx} className={`grid grid-cols-7 ${isMobile ? 'gap-1.5' : 'gap-3'}`}>
                         {week.map((cell, cellIdx) => {
                             if (!cell) return <div key={cellIdx} className="aspect-square"></div>;
                             const level = cell.data?.level || "UNKNOWN";
@@ -171,46 +174,52 @@ export default function HeatMapCalendar({
                                     key={cellIdx}
                                     onClick={() => onDayClick?.(cell.dateStr)}
                                     className={`
-                                        aspect-square rounded-xl border p-1.5 sm:p-3 flex flex-col justify-start transition-all cursor-pointer relative group
+                                        aspect-square rounded-xl border p-1.5 flex flex-col justify-start transition-all cursor-pointer relative group overflow-hidden
                                         ${getLevelBgColor(level)}
-                                        ${isActive ? 'ring-2 ring-blue-500/50 ring-offset-2 ring-offset-gray-950' : ''}
-                                        hover:scale-[1.02] active:scale-[0.98]
+                                        ${isActive ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-gray-900 shadow-[0_0_15px_-3px_rgba(59,130,246,0.5)]' : ''}
+                                        hover:scale-[1.02] active:scale-[0.95]
                                     `}
                                 >
-                                    <div className="flex justify-between items-center mb-1">
-                                        <span className={`text-[10px] sm:text-xs font-bold leading-none ${cell.data ? 'text-blue-400' : 'text-gray-600'}`}>
+                                    <div className="flex justify-between items-center mb-1 relative z-10">
+                                        <span className={`text-[10px] sm:text-xs font-black leading-none ${cell.data ? 'text-blue-400' : 'text-gray-600'}`}>
                                             {cell.day}
                                         </span>
                                         {cell.data && cell.data.taskCount > 0 && (
-                                            <div className="flex items-center gap-1">
-                                                <span className="text-[8px] font-black text-gray-500">{cell.data.taskCount}</span>
-                                                <div className={`w-1.5 h-1.5 rounded-full shadow-sm ${getLevelDotColor(level)}`} />
-                                            </div>
+                                            <div className={`w-1.5 h-1.5 rounded-full shadow-sm ${getLevelDotColor(level)} shadow-[0_0_8px_rgba(0,0,0,0.5)]`} />
                                         )}
                                     </div>
 
-                                    {/* Task List */}
-                                    <div className="flex-1 overflow-hidden flex flex-col gap-0.5 mt-0.5 relative z-10">
-                                        {cell.data?.tasks?.slice(0, 3).map((task, idx) => (
-                                            <div
-                                                key={task.task_id}
-                                                className={`text-[8px] sm:text-[9px] truncate leading-none py-0.5 px-1 rounded ${task.status === 'done'
-                                                    ? 'bg-emerald-500/10 text-emerald-500/70 line-through'
-                                                    : 'bg-white/5 text-gray-400'
-                                                    }`}
-                                            >
-                                                {task.task_name}
-                                            </div>
-                                        ))}
-                                        {cell.data && cell.data.taskCount > 3 && (
-                                            <div className="text-[7px] sm:text-[8px] text-gray-600 font-bold pl-1 mt-auto">
-                                                +{cell.data.taskCount - 3} more
-                                            </div>
-                                        )}
-                                    </div>
+                                    {/* Task List - Only on Desktop */}
+                                    {!isMobile && (
+                                        <div className="flex-1 overflow-hidden flex flex-col gap-0.5 mt-0.5 relative z-10">
+                                            {cell.data?.tasks?.slice(0, 2).map((task, idx) => (
+                                                <div
+                                                    key={task.task_id}
+                                                    className={`text-[8px] sm:text-[9px] truncate leading-none py-0.5 px-1 rounded ${task.status === 'done'
+                                                        ? 'bg-emerald-500/10 text-emerald-500/70 line-through'
+                                                        : 'bg-white/5 text-gray-400'
+                                                        }`}
+                                                >
+                                                    {task.task_name}
+                                                </div>
+                                            ))}
+                                            {cell.data && cell.data.taskCount > 2 && (
+                                                <div className="text-[7px] sm:text-[8px] text-gray-600 font-bold pl-1 mt-auto">
+                                                    +{cell.data.taskCount - 2}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
 
-                                    {/* Glass reflection effect */}
-                                    <div className="absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/5 to-transparent rounded-t-xl pointer-events-none" />
+                                    {/* Mobile indicator for task count */}
+                                    {isMobile && cell.data && cell.data.taskCount > 0 && (
+                                        <div className="absolute bottom-1 right-1 text-[8px] font-black text-gray-600/50">
+                                            {cell.data.taskCount}
+                                        </div>
+                                    )}
+
+                                    {/* Decorative background glow for active/high load */}
+                                    <div className={`absolute -right-4 -bottom-4 w-8 h-8 rounded-full blur-xl opacity-20 ${getLevelDotColor(level)}`} />
                                 </div>
                             );
                         })}

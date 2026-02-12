@@ -23,8 +23,14 @@ import {
     Command as CmdIcon,
     ChevronDown,
     Wand2,
-    X
+    X,
+    Heading1,
+    Heading2,
+    Heading3,
+    FileEdit,
+    Code2
 } from "lucide-react";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 interface CanvasProps {
     content: string;
@@ -181,32 +187,49 @@ export default function Canvas({
         }
     };
 
+    const isMobile = useIsMobile();
+
     return (
         <div className="flex flex-col h-full bg-gray-950 border-l border-gray-800 text-gray-200">
-            {/* Toolbar */}
-            <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800 bg-gray-900/50 backdrop-blur-md sticky top-0 z-10">
+            {/* Toolbar: Simplified for Mobile */}
+            <div className={`flex items-center justify-between px-4 py-2 border-b border-gray-800 bg-gray-900/50 backdrop-blur-md sticky top-0 z-10 ${isMobile ? "h-14" : ""}`}>
                 <div className="flex items-center gap-1">
                     <div className="flex bg-gray-800/50 p-1 rounded-lg">
                         <button
                             onClick={() => setEditorMode("markdown")}
-                            className={`p-1.5 rounded-md transition-all ${editorMode === "markdown" ? "bg-gray-700 text-cyan-400 shadow-sm" : "text-gray-400 hover:text-white"}`}
-                            title="Rich Text"
+                            className={`p-1.5 rounded-md transition-all ${editorMode === "markdown" ? "bg-cyan-500 text-white shadow-lg shadow-cyan-500/20" : "text-gray-400 hover:text-gray-200 hover:bg-gray-700"}`}
                         >
-                            <Type size={16} />
+                            <FileEdit size={16} />
                         </button>
                         <button
-                            onClick={() => setEditorMode("code")}
-                            className={`p-1.5 rounded-md transition-all ${editorMode === "code" ? "bg-gray-700 text-cyan-400 shadow-sm" : "text-gray-400 hover:text-white"}`}
-                            title="Code"
+                            onClick={toggleMode}
+                            className={`p-1.5 rounded-md transition-all ${editorMode === "code" ? "bg-cyan-500 text-white shadow-lg shadow-cyan-500/20" : "text-gray-400 hover:text-gray-200 hover:bg-gray-700"}`}
                         >
-                            <Code size={16} />
+                            <Code2 size={16} />
                         </button>
                     </div>
 
-                    <div className="h-4 w-px bg-gray-800 mx-2" />
-
-                    {editorMode === "markdown" && (
-                        <div className="flex items-center gap-0.5">
+                    {!isMobile && editorMode === "markdown" && (
+                        <div className="flex items-center gap-1 ml-2 pl-2 border-l border-gray-800">
+                            <button
+                                onClick={() => tiptapEditor?.chain().focus().toggleHeading({ level: 1 }).run()}
+                                className={`p-1.5 rounded-md hover:bg-gray-800 transition-colors ${tiptapEditor?.isActive('heading', { level: 1 }) ? 'text-cyan-400' : 'text-gray-400'}`}
+                            >
+                                <Heading1 size={16} />
+                            </button>
+                            <button
+                                onClick={() => tiptapEditor?.chain().focus().toggleHeading({ level: 2 }).run()}
+                                className={`p-1.5 rounded-md hover:bg-gray-800 transition-colors ${tiptapEditor?.isActive('heading', { level: 2 }) ? 'text-cyan-400' : 'text-gray-400'}`}
+                            >
+                                <Heading2 size={16} />
+                            </button>
+                            <button
+                                onClick={() => tiptapEditor?.chain().focus().toggleHeading({ level: 3 }).run()}
+                                className={`p-1.5 rounded-md hover:bg-gray-800 transition-colors ${tiptapEditor?.isActive('heading', { level: 3 }) ? 'text-cyan-400' : 'text-gray-400'}`}
+                            >
+                                <Heading3 size={16} />
+                            </button>
+                            <div className="w-px h-4 bg-gray-800 mx-1" />
                             <button
                                 onClick={() => tiptapEditor?.chain().focus().toggleBold().run()}
                                 className={`p-1.5 rounded-md hover:bg-gray-800 transition-colors ${tiptapEditor?.isActive('bold') ? 'text-cyan-400' : 'text-gray-400'}`}
@@ -297,25 +320,34 @@ export default function Canvas({
                         <EditorContent editor={tiptapEditor} />
                     </div>
                 ) : (
-                    <Editor
-                        height="100%"
-                        language={language}
-                        theme="vs-dark"
-                        value={localContent}
-                        onChange={(value) => handleContentUpdate(value || "")}
-                        options={{
-                            minimap: { enabled: false },
-                            fontSize: 14,
-                            lineNumbers: "on",
-                            roundedSelection: false,
-                            scrollBeyondLastLine: false,
-                            readOnly: false,
-                            cursorStyle: "line",
-                            automaticLayout: true,
-                            padding: { top: 20 },
-                            wordWrap: "on"
-                        }}
-                    />
+                    isMobile ? (
+                        <textarea
+                            className="w-full h-full bg-gray-950 text-gray-300 font-mono p-4 text-sm focus:outline-none resize-none"
+                            value={localContent}
+                            onChange={(e) => handleContentUpdate(e.target.value)}
+                            spellCheck={false}
+                        />
+                    ) : (
+                        <Editor
+                            height="100%"
+                            language={language}
+                            theme="vs-dark"
+                            value={localContent}
+                            onChange={(value) => handleContentUpdate(value || "")}
+                            options={{
+                                minimap: { enabled: false },
+                                fontSize: 14,
+                                lineNumbers: "on",
+                                roundedSelection: false,
+                                scrollBeyondLastLine: false,
+                                readOnly: false,
+                                cursorStyle: "line",
+                                automaticLayout: true,
+                                padding: { top: 20 },
+                                wordWrap: "on"
+                            }}
+                        />
+                    )
                 )}
             </div>
 
