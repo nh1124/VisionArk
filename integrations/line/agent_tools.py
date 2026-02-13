@@ -17,7 +17,7 @@ class SendLineMessageTool(BaseTool):
     args_schema = SendLineMessageArgs
 
     async def run(self, text: str, to_user_id: Optional[str] = None, ctx: IntegrationContext = None, **kwargs) -> Any:
-        from domains.orchestration.tools.base import ToolResult
+        from va_sdk import ToolResult
         if not ctx: return ToolResult(content="Context error", is_success=False)
         db_session = ctx.db
         user_id = ctx.user_id

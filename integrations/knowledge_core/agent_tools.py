@@ -17,7 +17,7 @@ class SearchKnowledgeTool(BaseTool):
     args_schema = SearchKnowledgeArgs
 
     async def run(self, query: str, limit: int = 5, ctx: IntegrationContext = None, **kwargs) -> Any:
-        from domains.orchestration.tools.base import ToolResult
+        from va_sdk import ToolResult
         if not ctx: return ToolResult(content="Context error", is_success=False)
         
         try:
@@ -44,7 +44,7 @@ class IngestKnowledgeTool(BaseTool):
     args_schema = IngestKnowledgeArgs
 
     async def run(self, content: str, label: Optional[str] = None, ctx: IntegrationContext = None, **kwargs) -> Any:
-        from domains.orchestration.tools.base import ToolResult
+        from va_sdk import ToolResult
         if not ctx: return ToolResult(content="Context error", is_success=False)
         
         try:

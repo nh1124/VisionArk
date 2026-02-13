@@ -21,7 +21,6 @@ from shared.database import Node, Project, ChatSession, ChatMessage, ChatSubMess
 from shared.paths import get_project_dir, get_user_projects_dir, validate_name, secure_path_join, update_project_name_cache as update_cache
 from uuid import uuid4
 from datetime import datetime, timedelta
-from domains.orchestration.member_node_registry import sync_member_nodes_for_project
 
 router = APIRouter(prefix="/api/agents", tags=["Agents"])
 
@@ -546,9 +545,6 @@ async def create_project(
         project_dir.mkdir(parents=True, exist_ok=True)
         (project_dir / "refs").mkdir(exist_ok=True)
         
-        # 6. Initialize Member Nodes for this project
-        await sync_member_nodes_for_project(project_id)
-        
         await db.commit()
         
         return {
@@ -581,48 +577,125 @@ async def create_project_from_prompt(
     Create a new Project from a user prompt.
     Uses AI to generate a project name and system prompt, then enqueues the initial message.
     """
-    from domains.orchestration.nodes.system.project_creator_node import ProjectCreatorNode
     from infrastructure.queue.manager import QueueManager
-    
+    from shared.database import TaskType, UserSettings
+    import re
+
     if not data.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
-    
+
     try:
-        # 1. Create context for the node
-        context = {
-            "user_id": identity.user_id,
-            "db_session": db
-        }
-        
-        # 2. Initialize and run ProjectCreatorNode to create the project
-        creator = ProjectCreatorNode(context)
-        result = await creator.process(data.prompt)
-        
-        if not result.get("success"):
-            raise HTTPException(status_code=500, detail="Failed to create project")
-        
-        project_name = result["project_name"]
-        
-        # 3. Enqueue the initial prompt to be processed by the worker
+        # 1. Generate project name + system prompt via LLM
+        res = await db.execute(select(UserSettings).filter(UserSettings.user_id == identity.user_id))
+        settings = res.scalars().first()
+        api_key = settings.gemini_api_key if settings else None
+
+        generated_name = None
+        generated_prompt = None
+
+        if api_key:
+            try:
+                from infrastructure.llm.orchestration2_provider import GeminiLLMProvider
+                from domains.orchestration2.engine.models.message import Message as V2Message
+                from domains.orchestration2.engine.models.common import MessageRole
+
+                provider = GeminiLLMProvider(api_key=api_key)
+
+                system_instruction = (
+                    "You are a project setup assistant. Given a user's project description, generate:\n"
+                    "1. A concise project name (snake_case, 2-4 words)\n"
+                    "2. A tailored system prompt for an AI assistant that will help with this specific project\n\n"
+                    "OUTPUT FORMAT (JSON only, no markdown):\n"
+                    '{"name": "project_name_here", "system_prompt": "You are a specialized AI assistant for..."}'
+                )
+
+                messages = [V2Message(role=MessageRole.USER, content=f"Create a project setup for: {data.prompt}")]
+                llm_response = await provider.complete(messages, system=system_instruction)
+
+                content = llm_response.content.strip()
+                json_match = re.search(r'\{[^{}]*"name"[^{}]*"system_prompt"[^{}]*\}', content, re.DOTALL)
+                if json_match:
+                    content = json_match.group()
+                parsed = json.loads(content)
+
+                name = parsed.get("name", "").strip().lower()
+                name = name.replace('"', '').replace("'", '').replace(' ', '_')
+                name = ''.join(c for c in name if c.isalnum() or c == '_')
+                if len(name) >= 3:
+                    generated_name = name[:50]
+                generated_prompt = parsed.get("system_prompt")
+            except Exception as e:
+                print(f"[create-from-prompt] LLM generation failed, using fallback: {e}")
+
+        # Fallback values
+        if not generated_name:
+            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            generated_name = f"project_{timestamp}"
+        if not generated_prompt:
+            generated_prompt = "You are a specialized AI assistant for this project. Help the user manage tasks, analyze data, and generate insights."
+
+        display_name = generated_name.replace('_', ' ').title()
+
+        # 2. Check for name collision
+        base_display_name = display_name
+        counter = 1
+        while True:
+            dup_res = await db.execute(select(Project).filter(
+                Project.user_id == identity.user_id,
+                Project.name == display_name,
+                Project.status != "archived"
+            ))
+            if not dup_res.scalars().first():
+                break
+            display_name = f"{base_display_name} {counter}"
+            counter += 1
+
+        # 3. Create Project + Node (same as create_project endpoint)
+        project_id = str(uuid4())
+        new_project = Project(
+            id=project_id,
+            user_id=identity.user_id,
+            name=display_name,
+            status="active"
+        )
+        db.add(new_project)
+
+        node_id = str(uuid4())
+        new_node = Node(
+            id=node_id,
+            project_id=project_id,
+            node_type="PROJECT",
+            display_name=display_name,
+            system_prompt=generated_prompt,
+            status="active"
+        )
+        db.add(new_node)
+        update_cache(identity.user_id, project_id, display_name)
+
+        # 4. Create project directory
+        project_dir = get_project_dir(identity.user_id, project_id)
+        project_dir.mkdir(parents=True, exist_ok=True)
+        (project_dir / "refs").mkdir(exist_ok=True)
+
+        await db.commit()
+
+        # 5. Enqueue the initial prompt
         manager = QueueManager()
-        
         queue_context = {
             "user_id": identity.user_id,
             "preferred_model": x_preferred_model,
             "env": "v4",
-            "project_id": result["project_id"],
+            "project_id": project_id,
             "files": []
         }
-        
-        from shared.database import TaskType
         task_id = await manager.enqueue(identity.user_id, data.prompt, queue_context, task_type=TaskType.USER_MESSAGE)
-        
+
         return {
-            "project_name": project_name,
-            "project_id": result["project_id"],
-            "node_id": result["node_id"],
+            "project_name": display_name,
+            "project_id": project_id,
+            "node_id": node_id,
             "task_id": task_id,
-            "message": f"Project '{project_name}' created and initial message queued"
+            "message": f"Project '{display_name}' created and initial message queued"
         }
     except HTTPException:
         raise
@@ -1215,58 +1288,3 @@ async def clone_project(
         print(f"[agents/clone_project] Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/system/{node_role}/chat")
-async def chat_with_system_node(
-    node_role: str,
-    message: str = Form(""),
-    stream: bool = Form(False),
-    identity: Identity = Depends(resolve_identity),
-    db: AsyncSession = Depends(get_async_db),
-    x_preferred_model: Optional[str] = Header(None, alias="X-Preferred-Model")
-):
-    """Chat with a specialized system node (e.g. project_manager)"""
-    from infrastructure.queue.manager import QueueManager
-    from shared.database import TaskType, Node
-    import uuid
-
-    if not message.strip():
-        raise HTTPException(status_code=400, detail="Message cannot be empty")
-
-    try:
-        # 1. Verify that the node exists and is a SYSTEM node
-        result = await db.execute(select(Node).filter(Node.role_name == node_role, Node.node_type == "SYSTEM"))
-        node = result.scalars().first()
-        if not node:
-             raise HTTPException(status_code=404, detail=f"System node '{node_role}' not found")
-
-        # 2. Enqueue the task
-        manager = QueueManager()
-        
-        # We use a pseudo-project ID or "system" to indicate it's not a specific project
-        # In this OS, we might want a dedicated session for system nodes.
-        # For now, let's just send it with project_id=None
-        
-        context = {
-            "user_id": identity.user_id,
-            "target_node_id": node.id,
-            "target_node_role": node_role,
-            "preferred_model": x_preferred_model,
-            "stream": stream
-        }
-        
-        task_id = await manager.enqueue(
-            user_id=identity.user_id,
-            message=message,
-            context=context,
-            task_type=TaskType.SYSTEM_MANAGEMENT
-        )
-        
-        return {
-            "status": "success",
-            "task_id": task_id,
-            "message": f"Message sent to {node.display_name}"
-        }
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))

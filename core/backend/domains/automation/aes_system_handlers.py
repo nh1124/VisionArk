@@ -62,7 +62,7 @@ class HardDeleteHandler(BaseAESHandler):
 
         # 2. Delete from LBS
         try:
-            from domains.orchestration.tools.utils import get_lbs_client
+            from shared.service_helpers import get_lbs_client
             client = await get_lbs_client(self.user_id, self.db)
             tasks = await client.list_tasks(context=proj.name)
             for t in tasks:

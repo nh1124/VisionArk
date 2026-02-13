@@ -26,19 +26,7 @@ async def lifespan(app: FastAPI):
     
     init_database()  # Use automatic path detection
     print("Database initialized")
-    
-    # Discover and register all tools
-    from domains.orchestration.tool_registry import ToolRegistry
-    await ToolRegistry.discover_all_tools()
-    
-    # Sync System Nodes
-    from domains.orchestration.system_node_registry import sync_system_nodes
-    await sync_system_nodes()
 
-    # Sync Member Nodes
-    from domains.orchestration.member_node_registry import sync_member_nodes
-    await sync_member_nodes()
-    
     # Sync Agent Skills
     from domains.automation.skills import init_skills
     await init_skills()

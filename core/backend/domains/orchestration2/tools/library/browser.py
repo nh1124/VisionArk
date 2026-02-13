@@ -30,7 +30,7 @@ class BrowserOpenTool:
         wait_until = call.arguments.get("wait_until", "networkidle")
 
         try:
-            from domains.orchestration.browser_manager import browser_manager
+            from shared.browser_manager import browser_manager
 
             session_id = get_project_id(ctx)
             page = await browser_manager.get_page(session_id)
@@ -66,7 +66,7 @@ class BrowserClickTool:
         timeout = call.arguments.get("timeout", 30000)
 
         try:
-            from domains.orchestration.browser_manager import browser_manager
+            from shared.browser_manager import browser_manager
 
             session_id = get_project_id(ctx)
             page = await browser_manager.get_page(session_id)
@@ -99,7 +99,7 @@ class BrowserFillTool:
         value = call.arguments.get("value", "")
 
         try:
-            from domains.orchestration.browser_manager import browser_manager
+            from shared.browser_manager import browser_manager
 
             session_id = get_project_id(ctx)
             page = await browser_manager.get_page(session_id)
@@ -126,7 +126,7 @@ class BrowserScreenshotTool:
         full_page = call.arguments.get("full_page", False)
 
         try:
-            from domains.orchestration.browser_manager import browser_manager
+            from shared.browser_manager import browser_manager
 
             user_id = get_user_id(ctx)
             project_id = get_project_id(ctx)

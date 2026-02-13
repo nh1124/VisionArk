@@ -8,8 +8,9 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from shared.database import UserSettings
-from infrastructure.llm.provider_factory import get_provider
-from infrastructure.llm.base_provider import Message, MessageRole
+from infrastructure.llm.orchestration2_provider import GeminiLLMProvider
+from domains.orchestration2.engine.models.message import Message
+from domains.orchestration2.engine.models.common import MessageRole
 from api.auth import get_current_user
 from domains.identity.auth import get_db
 import json
@@ -85,11 +86,10 @@ Example output:
     
     try:
         # Use Gemini to generate subtasks
-        provider = get_provider(api_key=api_key)
-        response = await provider.complete_async(
+        provider = GeminiLLMProvider(api_key=api_key)
+        response = await provider.complete(
             messages=[Message(role=MessageRole.USER, content=prompt)],
-            preferred_model="gemini-2.5-flash-lite",
-            temperature=0.7
+            model="gemini-2.5-flash-lite",
         )
         
         # Parse the JSON response

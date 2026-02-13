@@ -18,7 +18,7 @@ class ListTasksTool(BaseTool):
     args_schema = ListTasksArgs
 
     async def run(self, context: Optional[str] = None, ctx: IntegrationContext = None, **kwargs) -> Any:
-        from domains.orchestration.tools.base import ToolResult
+        from va_sdk import ToolResult
         if not ctx: return ToolResult(content="Context error", is_success=False)
         db_session = ctx.db
         user_id = ctx.user_id
@@ -75,7 +75,7 @@ class CreateTaskTool(BaseTool):
     args_schema = CreateTaskArgs
 
     async def run(self, ctx: IntegrationContext = None, **kwargs) -> Any:
-        from domains.orchestration.tools.base import ToolResult
+        from va_sdk import ToolResult
         if not ctx: return ToolResult(content="Context error", is_success=False)
         db_session = ctx.db
         user_id = ctx.user_id
@@ -139,7 +139,7 @@ class UpdateTaskTool(BaseTool):
     args_schema = UpdateTaskArgs
 
     async def run(self, task_id: str, ctx: IntegrationContext = None, **kwargs) -> Any:
-        from domains.orchestration.tools.base import ToolResult
+        from va_sdk import ToolResult
         if not ctx: return ToolResult(content="Context error", is_success=False)
         db_session = ctx.db
         user_id = ctx.user_id
@@ -171,7 +171,7 @@ class DeleteTaskTool(BaseTool):
     args_schema = DeleteTaskArgs
 
     async def run(self, task_id: str, ctx: IntegrationContext = None, **kwargs) -> Any:
-        from domains.orchestration.tools.base import ToolResult
+        from va_sdk import ToolResult
         if not ctx: return ToolResult(content="Context error", is_success=False)
         db_session = ctx.db
         user_id = ctx.user_id
@@ -199,7 +199,7 @@ class CompleteLBSTaskTool(BaseTool):
     args_schema = CompleteLBSTaskArgs
 
     async def run(self, task_id: str, target_date: str, status: str = "done", ctx: IntegrationContext = None, **kwargs) -> Any:
-        from domains.orchestration.tools.base import ToolResult
+        from va_sdk import ToolResult
         if not ctx: return ToolResult(content="Context error", is_success=False)
         db_session = ctx.db
         user_id = ctx.user_id
@@ -223,7 +223,7 @@ class GetLBSScheduleTool(BaseTool):
     args_schema = GetLBSScheduleArgs
 
     async def run(self, start_date: str, end_date: str, ctx: IntegrationContext = None, **kwargs) -> Any:
-        from domains.orchestration.tools.base import ToolResult
+        from va_sdk import ToolResult
         if not ctx: return ToolResult(content="Context error", is_success=False)
         db_session = ctx.db
         user_id = ctx.user_id
@@ -244,7 +244,7 @@ class GetLoadOnDayTool(BaseTool):
     args_schema = GetLoadOnDayArgs
 
     async def run(self, target_date: str, ctx: IntegrationContext = None, **kwargs) -> Any:
-        from domains.orchestration.tools.base import ToolResult
+        from va_sdk import ToolResult
         if not ctx: return ToolResult(content="Context error", is_success=False)
         db_session = ctx.db
         user_id = ctx.user_id
@@ -273,7 +273,7 @@ class GetLoadInPeriodTool(BaseTool):
         user_id = ctx.user_id
         
         try:
-            from domains.orchestration.tools.base import ToolResult
+            from va_sdk import ToolResult
             client = await get_lbs_client(user_id, db_session)
             hm = await client.get_heatmap(date.fromisoformat(start_date), date.fromisoformat(end_date))
             return ToolResult(content=f"Heatmap: {len(hm)} days", data={"heatmap": hm})
@@ -300,7 +300,7 @@ class ManageTaskExceptionTool(BaseTool):
     args_schema = ManageTaskExceptionArgs
 
     async def run(self, ctx: IntegrationContext = None, **kwargs) -> Any:
-        from domains.orchestration.tools.base import ToolResult
+        from va_sdk import ToolResult
         if not ctx: return ToolResult(content="Context error", is_success=False)
         db_session = ctx.db
         user_id = ctx.user_id
@@ -348,7 +348,7 @@ class ListExceptionsTool(BaseTool):
     args_schema = ListExceptionsArgs
 
     async def run(self, start_date: str, end_date: str, task_id: Optional[str] = None, **kwargs) -> Any:
-        from domains.orchestration.tools.base import ToolResult
+        from va_sdk import ToolResult
         db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         if not db_session or not user_id:
@@ -375,7 +375,7 @@ class GetCurrentConditionTool(BaseTool):
     args_schema = GetCurrentConditionArgs
 
     async def run(self, target_date: Optional[str] = None, ctx: IntegrationContext = None, **kwargs) -> Any:
-        from domains.orchestration.tools.base import ToolResult
+        from va_sdk import ToolResult
         if not ctx: return ToolResult(content="Context error", is_success=False)
         db_session = ctx.db
         user_id = ctx.user_id
@@ -399,7 +399,7 @@ class UpdateUserConditionTool(BaseTool):
     args_schema = UpdateUserConditionArgs
 
     async def run(self, cognitive_fatigue: int, target_date: Optional[str] = None, notes: Optional[str] = None, ctx: IntegrationContext = None, **kwargs) -> Any:
-        from domains.orchestration.tools.base import ToolResult
+        from va_sdk import ToolResult
         if not ctx: return ToolResult(content="Context error", is_success=False)
         db_session = ctx.db
         user_id = ctx.user_id
@@ -424,7 +424,7 @@ class GetTaskHistoryTool(BaseTool):
     args_schema = GetTaskHistoryArgs
 
     async def run(self, task_id: str, start_date: str, end_date: str, ctx: IntegrationContext = None, **kwargs) -> Any:
-        from domains.orchestration.tools.base import ToolResult
+        from va_sdk import ToolResult
         if not ctx: return ToolResult(content="Context error", is_success=False)
         db_session = ctx.db
         user_id = ctx.user_id
@@ -445,7 +445,7 @@ class ResetUserConditionTool(BaseTool):
     args_schema = ResetUserConditionArgs
 
     async def run(self, target_date: Optional[str] = None, ctx: IntegrationContext = None, **kwargs) -> Any:
-        from domains.orchestration.tools.base import ToolResult
+        from va_sdk import ToolResult
         if not ctx: return ToolResult(content="Context error", is_success=False)
         db_session = ctx.db
         user_id = ctx.user_id

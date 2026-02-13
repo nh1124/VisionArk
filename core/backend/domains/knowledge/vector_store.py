@@ -15,7 +15,7 @@ try:
 except ImportError:
     CHROMADB_AVAILABLE = False
 
-from infrastructure.llm import get_provider
+from infrastructure.llm import GeminiLLMProvider
 from shared.paths import get_project_dir, get_user_projects_dir
 
 
@@ -53,7 +53,7 @@ class VectorStore:
     @property
     def llm(self):
         if self._llm is None:
-            self._llm = get_provider(api_key=self._api_key)
+            self._llm = GeminiLLMProvider(api_key=self._api_key)
         return self._llm
 
     def set_api_key(self, api_key: str):

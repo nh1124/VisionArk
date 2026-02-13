@@ -14,7 +14,7 @@ class ListOutlookEventsTool(BaseTool):
     args_schema = ListOutlookEventsArgs
     
     async def run(self, ctx: IntegrationContext, **kwargs) -> Any:
-        from domains.orchestration.tools.base import ToolResult
+        from va_sdk import ToolResult
         user_id = ctx.user_id
         db = ctx.db
         days = kwargs.get("days", 7)

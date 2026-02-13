@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from sqlalchemy import select
 from shared.database import Skill, ScheduledTask, ScheduledTaskStatus, ChatMessage, ChatSubMessage, ToolUsage
-from infrastructure.llm import get_provider
+from infrastructure.llm.orchestration2_provider import GeminiLLMProvider
 
 class SkillMiningService:
     STATE_FILENAME = "mining_state.json"
@@ -82,32 +82,22 @@ class SkillMiningService:
 
     async def generate_draft_skill(self, user_id: str, analysis_context: str, task_id: str):
         """Use LLM to generate a SKILL.md draft from context."""
-        from domains.orchestration.tools.utils import get_user_api_key
-        api_key = await get_user_api_key(user_id, self.db)
-        llm = get_provider(api_key=api_key) 
+        from shared.service_helpers import get_user_api_key
+        from domains.orchestration2.engine.models.message import Message
+        from domains.orchestration2.engine.models.common import MessageRole
 
-        # 1. Define JSON Schema for structured output
-        skill_schema = {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "Concise name of the skill"},
-                "description": {"type": "string", "description": "Short summary of what the skill does"},
-                "id": {"type": "string", "description": "Kebab-case unique identifier"},
-                "content": {"type": "string", "description": "Full Markdown content of the SKILL.md file"},
-                "priority": {"type": "integer", "description": "Priority (1-10), 10 being highest. Default to 5."},
-                "intents": {"type": "array", "items": {"type": "string"}, "description": "List of intents where this skill is most applicable (e.g., ['market_research']"}
-            },
-            "required": ["name", "description", "id", "content", "priority", "intents"]
-        }
-        
+        api_key = await get_user_api_key(user_id, self.db)
+        provider = GeminiLLMProvider(api_key=api_key)
+
         system_prompt = (
             "You are a Skill Architect. Your job is to extract repeatable 'Agent Skills' "
             "from user interaction logs. A Skill should be a Markdown document (SKILL.md) "
             "with YAML frontmatter and clear instructions.\n\n"
             "Focus on the PROCEDURAL DNA. What steps did the agent take to succeed?\n"
-            "Identify SPECIFIC INTENTS (e.g., 'code_review', 'data_extraction') and assign a PRIORITY."
+            "Identify SPECIFIC INTENTS (e.g., 'code_review', 'data_extraction') and assign a PRIORITY.\n\n"
+            "Return ONLY valid JSON with keys: name, description, id, content, priority, intents."
         )
-        
+
         user_prompt = (
             f"Analyze the following interaction and define a useful skill that summarizes the expertise shown:\n\n"
             f"### INTERACTION LOG\n{analysis_context}\n\n"
@@ -116,15 +106,12 @@ class SkillMiningService:
             f"2. Content must follow the SKILL.md format with instructions.\n"
             f"3. Do not include specific user data, keep it as a generalized template."
         )
-        
-        from domains.orchestration.message import Message, MessageRole
 
         try:
-            response = await llm.complete_async(
+            response = await provider.complete(
                 [Message(role=MessageRole.USER, content=user_prompt)],
-                system_instruction=system_prompt,
-                preferred_model="gemini-2.5-flash-lite", # Upgrading to a more reliable model for structured output
-                response_format=skill_schema
+                system=system_prompt,
+                model="gemini-2.5-flash-lite",
             )
             
             # response.content is now guaranteed to be a valid JSON string

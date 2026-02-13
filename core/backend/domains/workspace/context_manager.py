@@ -11,8 +11,9 @@ from typing import Dict, Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
-from infrastructure.llm import get_provider
-from infrastructure.llm.base_provider import Message
+from infrastructure.llm import GeminiLLMProvider
+from domains.orchestration2.engine.models.message import Message
+from domains.orchestration2.engine.models.common import MessageRole
 from shared.paths import get_project_dir, get_prompts_dir
 
 
@@ -106,7 +107,7 @@ class ContextManager:
         settings = result.scalars().first()
         api_key = settings.gemini_api_key if settings else None
         
-        self._llm = get_provider(api_key=api_key)
+        self._llm = GeminiLLMProvider(api_key=api_key)
         return self._llm
 
     async def generate_summary(self, conversation: List[Dict[str, str]]) -> str:
@@ -138,8 +139,8 @@ class ContextManager:
         
         try:
             llm = await self._get_llm()
-            messages = [Message(role="user", content=summary_prompt)]
-            response = await llm.complete_async(messages, temperature=0.3)
+            messages = [Message(role=MessageRole.USER, content=summary_prompt)]
+            response = await llm.complete(messages)
             return response.content
         except Exception as e:
             return f"Summary generation failed: {str(e)}\n\nConversation had {len(conversation)} messages."

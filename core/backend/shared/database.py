@@ -80,11 +80,7 @@ class NotificationType(str, Enum):
 class TaskType(str, Enum):
     """Types of asynchronous tasks in the queue"""
     USER_MESSAGE = "user_message"
-    NODE_EXECUTION = "node_execution"
-    AI_ROUTING = "ai_routing"
     AES_SYSTEM_TASK = "aes_system_task"
-    APPROVAL_EXECUTION = "approval_execution"
-    SYSTEM_MANAGEMENT = "system_management"
 
 
 class ScheduledTask(Base):

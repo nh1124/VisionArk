@@ -6,7 +6,8 @@ import json
 from datetime import datetime
 
 from domains.orchestration2.engine.models.execution import ExecutionContext, ToolResult
-from domains.orchestration2.engine.models.message import ToolCallRef
+from domains.orchestration2.engine.models.message import Message, ToolCallRef
+from domains.orchestration2.engine.models.common import MessageRole
 from domains.orchestration2.engine.models.tool import ToolDef
 from domains.orchestration2.tools.base import (
     fail,
@@ -49,9 +50,9 @@ class RecursiveWriterTool:
             if not api_key:
                 return fail(call, "No API key available for content generation.")
 
-            from infrastructure.llm import get_provider
+            from infrastructure.llm.orchestration2_provider import GeminiLLMProvider
 
-            llm = get_provider(api_key=api_key)
+            provider = GeminiLLMProvider(api_key=api_key)
 
             # Resolve path
             root_dir = get_project_dir(user_id, project_id)
@@ -68,7 +69,7 @@ class RecursiveWriterTool:
             )
 
             # Generate outline
-            outline = await self._generate_outline(llm, topic)
+            outline = await self._generate_outline(provider, topic)
             if not outline:
                 return fail(call, "Failed to generate outline.")
 
@@ -79,28 +80,26 @@ class RecursiveWriterTool:
             # Write sections
             prev_context = "Start of the document."
             for i, section in enumerate(outline):
-                content = await self._write_section(llm, topic, section["title"], section.get("description", ""), prev_context)
+                content = await self._write_section(provider, topic, section["title"], section.get("description", ""), prev_context)
                 with open(final_path, "a", encoding="utf-8") as f:
                     f.write(content + "\n\n")
-                prev_context = await self._summarize(llm, section["title"], content)
+                prev_context = await self._summarize(provider, section["title"], content)
 
             return make_result(call, f"Long-form content written to {target_file}")
         except Exception as e:
             return fail(call, f"Writer failed: {e}")
 
-    async def _generate_outline(self, llm, topic: str) -> list[dict]:
-        from domains.orchestration.message import Message, MessageRole
-
+    async def _generate_outline(self, provider, topic: str) -> list[dict]:
         prompt = (
             f'Create a detailed outline for: "{topic}". '
             "Return ONLY a JSON array of objects with 'title' and 'description'."
         )
-        messages = [
-            Message(role=MessageRole.SYSTEM, content="You are a planning assistant. Output valid JSON only."),
-            Message(role=MessageRole.USER, content=prompt),
-        ]
+        messages = [Message(role=MessageRole.USER, content=prompt)]
         try:
-            response = await llm.complete_async(messages, temperature=0.5)
+            response = await provider.complete(
+                messages,
+                system="You are a planning assistant. Output valid JSON only.",
+            )
             text = response.content
             if "```json" in text:
                 text = text.split("```json")[1].split("```")[0].strip()
@@ -110,26 +109,22 @@ class RecursiveWriterTool:
         except Exception:
             return []
 
-    async def _write_section(self, llm, topic: str, title: str, desc: str, prev: str) -> str:
-        from domains.orchestration.message import Message, MessageRole
-
+    async def _write_section(self, provider, topic: str, title: str, desc: str, prev: str) -> str:
         prompt = (
             f'Writing section of report on "{topic}".\n'
             f'Section: "{title}"\nDescription: {desc}\n'
             f"Previous context: {prev}\n\n"
             f"Write ONLY this section. Use Markdown. Start with ## {title}."
         )
-        messages = [
-            Message(role=MessageRole.SYSTEM, content="You are an expert ghostwriter."),
-            Message(role=MessageRole.USER, content=prompt),
-        ]
-        response = await llm.complete_async(messages, temperature=0.7)
+        messages = [Message(role=MessageRole.USER, content=prompt)]
+        response = await provider.complete(
+            messages,
+            system="You are an expert ghostwriter.",
+        )
         return response.content
 
-    async def _summarize(self, llm, title: str, content: str) -> str:
-        from domains.orchestration.message import Message, MessageRole
-
+    async def _summarize(self, provider, title: str, content: str) -> str:
         prompt = f"Summarize this section briefly (under 100 words):\n\nSection: {title}\n{content[:4000]}"
         messages = [Message(role=MessageRole.USER, content=prompt)]
-        response = await llm.complete_async(messages, temperature=0.3)
+        response = await provider.complete(messages)
         return response.content

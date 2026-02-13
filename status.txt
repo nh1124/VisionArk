@@ -1,0 +1,74 @@
+﻿ M core/backend/api/agents.py
+ M core/backend/api/decomposer.py
+ M core/backend/app/main.py
+ M core/backend/app/worker.py
+ M core/backend/domains/automation/aes_system_handlers.py
+ M core/backend/domains/automation/skill_mining.py
+ M core/backend/domains/knowledge/vector_store.py
+ D core/backend/domains/orchestration/__init__.py
+ D core/backend/domains/orchestration/browser_manager.py
+ D core/backend/domains/orchestration/callback_service.py
+ D core/backend/domains/orchestration/member_node_registry.py
+ D core/backend/domains/orchestration/message.py
+ D core/backend/domains/orchestration/node_factory.py
+ D core/backend/domains/orchestration/nodes/__init__.py
+ D core/backend/domains/orchestration/nodes/base_node.py
+ D core/backend/domains/orchestration/nodes/members/__init__.py
+ D core/backend/domains/orchestration/nodes/members/advocate.py
+ D core/backend/domains/orchestration/nodes/members/generic_member_node.py
+ D core/backend/domains/orchestration/nodes/members/planner.py
+ D core/backend/domains/orchestration/nodes/members/researcher.py
+ D core/backend/domains/orchestration/nodes/members/ruler.py
+ D core/backend/domains/orchestration/nodes/project/__init__.py
+ D core/backend/domains/orchestration/nodes/project/project_node.py
+ D core/backend/domains/orchestration/nodes/system/__init__.py
+ D core/backend/domains/orchestration/nodes/system/generic_system_node.py
+ D core/backend/domains/orchestration/nodes/system/global_scheduler.py
+ D core/backend/domains/orchestration/nodes/system/memory_node.py
+ D core/backend/domains/orchestration/nodes/system/project_creator_node.py
+ D core/backend/domains/orchestration/nodes/system/project_manager_node.py
+ D core/backend/domains/orchestration/nodes/system/router_node.py
+ D core/backend/domains/orchestration/nodes/system/scheduler_node.py
+ D core/backend/domains/orchestration/nodes/system/system_node.py
+ D core/backend/domains/orchestration/nodes/system/task_manager_node.py
+ D core/backend/domains/orchestration/system_node_registry.py
+ D core/backend/domains/orchestration/tool_registry.py
+ D core/backend/domains/orchestration/tools/__init__.py
+ D core/backend/domains/orchestration/tools/base.py
+ D core/backend/domains/orchestration/tools/library/ai.py
+ D core/backend/domains/orchestration/tools/library/browser.py
+ D core/backend/domains/orchestration/tools/library/canvas.py
+ D core/backend/domains/orchestration/tools/library/files.py
+ D core/backend/domains/orchestration/tools/library/governance.py
+ D core/backend/domains/orchestration/tools/library/markdown.py
+ D core/backend/domains/orchestration/tools/library/members.py
+ D core/backend/domains/orchestration/tools/library/notes.py
+ D core/backend/domains/orchestration/tools/library/routing.py
+ D core/backend/domains/orchestration/tools/library/search.py
+ D core/backend/domains/orchestration/tools/library/shell.py
+ D core/backend/domains/orchestration/tools/library/system.py
+ D core/backend/domains/orchestration/tools/library/writer.py
+ D core/backend/domains/orchestration/tools/tool_utils.py
+ D core/backend/domains/orchestration/tools/utils.py
+ M core/backend/domains/orchestration2/tools/library/browser.py
+ M core/backend/domains/orchestration2/tools/library/writer.py
+ M core/backend/domains/workspace/context_manager.py
+ M core/backend/infrastructure/llm/__init__.py
+ D core/backend/infrastructure/llm/base_provider.py
+ D core/backend/infrastructure/llm/gemini_provider.py
+ D core/backend/infrastructure/llm/openai_provider.py
+ D core/backend/infrastructure/llm/provider_factory.py
+ D core/backend/infrastructure/llm/reasoning_engine.py
+ M core/backend/shared/database.py
+ M integrations/knowledge_core/agent_tools.py
+ M integrations/lbs/agent_tools.py
+ M integrations/line/agent_tools.py
+ M integrations/outlook/agent_tools.py
+ M va_sdk/__init__.py
+?? core/backend/shared/browser_manager.py
+?? core/backend/shared/file_types.py
+?? core/backend/shared/service_helpers.py
+?? docs/proposals/
+?? git_status.txt
+?? status.txt
+?? va_sdk/models.py

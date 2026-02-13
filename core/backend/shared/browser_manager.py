@@ -39,7 +39,7 @@ class BrowserManager:
         """Get or create an isolated BrowserContext for the given session."""
         if not self.browser:
             await self.start()
-        
+
         async with self._lock:
             if session_id not in self.contexts:
                 context = await self.browser.new_context(
