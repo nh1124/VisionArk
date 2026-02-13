@@ -77,10 +77,7 @@ def _get_all_tools() -> list[tuple[ToolDef, Any]]:
     )
     from .tools.library.writer import RecursiveWriterTool
     from .tools.library.shell import RunSafeShellTool
-    from .tools.library.routing import (
-        SubscribeIntentTool,
-        UnsubscribeIntentTool, ListSubscriptionsTool,
-    )
+
     from .tools.library.markdown import (
         ReadMDSectionTool, InitPlanTool, UpdatePlanProgressTool,
         GetCurrentStatusTool, UpdateMDSectionTool,
@@ -112,9 +109,7 @@ def _get_all_tools() -> list[tuple[ToolDef, Any]]:
         RecursiveWriterTool,
         # Shell
         RunSafeShellTool,
-        # Routing
-        SubscribeIntentTool,
-        UnsubscribeIntentTool, ListSubscriptionsTool,
+
         # Markdown
         ReadMDSectionTool, InitPlanTool, UpdatePlanProgressTool,
         GetCurrentStatusTool, UpdateMDSectionTool,

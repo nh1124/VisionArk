@@ -291,17 +291,7 @@ class SkillMiningHandler(BaseAESHandler):
         else:
             print("[AES] Warning: SYSTEM_SKILL_MINING requires task_id or is_batch=True")
 
-@register_aes_handler("SYNC_ROUTER_HOOKS")
-class RouterSyncHandler(BaseAESHandler):
-    """
-    Synchronizes the Global Router's memory hooks with the database.
-    This ensures all worker processes are eventually consistent.
-    """
-    async def run(self, context: Dict[str, Any]):
-        print("[AES] Executing SYNC_ROUTER_HOOKS")
-        from api.router import Router
-        await Router.initialize_default_hooks()
-        print("[AES] Router synchronization complete.")
+
 
 @register_aes_handler("SYSTEM_TIMER")
 class TimerHandler(BaseAESHandler):

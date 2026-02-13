@@ -66,13 +66,7 @@ class Worker:
                 except Exception as e:
                     print(f"⚠️ Failed to load integration {module_name}: {e}")
 
-        # Initialize Router Hooks
-        try:
-            from api.router import Router
-            await Router.initialize_default_hooks()
-            print("Router: Default hooks initialized.")
-        except Exception as re:
-            print(f"⚠️ Router initialization failed: {re}")
+
 
         # Sync Agent Skills
         try:
@@ -87,36 +81,7 @@ class Worker:
         # Start AES Dispatcher as a background task
         asyncio.create_task(self.dispatcher.run_forever())
 
-        # Ensure daily Router synchronization is scheduled
-        try:
-            async with AsyncSessionLocal() as db:
-                stmt = select(ScheduledTask).filter(
-                    ScheduledTask.task_type == "SYNC_ROUTER_HOOKS",
-                    ScheduledTask.status == ScheduledTaskStatus.PENDING
-                )
-                res = await db.execute(stmt)
-                if not res.scalars().first():
-                    print("[Worker] Scheduling daily SYNC_ROUTER_HOOKS task...")
-                    u_stmt = select(Project.user_id).limit(1)
-                    u_res = await db.execute(u_stmt)
-                    sys_user_id = u_res.scalar()
 
-                    if sys_user_id:
-                        import uuid
-                        new_st = ScheduledTask(
-                            id=str(uuid.uuid4()),
-                            user_id=sys_user_id,
-                            task_type="SYNC_ROUTER_HOOKS",
-                            payload={},
-                            scheduled_at=datetime.utcnow() + timedelta(days=1),
-                            recurring_rule="0 0 * * *", # Daily at midnight
-                            status=ScheduledTaskStatus.PENDING
-                        )
-                        db.add(new_st)
-                        await db.commit()
-                        print("[Worker] Daily SYNC_ROUTER_HOOKS task scheduled.")
-        except Exception as e:
-            print(f"⚠️ Failed to schedule Router sync: {e}")
 
         while True:
             try:
@@ -285,7 +250,7 @@ class Worker:
             print(f"Worker: Task {task_id} completed.")
         else:
             print(f"Worker: No project_id in context. Skipping. (Task {task_id})")
-            await self.manager.update_status(task_id, "completed", "Message processed by system router.")
+            await self.manager.update_status(task_id, "completed", "Message skipped (No project context).")
 
         # 4. External Channel Reply (LINE, etc.)
         if context.get("external_reply_channel"):

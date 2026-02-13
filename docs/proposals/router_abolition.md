@@ -17,7 +17,7 @@
 ### 推奨改修
 
 1.  **Routerの廃止**:
-    -   `api/router.py` を廃止（またはdeprecated化して no-op 化）。
+    -   `api/router.py` を廃止。
 2.  **定期タスクの削除**:
     -   Worker起動時のRouter初期化フローを削除。
     -   日次 `SYNC_ROUTER_HOOKS` スケジューリングおよびハンドラ(`aes_system_handlers.py`)を削除。
