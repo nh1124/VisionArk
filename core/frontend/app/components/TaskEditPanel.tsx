@@ -102,6 +102,8 @@ export default function TaskEditPanel({
                 return;
             }
 
+            const targetDate = task.due_date || new Date().toISOString().split('T')[0];
+
             // Fetch full task details including the status for the specific date
             apiFetch(`/api/lbs/tasks/${task.task_id}?target_date=${targetDate}`)
                 .then(res => {

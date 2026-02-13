@@ -5,6 +5,7 @@ import { apiFetch, getFileToken } from "@/lib/api";
 import { Download, FileText, Image, ExternalLink, X, Folder, File as FileIcon, RefreshCw, Trash2, Loader2, Eye, Plus, CheckSquare, Square, CheckCircle2, ChevronsUp, ChevronsDown } from "lucide-react";
 import MarkdownRenderer from "./MarkdownRenderer";
 import { useNotification } from "@/lib/NotificationContext";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 interface FileInfo {
     id: string;
