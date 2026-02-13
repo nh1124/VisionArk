@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 
 from ..errors import RunNotFoundError
 from ..interfaces.store import Store
@@ -51,7 +51,7 @@ class ApprovalManager:
 
         run.status = RunStatus.WAITING_APPROVAL
         run.pending_approval_ids.append(request.id)
-        run.updated_at = datetime.now(timezone.utc)
+        run.updated_at = datetime.utcnow()
         await self._store.save_run(run)
 
         # Emit event
@@ -115,7 +115,7 @@ class ApprovalManager:
         if not run.pending_approval_ids:
             run.status = RunStatus.RUNNING
 
-        run.updated_at = datetime.now(timezone.utc)
+        run.updated_at = datetime.utcnow()
         await self._store.save_run(run)
 
         return events

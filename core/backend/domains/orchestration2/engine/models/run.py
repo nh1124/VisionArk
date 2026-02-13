@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
+from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -23,17 +24,18 @@ class RunRecord(BaseModel):
     status: RunStatus = RunStatus.QUEUED
     agent_name: str
     graph_name: str
-    input_message: Message
+    input_message: Message | None = None
     history: list[Message] = Field(default_factory=list)
     output_message: Message | None = None
     current_step_id: str | None = None
     pending_approval_ids: list[str] = Field(default_factory=list)
     pending_delegation_ids: list[str] = Field(default_factory=list)
     context: RunContext = Field(default_factory=RunContext)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=datetime.utcnow
     )
     updated_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=datetime.utcnow
     )

@@ -1,0 +1,15 @@
+OK. Let's brush up the codes.
+Now the code is a bit mixed up with the core orchestration parts and the adaption part for the system.
+But, it's a issue.
+I believe the engine should be independent from the vision ark system to be pure agent orchestration manager.
+And specific implementation parts should be decoupled from the engine (connectivity is offered by the register functions).
+So, please make the engine independent module as the core orchestration parts.
+And, move the specific adaption or implementation parts, such as engine_setup.py, tools, role, etc to different dir.
+
+My idea is restructure the dir:
+orchestration2
+    engine # independent module
+    tools # specific implementation parts
+    roles # specific implementation parts
+    other impelemntation parts for vision ark system...
+You can propose the dir structure if you have better idea.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -13,6 +14,8 @@ from .common import MessageRole, SubMessageKind
 class ToolCallRef(BaseModel):
     tool_name: str
     call_id: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    provider_data: dict[str, Any] = Field(default_factory=dict)
 
 
 class SubMessage(BaseModel):

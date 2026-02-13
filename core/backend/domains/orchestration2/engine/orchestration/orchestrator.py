@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from ..errors import (
@@ -41,16 +41,21 @@ class Orchestrator:
         message: Message,
         history: list[Message] | None = None,
         parent_run_id: str | None = None,
+        metadata: dict | None = None,
     ) -> RunResponse:
         """Execute a full orchestration run and return the response."""
-        # Create RunRecord
+        # Create RunRecord — append input message to history so the
+        # conversation is always in correct order (user, model, tool, …).
+        combined_history = list(history) if history else []
+        combined_history.append(message)
         run = RunRecord(
             status=RunStatus.RUNNING,
             agent_name=agent_def.name,
             graph_name=graph.graph_name,
             input_message=message,
-            history=list(history) if history else [],
+            history=combined_history,
             current_step_id=graph.start,
+            metadata=metadata or {},
         )
         await self._store.save_run(run)
 
@@ -88,13 +93,22 @@ class Orchestrator:
                         )
 
                 # Execute step
+                logger.debug("Executing step '%s' (type=%s, terminal=%s)", current_step_id, step.type, step.terminal)
                 events = await self._step_executor.execute_step(
                     step, run, agent_def
                 )
 
                 # Check if run was suspended (approval/delegation)
+                # Refresh persisted fields (status, context, etc.) from DB
+                # but preserve runtime-only fields not stored in DB.
                 refreshed_run = await self._store.get_run(run.run_id)
                 if refreshed_run:
+                    refreshed_run.input_message = run.input_message
+                    refreshed_run.history = run.history
+                    refreshed_run.output_message = run.output_message
+                    refreshed_run.metadata = run.metadata
+                    refreshed_run.pending_approval_ids = run.pending_approval_ids
+                    refreshed_run.pending_delegation_ids = run.pending_delegation_ids
                     run = refreshed_run
 
                 if run.status in (
@@ -105,13 +119,14 @@ class Orchestrator:
 
                 # If terminal step, complete
                 if step.terminal:
+                    logger.debug("Step '%s' is terminal — completing run", current_step_id)
                     run.status = RunStatus.COMPLETED
                     break
 
                 # Route to next step based on events
                 next_step_id = self._resolve_next_step(step, events)
+                logger.debug("Transition '%s' -> '%s'", current_step_id, next_step_id)
                 if next_step_id is None:
-                    # No matching transition - run is done
                     run.status = RunStatus.COMPLETED
                     break
 
@@ -131,7 +146,8 @@ class Orchestrator:
             run.error = f"Unexpected error: {exc}"
             logger.exception("Run %s failed unexpectedly", run.run_id)
 
-        run.updated_at = datetime.now(timezone.utc)
+        logger.debug("Run %s finished: status=%s", run.run_id, run.status.value)
+        run.updated_at = datetime.utcnow()
         await self._store.save_run(run)
         return self._build_response(run)
 

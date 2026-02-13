@@ -116,6 +116,7 @@ class ApprovalRequest(Base):
     id = Column(String(36), primary_key=True)               # UUID
     project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    run_id = Column(String(36), nullable=True)              # orchestration2 run tracking
     tool_name = Column(String(100), nullable=False)         # e.g. "run_safe_shell"
     payload = Column(JSON, nullable=False)                  # Arguments like {"command": "dir"}
     status = Column(String(20), default="pending", index=True)
@@ -387,11 +388,14 @@ class ChatMessage(Base):
 class ChatSubMessage(Base):
     """Structured sub-messages for intermediate thinking turns and tool calls"""
     __tablename__ = "chat_sub_messages"
-    
+
     id = Column(String(36), primary_key=True)
     message_id = Column(String(36), ForeignKey("chat_messages.id"), nullable=False, index=True)
     turn_index = Column(Integer, nullable=False)
     content = Column(Text, nullable=True)                  # Thought/Text
+    kind = Column(String(20), nullable=True)               # 'text', 'tool_call', 'tool_result', 'reasoning'
+    run_id = Column(String(36), nullable=True)             # orchestration2 run tracking
+    step_id = Column(String(36), nullable=True)            # orchestration2 step tracking
     meta_payload = Column(JSON, nullable=True)              # Tool calls, usage, metadata
     created_at = Column(DateTime, default=datetime.utcnow)
     
@@ -403,11 +407,12 @@ class ChatSubMessage(Base):
 class ToolUsage(Base):
     """Structured log of tool/function execution within a message or sub-message"""
     __tablename__ = "tool_usages"
-    
+
     id = Column(String(36), primary_key=True)
     message_id = Column(String(36), ForeignKey("chat_messages.id"), nullable=False, index=True)
     sub_message_id = Column(String(36), ForeignKey("chat_sub_messages.id"), nullable=True, index=True)
     name = Column(String(100), nullable=False)             # Tool name
+    call_id = Column(String(100), nullable=True)           # orchestration2 correlation ID
     args = Column(JSON, nullable=True)                     # Input args
     result = Column(Text, nullable=True)                   # Output string
     is_success = Column(Boolean, default=True)
@@ -494,6 +499,46 @@ class Note(Base):
     user = relationship("User")
     project = relationship("Project")
     audio_file = relationship("UploadedFile")
+
+
+class OrchestrationRun(Base):
+    """Persistent storage for orchestration2 RunRecord"""
+    __tablename__ = "orchestration_runs"
+
+    run_id = Column(String(36), primary_key=True)
+    status = Column(String(30), nullable=False, index=True)
+    agent_name = Column(String(200), nullable=False)
+    graph_name = Column(String(200), nullable=False)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
+    session_id = Column(String(36), ForeignKey("chat_sessions.id"), nullable=True, index=True)
+    current_step_id = Column(String(100), nullable=True)
+    context_json = Column(JSON, nullable=True)
+    metadata_json = Column(JSON, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    project = relationship("Project")
+    user = relationship("User")
+    session = relationship("ChatSession")
+
+
+class OrchestrationEvent(Base):
+    """Event log for orchestration2 runs"""
+    __tablename__ = "orchestration_events"
+
+    id = Column(String(36), primary_key=True)
+    run_id = Column(String(36), ForeignKey("orchestration_runs.run_id"), nullable=False, index=True)
+    step_id = Column(String(100), nullable=True)
+    event_type = Column(String(50), nullable=False)
+    source = Column(String(50), nullable=False)
+    detail = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    run = relationship("OrchestrationRun")
 
 
 class FileChunk(Base):
@@ -754,17 +799,45 @@ def _run_migrations(engine):
                 conn.commit()
                 print("✅ Migration: Added args column to tool_usages")
 
-        if 'call_id' in columns:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE tool_usages DROP COLUMN call_id"))
-                conn.commit()
-                print("✅ Migration: Dropped call_id column from tool_usages")
-        
         if 'meta_payload' not in columns:
             with engine.connect() as conn:
                 conn.execute(text("ALTER TABLE tool_usages ADD COLUMN meta_payload JSON"))
                 conn.commit()
                 print("✅ Migration: Added meta_payload column to tool_usages")
+
+        if 'call_id' not in columns:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE tool_usages ADD COLUMN call_id VARCHAR(100)"))
+                conn.commit()
+                print("✅ Migration: Added call_id column to tool_usages")
+
+    # Migration: Add orchestration2 columns to chat_sub_messages
+    if 'chat_sub_messages' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('chat_sub_messages')]
+        if 'kind' not in columns:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE chat_sub_messages ADD COLUMN kind VARCHAR(20)"))
+                conn.commit()
+                print("✅ Migration: Added kind column to chat_sub_messages")
+        if 'run_id' not in columns:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE chat_sub_messages ADD COLUMN run_id VARCHAR(36)"))
+                conn.commit()
+                print("✅ Migration: Added run_id column to chat_sub_messages")
+        if 'step_id' not in columns:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE chat_sub_messages ADD COLUMN step_id VARCHAR(36)"))
+                conn.commit()
+                print("✅ Migration: Added step_id column to chat_sub_messages")
+
+    # Migration: Add run_id to approval_requests for orchestration2 tracking
+    if 'approval_requests' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('approval_requests')]
+        if 'run_id' not in columns:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE approval_requests ADD COLUMN run_id VARCHAR(36)"))
+                conn.commit()
+                print("✅ Migration: Added run_id column to approval_requests")
 
 
 # Global sync session maker

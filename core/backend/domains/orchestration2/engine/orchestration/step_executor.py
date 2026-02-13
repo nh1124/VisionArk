@@ -74,6 +74,7 @@ class StepExecutor:
             agent_def=agent_def,
             run_context=run.context,
             store=self._store,
+            metadata=run.metadata,
         )
 
         if step.type == "role":
@@ -169,19 +170,43 @@ class StepExecutor:
             await self._store.append_event(event)
             return [event]
 
-        messages = list(run.history) + [run.input_message]
+        messages = list(run.history)
+        logger.debug("role_step '%s': calling LLM with %d messages, %d tools", step.id, len(messages), len(tool_defs))
         llm_response = await provider.complete(
             messages=messages,
             system=system_prompt,
             tools=tool_defs,
             model=model_config.model_id,
         )
+        logger.debug("role_step '%s': LLM returned tool_calls=%d, finish_reason=%s", step.id, len(llm_response.tool_calls), llm_response.finish_reason)
 
         # Post-process with role
         role_result = role_impl.post_process(llm_response.content, ctx)
 
         # Handle tool calls from LLM response
         if llm_response.tool_calls:
+
+            # Add assistant message with tool-call submessages to history
+            # so the LLM sees its own function_calls before function_responses.
+            tool_call_subs = []
+            for tc in llm_response.tool_calls:
+                tool_call_subs.append(SubMessage(
+                    kind=SubMessageKind.TOOL_CALL,
+                    content=llm_response.content or "",
+                    tool_call=ToolCallRef(
+                        tool_name=tc.get("name", ""),
+                        call_id=tc.get("call_id", tc.get("id", "")),
+                        arguments=tc.get("arguments", {}),
+                        provider_data=tc.get("provider_data", {}),
+                    ),
+                ))
+            assistant_tc_msg = Message(
+                role=MessageRole.ASSISTANT,
+                content=llm_response.content or "",
+                submessages=tool_call_subs,
+            )
+            run.history.append(assistant_tc_msg)
+
             for tc in llm_response.tool_calls:
                 tool_events = await self._handle_tool_call(
                     tc, step, run, agent_def, ctx
@@ -213,6 +238,10 @@ class StepExecutor:
             )
             run.history.append(assistant_msg)
 
+            # Capture as output so downstream steps (responder) can
+            # use it without a redundant LLM call.
+            run.output_message = assistant_msg
+
             event = OrchestrationEvent(
                 type=EventType.DONE,
                 run_id=run.run_id,
@@ -237,7 +266,8 @@ class StepExecutor:
         """Handle a single tool call from the LLM."""
         events: list[OrchestrationEvent] = []
         tool_name = tool_call.get("name", "")
-        call_id = tool_call.get("id", "")
+        call_id = tool_call.get("call_id", tool_call.get("id", ""))
+        logger.debug("tool_call: tool=%s, call_id=%s", tool_name, call_id)
 
         # Emit tool_call event
         tc_event = OrchestrationEvent(
@@ -303,9 +333,14 @@ class StepExecutor:
             return events
 
         # Execute tool
-        call_ref = ToolCallRef(tool_name=tool_name, call_id=call_id)
+        call_ref = ToolCallRef(
+            tool_name=tool_name,
+            call_id=call_id,
+            arguments=tool_call.get("arguments", {}),
+        )
         try:
             result = await tool_impl.invoke(call_ref, ctx)
+            logger.debug("tool '%s' result: error=%s", tool_name, result.error)
 
             # Add tool result to history as a submessage
             sub = SubMessage(
@@ -522,45 +557,22 @@ class StepExecutor:
         agent_def: AgentDef,
         ctx: ExecutionContext,
     ) -> list[OrchestrationEvent]:
-        """Execute a responder (terminal) step."""
-        role_name = step.role
-        if not role_name:
-            role_name = agent_def.role_bindings.get(step.id)
+        """Execute a responder (terminal) step.
 
-        output_content = ""
-        if role_name:
-            try:
-                role_impl = self._roles.get(role_name)
-                system_prompt = role_impl.build_prompt(ctx)
-
-                model_name = agent_def.default_model
-                model_config = self._models.get(model_name)
-                provider = model_config.extra.get("provider_impl")
-
-                if provider:
-                    messages = list(run.history) + [run.input_message]
-                    llm_response = await provider.complete(
-                        messages=messages,
-                        system=system_prompt,
-                        model=model_config.model_id,
-                    )
-                    role_result = role_impl.post_process(
-                        llm_response.content, ctx
-                    )
-                    output_content = role_result.output
-                else:
-                    output_content = "No LLM provider available for response."
-            except RegistryKeyError:
-                output_content = "Responder role not found."
+        If an output_message was already captured by a prior role step,
+        use it directly instead of making a redundant LLM call.
+        """
+        # Use output already captured by a prior step if available
+        if run.output_message and run.output_message.content:
+            output_content = run.output_message.content
         else:
-            # No role, use last assistant message or input
-            if run.history:
-                last_assistant = [
-                    m for m in run.history if m.role == MessageRole.ASSISTANT
-                ]
-                if last_assistant:
-                    output_content = last_assistant[-1].content
-            if not output_content:
+            # Fallback: extract from last assistant message in history
+            last_assistant = [
+                m for m in run.history if m.role == MessageRole.ASSISTANT
+            ]
+            if last_assistant:
+                output_content = last_assistant[-1].content
+            else:
                 output_content = "Run completed."
 
         run.output_message = Message(
@@ -581,28 +593,38 @@ class StepExecutor:
     def _gather_tool_definitions(
         self, agent_def: AgentDef
     ) -> list[dict[str, Any]]:
-        """Gather tool definitions from all skills assigned to the agent."""
+        """Gather tool definitions available to the agent.
+
+        If the agent has skills, only tools referenced by those skills are
+        included (skill-tool constraint).  Otherwise, ALL registered tools
+        are exposed.
+        """
         tool_defs: list[dict[str, Any]] = []
         seen: set[str] = set()
 
-        for skill_name in agent_def.skills:
-            try:
-                skill_def = self._skills.get_def(skill_name)
-                for tool_name in skill_def.tools:
-                    if tool_name not in seen:
-                        seen.add(tool_name)
-                        try:
-                            td = self._tools.get_def(tool_name)
-                            tool_defs.append(td.model_dump())
-                        except RegistryKeyError:
-                            logger.warning(
-                                "Tool '%s' referenced by skill '%s' not found",
-                                tool_name,
-                                skill_name,
-                            )
-            except RegistryKeyError:
-                logger.warning(
-                    "Skill '%s' referenced by agent not found", skill_name
-                )
+        if agent_def.skills:
+            for skill_name in agent_def.skills:
+                try:
+                    skill_def = self._skills.get_def(skill_name)
+                    for tool_name in skill_def.tools:
+                        if tool_name not in seen:
+                            seen.add(tool_name)
+                            try:
+                                td = self._tools.get_def(tool_name)
+                                tool_defs.append(td.model_dump())
+                            except RegistryKeyError:
+                                logger.warning(
+                                    "Tool '%s' referenced by skill '%s' not found",
+                                    tool_name,
+                                    skill_name,
+                                )
+                except RegistryKeyError:
+                    logger.warning(
+                        "Skill '%s' referenced by agent not found", skill_name
+                    )
+        else:
+            # No skills — expose all registered tools
+            for td in self._tools.list():
+                tool_defs.append(td.model_dump())
 
         return tool_defs

@@ -10,7 +10,6 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from infrastructure.queue.manager import QueueManager
-from domains.orchestration.nodes.project.project_node import ProjectNode
 from domains.orchestration.nodes.system.scheduler_node import SchedulerNode
 from domains.orchestration.nodes.system.router_node import RouterNode
 from domains.automation.command_parser import parse_command, execute_command
@@ -193,10 +192,10 @@ class Worker:
             import traceback
             traceback.print_exc()
             await self.manager.update_status(task_id, "failed", str(e))
-        finally:
-            # 6. Skill Mining (Async cleanup/analysis)
-            if task_data.get("task_type") in [TaskType.USER_MESSAGE, TaskType.NODE_EXECUTION]:
-                asyncio.create_task(self._trigger_skill_mining(task_id, user_id))
+        # finally:
+        #     # 6. Skill Mining (Async cleanup/analysis)
+        #     if task_data.get("task_type") in [TaskType.USER_MESSAGE, TaskType.NODE_EXECUTION]:
+        #         asyncio.create_task(self._trigger_skill_mining(task_id, user_id))
 
     async def _trigger_skill_mining(self, task_id: str, user_id: str):
         """Enqueue a background AES task for skill extraction (Conservative)"""
@@ -394,7 +393,7 @@ class Worker:
         await self.manager.update_status(task_id, "completed", f"AES Task {task_record.task_type} done.")
 
     async def _handle_user_message(self, message: str, context: dict, db_session):
-        """Default logic for user chat and commands"""
+        """Default logic for user chat and commands (orchestration2)"""
         task_id = context.get("task_id")
         user_id = context.get("user_id")
         project_id = context.get("project_id")
@@ -402,46 +401,204 @@ class Worker:
         # 1. Attachments
         if context.get("files"):
             context["attached_files"] = await self._process_attachments(context, db_session)
-        
+
         # 2. Commands (Optimized: Check before Routing)
         if await self._command_detection(message, context):
             return
 
         # 3. GLOBAL ROUTER (Cross-project intent analysis)
-        try:
-            from api.router import Router
-            router = Router()
+        # try:
+        #     from api.router import Router
+        #     router = Router()
 
-            # Ensure the router doesn't re-trigger the project we're about to handle
-            if project_id:
-                res_node = await db_session.execute(
-                    select(Node).filter(Node.project_id == project_id, Node.node_type == "PROJECT")
-                )
-                proj_node = res_node.scalars().first()
-                if proj_node:
-                    already_triggered = context.get("already_triggered_node_ids", [])
-                    if proj_node.id not in already_triggered:
-                        context["already_triggered_node_ids"] = list(set(already_triggered + [proj_node.id]))
+        #     # Ensure the router doesn't re-trigger the project we're about to handle
+        #     if project_id:
+        #         res_node = await db_session.execute(
+        #             select(Node).filter(Node.project_id == project_id, Node.node_type == "PROJECT")
+        #         )
+        #         proj_node = res_node.scalars().first()
+        #         if proj_node:
+        #             already_triggered = context.get("already_triggered_node_ids", [])
+        #             if proj_node.id not in already_triggered:
+        #                 context["already_triggered_node_ids"] = list(set(already_triggered + [proj_node.id]))
 
-            await router.dispatch(message, context)
-        except Exception as re:
-            print(f"⚠️ Router dispatch error: {re}")
-            
-        # 4. DATA/PROJECT CONTEXT (Project-specific execution)
+        #     await router.dispatch(message, context)
+        # except Exception as re:
+        #     print(f"⚠️ Router dispatch error: {re}")
+
+        # 4. DATA/PROJECT CONTEXT (orchestration2 engine)
+        result = None
         if project_id:
-            target_node = ProjectNode(context)
-            result = await target_node.process(message)
+            result = await self._run_orchestration2(
+                message, project_id, user_id, context, db_session
+            )
             await self.manager.update_status(task_id, "completed", result)
             print(f"Worker: Task {task_id} completed.")
         else:
-            print(f"Worker: No project_id in context. Skipping ProjectNode. (Task {task_id})")
-            # If not handled by router/explicit, and no project, mark as completed but mention no context
-            # (In a real system, we might want a 'failed' status if nothing happened, but router usually hits RouterNode)
+            print(f"Worker: No project_id in context. Skipping. (Task {task_id})")
             await self.manager.update_status(task_id, "completed", "Message processed by system router.")
 
         # 5. External Channel Reply (LINE, etc.)
         if context.get("external_reply_channel"):
             await self._handle_external_reply(result, context, db_session)
+
+    async def _run_orchestration2(
+        self, message: str, project_id: str, user_id: str,
+        context: dict, db_session
+    ) -> str:
+        """Run the orchestration2 engine for a user message."""
+        from uuid import uuid4
+        from shared.database import (
+            UserSettings, ChatSession, ChatMessage, ChatSubMessage, ToolUsage,
+        )
+        from domains.orchestration2.engine_setup import create_engine_for_project
+        from domains.orchestration2.engine.models.common import MessageRole
+        from domains.orchestration2.engine.models.message import Message as V2Message
+
+        # 1. Get API key
+        res = await db_session.execute(
+            select(UserSettings).filter(UserSettings.user_id == user_id)
+        )
+        settings = res.scalars().first()
+        api_key = settings.gemini_api_key if settings else None
+        if not api_key:
+            return "Error: No API key configured. Please set your Gemini API key in settings."
+
+        preferred_model = context.get("preferred_model")
+
+        # 2. Get or create session
+        session_id = context.get("session_id")
+        if not session_id:
+            sess_res = await db_session.execute(
+                select(ChatSession).filter(
+                    ChatSession.project_id == project_id,
+                    ChatSession.is_archived == False,
+                ).order_by(ChatSession.created_at.desc())
+            )
+            session = sess_res.scalars().first()
+            if session:
+                session_id = session.id
+            else:
+                session_id = str(uuid4())
+                db_session.add(ChatSession(
+                    id=session_id,
+                    project_id=project_id,
+                    title="New Session",
+                    is_archived=False,
+                ))
+                await db_session.flush()
+
+        # 3. Load chat history as v2 Messages
+        history_res = await db_session.execute(
+            select(ChatMessage).filter(
+                ChatMessage.session_id == session_id,
+                ChatMessage.is_excluded == False,
+            ).order_by(ChatMessage.created_at.asc())
+        )
+        db_messages = history_res.scalars().all()
+
+        v2_history: list[V2Message] = []
+        for dbm in db_messages:
+            role_map = {
+                "user": MessageRole.USER,
+                "assistant": MessageRole.ASSISTANT,
+                "system": MessageRole.SYSTEM,
+                "tool": MessageRole.TOOL,
+            }
+            role = role_map.get(dbm.role, MessageRole.USER)
+            v2_history.append(V2Message(
+                id=dbm.id,
+                role=role,
+                content=dbm.content or "",
+            ))
+
+        # 4. Create v2 user message
+        user_msg = V2Message(role=MessageRole.USER, content=message)
+
+        # 5. Create engine
+        engine, agent_id = await create_engine_for_project(
+            project_id=project_id,
+            user_id=user_id,
+            db_session=db_session,
+            api_key=api_key,
+            preferred_model=preferred_model,
+        )
+
+        # 6. Build metadata for tools/roles
+        prompt_data = getattr(engine, "_prompt_data", {})
+        metadata = {
+            "project_id": project_id,
+            "user_id": user_id,
+            "db_session": db_session,
+            "api_key": api_key,
+            "session_id": session_id,
+            "attached_files": context.get("attached_files", []),
+            **prompt_data,
+        }
+
+        # 7. Execute run
+        run_response = await engine.execute_run(
+            message=user_msg,
+            agent_id=agent_id,
+            history=v2_history,
+            metadata=metadata,
+        )
+
+        # 8. Extract response text
+        response_text = ""
+        if run_response.message:
+            response_text = run_response.message.content
+        if not response_text.strip():
+            response_text = "Task completed."
+
+        # 9. Save user message + assistant response to DB
+        user_msg_id = str(uuid4())
+        db_session.add(ChatMessage(
+            id=user_msg_id,
+            session_id=session_id,
+            role="user",
+            content=message,
+            meta_payload={"attached_files": [
+                f.to_dict() if hasattr(f, "to_dict") else str(f)
+                for f in context.get("attached_files", [])
+            ]} if context.get("attached_files") else None,
+        ))
+
+        assistant_msg_id = str(uuid4())
+        db_session.add(ChatMessage(
+            id=assistant_msg_id,
+            session_id=session_id,
+            role="assistant",
+            content=response_text,
+        ))
+
+        # Save sub-messages from run history (tool calls, reasoning, etc.)
+        if run_response.message and run_response.message.submessages:
+            for idx, sub in enumerate(run_response.message.submessages):
+                db_session.add(ChatSubMessage(
+                    id=sub.id,
+                    message_id=assistant_msg_id,
+                    turn_index=idx,
+                    content=sub.content,
+                    kind=sub.kind.value if sub.kind else None,
+                    run_id=run_response.run_id,
+                    meta_payload={
+                        "tool_call": sub.tool_call.model_dump() if sub.tool_call else None,
+                    } if sub.tool_call else None,
+                ))
+
+        await db_session.commit()
+
+        # 10. Ingest to knowledge core (best-effort)
+        try:
+            from domains.orchestration.tools.utils import get_kc_service
+            kc_svc = get_kc_service(user_id, db_session)
+            await kc_svc.ingest_message(text=message, role="user", scope="global")
+            await kc_svc.ingest_message(text=response_text, role="assistant", scope="global")
+        except Exception as e:
+            print(f"[Worker] KC ingestion failed (non-fatal): {e}")
+
+        return response_text
 
     async def _handle_external_reply(self, result: Any, context: dict, db_session):
         """Send the processing result back to an external source (e.g., LINE)"""

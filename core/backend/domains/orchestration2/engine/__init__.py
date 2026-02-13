@@ -1,14 +1,17 @@
-"""orchestration2 — Type-safe, registry-driven agent execution engine.
+"""orchestration2 engine — pure, reusable agent execution core.
 
 Public API:
     AgentEngine          — main facade
+    Errors               — via .errors module
     Models               — via .models subpackage
     Interfaces           — via .interfaces subpackage
-    Errors               — via .errors module
+    Registry             — via .registry subpackage
+    Orchestration        — via .orchestration subpackage
+    Store                — via .store subpackage
 """
 
-from .engine.agent_engine import AgentEngine
-from .engine.errors import (
+from .agent_engine import AgentEngine
+from .errors import (
     AgentNotFoundError,
     DelegationError,
     DuplicateNameError,

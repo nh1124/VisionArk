@@ -27,6 +27,7 @@ Contains the core business logic, organized by domain. High-level policies resid
 *   **`workspace/`**: File management, Context management, Notifications.
 *   **`automation/`**: AES (Automated Execution System), Scheduler, Skill System, Commands.
 *   **`orchestration/`**: Agent orchestration, routing, chat projection, and **Tools** (Standard Library).
+*   **`orchestration2/`**: Next-generation graph-driven agent engine. Contains a reusable `engine/` core (interfaces, models, registries, orchestrator, store) with VisionArk-specific `roles/`, `tools/`, and `engine_setup.py`. See [`orchestration2_engine.md`](orchestration2_engine.md) for full architecture.
 
 ### 3. Infrastructure Layer (`infrastructure/`)
 Contains technical implementations and interfaces to external systems.

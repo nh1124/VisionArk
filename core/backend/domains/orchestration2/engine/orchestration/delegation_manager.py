@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from ..errors import DelegationError, RunNotFoundError
@@ -50,7 +50,7 @@ class DelegationManager:
         # Update parent run
         parent_run.status = RunStatus.WAITING_DELEGATION
         parent_run.pending_delegation_ids.append(request.id)
-        parent_run.updated_at = datetime.now(timezone.utc)
+        parent_run.updated_at = datetime.utcnow()
         await self._store.save_run(parent_run)
 
         # Emit event
@@ -100,7 +100,7 @@ class DelegationManager:
                 parent_run.pending_delegation_ids.remove(delegation_id)
             if not parent_run.pending_delegation_ids:
                 parent_run.status = RunStatus.RUNNING
-            parent_run.updated_at = datetime.now(timezone.utc)
+            parent_run.updated_at = datetime.utcnow()
             await self._store.save_run(parent_run)
 
         # Emit event

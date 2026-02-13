@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -20,7 +20,13 @@ if TYPE_CHECKING:
 
 
 class ExecutionContext(BaseModel):
-    """Context passed to tools, skills, and roles during execution."""
+    """Context passed to tools, skills, and roles during execution.
+
+    The ``metadata`` dict is a generic extension point for host applications.
+    orchestration2 core never reads from it — tools, skills, and roles owned
+    by the host app can store whatever they need (e.g. project_id, user_id,
+    db_session, api_key).
+    """
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -28,6 +34,7 @@ class ExecutionContext(BaseModel):
     agent_def: Any  # AgentDef (avoid circular import at runtime)
     run_context: Any  # RunContext
     store: Any  # Store reference
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ToolResult(BaseModel):
@@ -59,7 +66,7 @@ class OrchestrationEvent(BaseModel):
     source: EventSource
     detail: str | None = None
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=datetime.utcnow
     )
 
 

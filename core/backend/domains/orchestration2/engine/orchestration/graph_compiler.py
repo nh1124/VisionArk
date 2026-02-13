@@ -58,6 +58,14 @@ def _validate_and_compile(data: dict[str, Any]) -> GraphSpec:
     for raw_step in data["steps"]:
         if not isinstance(raw_step, dict):
             raise GraphValidationError(f"Each step must be a mapping, got: {type(raw_step)}")
+
+        # Fix PyYAML 1.1 boolean key issue: 'on', 'off', 'yes', 'no'
+        # are parsed as booleans instead of strings.
+        if True in raw_step and "on" not in raw_step:
+            raw_step["on"] = raw_step.pop(True)
+        if False in raw_step and "off" not in raw_step:
+            raw_step["off"] = raw_step.pop(False)
+
         if "id" not in raw_step:
             raise GraphValidationError("Each step must have an 'id' field")
         if "type" not in raw_step:

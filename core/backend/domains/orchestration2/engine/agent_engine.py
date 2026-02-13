@@ -243,11 +243,16 @@ class AgentEngine:
         agent_def: AgentDef | None = None,
         history: list[Message] | None = None,
         async_mode: bool = False,
+        metadata: dict | None = None,
     ) -> RunResponse:
         """Execute an agent run.
 
         Provide either ``agent_id`` (for registered agents) or ``agent_def``
         (for ad-hoc / test runs).
+
+        ``metadata`` is an opaque dict passed through to ``ExecutionContext``
+        so that host-app code (tools, roles) can access app-specific data
+        like ``project_id``, ``db_session``, etc.
         """
         # Resolve agent definition
         resolved_def = self._resolve_agent_def(agent_id, agent_def)
@@ -257,7 +262,7 @@ class AgentEngine:
 
         if async_mode:
             return await self._execute_async(
-                resolved_def, graph, message, history
+                resolved_def, graph, message, history, metadata
             )
 
         return await self._orchestrator.run(
@@ -265,6 +270,7 @@ class AgentEngine:
             graph=graph,
             message=message,
             history=history,
+            metadata=metadata,
         )
 
     async def execute_run_by_name(
@@ -274,6 +280,7 @@ class AgentEngine:
         *,
         history: list[Message] | None = None,
         async_mode: bool = False,
+        metadata: dict | None = None,
     ) -> RunResponse:
         """Execute a run by agent name (convenience method)."""
         agent_id, _ = self.agents.get_by_name(name)
@@ -282,6 +289,7 @@ class AgentEngine:
             agent_id=agent_id,
             history=history,
             async_mode=async_mode,
+            metadata=metadata,
         )
 
     async def _execute_async(
@@ -290,6 +298,7 @@ class AgentEngine:
         graph: GraphSpec,
         message: Message,
         history: list[Message] | None,
+        metadata: dict | None = None,
     ) -> RunResponse:
         """Start an async run and return immediately with the run_id."""
         # Create a placeholder run record
@@ -299,6 +308,7 @@ class AgentEngine:
             graph_name=graph.graph_name,
             input_message=message,
             history=list(history) if history else [],
+            metadata=metadata or {},
         )
         await self._store.save_run(run)
 
@@ -309,6 +319,7 @@ class AgentEngine:
                 graph=graph,
                 message=message,
                 history=history,
+                metadata=metadata,
             )
         )
         self._async_tasks[run.run_id] = task
