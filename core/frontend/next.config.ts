@@ -4,6 +4,7 @@ const nextConfig = {
   devIndicators: false,
   // Increase body size limit for file uploads
   experimental: {
+    optimizePackageImports: ['lucide-react'],
     serverActions: {
       bodySizeLimit: '100mb',
     },
@@ -11,7 +12,7 @@ const nextConfig = {
   },
   // Server external packages for proper proxying
   serverExternalPackages: [],
-  transpilePackages: ['mermaid'],
+  transpilePackages: ['mermaid', 'lucide-react'],
   async rewrites() {
     // In Docker: use backend service name (http://backend:8000)
     // Local dev: use localhost:8000

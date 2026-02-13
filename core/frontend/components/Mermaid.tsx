@@ -63,6 +63,7 @@ const Mermaid: React.FC<MermaidProps> = React.memo(({ chart }) => {
                         theme: "dark",
                         securityLevel: "loose",
                         fontFamily: "Inter, sans-serif",
+                        suppressErrorRendering: true,
                     });
 
                     const id = `mermaid-${Math.floor(Math.random() * 1000000)}`;
