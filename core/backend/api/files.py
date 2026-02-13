@@ -12,7 +12,7 @@ import mimetypes
 from uuid import uuid4
 
 from domains.identity.auth import resolve_identity, Identity, resolve_identity_for_download
-from shared.database import UploadedFile, Node, Project, get_async_db, UserSettings
+from shared.database import UploadedFile, Project, get_async_db, UserSettings
 from domains.workspace.file_service import FileService
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select

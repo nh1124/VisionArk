@@ -45,10 +45,10 @@ class MulticastMessageTool:
 
         try:
             from sqlalchemy import select
-            from shared.database import Node
+            from shared.database import ProjectAgent
             from infrastructure.queue.manager import QueueManager
 
-            res = await db.execute(select(Node.id))
+            res = await db.execute(select(ProjectAgent.id))
             valid_ids = set(res.scalars().all())
 
             invalid = [t for t in target_ids if t not in valid_ids]
@@ -58,11 +58,10 @@ class MulticastMessageTool:
             manager = QueueManager()
             count = 0
             for tid in target_ids:
-                await manager.enqueue_node_task(
+                await manager.enqueue(
                     user_id=user_id,
-                    target_node_id=tid,
                     message=message,
-                    context={"session_id": session_id, "project_id": project_id},
+                    context={"session_id": session_id, "project_id": project_id, "target_agent_id": tid},
                 )
                 count += 1
 
@@ -99,21 +98,21 @@ class SubscribeIntentTool:
         if not pattern and not intent_desc:
             return fail(call, "Either 'pattern' or 'intent_description' must be provided.")
 
-        node_id = ctx.metadata.get("node_id")
+        agent_id = ctx.metadata.get("agent_id")
         session_id = ctx.metadata.get("session_id") if session_bound else None
         db = get_db(ctx)
 
         try:
             from sqlalchemy import select
             from sqlalchemy.orm.attributes import flag_modified
-            from shared.database import Node
+            from shared.database import ProjectAgent
 
-            res = await db.execute(select(Node).filter(Node.id == node_id))
-            node = res.scalars().first()
-            if not node:
-                return fail(call, f"Node {node_id} not found.")
+            res = await db.execute(select(ProjectAgent).filter(ProjectAgent.id == agent_id))
+            agent = res.scalars().first()
+            if not agent:
+                return fail(call, f"Agent {agent_id} not found.")
 
-            meta = copy.deepcopy(node.meta_payload or {})
+            meta = copy.deepcopy(agent.meta_payload or {})
             sub_id = f"sub_{uuid.uuid4().hex[:8]}"
 
             if pattern:
@@ -128,8 +127,8 @@ class SubscribeIntentTool:
                     interests.append({"id": sub_id, "value": intent_desc, "session_id": session_id, "description": description})
                     meta["semantic_interests"] = interests
 
-            node.meta_payload = meta
-            flag_modified(node, "meta_payload")
+            agent.meta_payload = meta
+            flag_modified(agent, "meta_payload")
             await db.commit()
 
             try:
@@ -167,20 +166,20 @@ class UnsubscribeIntentTool:
         if not sub_id and not pattern and not intent_desc:
             return fail(call, "Provide subscription_id, pattern, or intent_description.")
 
-        node_id = ctx.metadata.get("node_id")
+        agent_id = ctx.metadata.get("agent_id")
         db = get_db(ctx)
 
         try:
             from sqlalchemy import select
             from sqlalchemy.orm.attributes import flag_modified
-            from shared.database import Node
+            from shared.database import ProjectAgent
 
-            res = await db.execute(select(Node).filter(Node.id == node_id))
-            node = res.scalars().first()
-            if not node:
-                return fail(call, f"Node {node_id} not found.")
+            res = await db.execute(select(ProjectAgent).filter(ProjectAgent.id == agent_id))
+            agent = res.scalars().first()
+            if not agent:
+                return fail(call, f"Agent {agent_id} not found.")
 
-            meta = copy.deepcopy(node.meta_payload or {})
+            meta = copy.deepcopy(agent.meta_payload or {})
             removed = False
 
             def filter_list(key, match_val, by_id=False):
@@ -209,8 +208,8 @@ class UnsubscribeIntentTool:
                     meta["semantic_interests"] = filter_list("semantic_interests", intent_desc)
 
             if removed:
-                node.meta_payload = meta
-                flag_modified(node, "meta_payload")
+                agent.meta_payload = meta
+                flag_modified(agent, "meta_payload")
                 await db.commit()
 
                 try:
@@ -235,19 +234,19 @@ class ListSubscriptionsTool:
     )
 
     async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
-        node_id = ctx.metadata.get("node_id")
+        agent_id = ctx.metadata.get("agent_id")
         db = get_db(ctx)
 
         try:
             from sqlalchemy import select
-            from shared.database import Node
+            from shared.database import ProjectAgent
 
-            res = await db.execute(select(Node).filter(Node.id == node_id))
-            node = res.scalars().first()
-            if not node:
-                return fail(call, "Node not found.")
+            res = await db.execute(select(ProjectAgent).filter(ProjectAgent.id == agent_id))
+            agent = res.scalars().first()
+            if not agent:
+                return fail(call, "Agent not found.")
 
-            meta = node.meta_payload or {}
+            meta = agent.meta_payload or {}
             patterns = meta.get("trigger_patterns", [])
             interests = meta.get("semantic_interests", [])
 

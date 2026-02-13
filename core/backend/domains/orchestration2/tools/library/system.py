@@ -1,4 +1,4 @@
-"""System tools: node management, project operations, timers."""
+"""System tools: agent management, project operations, timers."""
 
 from __future__ import annotations
 
@@ -11,10 +11,10 @@ from domains.orchestration2.engine.models.tool import ToolDef
 from domains.orchestration2.tools.base import fail, get_db, get_project_id, get_user_id, make_result
 
 
-class ListNodesTool:
+class ListAgentsTool:
     definition = ToolDef(
-        name="list_nodes",
-        description="List all available nodes (System, Members, Peer Projects) for communication.",
+        name="list_agents",
+        description="List all available agents (System, Members, Peer Projects) for communication.",
         parameters={"type": "object", "properties": {}, "required": []},
     )
 
@@ -25,87 +25,87 @@ class ListNodesTool:
 
         try:
             from sqlalchemy import select
-            from shared.database import Node, Project
+            from shared.database import ProjectAgent, Project
 
-            res_s = await db.execute(select(Node).filter(Node.node_type == "SYSTEM", Node.status == "active"))
+            res_s = await db.execute(select(ProjectAgent).filter(ProjectAgent.agent_type == "SYSTEM", ProjectAgent.status == "active"))
             systems = res_s.scalars().all()
 
-            res_m = await db.execute(select(Node).filter(Node.project_id == project_id, Node.node_type == "MEMBER", Node.status == "active"))
+            res_m = await db.execute(select(ProjectAgent).filter(ProjectAgent.project_id == project_id, ProjectAgent.agent_type == "MEMBER", ProjectAgent.status == "active"))
             members = res_m.scalars().all()
 
             res_p = await db.execute(
-                select(Node).join(Project, Node.project_id == Project.id).filter(
+                select(ProjectAgent).join(Project, ProjectAgent.project_id == Project.id).filter(
                     Project.user_id == user_id,
-                    Node.node_type == "PROJECT",
-                    Node.status == "active",
+                    ProjectAgent.agent_type == "PROJECT",
+                    ProjectAgent.status == "active",
                 )
             )
             peers = res_p.scalars().all()
 
-            lines = [f"Found {len(systems) + len(members) + len(peers)} available nodes:"]
-            for n in systems + members + peers:
-                lines.append(f"- [{n.node_type}] {n.id}: {n.display_name} ({n.role_name}) - {n.description or 'No description'}")
+            lines = [f"Found {len(systems) + len(members) + len(peers)} available agents:"]
+            for a in systems + members + peers:
+                lines.append(f"- [{a.agent_type}] {a.id}: {a.display_name} ({a.role_name}) - {a.description or 'No description'}")
 
             return make_result(call, "\n".join(lines))
         except Exception as e:
-            return fail(call, f"Failed to list nodes: {e}")
+            return fail(call, f"Failed to list agents: {e}")
 
 
-class GetNodeProfileTool:
+class GetAgentProfileTool:
     definition = ToolDef(
-        name="get_node_profile",
-        description="Retrieve detailed profile and capabilities for a specific node ID.",
+        name="get_agent_profile",
+        description="Retrieve detailed profile and capabilities for a specific agent ID.",
         parameters={
             "type": "object",
             "properties": {
-                "node_id": {"type": "string", "description": "UUID of the node to inspect"},
+                "agent_id": {"type": "string", "description": "UUID of the agent to inspect"},
             },
-            "required": ["node_id"],
+            "required": ["agent_id"],
         },
     )
 
     async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
-        node_id = call.arguments.get("node_id", "")
+        agent_id = call.arguments.get("agent_id", "")
         db = get_db(ctx)
 
         try:
             from sqlalchemy import select
-            from shared.database import Node
+            from shared.database import ProjectAgent
 
-            res = await db.execute(select(Node).filter(Node.id == node_id))
-            node = res.scalars().first()
-            if not node:
-                return fail(call, f"Node {node_id} not found.")
+            res = await db.execute(select(ProjectAgent).filter(ProjectAgent.id == agent_id))
+            agent = res.scalars().first()
+            if not agent:
+                return fail(call, f"Agent {agent_id} not found.")
 
             info = (
-                f"Node: {node.display_name} ({node.role_name})\n"
-                f"Type: {node.node_type}\n"
-                f"Description: {node.description or 'None'}\n"
-                f"Tools: {node.tools or []}\n"
-                f"Status: {node.status}"
+                f"Agent: {agent.display_name} ({agent.role_name})\n"
+                f"Type: {agent.agent_type}\n"
+                f"Description: {agent.description or 'None'}\n"
+                f"Tools: {agent.tools or []}\n"
+                f"Status: {agent.status}"
             )
             return make_result(call, info)
         except Exception as e:
-            return fail(call, f"Failed to get node profile: {e}")
+            return fail(call, f"Failed to get agent profile: {e}")
 
 
-class AskNodeTool:
+class AskAgentTool:
     definition = ToolDef(
-        name="ask_node",
-        description="Send a message or sub-task to another node.",
+        name="ask_agent",
+        description="Send a message or sub-task to another agent.",
         parameters={
             "type": "object",
             "properties": {
-                "target_node_id": {"type": "string", "description": "UUID of the target node"},
+                "target_agent_id": {"type": "string", "description": "UUID of the target agent"},
                 "message": {"type": "string", "description": "Message or instruction to send"},
                 "blocking": {"type": "boolean", "description": "Wait for response (true) or fire-and-forget (false)"},
             },
-            "required": ["target_node_id", "message"],
+            "required": ["target_agent_id", "message"],
         },
     )
 
     async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
-        target_id = call.arguments.get("target_node_id", "")
+        target_id = call.arguments.get("target_agent_id", "")
         message = call.arguments.get("message", "")
         blocking = call.arguments.get("blocking", False)
 
@@ -117,19 +117,19 @@ class AskNodeTool:
             from infrastructure.queue.manager import QueueManager
 
             manager = QueueManager()
-            await manager.enqueue_node_task(
+            await manager.enqueue(
                 user_id=user_id,
-                target_node_id=target_id,
                 message=message,
                 context={
                     "session_id": session_id,
                     "project_id": project_id,
                     "original_message": message,
+                    "target_agent_id": target_id,
                 },
             )
-            return make_result(call, f"Message sent to node {target_id}." + (" (non-blocking)" if not blocking else ""))
+            return make_result(call, f"Message sent to agent {target_id}." + (" (non-blocking)" if not blocking else ""))
         except Exception as e:
-            return fail(call, f"Failed to send message to node: {e}")
+            return fail(call, f"Failed to send message to agent: {e}")
 
 
 class BroadcastSystemMessageTool:
@@ -152,30 +152,29 @@ class BroadcastSystemMessageTool:
 
         try:
             from sqlalchemy import select
-            from shared.database import Node, Project
+            from shared.database import ProjectAgent, Project
             from infrastructure.queue.manager import QueueManager
 
             res = await db.execute(
-                select(Node).join(Project, Node.project_id == Project.id).filter(
+                select(ProjectAgent).join(Project, ProjectAgent.project_id == Project.id).filter(
                     Project.user_id == user_id,
-                    Node.node_type == "PROJECT",
-                    Node.status == "active",
+                    ProjectAgent.agent_type == "PROJECT",
+                    ProjectAgent.status == "active",
                 )
             )
-            project_nodes = res.scalars().all()
+            project_agents = res.scalars().all()
 
             manager = QueueManager()
             count = 0
-            for node in project_nodes:
-                await manager.enqueue_node_task(
+            for agent in project_agents:
+                await manager.enqueue(
                     user_id=user_id,
-                    target_node_id=node.id,
                     message=f"[SYSTEM BROADCAST] {message}",
-                    context={"project_id": node.project_id},
+                    context={"project_id": agent.project_id, "target_agent_id": agent.id},
                 )
                 count += 1
 
-            return make_result(call, f"Broadcast sent to {count} project nodes.")
+            return make_result(call, f"Broadcast sent to {count} project agents.")
         except Exception as e:
             return fail(call, f"Broadcast failed: {e}")
 
@@ -251,28 +250,27 @@ class UpdateProjectTool:
 class GetProjectHealthTool:
     definition = ToolDef(
         name="get_project_health",
-        description="Analyze project health (nodes, activity, LBS status).",
+        description="Analyze project health (agents, activity, status).",
         parameters={"type": "object", "properties": {}, "required": []},
     )
 
     async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
         project_id = get_project_id(ctx)
-        user_id = get_user_id(ctx)
         db = get_db(ctx)
 
         try:
             from sqlalchemy import select, func
-            from shared.database import Node, ChatMessage, ChatSession
+            from shared.database import ProjectAgent, ChatMessage, ChatSession
 
-            nodes_res = await db.execute(select(func.count()).select_from(Node).filter(Node.project_id == project_id))
-            node_count = nodes_res.scalar() or 0
+            agents_res = await db.execute(select(func.count()).select_from(ProjectAgent).filter(ProjectAgent.project_id == project_id))
+            agent_count = agents_res.scalar() or 0
 
             sessions_res = await db.execute(select(func.count()).select_from(ChatSession).filter(ChatSession.project_id == project_id))
             session_count = sessions_res.scalar() or 0
 
             info = (
                 f"Project Health Report:\n"
-                f"- Nodes: {node_count}\n"
+                f"- Agents: {agent_count}\n"
                 f"- Sessions: {session_count}\n"
                 f"- Status: active"
             )

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from shared.database import get_async_db, Skill, NodeSkill, Node
+from shared.database import get_async_db, Skill, ProjectSkill, ProjectAgent
 from sqlalchemy import select, delete
 from pydantic import BaseModel
 from typing import List
@@ -81,34 +81,47 @@ async def delete_skill(skill_id: str, db: AsyncSession = Depends(get_async_db)):
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete skill: {str(e)}")
 
-# --- Node-Skill Association Endpoints ---
+# --- Project-Skill Association Endpoints ---
 
-@router.get("/node/{node_id}")
-async def list_node_skills(node_id: str, db: AsyncSession = Depends(get_async_db)):
-    """List skills assigned to a node strictly by Node ID."""
-    stmt = select(Skill).join(NodeSkill).filter(NodeSkill.node_id == node_id)
+@router.get("/project/{project_id}")
+async def list_project_skills(project_id: str, db: AsyncSession = Depends(get_async_db)):
+    """List skills assigned to a project's main agent."""
+    # Find the project's main agent
+    agent_res = await db.execute(select(ProjectAgent).filter(
+        ProjectAgent.project_id == project_id,
+        ProjectAgent.agent_type == "PROJECT",
+        ProjectAgent.status == "active"
+    ))
+    agent = agent_res.scalars().first()
+    if not agent:
+        return []
+    stmt = select(Skill).join(ProjectSkill).filter(ProjectSkill.agent_id == agent.id)
     res = await db.execute(stmt)
     return res.scalars().all()
 
-@router.put("/node/{node_id}")
-async def update_node_skills(node_id: str, skill_ids: List[str], db: AsyncSession = Depends(get_async_db)):
-    """Batch update skills assigned to a node strictly by Node ID."""
-    # Verify node exists
-    node = await db.get(Node, node_id)
-    if not node:
-        raise HTTPException(status_code=404, detail="Node not found")
-        
+@router.put("/project/{project_id}")
+async def update_project_skills(project_id: str, skill_ids: List[str], db: AsyncSession = Depends(get_async_db)):
+    """Batch update skills assigned to a project's main agent."""
+    # Find the project's main agent
+    agent_res = await db.execute(select(ProjectAgent).filter(
+        ProjectAgent.project_id == project_id,
+        ProjectAgent.agent_type == "PROJECT",
+        ProjectAgent.status == "active"
+    ))
+    agent = agent_res.scalars().first()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Project agent not found")
+
     # Remove existing associations
-    await db.execute(delete(NodeSkill).where(NodeSkill.node_id == node_id))
-    
+    await db.execute(delete(ProjectSkill).where(ProjectSkill.agent_id == agent.id))
+
     # Add new associations
     for sid in skill_ids:
-        # Verify skill exists
         skill = await db.get(Skill, sid)
         if skill:
-            new_assoc = NodeSkill(node_id=node_id, skill_id=sid)
+            new_assoc = ProjectSkill(agent_id=agent.id, skill_id=sid)
             db.add(new_assoc)
-            
+
     await db.commit()
     return {"status": "success", "assigned_count": len(skill_ids)}
 

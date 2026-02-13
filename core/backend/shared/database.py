@@ -36,9 +36,9 @@ class TaskStatus(str, Enum):
     SKIPPED = "skipped"
 
 
-class NodeType(str, Enum):
-    """Node type for agent categorization"""
-    SYSTEM = "SYSTEM"       # System nodes (router, memory, etc.)
+class AgentType(str, Enum):
+    """Agent type for categorization"""
+    SYSTEM = "SYSTEM"       # System agents (router, memory, etc.)
     PROJECT = "PROJECT"     # Main project orchestrator
     MEMBER = "MEMBER"       # Project member agents
 
@@ -280,19 +280,19 @@ class Project(Base):
     
     # Relationships
     user = relationship("User", back_populates="projects")
-    nodes = relationship("Node", back_populates="project", cascade="all, delete-orphan")
+    agents = relationship("ProjectAgent", back_populates="project", cascade="all, delete-orphan")
     sessions = relationship("ChatSession", back_populates="project", cascade="all, delete-orphan")
     files = relationship("UploadedFile", back_populates="project", cascade="all, delete-orphan")
 
 
-class Node(Base):
-    """Agent node - contains agent configuration and prompt"""
-    __tablename__ = "nodes"
-    
+class ProjectAgent(Base):
+    """Project agent - contains agent configuration and prompt"""
+    __tablename__ = "project_agents"
+
     id = Column(String(36), primary_key=True)  # UUID
-    project_id = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)  # Null for SYSTEM nodes
-    parent_node_id = Column(String(36), ForeignKey("nodes.id"), nullable=True)  # Hierarchy for member nodes
-    node_type = Column(String(20), default="PROJECT")  # SYSTEM/PROJECT/MEMBER
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)  # Null for SYSTEM agents
+    parent_agent_id = Column(String(36), ForeignKey("project_agents.id"), nullable=True)  # Hierarchy for member agents
+    agent_type = Column(String(20), default="PROJECT")  # SYSTEM/PROJECT/MEMBER
     role_name = Column(String(50), nullable=True)  # e.g. "orchestrator", "researcher"
     display_name = Column(String(200), nullable=False, index=True)
     description = Column(String(500), nullable=True)  # Short summary of expertise
@@ -303,10 +303,10 @@ class Node(Base):
     version = Column(Integer, default=1)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
     # Relationships
-    project = relationship("Project", back_populates="nodes")
-    parent = relationship("Node", remote_side=[id], backref="children")
+    project = relationship("Project", back_populates="agents")
+    parent = relationship("ProjectAgent", remote_side=[id], backref="children")
 
     from sqlalchemy import UniqueConstraint
     __table_args__ = (
@@ -333,15 +333,15 @@ class Skill(Base):
     user = relationship("User")
 
 
-class NodeSkill(Base):
-    """Many-to-many relationship between Nodes and Skills"""
-    __tablename__ = "node_skills"
-    
-    node_id = Column(String(36), ForeignKey("nodes.id"), primary_key=True)
+class ProjectSkill(Base):
+    """Many-to-many relationship between ProjectAgents and Skills"""
+    __tablename__ = "project_skills"
+
+    agent_id = Column(String(36), ForeignKey("project_agents.id"), primary_key=True)
     skill_id = Column(String(100), ForeignKey("skills.id", ondelete="CASCADE"), primary_key=True)
-    
+
     # Relationships
-    node = relationship("Node", backref="attached_skills")
+    agent = relationship("ProjectAgent", backref="attached_skills")
     skill = relationship("Skill")
 
 class ChatSession(Base):
@@ -426,16 +426,16 @@ class ArchivedContext(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
-    node_id = Column(String(36), ForeignKey("nodes.id"), nullable=True, index=True)
+    agent_id = Column(String(36), ForeignKey("project_agents.id"), nullable=True, index=True)
     archived_at = Column(DateTime, default=datetime.utcnow)
     summary_path = Column(Text, nullable=True)
     log_path = Column(Text, nullable=True)
     token_count = Column(Integer, nullable=True)
-    
+
     # Relationships
     user = relationship("User")
     project = relationship("Project")
-    node = relationship("Node")
+    agent = relationship("ProjectAgent")
 
 
 class RagMetadata(Base):
@@ -591,6 +591,17 @@ def init_database(database_url: str = None):
     
     # 2. Setup engine and create core tables
     engine = get_engine(database_url)
+
+    # Pre-migration: drop legacy tables that conflict with renamed tables
+    from sqlalchemy import text, inspect
+    inspector = inspect(engine)
+    existing_tables = inspector.get_table_names()
+    if 'nodes' in existing_tables:
+        with engine.begin() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS node_skills CASCADE"))
+            conn.execute(text("DROP TABLE IF EXISTS nodes CASCADE"))
+            print("[INFO] Pre-migration: Dropped legacy 'nodes' and 'node_skills' tables")
+
     Base.metadata.create_all(engine)
     
     # 3. Run schema migrations for existing tables
@@ -657,23 +668,23 @@ def _run_migrations(engine):
                 conn.commit()
                 print("[INFO] Migration: Added role_name, display_name, and tools columns to agent_profiles")
 
-    # Migration: Add description to nodes if missing
-    if 'nodes' in inspector.get_table_names():
-        columns = [col['name'] for col in inspector.get_columns('nodes')]
+    # Migration: Add description to project_agents if missing
+    if 'project_agents' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('project_agents')]
         if 'description' not in columns:
             with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE nodes ADD COLUMN description VARCHAR(500)"))
+                conn.execute(text("ALTER TABLE project_agents ADD COLUMN description VARCHAR(500)"))
                 conn.commit()
-                print("[INFO] Migration: Added description column to nodes")
-    
-    # Migration: Add meta_payload to nodes if missing
-    if 'nodes' in inspector.get_table_names():
-        columns = [col['name'] for col in inspector.get_columns('nodes')]
+                print("[INFO] Migration: Added description column to project_agents")
+
+    # Migration: Add meta_payload to project_agents if missing
+    if 'project_agents' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('project_agents')]
         if 'meta_payload' not in columns:
             with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE nodes ADD COLUMN meta_payload JSON"))
+                conn.execute(text("ALTER TABLE project_agents ADD COLUMN meta_payload JSON"))
                 conn.commit()
-                print("[INFO] Migration: Added meta_payload column to nodes")
+                print("[INFO] Migration: Added meta_payload column to project_agents")
     # Migration: Rename project_name/source_project to project_id in multiple tables
     for table, old_col, new_col in [
         ('rag_metadata', 'project_name', 'project_id'),
@@ -701,16 +712,15 @@ def _run_migrations(engine):
                     print("[INFO] Migration: Added project_id column to external_identities")
                 except Exception as e:
                     print(f"[WARN] Migration failed for external_identities.project_id: {str(e)}")
-    # Migration: Add unique constraint uix_project_role to nodes if missing
-    if 'nodes' in inspector.get_table_names():
-        constraints = inspector.get_unique_constraints('nodes')
+    # Migration: Add unique constraint uix_project_role to project_agents if missing
+    if 'project_agents' in inspector.get_table_names():
+        constraints = inspector.get_unique_constraints('project_agents')
         if not any(c['name'] == 'uix_project_role' for c in constraints):
             with engine.connect() as conn:
                 try:
-                    # Note: Using IF NOT EXISTS for extra safety
-                    conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uix_project_role ON nodes (COALESCE(project_id, 'SYSTEM'), role_name)"))
+                    conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uix_project_role ON project_agents (COALESCE(project_id, 'SYSTEM'), role_name)"))
                     conn.commit()
-                    print("[INFO] Migration: Added unique index uix_project_role to nodes")
+                    print("[INFO] Migration: Added unique index uix_project_role to project_agents")
                 except Exception as e:
                     print(f"[WARN] Migration failed for uix_project_role: {str(e)}")
 
@@ -738,32 +748,28 @@ def _run_migrations(engine):
             if current_length and current_length < 100:
                 with engine.connect() as conn:
                     conn.execute(text("ALTER TABLE skills ALTER COLUMN id TYPE VARCHAR(100)"))
-                    if 'node_skills' in inspector.get_table_names():
-                        conn.execute(text("ALTER TABLE node_skills ALTER COLUMN skill_id TYPE VARCHAR(100)"))
+                    if 'project_skills' in inspector.get_table_names():
+                        conn.execute(text("ALTER TABLE project_skills ALTER COLUMN skill_id TYPE VARCHAR(100)"))
                     conn.commit()
                     print("✅ Migration: Increased Skill ID column lengths to 100")
         except (AttributeError, KeyError) as e:
             # Fallback if length attribute is missing or structure is different
             print(f"[DEBUG] Migration check for Skill ID skipped or failed: {str(e)}")
 
-    # Migration: Update node_skills foreign key to use CASCADE delete
-    if 'node_skills' in inspector.get_table_names():
+    # Migration: Update project_skills foreign key to use CASCADE delete
+    if 'project_skills' in inspector.get_table_names():
         with engine.connect() as conn:
             try:
-                # This is postgres specific syntax. For other DBs it might differ.
-                # First drop existing constraint, then add new one with CASCADE
-                # We need to find the constraint name first, but usually it's node_skills_skill_id_fkey
-                # To be safer across different environments, we can attempt to drop it if it exists.
                 conn.execute(text("""
-                    ALTER TABLE node_skills 
-                    DROP CONSTRAINT IF EXISTS node_skills_skill_id_fkey,
-                    ADD CONSTRAINT node_skills_skill_id_fkey 
+                    ALTER TABLE project_skills
+                    DROP CONSTRAINT IF EXISTS project_skills_skill_id_fkey,
+                    ADD CONSTRAINT project_skills_skill_id_fkey
                     FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
                 """))
                 conn.commit()
-                print("✅ Migration: Updated node_skills foreign key to CASCADE delete")
+                print("✅ Migration: Updated project_skills foreign key to CASCADE delete")
             except Exception as e:
-                print(f"[WARN] Migration failed for node_skills cascade: {str(e)}")
+                print(f"[WARN] Migration failed for project_skills cascade: {str(e)}")
             
     # Migration: Add tags column to notes if missing
     if 'notes' in inspector.get_table_names():

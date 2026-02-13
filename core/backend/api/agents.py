@@ -17,7 +17,7 @@ from typing import Optional, List, Dict
 
 
 from domains.identity.auth import resolve_identity, Identity, resolve_identity_for_download
-from shared.database import Node, Project, ChatSession, ChatMessage, ChatSubMessage, UploadedFile, get_async_db
+from shared.database import ProjectAgent, Project, ChatSession, ChatMessage, ChatSubMessage, UploadedFile, get_async_db
 from shared.paths import get_project_dir, get_user_projects_dir, validate_name, secure_path_join, update_project_name_cache as update_cache
 from uuid import uuid4
 from datetime import datetime, timedelta
@@ -192,12 +192,6 @@ async def chat_with_project(
     
     print(f"[Project Chat] Request for {project_id} from user {identity.user_id}")
     
-    # 1.5 Update cache with latest info if available (Node case)
-    result_node = await db.execute(select(Node).filter(Node.id == project_id))
-    node_obj = result_node.scalars().first()
-    if node_obj:
-        update_cache(identity.user_id, node_obj.id, node_obj.display_name)
-
     # 2. Handle File Uploads
     uploaded_files = None
     if files:
@@ -413,7 +407,7 @@ async def branch_project_chat(
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         new_project_name = f"{source_proj.name}_branch_{timestamp}"
         
-        # 5. Create new Project & Node
+        # 5. Create new Project & Agent
         new_project_id = str(uuid.uuid4())
         new_project = Project(
             id=new_project_id,
@@ -423,28 +417,27 @@ async def branch_project_chat(
             lbs_access_level=source_proj.lbs_access_level
         )
         db.add(new_project)
-        
-        new_node_id = str(uuid.uuid4())
-        new_node = Node(
-            id=new_node_id,
+
+        new_agent_id = str(uuid.uuid4())
+        new_agent = ProjectAgent(
+            id=new_agent_id,
             project_id=new_project_id,
-            node_type="PROJECT",
+            agent_type="PROJECT",
             display_name=new_project.name,
             system_prompt="You are a specialized AI assistant for this project.",
             status="active"
         )
-        db.add(new_node)
-        
-        # 6. Copy system prompt/tools from original project nodes
-        # (Simplified: find first PROJECT node of source)
-        node_res = await db.execute(select(Node).filter(
-            Node.project_id == source_proj.id,
-            Node.node_type == "PROJECT"
+        db.add(new_agent)
+
+        # 6. Copy system prompt/tools from original project agent
+        agent_res = await db.execute(select(ProjectAgent).filter(
+            ProjectAgent.project_id == source_proj.id,
+            ProjectAgent.agent_type == "PROJECT"
         ))
-        orig_node = node_res.scalars().first()
-        if orig_node:
-            new_node.system_prompt = orig_node.system_prompt
-            new_node.tools = orig_node.tools
+        orig_agent = agent_res.scalars().first()
+        if orig_agent:
+            new_agent.system_prompt = orig_agent.system_prompt
+            new_agent.tools = orig_agent.tools
         
         # 7. Create new session
         new_session = ChatSession(
@@ -479,8 +472,8 @@ async def branch_project_chat(
         return {
             "success": True, 
             "new_project_id": new_project_id,
-            "new_project_name": new_project_name, 
-            "new_node_id": new_node_id
+            "new_project_name": new_project_name,
+            "new_agent_id": new_agent_id
         }
         
     except HTTPException:
@@ -526,31 +519,30 @@ async def create_project(
         )
         db.add(new_project)
         
-        # 4. Create main Node
-        node_id = str(uuid4())
+        # 4. Create main ProjectAgent
+        agent_id = str(uuid4())
         system_prompt = project.custom_prompt or "You are a specialized AI assistant for this project. Help the user manage tasks, analyze data, and generate insights."
-        new_node = Node(
-            id=node_id,
+        new_agent = ProjectAgent(
+            id=agent_id,
             project_id=project_id,
-            node_type="PROJECT",
+            agent_type="PROJECT",
             display_name=project.project_name,
             system_prompt=system_prompt,
             status="active"
         )
-        db.add(new_node)
+        db.add(new_agent)
         update_cache(identity.user_id, project_id, project.project_name)
-        
+
         # 5. Create project directory on disk
         project_dir = get_project_dir(identity.user_id, project_id)
         project_dir.mkdir(parents=True, exist_ok=True)
         (project_dir / "refs").mkdir(exist_ok=True)
-        
+
         await db.commit()
-        
+
         return {
             "project_name": project.project_name,
             "project_id": project_id,
-            "node_id": node_id,
             "message": f"Project '{project.project_name}' created successfully"
         }
     except HTTPException:
@@ -650,7 +642,7 @@ async def create_project_from_prompt(
             display_name = f"{base_display_name} {counter}"
             counter += 1
 
-        # 3. Create Project + Node (same as create_project endpoint)
+        # 3. Create Project + Agent (same as create_project endpoint)
         project_id = str(uuid4())
         new_project = Project(
             id=project_id,
@@ -660,16 +652,16 @@ async def create_project_from_prompt(
         )
         db.add(new_project)
 
-        node_id = str(uuid4())
-        new_node = Node(
-            id=node_id,
+        agent_id = str(uuid4())
+        new_agent = ProjectAgent(
+            id=agent_id,
             project_id=project_id,
-            node_type="PROJECT",
+            agent_type="PROJECT",
             display_name=display_name,
             system_prompt=generated_prompt,
             status="active"
         )
-        db.add(new_node)
+        db.add(new_agent)
         update_cache(identity.user_id, project_id, display_name)
 
         # 4. Create project directory
@@ -693,7 +685,6 @@ async def create_project_from_prompt(
         return {
             "project_name": display_name,
             "project_id": project_id,
-            "node_id": node_id,
             "task_id": task_id,
             "message": f"Project '{display_name}' created and initial message queued"
         }
@@ -742,28 +733,24 @@ async def list_projects(
         except Exception:
             pass # Fallback to 0 if directory error
             
-        # Get nodes (agents) for this project
-        node_res = await db.execute(select(Node).where(
-            Node.project_id == proj.id,
-            Node.status == "active"
+        # Get agents for this project
+        agent_res = await db.execute(select(ProjectAgent).where(
+            ProjectAgent.project_id == proj.id,
+            ProjectAgent.status == "active"
         ))
-        nodes = node_res.scalars().all()
-        
-        orchestrator_id = proj.id # Fallback
+        agents = agent_res.scalars().all()
+
         has_custom = False
         members = []
-        for n in nodes:
-            if n.node_type == "PROJECT":
-                orchestrator_id = n.id
-                
-            role = n.display_name or n.role_name or "Agent"
-            if n.node_type == "MEMBER":
+        for a in agents:
+            role = a.display_name or a.role_name or "Agent"
+            if a.agent_type == "MEMBER":
                 members.append(role)
-            
+
             # Check for custom prompt
-            if n.system_prompt:
+            if a.system_prompt:
                 default_snippet = "You are a specialized AI assistant"
-                if default_snippet not in n.system_prompt or len(n.system_prompt) > 200:
+                if default_snippet not in a.system_prompt or len(a.system_prompt) > 200:
                     has_custom = True
 
         # Get Queue stats from Redis
@@ -814,7 +801,6 @@ async def list_projects(
             "name": proj.name,
             "display_name": proj.name,
             "project_id": proj.id,
-            "node_id": orchestrator_id,
             "status": proj.status,
             "priority": proj.priority,
             "created_at": proj.created_at.isoformat() if proj.created_at else None,
@@ -860,17 +846,17 @@ async def get_project_metadata(
         "updated_at": proj.updated_at.isoformat() if proj.updated_at else None
     }
 
-@router.get("/project/{project_id}/nodes")
-async def list_project_nodes(
+@router.get("/project/{project_id}/agents")
+async def list_project_agents(
     project_id: str,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
-    """List all nodes (agents) associated with a project"""
-    stmt = select(Node).filter(Node.project_id == project_id, Node.status == "active")
+    """List all agents associated with a project"""
+    stmt = select(ProjectAgent).filter(ProjectAgent.project_id == project_id, ProjectAgent.status == "active")
     res = await db.execute(stmt)
-    nodes = res.scalars().all()
-    return nodes
+    agents = res.scalars().all()
+    return agents
 
 @router.get("/project/{project_id}/active-task")
 async def get_project_active_task(
@@ -1033,17 +1019,16 @@ async def get_project_system_prompt(
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
-    """Get system prompt for a project from the main Node"""
-    # Find the main project node
-    result = await db.execute(select(Node).filter(
-        Node.project_id == project_id,
-        Node.node_type == "PROJECT",
-        Node.status == "active"
+    """Get system prompt for a project from the main agent"""
+    result = await db.execute(select(ProjectAgent).filter(
+        ProjectAgent.project_id == project_id,
+        ProjectAgent.agent_type == "PROJECT",
+        ProjectAgent.status == "active"
     ))
-    node = result.scalars().first()
-    
-    if node and node.system_prompt:
-        return {"content": node.system_prompt}
+    agent = result.scalars().first()
+
+    if agent and agent.system_prompt:
+        return {"content": agent.system_prompt}
     
     # Fallback to default
     return {"content": "You are a specialized AI assistant."}
@@ -1057,28 +1042,27 @@ async def update_project_system_prompt(
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
-    """Update system prompt in the main project Node"""
-    # Find the main project node
-    result = await db.execute(select(Node).filter(
-        Node.project_id == project_id,
-        Node.node_type == "PROJECT",
-        Node.status == "active"
+    """Update system prompt for the main project agent"""
+    result = await db.execute(select(ProjectAgent).filter(
+        ProjectAgent.project_id == project_id,
+        ProjectAgent.agent_type == "PROJECT",
+        ProjectAgent.status == "active"
     ))
-    node = result.scalars().first()
-    
-    if not node:
+    agent = result.scalars().first()
+
+    if not agent:
         # Create one if it doesn't exist
-        node = Node(
+        agent = ProjectAgent(
             id=str(uuid4()),
             project_id=project_id,
-            node_type="PROJECT",
+            agent_type="PROJECT",
             display_name="Main Agent",
             system_prompt=update.content,
             status="active"
         )
-        db.add(node)
+        db.add(agent)
     else:
-        node.system_prompt = update.content
+        agent.system_prompt = update.content
     
     await db.commit()
     
@@ -1184,29 +1168,26 @@ async def clone_project(
         db.add(new_project)
         update_cache(identity.user_id, new_project_id, new_name)
         
-        # 4. Copy Nodes (agents) from source project
-        result = await db.execute(select(Node).filter(
-            Node.project_id == source_proj_id,
-            Node.status == "active"
+        # 4. Copy agents from source project
+        result = await db.execute(select(ProjectAgent).filter(
+            ProjectAgent.project_id == source_proj_id,
+            ProjectAgent.status == "active"
         ))
-        source_nodes = result.scalars().all()
-        
-        node_id_map = {}  # old_node_id -> new_node_id
-        for sn in source_nodes:
-            new_node_id = str(uuid.uuid4())
-            node_id_map[sn.id] = new_node_id
-            new_node = Node(
-                id=new_node_id,
+        source_agents = result.scalars().all()
+
+        for sa in source_agents:
+            new_agent = ProjectAgent(
+                id=str(uuid.uuid4()),
                 project_id=new_project_id,
-                node_type=sn.node_type,
-                role_name=sn.role_name,
-                display_name=sn.display_name,
-                system_prompt=sn.system_prompt,
-                tools=sn.tools,
+                agent_type=sa.agent_type,
+                role_name=sa.role_name,
+                display_name=sa.display_name,
+                system_prompt=sa.system_prompt,
+                tools=sa.tools,
                 status="active",
                 version=1
             )
-            db.add(new_node)
+            db.add(new_agent)
             
         # 5. Copy Chat Sessions and Messages
         result = await db.execute(select(ChatSession).filter(ChatSession.project_id == source_proj_id))

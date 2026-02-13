@@ -68,12 +68,12 @@ def _get_all_tools() -> list[tuple[ToolDef, Any]]:
     from .tools.library.governance import GetProjectRulesTool, UpdateProjectRulesTool
     from .tools.library.notes import ListNotesTool, ReadNoteTool, CreateNoteTool
     from .tools.library.system import (
-        ListNodesTool, GetNodeProfileTool, AskNodeTool,
+        ListAgentsTool, GetAgentProfileTool, AskAgentTool,
         BroadcastSystemMessageTool, ListUserProjectsTool, UpdateProjectTool,
         GetProjectHealthTool, SetTimerTool, RaiseContinueTool,
     )
     from .tools.library.members import (
-        ListMembersTool, ManageMemberTool, UpdateNodeDescriptionTool,
+        ListMembersTool, ManageMemberTool, UpdateAgentDescriptionTool,
     )
     from .tools.library.writer import RecursiveWriterTool
     from .tools.library.shell import RunSafeShellTool
@@ -103,11 +103,11 @@ def _get_all_tools() -> list[tuple[ToolDef, Any]]:
         # Notes
         ListNotesTool, ReadNoteTool, CreateNoteTool,
         # System
-        ListNodesTool, GetNodeProfileTool, AskNodeTool,
+        ListAgentsTool, GetAgentProfileTool, AskAgentTool,
         BroadcastSystemMessageTool, ListUserProjectsTool, UpdateProjectTool,
         GetProjectHealthTool, SetTimerTool, RaiseContinueTool,
         # Members
-        ListMembersTool, ManageMemberTool, UpdateNodeDescriptionTool,
+        ListMembersTool, ManageMemberTool, UpdateAgentDescriptionTool,
         # Writer
         RecursiveWriterTool,
         # Shell
@@ -152,22 +152,22 @@ async def _load_prompt_components(
     except Exception as e:
         logger.warning("Failed to load prompt components: %s", e)
 
-    # 2. Node profile (DB)
+    # 2. Agent profile (DB)
     try:
-        from shared.database import Node
+        from shared.database import ProjectAgent
 
         res = await db.execute(
-            select(Node).filter(
-                Node.project_id == project_id,
-                Node.role_name == "project",
-                Node.status == "active",
+            select(ProjectAgent).filter(
+                ProjectAgent.project_id == project_id,
+                ProjectAgent.role_name == "project",
+                ProjectAgent.status == "active",
             )
         )
-        node = res.scalars().first()
-        if node and node.system_prompt:
-            result["node_profile"] = node.system_prompt
+        agent = res.scalars().first()
+        if agent and agent.system_prompt:
+            result["agent_profile"] = agent.system_prompt
     except Exception as e:
-        logger.warning("Failed to load node profile: %s", e)
+        logger.warning("Failed to load agent profile: %s", e)
 
     # 3. Project plan (PLAN.md)
     try:
@@ -181,20 +181,20 @@ async def _load_prompt_components(
 
     # 4. Skills text
     try:
-        from shared.database import NodeSkill, Skill, Node as NodeModel
+        from shared.database import ProjectSkill, Skill, ProjectAgent as AgentModel
 
-        node_res = await db.execute(
-            select(NodeModel).filter(
-                NodeModel.project_id == project_id,
-                NodeModel.role_name == "project",
+        agent_res = await db.execute(
+            select(AgentModel).filter(
+                AgentModel.project_id == project_id,
+                AgentModel.role_name == "project",
             )
         )
-        node = node_res.scalars().first()
-        if node:
+        agent = agent_res.scalars().first()
+        if agent:
             skill_res = await db.execute(
                 select(Skill)
-                .join(NodeSkill, NodeSkill.skill_id == Skill.id)
-                .filter(NodeSkill.node_id == node.id, Skill.is_active == True)
+                .join(ProjectSkill, ProjectSkill.skill_id == Skill.id)
+                .filter(ProjectSkill.agent_id == agent.id, Skill.is_active == True)
             )
             skills = skill_res.scalars().all()
             if skills:
@@ -220,53 +220,53 @@ async def _load_prompt_components(
 
     # 6. Team roster
     try:
-        from shared.database import Node as NodeModel, Project
+        from shared.database import ProjectAgent as AgentModel, Project
 
         roster_parts = []
 
-        # System nodes
+        # System agents
         sys_res = await db.execute(
-            select(NodeModel).filter(NodeModel.node_type == "SYSTEM", NodeModel.status == "active")
+            select(AgentModel).filter(AgentModel.agent_type == "SYSTEM", AgentModel.status == "active")
         )
-        sys_nodes = sys_res.scalars().all()
-        if sys_nodes:
-            roster_parts.append("### System Nodes")
-            for n in sys_nodes:
-                desc = n.description or "System capabilities."
-                roster_parts.append(f"- **{n.display_name}** (ID: `{n.id}`): {desc}")
+        sys_agents = sys_res.scalars().all()
+        if sys_agents:
+            roster_parts.append("### System Agents")
+            for a in sys_agents:
+                desc = a.description or "System capabilities."
+                roster_parts.append(f"- **{a.display_name}** (ID: `{a.id}`): {desc}")
 
-        # Member nodes
+        # Member agents
         mem_res = await db.execute(
-            select(NodeModel).filter(
-                NodeModel.project_id == project_id,
-                NodeModel.node_type == "MEMBER",
-                NodeModel.status == "active",
+            select(AgentModel).filter(
+                AgentModel.project_id == project_id,
+                AgentModel.agent_type == "MEMBER",
+                AgentModel.status == "active",
             )
         )
-        mem_nodes = mem_res.scalars().all()
-        if mem_nodes:
+        mem_agents = mem_res.scalars().all()
+        if mem_agents:
             roster_parts.append("### Project Members")
-            for n in mem_nodes:
-                desc = n.description or "Project specialist."
-                roster_parts.append(f"- **{n.display_name}** (ID: `{n.id}`): {desc}")
+            for a in mem_agents:
+                desc = a.description or "Project specialist."
+                roster_parts.append(f"- **{a.display_name}** (ID: `{a.id}`): {desc}")
 
         # Peer projects
         peer_res = await db.execute(
-            select(NodeModel)
-            .join(Project, NodeModel.project_id == Project.id)
+            select(AgentModel)
+            .join(Project, AgentModel.project_id == Project.id)
             .filter(
                 Project.user_id == user_id,
-                NodeModel.node_type == "PROJECT",
-                NodeModel.project_id != project_id,
-                NodeModel.status == "active",
+                AgentModel.agent_type == "PROJECT",
+                AgentModel.project_id != project_id,
+                AgentModel.status == "active",
             )
         )
-        peer_nodes = peer_res.scalars().all()
-        if peer_nodes:
+        peer_agents = peer_res.scalars().all()
+        if peer_agents:
             roster_parts.append("### Peer Projects")
-            for n in peer_nodes:
-                desc = n.description or "Peer project."
-                roster_parts.append(f"- **{n.display_name}** (ID: `{n.id}`): {desc}")
+            for a in peer_agents:
+                desc = a.description or "Peer project."
+                roster_parts.append(f"- **{a.display_name}** (ID: `{a.id}`): {desc}")
 
         if roster_parts:
             result["team_roster"] = "\n## Active Team Roster\n" + "\n".join(roster_parts)

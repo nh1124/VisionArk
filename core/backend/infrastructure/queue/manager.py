@@ -72,12 +72,6 @@ class QueueManager:
         
         return task_id
 
-    async def enqueue_node_task(self, user_id: str, target_node_id: str, message: str, context: Optional[Dict] = None) -> str:
-        """New specialized method for async node-to-node communication"""
-        ctx = context or {}
-        ctx["target_node_id"] = target_node_id
-        return await self.enqueue(user_id, message, ctx, task_type=TaskType.NODE_EXECUTION)
-
     async def dequeue(self) -> Dict[str, Any]:
         """Blocking pop from the queue"""
         # BLPOP returns (key, value) tuple

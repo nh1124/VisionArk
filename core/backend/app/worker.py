@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from infrastructure.queue.manager import QueueManager
 from domains.automation.command_parser import parse_command, execute_command
-from shared.database import AsyncSessionLocal, ScheduledTask, ScheduledTaskStatus, Node, TaskType, Project
+from shared.database import AsyncSessionLocal, ScheduledTask, ScheduledTaskStatus, TaskType, Project
 from domains.automation.aes_dispatcher import AESDispatcher
 from sqlalchemy import select, text
 from va_sdk import task_registry, reply_registry
@@ -133,7 +133,7 @@ class Worker:
         task_type = task_data.get("task_type", TaskType.USER_MESSAGE)
         context = task_data.get("context") or {}
 
-        # Inject user_id/task_id into context for Node usage
+        # Inject user_id/task_id into context
         context["user_id"] = user_id
         context["task_id"] = task_id
         context["task_type"] = task_type

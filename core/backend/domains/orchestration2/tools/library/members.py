@@ -23,13 +23,13 @@ class ListMembersTool:
 
         try:
             from sqlalchemy import select
-            from shared.database import Node
+            from shared.database import ProjectAgent
 
             result = await db.execute(
-                select(Node).where(
-                    Node.project_id == project_id,
-                    Node.node_type == "MEMBER",
-                    Node.status == "active",
+                select(ProjectAgent).where(
+                    ProjectAgent.project_id == project_id,
+                    ProjectAgent.agent_type == "MEMBER",
+                    ProjectAgent.status == "active",
                 )
             )
             members = result.scalars().all()
@@ -76,23 +76,23 @@ class ManageMemberTool:
 
         try:
             from sqlalchemy import select
-            from shared.database import Node
+            from shared.database import ProjectAgent
 
             if action == "create":
                 res = await db.execute(
-                    select(Node).where(
-                        Node.project_id == project_id,
-                        Node.role_name == role_name,
-                        Node.node_type == "MEMBER",
+                    select(ProjectAgent).where(
+                        ProjectAgent.project_id == project_id,
+                        ProjectAgent.role_name == role_name,
+                        ProjectAgent.agent_type == "MEMBER",
                     )
                 )
                 if res.scalars().first():
                     return fail(call, f"Member '{role_name}' already exists. Use 'update' instead.")
 
-                new_node = Node(
+                new_agent = ProjectAgent(
                     id=str(uuid.uuid4()),
                     project_id=project_id,
-                    node_type="MEMBER",
+                    agent_type="MEMBER",
                     role_name=role_name,
                     display_name=call.arguments.get("display_name") or role_name.title(),
                     description=call.arguments.get("description"),
@@ -101,47 +101,47 @@ class ManageMemberTool:
                     status="active",
                     version=1,
                 )
-                db.add(new_node)
+                db.add(new_agent)
                 await db.commit()
                 return make_result(call, f"Created member: {role_name}")
 
             elif action == "update":
                 res = await db.execute(
-                    select(Node).where(
-                        Node.project_id == project_id,
-                        Node.role_name == role_name,
-                        Node.node_type == "MEMBER",
+                    select(ProjectAgent).where(
+                        ProjectAgent.project_id == project_id,
+                        ProjectAgent.role_name == role_name,
+                        ProjectAgent.agent_type == "MEMBER",
                     )
                 )
-                node = res.scalars().first()
-                if not node:
+                agent = res.scalars().first()
+                if not agent:
                     return fail(call, f"Member '{role_name}' not found.")
 
                 if call.arguments.get("display_name"):
-                    node.display_name = call.arguments["display_name"]
+                    agent.display_name = call.arguments["display_name"]
                 if call.arguments.get("description"):
-                    node.description = call.arguments["description"]
+                    agent.description = call.arguments["description"]
                 if call.arguments.get("system_prompt"):
-                    node.system_prompt = call.arguments["system_prompt"]
+                    agent.system_prompt = call.arguments["system_prompt"]
                 if call.arguments.get("tools"):
-                    node.tools = call.arguments["tools"]
+                    agent.tools = call.arguments["tools"]
 
                 await db.commit()
                 return make_result(call, f"Updated member: {role_name}")
 
             elif action == "delete":
                 res = await db.execute(
-                    select(Node).where(
-                        Node.project_id == project_id,
-                        Node.role_name == role_name,
-                        Node.node_type == "MEMBER",
+                    select(ProjectAgent).where(
+                        ProjectAgent.project_id == project_id,
+                        ProjectAgent.role_name == role_name,
+                        ProjectAgent.agent_type == "MEMBER",
                     )
                 )
-                node = res.scalars().first()
-                if not node:
+                agent = res.scalars().first()
+                if not agent:
                     return fail(call, f"Member '{role_name}' not found.")
 
-                await db.delete(node)
+                await db.delete(agent)
                 await db.commit()
                 return make_result(call, f"Deleted member: {role_name}")
 
@@ -153,15 +153,15 @@ class ManageMemberTool:
             return fail(call, f"Member operation failed: {e}")
 
 
-class UpdateNodeDescriptionTool:
+class UpdateAgentDescriptionTool:
     definition = ToolDef(
-        name="update_node_description",
-        description="Update the short description for a node.",
+        name="update_agent_description",
+        description="Update the short description for an agent.",
         parameters={
             "type": "object",
             "properties": {
                 "description": {"type": "string", "description": "New 1-2 sentence description"},
-                "target_id": {"type": "string", "description": "UUID of node to update (null = self)"},
+                "target_id": {"type": "string", "description": "UUID of agent to update (null = self)"},
             },
             "required": ["description"],
         },
@@ -174,23 +174,23 @@ class UpdateNodeDescriptionTool:
 
         try:
             from sqlalchemy import select
-            from shared.database import Node
+            from shared.database import ProjectAgent
 
             if target_id:
-                res = await db.execute(select(Node).where(Node.id == target_id))
+                res = await db.execute(select(ProjectAgent).where(ProjectAgent.id == target_id))
             else:
-                node_id = ctx.metadata.get("node_id")
-                if not node_id:
-                    return fail(call, "Missing node_id to update self.")
-                res = await db.execute(select(Node).where(Node.id == node_id))
+                agent_id = ctx.metadata.get("agent_id")
+                if not agent_id:
+                    return fail(call, "Missing agent_id to update self.")
+                res = await db.execute(select(ProjectAgent).where(ProjectAgent.id == agent_id))
 
-            node = res.scalars().first()
-            if not node:
-                return fail(call, "Node not found.")
+            agent = res.scalars().first()
+            if not agent:
+                return fail(call, "Agent not found.")
 
-            node.description = description
+            agent.description = description
             await db.commit()
-            return make_result(call, f"Updated description for {node.display_name or node.role_name}.")
+            return make_result(call, f"Updated description for {agent.display_name or agent.role_name}.")
         except Exception as e:
             await db.rollback()
             return fail(call, f"Failed to update description: {e}")

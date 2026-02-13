@@ -7,8 +7,9 @@ from pydantic import BaseModel
 from typing import List, Optional
 from domains.knowledge.rag_service import RAGService
 from domains.identity.auth import resolve_identity, Identity
-from shared.database import get_async_db
+from shared.database import get_async_db, Project
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from shared.paths import get_project_dir
 
 router = APIRouter(prefix="/api/rag", tags=["RAG"])
@@ -41,6 +42,13 @@ class IndexResponse(BaseModel):
     details: List[dict] = []
 
 
+async def _verify_project(db: AsyncSession, user_id: str, project_id: str):
+    """Common project existence check using Project table."""
+    stmt = select(Project.id).filter(Project.user_id == user_id, Project.id == project_id)
+    if not (await db.execute(stmt)).scalars().first():
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+
+
 @router.post("/{project_id}/search", response_model=List[SearchResult])
 async def search_knowledge_base(
     project_id: str,
@@ -52,10 +60,7 @@ async def search_knowledge_base(
     Semantic search in a Project's knowledge base
     """
     try:
-        # Verify Project Exists
-        stmt = select(Node.id).filter(Node.user_id == identity.user_id, Node.id == project_id)
-        if not (await db.execute(stmt)).scalars().first():
-            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+        await _verify_project(db, identity.user_id, project_id)
 
         rag = RAGService(identity.user_id, project_id, db)
         results = await rag.search(req.query, req.n_results, req.filter_file)
@@ -77,10 +82,7 @@ async def index_refs_directory(
     Index all PDFs in the Project's refs/ directory
     """
     try:
-        # Verify Project Exists
-        stmt = select(Node.id).filter(Node.user_id == identity.user_id, Node.id == project_id)
-        if not (await db.execute(stmt)).scalars().first():
-            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+        await _verify_project(db, identity.user_id, project_id)
 
         rag = RAGService(identity.user_id, project_id, db)
         results = await rag.index_directory()
@@ -105,38 +107,34 @@ async def upload_reference_file(
     # Validate file type
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
-    
+
     try:
         import aiofiles
-        import shutil
-        
-        # Verify Project Exists
-        stmt = select(Node.id).filter(Node.user_id == identity.user_id, Node.id == project_id)
-        if not (await db.execute(stmt)).scalars().first():
-            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
-            
+
+        await _verify_project(db, identity.user_id, project_id)
+
         # Save file
         refs_dir = get_project_dir(identity.user_id, project_id) / "refs"
         refs_dir.mkdir(parents=True, exist_ok=True)
-        
+
         file_path = refs_dir / file.filename
-        
+
         async with aiofiles.open(file_path, "wb") as out_file:
             content = await file.read()
             await out_file.write(content)
-        
+
         response = {
             "filename": file.filename,
             "file_path": str(file_path),
             "uploaded": True
         }
-        
+
         # Auto-index if requested
         if auto_index:
             rag = RAGService(identity.user_id, project_id, db)
             index_result = await rag.index_pdf(file_path)
             response["index_result"] = index_result
-        
+
         return response
     except HTTPException:
         raise
@@ -154,10 +152,7 @@ async def list_indexed_files(
     List all indexed files in a Project's knowledge base
     """
     try:
-        # Verify Project Exists
-        stmt = select(Node.id).filter(Node.user_id == identity.user_id, Node.id == project_id)
-        if not (await db.execute(stmt)).scalars().first():
-            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+        await _verify_project(db, identity.user_id, project_id)
 
         rag = RAGService(identity.user_id, project_id, db)
         files = await rag.get_indexed_files()
@@ -178,10 +173,7 @@ async def get_rag_stats(
     Get RAG statistics for a Project
     """
     try:
-        # Verify Project Exists
-        stmt = select(Node.id).filter(Node.user_id == identity.user_id, Node.id == project_id)
-        if not (await db.execute(stmt)).scalars().first():
-            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+        await _verify_project(db, identity.user_id, project_id)
 
         rag = RAGService(identity.user_id, project_id, db)
         stats = await rag.get_stats()
@@ -202,10 +194,7 @@ async def rebuild_index(
     Rebuild the entire RAG index from scratch
     """
     try:
-        # Verify Project Exists
-        stmt = select(Node.id).filter(Node.user_id == identity.user_id, Node.id == project_id)
-        if not (await db.execute(stmt)).scalars().first():
-            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+        await _verify_project(db, identity.user_id, project_id)
 
         rag = RAGService(identity.user_id, project_id, db)
         results = await rag.rebuild_index()
@@ -229,16 +218,13 @@ async def delete_reference_file(
     """
     Delete a reference file and remove from index
     """
-    # Verify Project Exists
-    stmt = select(Node.id).filter(Node.user_id == identity.user_id, Node.id == project_id)
-    if not (await db.execute(stmt)).scalars().first():
-        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    await _verify_project(db, identity.user_id, project_id)
 
     file_path = get_project_dir(identity.user_id, project_id) / "refs" / filename
-    
+
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
-    
+
     try:
         file_path.unlink()
         return {

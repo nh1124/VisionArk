@@ -1,24 +1,24 @@
 from typing import List, Dict, Any, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from shared.database import Skill, NodeSkill
+from shared.database import Skill, ProjectSkill
 
 class SkillService:
     @staticmethod
-    async def get_node_skills(db: AsyncSession, node_id: str, intent: Optional[str] = None) -> List[Skill]:
+    async def get_agent_skills(db: AsyncSession, agent_id: str, intent: Optional[str] = None) -> List[Skill]:
         """
-        Fetch and resolve skills for a node.
-        
+        Fetch and resolve skills for an agent.
+
         Logic:
-        1. Fetch all active skills associated with the node.
+        1. Fetch all active skills associated with the agent.
         2. Filter by intent if provided.
         3. Sort by priority (descending).
         4. Resolve conflicts: If a skill conflicts with another, the higher-priority one wins.
         """
         stmt = (
             select(Skill)
-            .join(NodeSkill, Skill.id == NodeSkill.skill_id)
-            .filter(NodeSkill.node_id == node_id)
+            .join(ProjectSkill, Skill.id == ProjectSkill.skill_id)
+            .filter(ProjectSkill.agent_id == agent_id)
             .filter(Skill.is_active == True)
         )
         res = await db.execute(stmt)
@@ -145,17 +145,17 @@ class SkillService:
         return merged
 
     @classmethod
-    async def get_node_tool_policy(cls, db: AsyncSession, node_id: str, intent: Optional[str] = None) -> Dict[str, Any]:
-        """Fetch and merge tool policies for a node."""
-        skills = await cls.get_node_skills(db, node_id, intent=intent)
+    async def get_agent_tool_policy(cls, db: AsyncSession, agent_id: str, intent: Optional[str] = None) -> Dict[str, Any]:
+        """Fetch and merge tool policies for an agent."""
+        skills = await cls.get_agent_skills(db, agent_id, intent=intent)
         if not skills:
             return {}
         return cls.merge_tool_policies(skills)
 
     @classmethod
-    async def inject_skills_to_prompt(cls, db: AsyncSession, node_id: str, original_prompt: str, intent: Optional[str] = None) -> str:
+    async def inject_skills_to_prompt(cls, db: AsyncSession, agent_id: str, original_prompt: str, intent: Optional[str] = None) -> str:
         """Fetch skills and append them to the system prompt."""
-        skills = await cls.get_node_skills(db, node_id, intent=intent)
+        skills = await cls.get_agent_skills(db, agent_id, intent=intent)
         if not skills:
             return original_prompt
             

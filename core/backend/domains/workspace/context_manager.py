@@ -374,38 +374,38 @@ Conversation to summarize:
 
     async def _cleanup_session_subscriptions(self, session_id: str):
         """Find and remove all subscriptions in the project's nodes bound to this session_id"""
-        from shared.database import Node
+        from shared.database import ProjectAgent
         from sqlalchemy import select
         from sqlalchemy.orm.attributes import flag_modified
 
         try:
-            # Fetch all nodes for this project
-            stmt = select(Node).filter(Node.project_id == self.project_id)
+            # Fetch all agents for this project
+            stmt = select(ProjectAgent).filter(ProjectAgent.project_id == self.project_id)
             res = await self.db_session.execute(stmt)
-            nodes = res.scalars().all()
+            agents = res.scalars().all()
 
-            for node in nodes:
-                meta = node.meta_payload or {}
+            for agent in agents:
+                meta = agent.meta_payload or {}
                 updated = False
 
                 for key in ["trigger_patterns", "semantic_interests"]:
                     lst = meta.get(key, [])
                     if not lst: continue
-                    
+
                     new_lst = []
                     for item in lst:
                         if isinstance(item, dict) and item.get("session_id") == session_id:
                             updated = True
                             continue
                         new_lst.append(item)
-                    
+
                     if updated:
                         meta[key] = new_lst
-                
+
                 if updated:
-                    node.meta_payload = meta
-                    flag_modified(node, "meta_payload")
-                    print(f"[ContextManager] Removed session-bound subscriptions from node {node.display_name}")
+                    agent.meta_payload = meta
+                    flag_modified(agent, "meta_payload")
+                    print(f"[ContextManager] Removed session-bound subscriptions from {agent.display_name}")
 
             await self.db_session.commit()
         except Exception as e:

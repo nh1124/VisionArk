@@ -13,7 +13,7 @@ import urllib.parse
 from datetime import datetime
 
 from domains.identity.auth import resolve_identity_for_download, Identity
-from shared.database import Node, Project, ChatSession, ChatMessage, get_async_db
+from shared.database import Project, ChatSession, ChatMessage, get_async_db
 from shared.paths import validate_name
 
 logger = logging.getLogger(__name__)

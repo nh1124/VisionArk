@@ -6,7 +6,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from domains.automation.commands.base import BaseCommand, CommandResult
-from shared.database import Node, Project, ChatSession, ChatMessage
+from shared.database import ProjectAgent, Project, ChatSession, ChatMessage
 from domains.workspace.context_manager import ContextManager
 from domains.knowledge.note_service import NoteService
 from shared.paths import get_project_dir, validate_name
@@ -145,16 +145,16 @@ class CreateProjectCommand(BaseCommand):
             proj = Project(id=project_id, user_id=user_id, name=name.replace('_', ' ').title(), status="active")
             db_session.add(proj)
 
-            node_id = str(uuid.uuid4())
-            node = Node(
-                id=node_id, 
-                project_id=project_id, 
-                node_type="PROJECT",
+            agent_id = str(uuid.uuid4())
+            agent = ProjectAgent(
+                id=agent_id,
+                project_id=project_id,
+                agent_type="PROJECT",
                 display_name="Orchestrator",
                 system_prompt=prompt or "You are a specialized AI assistant for this project.",
                 status="active"
             )
-            db_session.add(node)
+            db_session.add(agent)
 
             project_dir = get_project_dir(user_id, project_id)
             project_dir.mkdir(parents=True, exist_ok=True)
@@ -162,7 +162,7 @@ class CreateProjectCommand(BaseCommand):
                 (project_dir / sub).mkdir(exist_ok=True)
 
             await db_session.commit()
-            return CommandResult(success=True, message=f"✅ Created Project: {name}", data={"project_id": project_id, "node_id": node_id})
+            return CommandResult(success=True, message=f"✅ Created Project: {name}", data={"project_id": project_id})
         except Exception as e:
             if db_session: await db_session.rollback()
             return CommandResult(success=False, message=f"Failed to create Project: {str(e)}")
@@ -256,21 +256,21 @@ class CloneProjectCommand(BaseCommand):
             new_proj = Project(id=new_project_id, user_id=user_id, name=final_name, status="active")
             db_session.add(new_proj)
 
-            res_nodes = await db_session.execute(select(Node).filter(Node.project_id == source_proj.id, Node.status == "active"))
-            source_nodes = res_nodes.scalars().all()
-            for sn in source_nodes:
-                new_node = Node(
-                    id=str(uuid.uuid4()), 
-                    project_id=new_project_id, 
-                    node_type=sn.node_type,
-                    role_name=sn.role_name,
-                    display_name=sn.display_name,
-                    system_prompt=sn.system_prompt,
-                    tools=sn.tools,
+            res_agents = await db_session.execute(select(ProjectAgent).filter(ProjectAgent.project_id == source_proj.id, ProjectAgent.status == "active"))
+            source_agents = res_agents.scalars().all()
+            for sa in source_agents:
+                new_agent = ProjectAgent(
+                    id=str(uuid.uuid4()),
+                    project_id=new_project_id,
+                    agent_type=sa.agent_type,
+                    role_name=sa.role_name,
+                    display_name=sa.display_name,
+                    system_prompt=sa.system_prompt,
+                    tools=sa.tools,
                     status="active",
                     version=1
                 )
-                db_session.add(new_node)
+                db_session.add(new_agent)
 
             source_dir = get_project_dir(user_id, source_proj.id)
             new_dir = get_project_dir(user_id, new_project_id)
@@ -306,9 +306,9 @@ class SendMessageCommand(BaseCommand):
             return CommandResult(success=False, message="Missing required IDs")
 
         try:
-            res = await db_session.execute(select(Node).filter(Node.user_id == user_id, Node.id == project))
-            node = res.scalars().first()
-            if not node: return CommandResult(success=False, message=f"Project '{project}' not found")
+            res = await db_session.execute(select(Project).filter(Project.user_id == user_id, Project.id == project))
+            proj = res.scalars().first()
+            if not proj: return CommandResult(success=False, message=f"Project '{project}' not found")
 
             res = await db_session.execute(select(ChatSession).filter(ChatSession.project_id == project, ChatSession.is_archived == False).order_by(ChatSession.created_at.desc()))
             chat_session = res.scalars().first()
@@ -317,10 +317,10 @@ class SendMessageCommand(BaseCommand):
                 db_session.add(chat_session)
                 await db_session.flush()
 
-            db_message = ChatMessage(id=str(uuid.uuid4()), session_id=chat_session.id, role="assistant", content=f"[Main -> {node.display_name}] {message}")
+            db_message = ChatMessage(id=str(uuid.uuid4()), session_id=chat_session.id, role="assistant", content=f"[Main -> {proj.name}] {message}")
             db_session.add(db_message)
             await db_session.commit()
-            return CommandResult(success=True, message=f"📨 Message sent to {node.display_name}")
+            return CommandResult(success=True, message=f"Message sent to {proj.name}")
         except Exception as e:
             if db_session: await db_session.rollback()
             return CommandResult(success=False, message=f"Failed to send message: {str(e)}")

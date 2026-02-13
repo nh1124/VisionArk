@@ -5,7 +5,7 @@ import json
 from fastapi import APIRouter, Request, Header, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from shared.database import get_async_db, ExternalIdentity, ServiceRegistry, User, Project, Node
+from shared.database import get_async_db, ExternalIdentity, ServiceRegistry, User, Project, ProjectAgent
 from .client import LineClient
 from uuid import uuid4
 import secrets
@@ -311,16 +311,16 @@ async def line_webhook(
                         )
                         db.add(new_project)
                         
-                        # 3. Create Orchestrator Node
-                        new_node = Node(
+                        # 3. Create Orchestrator Agent
+                        new_agent = ProjectAgent(
                             id=str(uuid4()),
                             project_id=project_id,
-                            node_type="PROJECT",
+                            agent_type="PROJECT",
                             display_name="Orchestrator",
                             system_prompt=f"You are a specialized AI assistant for {display_name} via LINE. Help them manage their tasks and information.",
                             status="active"
                         )
-                        db.add(new_node)
+                        db.add(new_agent)
                         
                         # Flush to ensure Project exists for the foreign key constraint
                         await db.flush()
