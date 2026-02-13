@@ -17,6 +17,16 @@ from sqlalchemy import select, text
 from va_sdk import task_registry, reply_registry
 from integrations import * # Force load integrations to register handlers
 
+def make_json_serializable(obj):
+    """Recursively convert bytes to string placeholder to make object JSON serializable."""
+    if isinstance(obj, bytes):
+        return "<bytes>"
+    if isinstance(obj, dict):
+        return {k: make_json_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [make_json_serializable(v) for v in obj]
+    return obj
+
 class Worker:
     def __init__(self):
         from app.config import settings
@@ -411,20 +421,54 @@ class Worker:
             content=response_text,
         ))
 
-        # Save sub-messages from run history (tool calls, reasoning, etc.)
-        if run_response.message and run_response.message.submessages:
-            for idx, sub in enumerate(run_response.message.submessages):
+        # Save sub-messages from full run history (all intermediate steps)
+        # We start after the (history + current_user_message) to only save NEW messages
+        from domains.orchestration2.engine.models.common import SubMessageKind
+        turn_idx = 0
+        tool_usage_by_call_id: dict[str, str] = {}  # call_id -> ToolUsage.id
+
+        start_index = len(v2_history) + 1  # Skip past history and the current user message
+        new_messages = run_response.history[start_index:]
+
+        for hist_msg in new_messages:
+            for sub in hist_msg.submessages:
+                sub_id = sub.id
                 db_session.add(ChatSubMessage(
-                    id=sub.id,
+                    id=sub_id,
                     message_id=assistant_msg_id,
-                    turn_index=idx,
+                    turn_index=turn_idx,
                     content=sub.content,
                     kind=sub.kind.value if sub.kind else None,
                     run_id=run_response.run_id,
                     meta_payload={
-                        "tool_call": sub.tool_call.model_dump() if sub.tool_call else None,
+                        "tool_call": make_json_serializable(sub.tool_call.model_dump()) if sub.tool_call else None,
                     } if sub.tool_call else None,
                 ))
+
+                # Create ToolUsage for tool_call submessages
+                if sub.kind == SubMessageKind.TOOL_CALL and sub.tool_call:
+                    tu_id = str(uuid4())
+                    db_session.add(ToolUsage(
+                        id=tu_id,
+                        message_id=assistant_msg_id,
+                        sub_message_id=sub_id,
+                        name=sub.tool_call.tool_name,
+                        call_id=sub.tool_call.call_id,
+                        args=sub.tool_call.arguments,
+                        is_success=True,
+                    ))
+                    tool_usage_by_call_id[sub.tool_call.call_id] = tu_id
+
+                # Update ToolUsage result for tool_result submessages
+                elif sub.kind == SubMessageKind.TOOL_RESULT and sub.tool_call:
+                    existing_tu_id = tool_usage_by_call_id.get(sub.tool_call.call_id)
+                    if existing_tu_id:
+                        await db_session.execute(
+                            text("UPDATE tool_usages SET result = :result WHERE id = :id"),
+                            {"result": sub.content, "id": existing_tu_id},
+                        )
+
+                turn_idx += 1
 
         await db_session.commit()
 

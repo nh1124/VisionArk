@@ -204,6 +204,7 @@ class Orchestrator:
             run_id=run.run_id,
             completed=run.status == RunStatus.COMPLETED,
             message=run.output_message,
+            history=run.history,
             approval_requests=[],  # populated by caller if needed
             delegation_requests=[],
         )

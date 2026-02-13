@@ -74,6 +74,7 @@ class RunResponse(BaseModel):
     run_id: str
     completed: bool
     message: Message | None = None
+    history: list[Message] = Field(default_factory=list)
     approval_requests: list[ApprovalRequest] = Field(default_factory=list)
     delegation_requests: list[DelegationRequest] = Field(default_factory=list)
 
