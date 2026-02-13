@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(dir \"C:\\\\Users\\\\nh112\\\\programming\\\\project\\\\VisionArk\\\\core\\\\backend\\\\domains\" /b)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(dir:*)",
+      "Bash(for f in ai.py browser.py canvas.py files.py governance.py markdown.py members.py notes.py routing.py search.py shell.py system.py writer.py)",
+      "Bash(do sed -i 's/from domains\\\\.orchestration2\\\\.models\\\\./from domains.orchestration2.engine.models./g' \"$f\")",
+      "Bash(done)"
     ]
   }
 }

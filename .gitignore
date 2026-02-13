@@ -56,5 +56,5 @@ spokes/*/artifacts/
 .gemini/
 
 # Coding agent
-.claude
+.claude/
 
