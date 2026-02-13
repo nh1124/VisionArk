@@ -68,8 +68,8 @@ def _get_all_tools() -> list[tuple[ToolDef, Any]]:
     from .tools.library.governance import GetProjectRulesTool, UpdateProjectRulesTool
     from .tools.library.notes import ListNotesTool, ReadNoteTool, CreateNoteTool
     from .tools.library.system import (
-        ListAgentsTool, GetAgentProfileTool, AskAgentTool,
-        BroadcastSystemMessageTool, ListUserProjectsTool, UpdateProjectTool,
+        ListAgentsTool, GetAgentProfileTool,
+        ListUserProjectsTool, UpdateProjectTool,
         GetProjectHealthTool, SetTimerTool, RaiseContinueTool,
     )
     from .tools.library.members import (
@@ -78,7 +78,7 @@ def _get_all_tools() -> list[tuple[ToolDef, Any]]:
     from .tools.library.writer import RecursiveWriterTool
     from .tools.library.shell import RunSafeShellTool
     from .tools.library.routing import (
-        MulticastMessageTool, SubscribeIntentTool,
+        SubscribeIntentTool,
         UnsubscribeIntentTool, ListSubscriptionsTool,
     )
     from .tools.library.markdown import (
@@ -103,8 +103,8 @@ def _get_all_tools() -> list[tuple[ToolDef, Any]]:
         # Notes
         ListNotesTool, ReadNoteTool, CreateNoteTool,
         # System
-        ListAgentsTool, GetAgentProfileTool, AskAgentTool,
-        BroadcastSystemMessageTool, ListUserProjectsTool, UpdateProjectTool,
+        ListAgentsTool, GetAgentProfileTool,
+        ListUserProjectsTool, UpdateProjectTool,
         GetProjectHealthTool, SetTimerTool, RaiseContinueTool,
         # Members
         ListMembersTool, ManageMemberTool, UpdateAgentDescriptionTool,
@@ -113,7 +113,7 @@ def _get_all_tools() -> list[tuple[ToolDef, Any]]:
         # Shell
         RunSafeShellTool,
         # Routing
-        MulticastMessageTool, SubscribeIntentTool,
+        SubscribeIntentTool,
         UnsubscribeIntentTool, ListSubscriptionsTool,
         # Markdown
         ReadMDSectionTool, InitPlanTool, UpdatePlanProgressTool,
@@ -217,61 +217,6 @@ async def _load_prompt_components(
             result["user_settings"] = settings.general_settings
     except Exception as e:
         logger.warning("Failed to load user settings: %s", e)
-
-    # 6. Team roster
-    try:
-        from shared.database import ProjectAgent as AgentModel, Project
-
-        roster_parts = []
-
-        # System agents
-        sys_res = await db.execute(
-            select(AgentModel).filter(AgentModel.agent_type == "SYSTEM", AgentModel.status == "active")
-        )
-        sys_agents = sys_res.scalars().all()
-        if sys_agents:
-            roster_parts.append("### System Agents")
-            for a in sys_agents:
-                desc = a.description or "System capabilities."
-                roster_parts.append(f"- **{a.display_name}** (ID: `{a.id}`): {desc}")
-
-        # Member agents
-        mem_res = await db.execute(
-            select(AgentModel).filter(
-                AgentModel.project_id == project_id,
-                AgentModel.agent_type == "MEMBER",
-                AgentModel.status == "active",
-            )
-        )
-        mem_agents = mem_res.scalars().all()
-        if mem_agents:
-            roster_parts.append("### Project Members")
-            for a in mem_agents:
-                desc = a.description or "Project specialist."
-                roster_parts.append(f"- **{a.display_name}** (ID: `{a.id}`): {desc}")
-
-        # Peer projects
-        peer_res = await db.execute(
-            select(AgentModel)
-            .join(Project, AgentModel.project_id == Project.id)
-            .filter(
-                Project.user_id == user_id,
-                AgentModel.agent_type == "PROJECT",
-                AgentModel.project_id != project_id,
-                AgentModel.status == "active",
-            )
-        )
-        peer_agents = peer_res.scalars().all()
-        if peer_agents:
-            roster_parts.append("### Peer Projects")
-            for a in peer_agents:
-                desc = a.description or "Peer project."
-                roster_parts.append(f"- **{a.display_name}** (ID: `{a.id}`): {desc}")
-
-        if roster_parts:
-            result["team_roster"] = "\n## Active Team Roster\n" + "\n".join(roster_parts)
-    except Exception as e:
-        logger.warning("Failed to load team roster: %s", e)
 
     return result
 

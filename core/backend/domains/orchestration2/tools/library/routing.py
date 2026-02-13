@@ -11,65 +11,6 @@ from domains.orchestration2.engine.models.tool import ToolDef
 from domains.orchestration2.tools.base import fail, get_db, get_project_id, get_user_id, make_result
 
 
-class MulticastMessageTool:
-    definition = ToolDef(
-        name="multicast_message",
-        description="Send a fire-and-forget message to multiple target node IDs at once.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "target_ids": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "List of node IDs to notify",
-                },
-                "message": {"type": "string", "description": "Message to send"},
-                "force": {"type": "boolean", "description": "Bypass redundancy checks"},
-            },
-            "required": ["target_ids", "message"],
-        },
-    )
-
-    async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
-        target_ids = call.arguments.get("target_ids", [])
-        message = call.arguments.get("message", "")
-        force = call.arguments.get("force", False)
-
-        if not target_ids:
-            return fail(call, "No target IDs provided.")
-
-        user_id = get_user_id(ctx)
-        project_id = get_project_id(ctx)
-        session_id = ctx.metadata.get("session_id")
-        db = get_db(ctx)
-
-        try:
-            from sqlalchemy import select
-            from shared.database import ProjectAgent
-            from infrastructure.queue.manager import QueueManager
-
-            res = await db.execute(select(ProjectAgent.id))
-            valid_ids = set(res.scalars().all())
-
-            invalid = [t for t in target_ids if t not in valid_ids]
-            if invalid:
-                return fail(call, f"Invalid target IDs: {', '.join(invalid)}")
-
-            manager = QueueManager()
-            count = 0
-            for tid in target_ids:
-                await manager.enqueue(
-                    user_id=user_id,
-                    message=message,
-                    context={"session_id": session_id, "project_id": project_id, "target_agent_id": tid},
-                )
-                count += 1
-
-            return make_result(call, f"Multicasted message to {count} agents.")
-        except Exception as e:
-            return fail(call, f"Multicast failed: {e}")
-
-
 class SubscribeIntentTool:
     definition = ToolDef(
         name="subscribe_to_intent",
