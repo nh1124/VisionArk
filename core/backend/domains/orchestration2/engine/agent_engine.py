@@ -355,6 +355,17 @@ class AgentEngine:
 
     # ── Approval ─────────────────────────────────────────────────────
 
+    async def resume_run(self, run_id: str) -> RunResponse:
+        """Resume a suspended run by resolving agent_def + graph and calling orchestrator.resume()."""
+        run = await self._store.get_run(run_id)
+        if run is None:
+            from .errors import RunNotFoundError
+            raise RunNotFoundError(run_id)
+
+        agent_def = self._resolve_agent_def_from_run(run)
+        graph = self.graphs.get(run.graph_name)
+        return await self._orchestrator.resume(run_id, agent_def, graph)
+
     async def approval_request(
         self,
         run_id: str,
@@ -367,19 +378,10 @@ class AgentEngine:
         run = await self._store.get_run(run_id)
         if run is None:
             from .errors import RunNotFoundError
-
             raise RunNotFoundError(run_id)
 
         if run.status == RunStatus.RUNNING:
-            # Re-execute from current step
-            agent_def = self._resolve_agent_def_from_run(run)
-            graph = self.graphs.get(run.graph_name)
-            return await self._orchestrator.run(
-                agent_def=agent_def,
-                graph=graph,
-                message=run.input_message,
-                history=run.history,
-            )
+            return await self.resume_run(run_id)
 
         return RunResponse(
             run_id=run.run_id,

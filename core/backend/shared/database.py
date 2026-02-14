@@ -511,6 +511,11 @@ class OrchestrationRun(Base):
     current_step_id = Column(String(100), nullable=True)
     context_json = Column(JSON, nullable=True)
     metadata_json = Column(JSON, nullable=True)
+    pending_approval_ids = Column(JSON, default=list)
+    pending_delegation_ids = Column(JSON, default=list)
+    history_json = Column(JSON, nullable=True)
+    input_message_json = Column(JSON, nullable=True)
+    output_message_json = Column(JSON, nullable=True)
     error = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -519,6 +524,42 @@ class OrchestrationRun(Base):
     project = relationship("Project")
     user = relationship("User")
     session = relationship("ChatSession")
+
+
+class OrchestrationPendingAction(Base):
+    """Persistent storage for orchestration2 PendingAction (approval requests)"""
+    __tablename__ = "orchestration_pending_actions"
+
+    id = Column(String(36), primary_key=True)
+    run_id = Column(String(36), ForeignKey("orchestration_runs.run_id"), nullable=False, index=True)
+    step_id = Column(String(100), nullable=True)
+    action_type = Column(String(50), nullable=True)
+    action_name = Column(String(200), nullable=True)
+    status = Column(String(30), default="pending")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    run = relationship("OrchestrationRun")
+
+
+class OrchestrationDelegation(Base):
+    """Persistent storage for orchestration2 DelegationRequest/Result"""
+    __tablename__ = "orchestration_delegations"
+
+    id = Column(String(36), primary_key=True)
+    parent_run_id = Column(String(36), ForeignKey("orchestration_runs.run_id"), nullable=False, index=True)
+    child_agent_name = Column(String(200), nullable=True)
+    child_run_id = Column(String(36), nullable=True)
+    task = Column(Text, nullable=True)
+    status = Column(String(30), default="pending")
+    output_json = Column(JSON, nullable=True)
+    error = Column(Text, nullable=True)
+    timeout_sec = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    parent_run = relationship("OrchestrationRun")
 
 
 class OrchestrationEvent(Base):
@@ -831,6 +872,23 @@ def _run_migrations(engine):
                 conn.execute(text("ALTER TABLE chat_sub_messages ADD COLUMN step_id VARCHAR(36)"))
                 conn.commit()
                 print("✅ Migration: Added step_id column to chat_sub_messages")
+
+    # Migration: Add new columns to orchestration_runs for state persistence
+    if 'orchestration_runs' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('orchestration_runs')]
+        new_cols = {
+            'pending_approval_ids': "JSON DEFAULT '[]'",
+            'pending_delegation_ids': "JSON DEFAULT '[]'",
+            'history_json': "JSON",
+            'input_message_json': "JSON",
+            'output_message_json': "JSON",
+        }
+        for col_name, col_type in new_cols.items():
+            if col_name not in columns:
+                with engine.connect() as conn:
+                    conn.execute(text(f"ALTER TABLE orchestration_runs ADD COLUMN {col_name} {col_type}"))
+                    conn.commit()
+                    print(f"✅ Migration: Added {col_name} column to orchestration_runs")
 
     # Migration: Add run_id to approval_requests for orchestration2 tracking
     if 'approval_requests' in inspector.get_table_names():

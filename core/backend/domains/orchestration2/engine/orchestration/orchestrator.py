@@ -10,6 +10,7 @@ from ..errors import (
     GraphValidationError,
     LimitsExceededError,
     RegistryKeyError,
+    RunNotFoundError,
     ToolNotAllowedError,
 )
 from ..models.common import EventType, RunStatus
@@ -59,10 +60,44 @@ class Orchestrator:
         )
         await self._store.save_run(run)
 
-        # Build step lookup
+        # Build step lookup and run the main loop
         step_map = {step.id: step for step in graph.steps}
+        return await self._run_loop(run, agent_def, step_map)
 
-        current_step_id = graph.start
+    async def resume(
+        self,
+        run_id: str,
+        agent_def: AgentDef,
+        graph: GraphSpec,
+    ) -> RunResponse:
+        """Resume a suspended run (after approval/delegation resolution)."""
+        run = await self._store.get_run(run_id)
+        if run is None:
+            raise RunNotFoundError(run_id)
+
+        if run.status not in (
+            RunStatus.WAITING_APPROVAL,
+            RunStatus.WAITING_DELEGATION,
+            RunStatus.RUNNING,
+        ):
+            return self._build_response(run)
+
+        # Set status back to RUNNING so the loop can proceed
+        run.status = RunStatus.RUNNING
+        await self._store.save_run(run)
+
+        # Build step lookup and re-enter the loop from current_step_id
+        step_map = {step.id: step for step in graph.steps}
+        return await self._run_loop(run, agent_def, step_map)
+
+    async def _run_loop(
+        self,
+        run: RunRecord,
+        agent_def: AgentDef,
+        step_map: dict[str, object],
+    ) -> RunResponse:
+        """Shared step-execution loop used by both run() and resume()."""
+        current_step_id = run.current_step_id or next(iter(step_map))
         max_iterations = agent_def.limits.max_turns * 3  # safety limit
 
         try:
@@ -93,22 +128,24 @@ class Orchestrator:
                         )
 
                 # Execute step
-                logger.debug("Executing step '%s' (type=%s, terminal=%s)", current_step_id, step.type, step.terminal)
+                logger.debug(
+                    "Executing step '%s' (type=%s, terminal=%s)",
+                    current_step_id, step.type, step.terminal,
+                )
                 events = await self._step_executor.execute_step(
                     step, run, agent_def
                 )
 
-                # Check if run was suspended (approval/delegation)
-                # Refresh persisted fields (status, context, etc.) from DB
-                # but preserve runtime-only fields not stored in DB.
+                # Refresh status/pending IDs from DB (may have been changed by
+                # approval/delegation managers) but preserve fields that the
+                # step executor modified in-memory and haven't been saved yet.
                 refreshed_run = await self._store.get_run(run.run_id)
                 if refreshed_run:
                     refreshed_run.input_message = run.input_message
                     refreshed_run.history = run.history
                     refreshed_run.output_message = run.output_message
                     refreshed_run.metadata = run.metadata
-                    refreshed_run.pending_approval_ids = run.pending_approval_ids
-                    refreshed_run.pending_delegation_ids = run.pending_delegation_ids
+                    refreshed_run.context = run.context
                     run = refreshed_run
 
                 if run.status in (
@@ -154,25 +191,6 @@ class Orchestrator:
         logger.debug("Run %s finished: status=%s", run.run_id, run.status.value)
         run.updated_at = datetime.utcnow()
         await self._store.save_run(run)
-        return self._build_response(run)
-
-    async def resume(self, run_id: str) -> RunResponse:
-        """Resume a suspended run (after approval/delegation resolution)."""
-        run = await self._store.get_run(run_id)
-        if run is None:
-            from ..errors import RunNotFoundError
-
-            raise RunNotFoundError(run_id)
-
-        if run.status not in (
-            RunStatus.WAITING_APPROVAL,
-            RunStatus.WAITING_DELEGATION,
-            RunStatus.RUNNING,
-        ):
-            return self._build_response(run)
-
-        # Get the agent def and graph to continue
-        # These need to be provided externally; for now return current state
         return self._build_response(run)
 
     def _resolve_next_step(
