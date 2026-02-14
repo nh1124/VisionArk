@@ -33,7 +33,7 @@ class ProjectRole:
 
         Expected metadata keys (pre-populated by engine_setup):
             system_prompt_components: list[str]  — loaded prompt text blocks
-            node_profile: str | None             — DB node system_prompt
+            agent_profile: str | None            — DB agent system_prompt
             user_profile: str | None             — user context info
             knowledge_context: str | None        — RAG results
             team_roster: str | None              — formatted roster
@@ -50,8 +50,8 @@ class ProjectRole:
         else:
             parts.append("You are a helpful AI assistant managing a project.")
 
-        # 2. Node-specific system prompt (from DB)
-        node_prompt = ctx.metadata.get("node_profile")
+        # 2. Agent-specific system prompt (from DB)
+        node_prompt = ctx.metadata.get("agent_profile")
         if node_prompt:
             parts.append(f"\n## Role Profile\n{node_prompt}")
 
