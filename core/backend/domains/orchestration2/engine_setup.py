@@ -17,8 +17,10 @@ from .engine.agent_engine import AgentEngine
 from .engine.models.agent import AgentDef, AgentLimits
 from .engine.models.skill import SkillDef
 from .engine.models.tool import ToolDef
+from .roles.planner_role import PlannerRole
 from .roles.project_role import ProjectRole
 from .roles.responder_role import ResponderRole
+from .roles.verifier_role import VerifierRole
 from .engine.store.sqlalchemy_store import SQLAlchemyStore
 
 logger = logging.getLogger(__name__)
@@ -27,9 +29,19 @@ logger = logging.getLogger(__name__)
 
 PROJECT_GRAPH_YAML = """
 graph_name: project_assistant
-start: main
+start: plan
 steps:
-  - id: main
+  - id: plan
+    type: role
+    role: planner
+    limits:
+      max_turns: 3
+    on:
+      - when: "event.type == 'done'"
+        next: execute
+      - when: default
+        next: plan
+  - id: execute
     type: role
     role: project
     limits:
@@ -37,11 +49,22 @@ steps:
       max_tool_calls: 50
     on:
       - when: "event.type == 'done'"
+        next: verify
+      - when: default
+        next: execute
+  - id: verify
+    type: role
+    role: verifier
+    limits:
+      max_turns: 5
+      max_tool_calls: 10
+    on:
+      - when: "event.type == 'done'"
         next: respond
       - when: default
-        next: main
+        next: verify
   - id: respond
-    type: responder
+    type: role
     role: responder
     terminal: true
 """
@@ -245,7 +268,9 @@ async def create_engine_for_project(
         engine.register_tool(tool_def, tool_impl)
 
     # 3. Register roles
+    engine.register_role(PlannerRole())
     engine.register_role(ProjectRole())
+    engine.register_role(VerifierRole())
     engine.register_role(ResponderRole())
 
     # 4. Register graph

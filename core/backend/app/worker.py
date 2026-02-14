@@ -362,8 +362,23 @@ class Worker:
         response_text = ""
         if run_response.message:
             response_text = run_response.message.content
+
         if not response_text.strip():
-            response_text = "Task completed."
+            if not run_response.completed:
+                # Run failed — surface the error
+                error_detail = getattr(run_response, "error", None) or "Unknown error"
+                response_text = f"An error occurred during processing: {error_detail}"
+                print(f"[Worker] Run {run_response.run_id} failed: {error_detail}")
+            else:
+                # Run completed but output was empty — pull from last assistant msg
+                last_assistant = [
+                    m for m in run_response.history
+                    if m.role.value == "assistant" and m.content.strip()
+                ]
+                if last_assistant:
+                    response_text = last_assistant[-1].content
+                else:
+                    response_text = "Task completed."
 
         # 9. Save user message + assistant response to DB
         user_msg_id = str(uuid4())

@@ -130,6 +130,11 @@ class Orchestrator:
                     run.status = RunStatus.COMPLETED
                     break
 
+                # Reset per-step counters when moving to a different step
+                if next_step_id != current_step_id:
+                    run.context.turn_index = 0
+                    run.context.tool_call_count = 0
+
                 current_step_id = next_step_id
 
             else:
@@ -205,6 +210,7 @@ class Orchestrator:
             completed=run.status == RunStatus.COMPLETED,
             message=run.output_message,
             history=run.history,
+            error=run.error,
             approval_requests=[],  # populated by caller if needed
             delegation_requests=[],
         )
