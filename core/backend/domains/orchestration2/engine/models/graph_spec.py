@@ -27,6 +27,7 @@ class GraphStep(BaseModel):
     type: str  # role | skill | approval | delegation | responder
     role: str | None = None
     skill: str | None = None
+    skills: list[str] = Field(default_factory=list)
     policy: StepPolicy = Field(default_factory=StepPolicy)
     limits: StepLimits = Field(default_factory=StepLimits)
     on: list[StepTransition] = Field(default_factory=list)

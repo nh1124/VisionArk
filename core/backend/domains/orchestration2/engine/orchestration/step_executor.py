@@ -139,8 +139,8 @@ class StepExecutor:
         # Build prompt
         system_prompt = role_impl.build_prompt(ctx)
 
-        # Gather available tools from agent's skills
-        tool_defs = self._gather_tool_definitions(agent_def)
+        # Gather available tools from step skills (or agent fallback)
+        tool_defs = self._gather_tool_definitions(agent_def, step_skills=step.skills)
 
         # Call LLM
         model_name = agent_def.default_model
@@ -591,19 +591,24 @@ class StepExecutor:
         return [event]
 
     def _gather_tool_definitions(
-        self, agent_def: AgentDef
+        self,
+        agent_def: AgentDef,
+        step_skills: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Gather tool definitions available to the agent.
+        """Gather tool definitions available to the agent for a given step.
 
-        If the agent has skills, only tools referenced by those skills are
-        included (skill-tool constraint).  Otherwise, ALL registered tools
-        are exposed.
+        Resolution order:
+        1. If *step_skills* is provided and non-empty, use those skill groups.
+        2. Else fall back to *agent_def.skills*.
+        3. Else expose ALL registered tools (backward compatibility).
         """
+        active_skills = step_skills if step_skills else agent_def.skills
+
         tool_defs: list[dict[str, Any]] = []
         seen: set[str] = set()
 
-        if agent_def.skills:
-            for skill_name in agent_def.skills:
+        if active_skills:
+            for skill_name in active_skills:
                 try:
                     skill_def = self._skills.get_def(skill_name)
                     for tool_name in skill_def.tools:

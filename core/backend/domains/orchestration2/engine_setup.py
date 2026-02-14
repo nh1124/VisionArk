@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .engine.agent_engine import AgentEngine
 from .engine.models.agent import AgentDef, AgentLimits
+from .engine.models.execution import ExecutionContext, SkillResult
+from .engine.models.message import Message
 from .engine.models.skill import SkillDef
 from .engine.models.tool import ToolDef
 from .roles.planner_role import PlannerRole
@@ -25,6 +27,67 @@ from .engine.store.sqlalchemy_store import SQLAlchemyStore
 
 logger = logging.getLogger(__name__)
 
+
+# ── No-op skill impl (used purely for tool-filtering, never executed) ─
+
+class _NoOpSkill:
+    """Minimal BaseSkill-compatible impl for tool-filtering-only skills."""
+
+    def __init__(self, skill_def: SkillDef) -> None:
+        self.definition = skill_def
+
+    async def run(self, input_message: Message, ctx: ExecutionContext) -> SkillResult:
+        raise NotImplementedError("This skill is used for tool filtering only")
+
+
+# ── Skill group definitions ──────────────────────────────────────────
+
+SKILL_DEFS: list[SkillDef] = [
+    SkillDef(
+        name="investigation",
+        description="Research & information gathering",
+        tools=[
+            "google_search", "research_url", "search_places", "deep_research",
+            "read_reference", "list_files", "read_md_section",
+            "get_current_status", "list_notes", "read_note",
+            "get_project_rules", "get_project_health",
+            "list_agents", "get_agent_profile",
+            "list_user_projects", "list_members",
+        ],
+    ),
+    SkillDef(
+        name="document_creation",
+        description="Writing & content generation",
+        tools=[
+            "save_artifact", "recursive_writer",
+            "generate_image", "generate_mermaid_visualizer", "execute_code",
+            "create_note", "init_plan", "update_plan_progress",
+            "update_md_section", "update_canvas",
+        ],
+    ),
+    SkillDef(
+        name="file_management",
+        description="File CRUD & imports",
+        tools=[
+            "save_artifact", "read_reference", "list_files",
+            "delete_artifact", "import_github_repo",
+        ],
+    ),
+    SkillDef(
+        name="operation",
+        description="System & project administration",
+        tools=[
+            "update_project", "update_project_rules",
+            "manage_member", "update_agent_description",
+            "set_timer", "raise_continue", "run_safe_shell",
+            "browser_open", "browser_click", "browser_fill", "browser_screenshot",
+        ],
+    ),
+]
+
+ALL_SKILL_NAMES = [s.name for s in SKILL_DEFS]
+
+
 # ── Graph YAML ────────────────────────────────────────────────────────
 
 PROJECT_GRAPH_YAML = """
@@ -34,6 +97,7 @@ steps:
   - id: plan
     type: role
     role: planner
+    skills: [investigation]
     limits:
       max_turns: 3
     on:
@@ -44,6 +108,7 @@ steps:
   - id: execute
     type: role
     role: project
+    skills: [investigation, document_creation, file_management, operation]
     limits:
       max_turns: 25
       max_tool_calls: 50
@@ -55,6 +120,7 @@ steps:
   - id: verify
     type: role
     role: verifier
+    skills: [investigation]
     limits:
       max_turns: 5
       max_tool_calls: 10
@@ -66,6 +132,7 @@ steps:
   - id: respond
     type: role
     role: responder
+    skills: []
     terminal: true
 """
 
@@ -267,23 +334,28 @@ async def create_engine_for_project(
     for tool_def, tool_impl in _get_all_tools():
         engine.register_tool(tool_def, tool_impl)
 
-    # 3. Register roles
+    # 3. Register skills (for tool filtering)
+    for skill_def in SKILL_DEFS:
+        engine.register_skill(skill_def, _NoOpSkill(skill_def))
+
+    # 4. Register roles
     engine.register_role(PlannerRole())
     engine.register_role(ProjectRole())
     engine.register_role(VerifierRole())
     engine.register_role(ResponderRole())
 
-    # 4. Register graph
+    # 5. Register graph
     engine.register_graph(PROJECT_GRAPH_YAML)
 
-    # 5. Pre-load prompt data
+    # 6. Pre-load prompt data
     prompt_data = await _load_prompt_components(db_session, project_id, user_id)
 
-    # 6. Register agent
+    # 7. Register agent
     agent_def = AgentDef(
         name=f"project_{project_id}",
         graph_name="project_assistant",
         default_model="default",
+        skills=ALL_SKILL_NAMES,
         limits=AgentLimits(max_turns=25),
     )
     agent_id = engine.register_agent(agent_def)
