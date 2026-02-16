@@ -405,7 +405,9 @@ class Worker:
         # We start after the (history + current_user_message) to only save NEW messages
         from domains.orchestration2.engine.models.common import SubMessageKind
         turn_idx = 0
-        tool_usage_by_call_id: dict[str, str] = {}  # call_id -> ToolUsage.id
+        # Keep ORM object references so we can set .result directly
+        # (raw SQL UPDATE against unflushed add() is unreliable in async SQLAlchemy)
+        tool_usage_objects: dict[str, ToolUsage] = {}  # call_id -> ToolUsage ORM object
 
         start_index = len(v2_history) + 1  # Skip past history and the current user message
         new_messages = run_response.history[start_index:]
@@ -427,26 +429,24 @@ class Worker:
 
                 # Create ToolUsage for tool_call submessages
                 if sub.kind == SubMessageKind.TOOL_CALL and sub.tool_call:
-                    tu_id = str(uuid4())
-                    db_session.add(ToolUsage(
-                        id=tu_id,
+                    tu = ToolUsage(
+                        id=str(uuid4()),
                         message_id=assistant_msg_id,
                         sub_message_id=sub_id,
                         name=sub.tool_call.tool_name,
                         call_id=sub.tool_call.call_id,
                         args=sub.tool_call.arguments,
                         is_success=True,
-                    ))
-                    tool_usage_by_call_id[sub.tool_call.call_id] = tu_id
+                    )
+                    db_session.add(tu)
+                    tool_usage_objects[sub.tool_call.call_id] = tu
 
                 # Update ToolUsage result for tool_result submessages
                 elif sub.kind == SubMessageKind.TOOL_RESULT and sub.tool_call:
-                    existing_tu_id = tool_usage_by_call_id.get(sub.tool_call.call_id)
-                    if existing_tu_id:
-                        await db_session.execute(
-                            text("UPDATE tool_usages SET result = :result WHERE id = :id"),
-                            {"result": sub.content, "id": existing_tu_id},
-                        )
+                    tu = tool_usage_objects.get(sub.tool_call.call_id)
+                    if tu:
+                        tu.result = sub.content
+                        tu.is_success = not bool(sub.content and sub.content.startswith("Error:"))
 
                 turn_idx += 1
 

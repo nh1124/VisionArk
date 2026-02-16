@@ -51,6 +51,21 @@ class SQLAlchemyStore:
         return clean
 
     @staticmethod
+    def _sanitize_value(value: Any) -> Any:
+        """Make a value JSON-safe: fix invalid UTF-8, convert datetimes, etc."""
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, str):
+            return value.encode("utf-8", errors="replace").decode("utf-8")
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        if isinstance(value, dict):
+            return {k: SQLAlchemyStore._sanitize_value(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [SQLAlchemyStore._sanitize_value(v) for v in value]
+        return value
+
+    @staticmethod
     def _serialize_message(msg: Message | None) -> dict | None:
         if msg is None:
             return None
@@ -66,7 +81,15 @@ class SQLAlchemyStore:
 
     @staticmethod
     def _serialize_history(history: list[Message]) -> list[dict]:
-        return [m.model_dump(mode="json") for m in history]
+        result = []
+        for m in history:
+            try:
+                result.append(m.model_dump(mode="json"))
+            except UnicodeDecodeError:
+                # Fallback: dump then sanitize any non-UTF-8 byte sequences
+                raw = m.model_dump()
+                result.append(SQLAlchemyStore._sanitize_value(raw))
+        return result
 
     @staticmethod
     def _deserialize_history(data: Any) -> list[Message]:
