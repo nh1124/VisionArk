@@ -99,7 +99,7 @@ steps:
     role: planner
     skills: [investigation]
     limits:
-      max_turns: 3
+      max_turns: 10
     on:
       - when: "event.type == 'done'"
         next: execute
