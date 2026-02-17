@@ -47,6 +47,10 @@ class PlannerRole:
         if agent_profile:
             parts.append(f"\n## Agent Profile\n{agent_profile}")
 
+        integration_tools = ctx.metadata.get("integration_tools_text")
+        if integration_tools:
+            parts.append(f"\n## Available Integration Tools\n{integration_tools}")
+
         return "\n\n".join(parts)
 
     def post_process(self, llm_output: str, ctx: ExecutionContext) -> RoleResult:

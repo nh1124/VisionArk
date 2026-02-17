@@ -334,6 +334,48 @@ async def create_engine_for_project(
     # 2. Register all tools
     for tool_def, tool_impl in _get_all_tools():
         engine.register_tool(tool_def, tool_impl)
+        
+    # 2b. Register integration tools
+    # 2b. Register integration tools and reflect them into Skills/Prompts
+    integration_tools_text = ""
+    dynamic_skills = [s.model_copy() for s in SKILL_DEFS]
+    
+    try:
+        from integrations.loader import load_integration_tools
+        integration_tools = await load_integration_tools(user_id, db_session)
+        
+        valid_integrations = []
+        for tool_def, tool_impl in integration_tools:
+            # Duplicate check: Core tools take precedence
+            try:
+                engine.get_tool(tool_def.name)
+                logger.warning(
+                    "Integration tool '%s' skipped (shadows existing core tool)", 
+                    tool_def.name
+                )
+            except Exception:
+                # Tool does not exist, safe to register
+                engine.register_tool(tool_def, tool_impl)
+                valid_integrations.append(tool_def)
+
+        # Dynamic Reflection: Inject valid tools into "operation" skill (default)
+        # and build prompt text.
+        if valid_integrations:
+            # Add to 'operation' skill
+            for s in dynamic_skills:
+                if s.name == "operation":
+                    s.tools.extend([t.name for t in valid_integrations])
+            
+            # Build prompt text
+            lines = ["The following external integration tools are available:\n"]
+            for tool in valid_integrations:
+                lines.append(f"- {tool.name}: {tool.description}")
+                # Optional: Add args schema if helpful, but keeping it brief for now
+            integration_tools_text = "\n".join(lines)
+                
+        logger.info("Registered %d integration tools", len(valid_integrations))
+    except Exception as e:
+        logger.warning("Failed to load integration tools: %s", e)
 
     # 3. Create GeminiEngine (uses Gemini SDK directly, no LLMProvider wrapper)
     gemini_engine = GeminiEngine(
@@ -349,7 +391,8 @@ async def create_engine_for_project(
     engine.register_model("default", preferred_model or "gemini-3-pro-preview")
 
     # 7. Register skills (for tool filtering)
-    for skill_def in SKILL_DEFS:
+    # 7. Register skills (for tool filtering)
+    for skill_def in dynamic_skills:
         engine.register_skill(skill_def, _NoOpSkill(skill_def))
 
     # 8. Register roles
@@ -363,6 +406,8 @@ async def create_engine_for_project(
 
     # 10. Pre-load prompt data
     prompt_data = await _load_prompt_components(db_session, project_id, user_id)
+    if integration_tools_text:
+        prompt_data["integration_tools_text"] = integration_tools_text
 
     # 11. Register agent
     agent_def = AgentDef(

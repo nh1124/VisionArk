@@ -82,7 +82,12 @@ class ProjectRole:
         if roster:
             parts.append(roster)
 
-        # 8. User settings (timezone, language)
+        # 8b. Integration Tools
+        integration_tools = ctx.metadata.get("integration_tools_text")
+        if integration_tools:
+            parts.append(f"\n## Available Integration Tools\n{integration_tools}")
+
+        # 9. User settings (timezone, language)
         settings = ctx.metadata.get("user_settings", {})
         if settings:
             tz = settings.get("timezone", "UTC")
