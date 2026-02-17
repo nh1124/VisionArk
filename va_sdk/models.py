@@ -17,6 +17,7 @@ class IntegrationContext:
     project_id: Optional[str] = None
     session_id: Optional[str] = None
     api_key: Optional[str] = None
+    user_settings: dict = field(default_factory=dict)
     metadata: dict = field(default_factory=dict)
 
 

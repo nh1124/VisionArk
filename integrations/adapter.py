@@ -64,6 +64,7 @@ class IntegrationToolAdapter:
                 project_id=ctx.metadata.get("project_id"),
                 session_id=ctx.metadata.get("session_id"),
                 api_key=ctx.metadata.get("api_key"),
+                user_settings=ctx.metadata.get("user_settings", {}),
                 metadata=ctx.metadata,
             )
         except KeyError as e:
