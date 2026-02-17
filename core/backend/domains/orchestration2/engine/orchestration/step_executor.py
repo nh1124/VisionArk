@@ -144,6 +144,24 @@ class StepExecutor:
             return [event]
 
         # Build prompt and gather tools (shared by both paths)
+        # INJECTION: Filter skill text matching the step's allowed skills
+        active_skills_text = ""
+        skill_defs = ctx.metadata.get("skill_definitions", {})
+        if step.skills and skill_defs:
+            # Gather text for each allowed skill
+            texts = []
+            for skill_name in step.skills:
+                if skill_name in skill_defs:
+                    texts.append(skill_defs[skill_name])
+            active_skills_text = "\n\n".join(texts)
+        
+        # Determine effective skills text: active subset OR global fallback
+        # We store it in metadata so ProjectRole can use it.
+        # PlannerRole will likely ignore this and use the global 'skills_text' 
+        # (which engine_setup.py populates) if it wants the full list.
+        if active_skills_text:
+             ctx.metadata["active_skills_text"] = active_skills_text
+
         system_prompt = role_impl.build_prompt(ctx)
         tool_defs = self._gather_tool_definitions(agent_def, step_skills=step.skills)
 

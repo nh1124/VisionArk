@@ -286,9 +286,14 @@ async def _load_prompt_components(
             skills = skill_res.scalars().all()
             if skills:
                 texts = []
+                skill_map = {}
                 for s in skills:
-                    texts.append(f"### {s.name}\n{s.content}")
+                    content = f"### {s.name}\n{s.content}"
+                    texts.append(content)
+                    skill_map[s.name] = content
+                
                 result["skills_text"] = "\n\n".join(texts)
+                result["skill_definitions"] = skill_map
     except Exception as e:
         logger.warning("Failed to load skills: %s", e)
 

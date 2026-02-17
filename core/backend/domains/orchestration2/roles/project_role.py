@@ -56,7 +56,9 @@ class ProjectRole:
             parts.append(f"\n## Role Profile\n{node_prompt}")
 
         # 3. Skills injection
-        skills_text = ctx.metadata.get("skills_text")
+        # Prefer step-specific active skills text if available (injected by StepExecutor)
+        # Fall back to global skills_text (all skills) if not found (legacy behavior)
+        skills_text = ctx.metadata.get("active_skills_text") or ctx.metadata.get("skills_text")
         if skills_text:
             parts.append(f"\n## Active Skills\n{skills_text}")
 
