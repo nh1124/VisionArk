@@ -3,6 +3,8 @@ from integrations.lbs.client import get_lbs_client, TaskStatus
 from domains.identity.sync_coordinator import SyncCoordinator
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Any, Optional, Dict
+from datetime import date
+
 from pydantic import Field  
 
 class ListTasksArgs(BaseModel):
@@ -25,10 +27,8 @@ class ListTasksTool(BaseTool):
         
         try:
             client = await get_lbs_client(user_id, db_session)
-            target_date = kwargs.get("target_date")
             tasks = await client.list_tasks(
-                context=context,
-                target_date=target_date
+                context=context
             )
             if not tasks:
                 return ToolResult(
@@ -38,7 +38,7 @@ class ListTasksTool(BaseTool):
             
             lines = []
             for t in tasks:
-                status = f" [{t.get('status', 'todo')}]" if target_date else ""
+                status = f" [{t.get('status', 'todo')}]"
                 locked = " [LOCKED]" if t.get("is_locked") else ""
                 exc = " [OVERWRITTEN]" if t.get("has_exception") else ""
                 lines.append(f"• [{t['task_id']}] {t['task_name']} ({t.get('rule_type')}){status}{locked}{exc}")
