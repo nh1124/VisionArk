@@ -119,15 +119,11 @@ class ReadReferenceTool:
             if not p.exists():
                 return fail(call, f"File not found: {file_path}")
 
-            # 1. Read Raw Content (Bytes) first to check for binary
+            # Read raw content
             raw_content = p.read_bytes()
-            
-            # Simple heuristic: null byte = binary
             is_binary = b"\x00" in raw_content
 
-            # Helper to sanitize text if we need to return text content
             def get_sanitized_text(data: bytes) -> str:
-                # Decode with replacement, then remove broken nulls
                 text = data.decode("utf-8", errors="replace")
                 return text.replace("\x00", "")
 
@@ -135,7 +131,8 @@ class ReadReferenceTool:
             gemini_upload_success = False
             gemini_uri = None
 
-            # Gemini upload for multimodal (Attempt for ALL files, but critical for binary)
+            # Attempt Gemini upload (text annotation only — native Part
+            # injection is handled by engine-specific adapters)
             try:
                 from sqlalchemy import select
                 from shared.database import UserSettings
@@ -150,27 +147,22 @@ class ReadReferenceTool:
                     from domains.workspace.file_service import FileService
 
                     service = FileService(db, user_id, api_key)
-                    # For binary files, we need to ensure we pass the path correctly
                     gemini_info = await service.ensure_gemini_upload(
                         local_path=p, filename=p.name, project_id=project_id
                     )
                     if gemini_info and gemini_info.get("gemini_file_uri"):
-                        gemini_uri = gemini_info['gemini_file_uri']
+                        gemini_uri = gemini_info["gemini_file_uri"]
                         gemini_upload_success = True
             except Exception:
                 pass
 
-            # Logic Decision Tree
             if is_binary:
                 if gemini_upload_success:
-                    # Case A: Binary + Gemini Success -> Placeholder ONLY
-                    return make_result(call, f"[Binary File uploaded to Gemini: {gemini_uri}]")
+                    return make_result(call, f"[Binary file uploaded to Gemini: {gemini_uri}]")
                 else:
-                    # Case B: Binary + Gemini Fail -> Sanitized Text
                     final_text_content = get_sanitized_text(raw_content)
             else:
-                # Case C: Text File -> Text Content (+ URI if available)
-                final_text_content = get_sanitized_text(raw_content) # Sanitize anyway to be safe
+                final_text_content = get_sanitized_text(raw_content)
                 if gemini_upload_success:
                     final_text_content += f"\n[Gemini File URI: {gemini_uri}]"
 

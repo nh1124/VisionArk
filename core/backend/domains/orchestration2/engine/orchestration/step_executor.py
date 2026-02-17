@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from ..registry.tool_registry import ToolRegistry
     from ..models.agent import AgentDef
     from ..models.run import RunRecord
+    from ..interfaces.llm_engine import LLMEngine
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ class StepExecutor:
         model_registry: ModelRegistry,
         approval_manager: ApprovalManager,
         delegation_manager: DelegationManager,
+        engine_runtime: LLMEngine | None = None,
     ) -> None:
         self._store = store
         self._tools = tool_registry
@@ -61,6 +63,7 @@ class StepExecutor:
         self._models = model_registry
         self._approval_mgr = approval_manager
         self._delegation_mgr = delegation_manager
+        self._engine = engine_runtime
 
     async def execute_step(
         self,
@@ -105,12 +108,16 @@ class StepExecutor:
         agent_def: AgentDef,
         ctx: ExecutionContext,
     ) -> list[OrchestrationEvent]:
-        """Execute a role step: build prompt, call LLM, process tool calls."""
+        """Execute a role step: build prompt, delegate to engine runtime.
+
+        The multi-turn inference loop (LLM call → tool dispatch → repeat)
+        is fully owned by the ``LLMEngine``.
+        """
         events: list[OrchestrationEvent] = []
 
+        # ── Resolve role ─────────────────────────────────────────
         role_name = step.role
         if not role_name:
-            # Check agent role_bindings
             role_name = agent_def.role_bindings.get(step.id)
         if not role_name:
             event = OrchestrationEvent(
@@ -136,118 +143,97 @@ class StepExecutor:
             await self._store.append_event(event)
             return [event]
 
-        # Build prompt
+        # Build prompt and gather tools (shared by both paths)
         system_prompt = role_impl.build_prompt(ctx)
-
-        # Gather available tools from step skills (or agent fallback)
         tool_defs = self._gather_tool_definitions(agent_def, step_skills=step.skills)
 
-        # Call LLM
-        model_name = agent_def.default_model
-        try:
-            model_config = self._models.get(model_name)
-        except RegistryKeyError:
-            event = OrchestrationEvent(
-                type=EventType.ERROR,
-                run_id=run.run_id,
-                step_id=step.id,
-                source=EventSource.ROLE,
-                detail=f"Model '{model_name}' not found in registry",
-            )
-            await self._store.append_event(event)
-            return [event]
-
-        # Get LLM provider (stored in model config extra as provider_impl)
-        provider = model_config.extra.get("provider_impl")
-        if provider is None:
-            event = OrchestrationEvent(
-                type=EventType.ERROR,
-                run_id=run.run_id,
-                step_id=step.id,
-                source=EventSource.ROLE,
-                detail=f"No LLM provider implementation for model '{model_name}'",
-            )
-            await self._store.append_event(event)
-            return [event]
-
-        messages = list(run.history)
-        logger.debug("role_step '%s': calling LLM with %d messages, %d tools", step.id, len(messages), len(tool_defs))
-        llm_response = await provider.complete(
-            messages=messages,
-            system=system_prompt,
-            tools=tool_defs,
-            model=model_config.model_id,
+        # ── Engine runtime path (preferred) ──────────────────────
+        return await self._execute_role_step_via_engine(
+            step, run, agent_def, ctx,
+            role_impl=role_impl,
+            system_prompt=system_prompt,
+            tool_defs=tool_defs,
         )
-        logger.debug("role_step '%s': LLM returned tool_calls=%d, finish_reason=%s", step.id, len(llm_response.tool_calls), llm_response.finish_reason)
+
+    async def _execute_role_step_via_engine(
+        self,
+        step: GraphStep,
+        run: RunRecord,
+        agent_def: AgentDef,
+        ctx: ExecutionContext,
+        *,
+        role_impl: Any,
+        system_prompt: str,
+        tool_defs: list[dict[str, Any]],
+    ) -> list[OrchestrationEvent]:
+        """Role step execution via engine_runtime (multi-turn)."""
+        from ..models.engine_io import EngineRunInput, RunOptions
+
+        events: list[OrchestrationEvent] = []
+
+        # Determine limits from step or agent defaults
+        max_turns = step.limits.max_turns or agent_def.limits.max_turns
+        max_tool_calls = step.limits.max_tool_calls or 50
+
+        engine_input = EngineRunInput(
+            run_id=run.run_id,
+            message=run.history[-1] if run.history else run.input_message,
+            history=list(run.history),
+            system_prompt=system_prompt,
+            tool_defs=tool_defs,
+            metadata={
+                **run.metadata,
+                "agent_def": agent_def,
+                "run_context": run.context,
+                "store": self._store,
+            },
+        )
+        options = RunOptions(
+            max_turns=max_turns,
+            max_tool_calls=max_tool_calls,
+        )
+
+        logger.debug(
+            "role_step '%s': delegating to engine_runtime (max_turns=%d, max_tool_calls=%d)",
+            step.id, max_turns, max_tool_calls,
+        )
+        engine_result = await self._engine.run(engine_input, options)
+
+        # ── Map engine result back to orchestration2 structures ──
+        # Replace run history with the engine's output history
+        run.history = engine_result.history
 
         # Post-process with role
-        role_result = role_impl.post_process(llm_response.content, ctx)
+        output_content = ""
+        if engine_result.output_message:
+            output_content = engine_result.output_message.content
+        role_result = role_impl.post_process(output_content, ctx)
 
-        # Handle tool calls from LLM response
-        if llm_response.tool_calls:
+        if engine_result.status == "completed":
+            run.output_message = engine_result.output_message
 
-            # Add assistant message with tool-call submessages to history
-            # so the LLM sees its own function_calls before function_responses.
-            tool_call_subs = []
-            for tc in llm_response.tool_calls:
-                tool_call_subs.append(SubMessage(
-                    kind=SubMessageKind.TOOL_CALL,
-                    content=llm_response.content or "",
-                    tool_call=ToolCallRef(
-                        tool_name=tc.get("name", ""),
-                        call_id=tc.get("call_id", tc.get("id", "")),
-                        arguments=tc.get("arguments", {}),
-                        provider_data=tc.get("provider_data", {}),
-                    ),
-                ))
-            assistant_tc_msg = Message(
-                role=MessageRole.ASSISTANT,
-                content=llm_response.content or "",
-                submessages=tool_call_subs,
-            )
-            run.history.append(assistant_tc_msg)
-
-            for tc in llm_response.tool_calls:
-                tool_events = await self._handle_tool_call(
-                    tc, step, run, agent_def, ctx
-                )
-                events.extend(tool_events)
-        elif role_result.done:
-            # Role signals completion
             event = OrchestrationEvent(
                 type=EventType.DONE,
                 run_id=run.run_id,
                 step_id=step.id,
                 source=EventSource.ROLE,
-                detail=role_result.output,
+                detail=output_content[:200] if output_content else "completed",
             )
             await self._store.append_event(event)
             events.append(event)
-
-            # Store output as assistant message
-            run.output_message = Message(
-                role=MessageRole.ASSISTANT,
-                content=role_result.output,
-            )
         else:
-            # LLM produced text but no tool calls and not done - continue
-            # Add assistant message to history
-            assistant_msg = Message(
-                role=MessageRole.ASSISTANT,
-                content=llm_response.content,
-            )
-            run.history.append(assistant_msg)
-
-            # Capture as output so downstream steps (responder) can
-            # use it without a redundant LLM call.
-            run.output_message = assistant_msg
+            # Engine returned failed/cancelled
+            detail = engine_result.error or "Engine run did not complete"
+            # If there is partial output, still capture it
+            if engine_result.output_message:
+                run.output_message = engine_result.output_message
 
             event = OrchestrationEvent(
-                type=EventType.DONE,
+                type=EventType.ERROR,
                 run_id=run.run_id,
                 step_id=step.id,
                 source=EventSource.ROLE,
-                detail=llm_response.content,
+                detail=detail,
             )
             await self._store.append_event(event)
             events.append(event)

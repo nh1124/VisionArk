@@ -24,6 +24,9 @@ from .roles.project_role import ProjectRole
 from .roles.responder_role import ResponderRole
 from .roles.verifier_role import VerifierRole
 from .engine.store.sqlalchemy_store import SQLAlchemyStore
+from .engine.registry.tool_dispatcher import ToolDispatcher
+from .engine_runtime.gemini_engine import GeminiEngine
+from .engine_runtime.adapters.gemini_file_adapter import GeminiFileAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -319,38 +322,52 @@ async def create_engine_for_project(
 
     Returns (engine, agent_id).
     """
-    engine = AgentEngine(store=SQLAlchemyStore(db_session))
+    store = SQLAlchemyStore(db_session)
 
-    # 1. Register LLM
-    from infrastructure.llm.orchestration2_provider import GeminiLLMProvider
-
-    engine.register_model(
-        "default",
-        "gemini",
-        provider_impl=GeminiLLMProvider(api_key, preferred_model),
-    )
+    # 1. Create engine
+    engine = AgentEngine(store=store)
 
     # 2. Register all tools
     for tool_def, tool_impl in _get_all_tools():
         engine.register_tool(tool_def, tool_impl)
 
-    # 3. Register skills (for tool filtering)
+    # 3. Create ToolDispatcher with Gemini-specific adapters
+    gemini_file_adapter = GeminiFileAdapter(api_key=api_key)
+    tool_dispatcher = ToolDispatcher(
+        tool_registry=engine.tools,
+        adapters=[gemini_file_adapter],
+    )
+
+    # 4. Create GeminiEngine (uses Gemini SDK directly, no LLMProvider wrapper)
+    gemini_engine = GeminiEngine(
+        api_key=api_key,
+        tool_dispatcher=tool_dispatcher,
+        model=preferred_model,
+    )
+
+    # 5. Register engine runtime via public API
+    engine.register_engine(gemini_engine)
+
+    # 6. Register model config (for metadata; provider_impl no longer used)
+    engine.register_model("default", preferred_model or "gemini-3-pro-preview")
+
+    # 7. Register skills (for tool filtering)
     for skill_def in SKILL_DEFS:
         engine.register_skill(skill_def, _NoOpSkill(skill_def))
 
-    # 4. Register roles
+    # 8. Register roles
     engine.register_role(PlannerRole())
     engine.register_role(ProjectRole())
     engine.register_role(VerifierRole())
     engine.register_role(ResponderRole())
 
-    # 5. Register graph
+    # 9. Register graph
     engine.register_graph(PROJECT_GRAPH_YAML)
 
-    # 6. Pre-load prompt data
+    # 10. Pre-load prompt data
     prompt_data = await _load_prompt_components(db_session, project_id, user_id)
 
-    # 7. Register agent
+    # 11. Register agent
     agent_def = AgentDef(
         name=f"project_{project_id}",
         graph_name="project_assistant",
@@ -362,5 +379,6 @@ async def create_engine_for_project(
 
     # Store prompt data in a way that will be merged into run metadata
     engine._prompt_data = prompt_data  # type: ignore[attr-defined]
+
 
     return engine, agent_id

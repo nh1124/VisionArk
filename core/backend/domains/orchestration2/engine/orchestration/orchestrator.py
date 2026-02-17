@@ -112,20 +112,25 @@ class Orchestrator:
                 run.context.active_step_id = current_step_id
                 await self._store.save_run(run)
 
-                # Check turn limits
-                step_max_turns = step.limits.max_turns or agent_def.limits.max_turns
-                if run.context.turn_index >= step_max_turns:
-                    raise LimitsExceededError(
-                        f"Turn limit ({step_max_turns}) exceeded at step '{step.id}'"
-                    )
-
-                # Check tool call limits
-                if step.limits.max_tool_calls is not None:
-                    if run.context.tool_call_count >= step.limits.max_tool_calls:
+                # Check turn/tool limits — skip for role steps when engine
+                # runtime handles them (limits are enforced inside the engine).
+                engine_handles_limits = (
+                    step.type == "role"
+                    and self._step_executor._engine is not None
+                )
+                if not engine_handles_limits:
+                    step_max_turns = step.limits.max_turns or agent_def.limits.max_turns
+                    if run.context.turn_index >= step_max_turns:
                         raise LimitsExceededError(
-                            f"Tool call limit ({step.limits.max_tool_calls}) "
-                            f"exceeded at step '{step.id}'"
+                            f"Turn limit ({step_max_turns}) exceeded at step '{step.id}'"
                         )
+
+                    if step.limits.max_tool_calls is not None:
+                        if run.context.tool_call_count >= step.limits.max_tool_calls:
+                            raise LimitsExceededError(
+                                f"Tool call limit ({step.limits.max_tool_calls}) "
+                                f"exceeded at step '{step.id}'"
+                            )
 
                 # Execute step
                 logger.debug(

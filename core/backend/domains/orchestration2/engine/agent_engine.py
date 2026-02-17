@@ -35,6 +35,10 @@ from .registry.skill_registry import SkillRegistry
 from .registry.tool_registry import ToolRegistry
 from .store.in_memory_store import InMemoryStore
 
+from typing import TYPE_CHECKING as _TC
+if _TC:
+    from .interfaces.llm_engine import LLMEngine
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,9 +48,11 @@ class AgentEngine:
     Instantiable (not a singleton) to enable testing and multiple instances.
     """
 
-    def __init__(self, store: Store | None = None) -> None:
+    def __init__(self, store: Store | None = None, engine_runtime: LLMEngine | None = None) -> None:
         # Store
         self._store: Store = store or InMemoryStore()
+        # Engine runtime (optional — enables multi-turn delegation)
+        self._engine_runtime = engine_runtime
 
         # Registries
         self.tools = ToolRegistry()
@@ -69,7 +75,13 @@ class AgentEngine:
             model_registry=self.models,
             approval_manager=self._approval_mgr,
             delegation_manager=self._delegation_mgr,
+            engine_runtime=self._engine_runtime,
         )
+
+    def register_engine(self, engine: LLMEngine) -> None:
+        """Register an LLMEngine and propagate it to the step executor."""
+        self._engine_runtime = engine
+        self._step_executor._engine = engine
 
         # Orchestrator
         self._orchestrator = Orchestrator(self._store, self._step_executor)

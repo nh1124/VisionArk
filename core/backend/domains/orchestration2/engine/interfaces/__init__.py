@@ -1,5 +1,6 @@
 """orchestration2 interface protocols."""
 
+from .llm_engine import LLMEngine
 from .llm_provider import LLMProvider
 from .role import BaseRole
 from .skill import BaseSkill
@@ -10,6 +11,7 @@ __all__ = [
     "BaseTool",
     "BaseSkill",
     "BaseRole",
+    "LLMEngine",
     "LLMProvider",
     "Store",
 ]

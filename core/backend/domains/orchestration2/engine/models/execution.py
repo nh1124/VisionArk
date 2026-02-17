@@ -42,6 +42,9 @@ class ToolResult(BaseModel):
     call_id: str
     output: str
     error: str | None = None
+    # Engine-native parts to inject into history (e.g. Gemini file URI Parts).
+    # Kept as ``Any`` to avoid coupling this model to a specific SDK.
+    provider_parts: list[Any] = Field(default_factory=list)
 
 
 class SkillResult(BaseModel):
