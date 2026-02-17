@@ -90,7 +90,7 @@ class ScheduledTask(Base):
     id = Column(String(36), primary_key=True)               # UUID
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     project_id = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
-    task_type = Column(String(50), nullable=False)          # e.g., "HARD_DELETE", "AUTO_RESEARCH"
+    task_type = Column(String(50), nullable=False)          # e.g., "HARD_DELETE", "POST_MESSAGE", "SYSTEM_TIMER"
     payload = Column(JSON, default=dict)                    # Arguments for the task
     scheduled_at = Column(DateTime, nullable=False, index=True)
     recurring_rule = Column(String(100), nullable=True)     # Cron format or similar

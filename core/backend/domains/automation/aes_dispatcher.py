@@ -1,10 +1,7 @@
 
 import asyncio
-import json
-import uuid
 from datetime import datetime, timedelta
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from shared.database import ScheduledTask, ScheduledTaskStatus
 from infrastructure.queue.manager import QueueManager
@@ -49,12 +46,10 @@ class AESDispatcher:
             
             for task in tasks:
                 # 2. Update status to prevent double-dispatch in a distributed environment
-                # (Though here we likely have only one dispatcher)
                 task.status = ScheduledTaskStatus.PROCESSING
                 task.last_run_at = now
                 
                 # 3. Enqueue to Redis
-                # We use a specific task_type for the worker to recognize
                 context = {
                     "scheduled_task_id": task.id,
                     "project_id": task.project_id,
@@ -70,31 +65,24 @@ class AESDispatcher:
                 )
             
             await session.commit()
+
     async def schedule_task(self, user_id: str, task_type: str, scheduled_at: datetime, project_id: str = None, payload: dict = None, recurring_rule: str = None):
-        """API/Service method to programmatically schedule a task"""
-        if scheduled_at and scheduled_at.tzinfo is not None:
-            # Convert to UTC first if it's not already
-            import datetime as dt
-            if scheduled_at.tzinfo != dt.timezone.utc:
-                scheduled_at = scheduled_at.astimezone(dt.timezone.utc)
-            # Strip timezone info for naive TIMESTAMP WITHOUT TIME ZONE column
-            scheduled_at = scheduled_at.replace(tzinfo=None)
+        """API/Service method to programmatically schedule a task.
+        
+        Delegates to AESSchedulerService for consistent task creation.
+        """
+        from domains.automation.aes_scheduler_service import AESSchedulerService
 
         async with self.session_maker() as session:
-            new_task = ScheduledTask(
-                id=str(uuid.uuid4()),
+            svc = AESSchedulerService(session)
+            return await svc.create_task(
                 user_id=user_id,
-                project_id=project_id,
                 task_type=task_type,
-                payload=payload or {},
                 scheduled_at=scheduled_at,
+                project_id=project_id,
+                payload=payload,
                 recurring_rule=recurring_rule,
-                status=ScheduledTaskStatus.PENDING
             )
-            session.add(new_task)
-            await session.commit()
-            print(f"[AES Dispatcher] Scheduled task {task_type} for {scheduled_at}")
-            return new_task.id
 
     @staticmethod
     def calculate_next_run(rule: str, last_run: datetime) -> datetime:
@@ -116,21 +104,12 @@ class AESDispatcher:
         return last_run + timedelta(days=1)
 
     async def reschedule_task(self, original_task: ScheduledTask, next_run: datetime):
+        """Creates a new task based on an existing recurring task.
+        
+        Delegates to AESSchedulerService for consistent task creation.
         """
-        Creates a new task based on an existing recurring task.
-        """
+        from domains.automation.aes_scheduler_service import AESSchedulerService
+
         async with self.session_maker() as session:
-            new_task = ScheduledTask(
-                id=str(uuid.uuid4()),
-                user_id=original_task.user_id,
-                project_id=original_task.project_id,
-                task_type=original_task.task_type,
-                payload=original_task.payload,
-                scheduled_at=next_run,
-                recurring_rule=original_task.recurring_rule,
-                status=ScheduledTaskStatus.PENDING
-            )
-            session.add(new_task)
-            await session.commit()
-            print(f"[AES Dispatcher] Rescheduled recurring task {original_task.task_type} for {next_run}")
-            return new_task.id
+            svc = AESSchedulerService(session)
+            return await svc.reschedule_from(original_task, next_run)

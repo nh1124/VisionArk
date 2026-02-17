@@ -10,8 +10,7 @@ from sqlalchemy import select, delete as sql_delete
 from sqlalchemy.orm import joinedload
 
 from domains.identity.auth import resolve_identity, Identity
-from domains.automation.aes_dispatcher import AESDispatcher
-import uuid
+from domains.automation.aes_scheduler_service import AESSchedulerService
 from shared.database import get_async_db, ScheduledTask, ScheduledTaskStatus
 
 router = APIRouter(prefix="/api/automation", tags=["Automation"])
@@ -55,9 +54,6 @@ async def list_scheduled_tasks(
     if exclude_system:
         system_types = [
             "HARD_DELETE", 
-            "SYNC_PROJECT_FILES", 
-            "PROJECT_SNAPSHOT", 
-            "SYSTEM_SKILL_MINING",
             "SYNC_ROUTER_HOOKS",
             "SYSTEM_TIMER"
         ]
@@ -90,14 +86,6 @@ async def schedule_task(
     db: AsyncSession = Depends(get_async_db)
 ):
     """Schedule a new automated task"""
-    
-    # Handle timezone
-    dt = request.scheduled_at
-    if dt.tzinfo is not None:
-        import datetime as datetime_mod
-        if dt.tzinfo != datetime_mod.timezone.utc:
-            dt = dt.astimezone(datetime_mod.timezone.utc)
-        dt = dt.replace(tzinfo=None) # Store as naive UTC
 
     # Validation: project_id exists if provided
     if request.project_id:
@@ -106,22 +94,17 @@ async def schedule_task(
         if not res.scalars().first():
             raise HTTPException(status_code=400, detail=f"Project {request.project_id} not found")
 
-    new_task = ScheduledTask(
-        id=str(uuid.uuid4()),
+    svc = AESSchedulerService(db)
+    task_id = await svc.create_task(
         user_id=identity.user_id,
-        project_id=request.project_id,
         task_type=request.task_type,
+        scheduled_at=request.scheduled_at,
+        project_id=request.project_id,
         payload=request.payload,
-        scheduled_at=dt,
         recurring_rule=request.recurring_rule,
-        status=ScheduledTaskStatus.PENDING
     )
-    db.add(new_task)
-    await db.commit()
     
-    print(f"[API] Manual schedule: {new_task.id} for {dt}")
-    
-    return {"status": "success", "task_id": new_task.id}
+    return {"status": "success", "task_id": task_id}
 
 @router.put("/tasks/{task_id}")
 async def update_task(
@@ -147,20 +130,15 @@ async def update_task(
         if not res.scalars().first():
             raise HTTPException(status_code=400, detail=f"Project {request.project_id} not found")
 
-    # Update fields
-    task.project_id = request.project_id
-    # task_type usually shouldn't change, but we allow it if payload matches
-    task.task_type = request.task_type 
-    task.payload = request.payload
-    task.scheduled_at = request.scheduled_at.replace(tzinfo=None) # Ensure naive
-    task.recurring_rule = request.recurring_rule
-    
-    # Reset status to pending if it was failed/completed, so it runs again at new time?
-    # Or just leave it? Usually if you edit a future task it is pending. 
-    # If editing a past task to run again, status should be pending.
-    task.status = ScheduledTaskStatus.PENDING
-    
-    await db.commit()
+    svc = AESSchedulerService(db)
+    await svc.update_task(
+        task=task,
+        task_type=request.task_type,
+        scheduled_at=request.scheduled_at,
+        project_id=request.project_id,
+        payload=request.payload,
+        recurring_rule=request.recurring_rule,
+    )
     
     return {"status": "success", "message": "Task updated"}
 

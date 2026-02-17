@@ -208,9 +208,6 @@ export default function CronTasksPage() {
     const getTaskTypeLabel = (type: string) => {
         switch (type) {
             case "POST_MESSAGE": return "Auto Message";
-            case "PROJECT_PULSE": return "Project Pulse";
-            case "AUTO_RESEARCH": return "Background Research";
-            case "LBS_REMINDER": return "LBS Reminder";
             default: return type;
         }
     };
@@ -248,8 +245,8 @@ export default function CronTasksPage() {
                 <button
                     onClick={() => setActiveTab("upcoming")}
                     className={`px-6 py-2 rounded-xl text-xs font-bold transition-all ${activeTab === "upcoming"
-                            ? "bg-gray-800 text-cyan-400 shadow-sm"
-                            : "text-gray-500 hover:text-gray-300"
+                        ? "bg-gray-800 text-cyan-400 shadow-sm"
+                        : "text-gray-500 hover:text-gray-300"
                         }`}
                 >
                     UPCOMING
@@ -257,8 +254,8 @@ export default function CronTasksPage() {
                 <button
                     onClick={() => setActiveTab("history")}
                     className={`px-6 py-2 rounded-xl text-xs font-bold transition-all ${activeTab === "history"
-                            ? "bg-gray-800 text-cyan-400 shadow-sm"
-                            : "text-gray-500 hover:text-gray-300"
+                        ? "bg-gray-800 text-cyan-400 shadow-sm"
+                        : "text-gray-500 hover:text-gray-300"
                         }`}
                 >
                     HISTORY

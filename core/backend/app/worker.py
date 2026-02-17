@@ -149,33 +149,6 @@ class Worker:
             traceback.print_exc()
             await self.manager.update_status(task_id, "failed", str(e))
 
-    async def _trigger_skill_mining(self, task_id: str, user_id: str):
-        """Enqueue a background AES task for skill extraction (Conservative)"""
-        try:
-            from shared.database import ScheduledTask, ScheduledTaskStatus
-            import uuid
-
-            async with AsyncSessionLocal() as db:
-                # GUARD: Issue control BEFORE enqueuing
-                from domains.automation.skill_mining import SkillMiningService
-                miner = SkillMiningService(db)
-                if not await miner.validate_mining_request(task_id, user_id):
-                    return # Issuance suppressed by guard logic
-
-                new_st = ScheduledTask(
-                    id=str(uuid.uuid4()),
-                    user_id=user_id,
-                    task_type="SYSTEM_SKILL_MINING",
-                    payload={"task_id": task_id, "user_id": user_id},
-                    scheduled_at=datetime.utcnow(),
-                    status=ScheduledTaskStatus.PENDING
-                )
-                db.add(new_st)
-                await db.commit()
-                print(f"[Worker] Guard approved: Enqueued SYSTEM_SKILL_MINING for task {task_id}")
-        except Exception as e:
-             print(f"[Worker] Failed to enqueue skill mining task: {e}")
-
     async def _handle_registry_task(self, task, db_session) -> bool:
         """Attempt to handle task using registry"""
         handler = task_registry.get(task.type)

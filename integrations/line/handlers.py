@@ -2,20 +2,15 @@ from va_sdk import aes_registry, task_registry, reply_registry, TaskType, Servic
 from sqlalchemy import select
 from .client import get_line_client
 
-# --- AES Handlers ---
-# (Incoming triggers)
-
-# Not yet implemented in aes_dispatcher side fully for custom strings, 
-# but we can register it for future use or if we change Dispatcher to use registry not just for "System Tasks"
-# For now, AESSystemHandlers is mostly for "System Tasks". 
-# But the goal was to move "line specific logic". 
-# Wait, LINE logic was in "line_webhook" -> "queue". 
-# The worker handles "TaskType.LINE_REPLY" (Outgoing) and "TaskType.USER_MESSAGE" (Incoming processed)
-# The "AES" part in implementation plan referred to "aes_dispatcher.py", but looking at it, it didn't have line logic.
-# So "handlers.py" here effectively replaces the "TaskType.LINE_REPLY" logic in worker.py.
+# LINE Integration Handlers
+#
+# This module registers two handler types for the Worker:
+#   1. task_registry ("line_reply")  - Handles LINE reply tasks dispatched via the queue.
+#   2. reply_registry ("line")       - Hooks into Worker._handle_external_reply() to send
+#                                      agent responses back to LINE (reply token or push).
+#
 
 # --- Task Handlers ---
-# (Worker execution)
 
 @task_registry.register("line_reply")
 async def handle_line_reply_task(task, db_session):
