@@ -35,6 +35,7 @@ class ExecutionContext(BaseModel):
     run_context: Any  # RunContext
     store: Any  # Store reference
     metadata: dict[str, Any] = Field(default_factory=dict)
+    engine_kind: str | None = None  # engine identifier (e.g. "gemini")
 
 
 class ToolResult(BaseModel):

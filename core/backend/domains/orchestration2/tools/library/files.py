@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from domains.orchestration2.engine.models.execution import ExecutionContext, ToolResult
 from domains.orchestration2.engine.models.message import ToolCallRef
@@ -93,85 +94,134 @@ class ReadReferenceTool:
     )
 
     async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
-        # Support 'path' and 'filename' aliases for 'file_path'
-        file_path = (
-            call.arguments.get("file_path") 
-            or call.arguments.get("path") 
-            or call.arguments.get("filename", "")
-        )
+        # 1. Engine-specific dispatch
+        if ctx.engine_kind == "gemini":
+            return await self._invoke_gemini(call, ctx)
+        
+        # 2. Default (Generic) implementation
+        return await self._invoke_generic(call, ctx)
+
+    async def _invoke_gemini(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
+        """Gemini-native implementation with file upload and limited context usage."""
+        file_path = self._resolve_path_arg(call)
         
         user_id = get_user_id(ctx)
         project_id = get_project_id(ctx)
         db = get_db(ctx)
 
         try:
-            d = get_project_dir(user_id, project_id)
-            p = secure_path_join(d, file_path)
-            if not p.exists():
-                for sub in ["refs", "files", "artifacts"]:
-                    try:
-                        p = secure_path_join(d / sub, file_path)
-                        if p.exists():
-                            break
-                    except Exception:
-                        pass
+            p = self._find_file(user_id, project_id, file_path)
+            if not p:
+                return fail(call, f"File not found: {file_path}")
 
-            if not p.exists():
+            # Read raw content for text fallback or binary handling
+            raw_content = p.read_bytes()
+            is_binary = b"\x00" in raw_content
+
+            def sanitize(data: bytes) -> str:
+                return data.decode("utf-8", errors="replace").replace("\x00", "")
+
+            # ── Gemini upload ────────────────────────────────────
+            from google.genai import types as genai_types
+            
+            provider_parts: list[Any] = []
+            gemini_uri: str | None = None
+            gemini_mime: str | None = None
+
+            try:
+                from domains.workspace.file_service import FileService
+                
+                # Need API key for Gemini upload
+                # In orchestration2, we might not have it in ctx directly yet, 
+                # but we can look it up or assume it's available via service if constructed right.
+                # Actually, FileService needs api_key.
+                api_key = await get_user_api_key(ctx) # Helper from base.py
+                
+                if api_key:
+                    service = FileService(db, user_id, api_key)
+                    gemini_info = await service.ensure_gemini_upload(
+                        local_path=p, filename=p.name, project_id=project_id,
+                    )
+                    if gemini_info and gemini_info.get("gemini_file_uri"):
+                        gemini_uri = gemini_info["gemini_file_uri"]
+                        gemini_mime = gemini_info.get(
+                            "mime_type", "application/octet-stream"
+                        )
+                        provider_parts.append(
+                            genai_types.Part.from_uri(
+                                file_uri=gemini_uri,
+                                mime_type=gemini_mime,
+                            )
+                        )
+            except Exception:
+                # Log error but proceed to fallback?
+                pass
+
+            # ── Build output text ────────────────────────────────
+            # Minimal output when upload succeeds to save context
+            if gemini_uri:
+                output = (
+                    f"[File available via Gemini: {p.name} "
+                    f"({gemini_mime}, uri={gemini_uri})]"
+                )
+            elif is_binary:
+                output = sanitize(raw_content) # Binary fallback usually garbage text but consistent with old behavior
+            else:
+                output = sanitize(raw_content)
+                if len(output) > 50000:
+                    output = output[:50000] + "\n... (truncated)"
+
+            return make_result(call, output, provider_parts=provider_parts)
+
+        except Exception as e:
+            return fail(call, f"Failed to read file (gemini): {e}")
+
+    async def _invoke_generic(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
+        """Standard text-based file reading."""
+        file_path = self._resolve_path_arg(call)
+        
+        user_id = get_user_id(ctx)
+        project_id = get_project_id(ctx)
+
+        try:
+            p = self._find_file(user_id, project_id, file_path)
+            if not p:
                 return fail(call, f"File not found: {file_path}")
 
             # Read raw content
             raw_content = p.read_bytes()
-            is_binary = b"\x00" in raw_content
+            
+            # Simple text decoding
+            text = raw_content.decode("utf-8", errors="replace").replace("\x00", "")
+            
+            if len(text) > 50000:
+                text = text[:50000] + "\n... (truncated)"
 
-            def get_sanitized_text(data: bytes) -> str:
-                text = data.decode("utf-8", errors="replace")
-                return text.replace("\x00", "")
-
-            final_text_content = ""
-            gemini_upload_success = False
-            gemini_uri = None
-
-            # Attempt Gemini upload (text annotation only — native Part
-            # injection is handled by engine-specific adapters)
-            try:
-                from sqlalchemy import select
-                from shared.database import UserSettings
-
-                result = await db.execute(
-                    select(UserSettings).filter(UserSettings.user_id == user_id)
-                )
-                user_settings = result.scalars().first()
-                api_key = user_settings.gemini_api_key if user_settings else None
-
-                if api_key:
-                    from domains.workspace.file_service import FileService
-
-                    service = FileService(db, user_id, api_key)
-                    gemini_info = await service.ensure_gemini_upload(
-                        local_path=p, filename=p.name, project_id=project_id
-                    )
-                    if gemini_info and gemini_info.get("gemini_file_uri"):
-                        gemini_uri = gemini_info["gemini_file_uri"]
-                        gemini_upload_success = True
-            except Exception:
-                pass
-
-            if is_binary:
-                if gemini_upload_success:
-                    return make_result(call, f"[Binary file uploaded to Gemini: {gemini_uri}]")
-                else:
-                    final_text_content = get_sanitized_text(raw_content)
-            else:
-                final_text_content = get_sanitized_text(raw_content)
-                if gemini_upload_success:
-                    final_text_content += f"\n[Gemini File URI: {gemini_uri}]"
-
-            if len(final_text_content) > 50000:
-                final_text_content = final_text_content[:50000] + "\n... (truncated)"
-
-            return make_result(call, final_text_content)
+            return make_result(call, text)
         except Exception as e:
             return fail(call, f"Failed to read file: {e}")
+
+    def _resolve_path_arg(self, call: ToolCallRef) -> str:
+        return (
+            call.arguments.get("file_path") 
+            or call.arguments.get("path") 
+            or call.arguments.get("filename", "")
+        )
+
+    def _find_file(self, user_id: str, project_id: str, file_path: str) -> Path | None:
+        d = get_project_dir(user_id, project_id)
+        p = secure_path_join(d, file_path)
+        if p.exists():
+            return p
+            
+        for sub in ["refs", "files", "artifacts"]:
+            try:
+                p = secure_path_join(d / sub, file_path)
+                if p.exists():
+                    return p
+            except Exception:
+                pass
+        return None
 
 
 class ListFilesTool:

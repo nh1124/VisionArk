@@ -24,9 +24,8 @@ from .roles.project_role import ProjectRole
 from .roles.responder_role import ResponderRole
 from .roles.verifier_role import VerifierRole
 from .engine.store.sqlalchemy_store import SQLAlchemyStore
-from .engine.registry.tool_dispatcher import ToolDispatcher
+
 from .engine_runtime.gemini_engine import GeminiEngine
-from .engine_runtime.adapters.gemini_file_adapter import GeminiFileAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -331,17 +330,10 @@ async def create_engine_for_project(
     for tool_def, tool_impl in _get_all_tools():
         engine.register_tool(tool_def, tool_impl)
 
-    # 3. Create ToolDispatcher with Gemini-specific adapters
-    gemini_file_adapter = GeminiFileAdapter(api_key=api_key)
-    tool_dispatcher = ToolDispatcher(
-        tool_registry=engine.tools,
-        adapters=[gemini_file_adapter],
-    )
-
-    # 4. Create GeminiEngine (uses Gemini SDK directly, no LLMProvider wrapper)
+    # 3. Create GeminiEngine (uses Gemini SDK directly, no LLMProvider wrapper)
     gemini_engine = GeminiEngine(
         api_key=api_key,
-        tool_dispatcher=tool_dispatcher,
+        tool_registry=engine.tools,
         model=preferred_model,
     )
 

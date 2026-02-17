@@ -25,7 +25,7 @@ from ..engine.models.engine_io import (
     EngineRunStatus,
     RunOptions,
 )
-from ..engine.registry.tool_dispatcher import ToolDispatcher
+from ..engine.registry.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ class GeminiEngine(LLMEngine):
     def __init__(
         self,
         api_key: str,
-        tool_dispatcher: ToolDispatcher,
+        tool_registry: ToolRegistry,
         *,
         model: str | None = None,
     ) -> None:
@@ -52,7 +52,7 @@ class GeminiEngine(LLMEngine):
             http_options={"api_version": "v1alpha", "timeout": 600000},
         )
         self._model = model or "gemini-3-pro-preview"
-        self._dispatcher = tool_dispatcher
+        self._tools = tool_registry
         # In-memory run status tracking
         self._active_runs: dict[str, EngineRunStatus] = {}
 
@@ -174,9 +174,14 @@ class GeminiEngine(LLMEngine):
                         )
 
                         try:
-                            result = await self._dispatcher.dispatch(
-                                self.kind, call_ref, ctx
-                            )
+                            # Direct tool invocation (no dispatcher)
+                            _def, tool_impl = self._tools.get(fc.name)
+                            
+                            # Inject engine identity
+                            ctx.engine_kind = self.kind
+                            
+                            result = await tool_impl.invoke(call_ref, ctx)
+
                         except Exception as exc:
                             logger.error(
                                 "[GeminiEngine] tool '%s' error: %s",
