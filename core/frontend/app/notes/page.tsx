@@ -111,12 +111,12 @@ export default function NotesPage() {
                         <select
                             value={selectedProject}
                             onChange={(e) => setSelectedProject(e.target.value)}
-                            className="bg-transparent text-sm text-gray-300 focus:outline-none cursor-pointer"
+                            className="bg-transparent text-sm text-gray-300 focus:outline-none cursor-pointer [color-scheme:dark]"
                         >
-                            <option value="all">All Projects</option>
-                            <option value="personal">Personal (No Project)</option>
+                            <option value="all" className="bg-gray-900 text-white">All Projects</option>
+                            <option value="personal" className="bg-gray-900 text-white">Personal (No Project)</option>
                             {projects.map(p => (
-                                <option key={p.id} value={p.id}>{p.display_name || p.name}</option>
+                                <option key={p.id} value={p.id} className="bg-gray-900 text-white">{p.display_name || p.name}</option>
                             ))}
                         </select>
                     </div>
@@ -150,11 +150,11 @@ export default function NotesPage() {
                                     <select
                                         value={newNote.project_id}
                                         onChange={(e) => setNewNote({ ...newNote, project_id: e.target.value })}
-                                        className="w-full bg-black/40 border border-gray-800 rounded-xl px-4 py-3 text-gray-300 focus:outline-none focus:border-cyan-500/50"
+                                        className="w-full bg-black/40 border border-gray-800 rounded-xl px-4 py-3 text-gray-300 focus:outline-none focus:border-cyan-500/50 [color-scheme:dark]"
                                     >
-                                        <option value="">None (Personal)</option>
+                                        <option value="" className="bg-gray-900 text-white">None (Personal)</option>
                                         {projects.map(p => (
-                                            <option key={p.id} value={p.id}>{p.display_name || p.name}</option>
+                                            <option key={p.id} value={p.id} className="bg-gray-900 text-white">{p.display_name || p.name}</option>
                                         ))}
                                     </select>
                                 </div>
