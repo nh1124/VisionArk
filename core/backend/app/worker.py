@@ -68,13 +68,13 @@ class Worker:
 
 
 
-        # Sync Agent Skills
-        try:
-            from domains.automation.skills import init_skills
-            await init_skills()
-            print("Skills: Registered skills synced.")
-        except Exception as se:
-            print(f"⚠️ Skill sync failed: {se}")
+        # Sync Agent Skills - DEPRECATED
+        # try:
+        #     from domains.automation.skills import init_skills
+        #     await init_skills()
+        #     print("Skills: Registered skills synced.")
+        # except Exception as se:
+        #     print(f"⚠️ Skill sync failed: {se}")
 
         print("Worker started. Waiting for tasks...")
 

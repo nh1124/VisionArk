@@ -13,13 +13,6 @@ interface Skill {
     is_active: boolean;
 }
 
-interface Node {
-    id: string;
-    display_name: string;
-    role_name: string;
-    node_type: string;
-}
-
 export default function ProjectSettingsPage({
     params,
 }: {
@@ -34,10 +27,8 @@ export default function ProjectSettingsPage({
     const [saveStatus, setSaveStatus] = useState("");
     const [isEditing, setIsEditing] = useState(false);
 
-    // Skills & Nodes state
+    // Skills state (project-level)
     const [allSkills, setAllSkills] = useState<Skill[]>([]);
-    const [nodes, setNodes] = useState<Node[]>([]);
-    const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
     const [assignedSkillIds, setAssignedSkillIds] = useState<string[]>([]);
 
     useEffect(() => {
@@ -58,36 +49,20 @@ export default function ProjectSettingsPage({
             const skillsData = await skillsRes.json();
             setAllSkills(skillsData.filter((s: Skill) => s.is_active));
 
-            // Load Project Nodes
-            const nodesRes = await apiFetch(`/api/agents/project/${projectId}/nodes`);
-            const nodesData = await nodesRes.json();
-            setNodes(nodesData);
-
-            // Default to main PROJECT node
-            const mainNode = nodesData.find((n: Node) => n.node_type === "PROJECT");
-            if (mainNode) {
-                setSelectedNodeId(mainNode.id);
-                loadNodeSkills(mainNode.id);
-            } else if (nodesData.length > 0) {
-                setSelectedNodeId(nodesData[0].id);
-                loadNodeSkills(nodesData[0].id);
-            }
+            // Load Project Skills
+            const projectSkillsRes = await apiFetch(`/api/skills/project/${projectId}`);
+            const projectSkillsData = await projectSkillsRes.json();
+            setAssignedSkillIds(
+                Array.isArray(projectSkillsData)
+                    ? projectSkillsData.map((s: Skill) => s.id)
+                    : []
+            );
 
         } catch (error) {
             console.error("Failed to load settings data:", error);
             setSaveStatus("❌ Failed to load settings");
         } finally {
             setLoading(false);
-        }
-    };
-
-    const loadNodeSkills = async (nodeId: string) => {
-        try {
-            const nodeSkillsRes = await apiFetch(`/api/skills/node/${nodeId}`);
-            const nodeSkillsData = await nodeSkillsRes.json();
-            setAssignedSkillIds(nodeSkillsData.map((s: Skill) => s.id));
-        } catch (error) {
-            console.error("Failed to load node skills:", error);
         }
     };
 
@@ -118,15 +93,13 @@ export default function ProjectSettingsPage({
     };
 
     const toggleSkill = async (skillId: string) => {
-        if (!selectedNodeId) return;
-
         const newIds = assignedSkillIds.includes(skillId)
             ? assignedSkillIds.filter(id => id !== skillId)
             : [...assignedSkillIds, skillId];
 
         setSaving(true);
         try {
-            const res = await apiFetch(`/api/skills/node/${selectedNodeId}`, {
+            const res = await apiFetch(`/api/skills/project/${projectId}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(newIds),
@@ -260,86 +233,58 @@ export default function ProjectSettingsPage({
                                 </div>
                             </div>
                         ) : (
-                            <div className="flex gap-8">
-                                {/* Left Side: Node List */}
-                                <div className="w-64 shrink-0 space-y-2">
-                                    <h2 className="text-[10px] font-bold text-gray-600 uppercase tracking-widest mb-4 px-2">
-                                        Agent Nodes
+                            <div className="space-y-6">
+                                <div className="flex items-center justify-between border-b border-gray-800 pb-2">
+                                    <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                                        <span className="text-cyan-500">◈</span> Project Skills
                                     </h2>
-                                    {nodes.map(node => (
-                                        <button
-                                            key={node.id}
-                                            onClick={() => {
-                                                setSelectedNodeId(node.id);
-                                                loadNodeSkills(node.id);
-                                            }}
-                                            className={`w-full text-left p-3 rounded-xl border transition-all ${selectedNodeId === node.id
-                                                ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400 font-bold shadow-[0_0_15px_rgba(34,211,238,0.05)]'
-                                                : 'bg-gray-900/30 border-gray-800 text-gray-500 hover:border-gray-700 hover:text-gray-300'
-                                                }`}
-                                        >
-                                            <div className="flex flex-col">
-                                                <span className="text-sm truncate">{node.display_name}</span>
-                                                <span className="text-[10px] opacity-60 uppercase">{node.role_name}</span>
-                                            </div>
-                                        </button>
-                                    ))}
+                                    <span className="text-xs text-gray-500">
+                                        {assignedSkillIds.length} skill{assignedSkillIds.length !== 1 ? 's' : ''} assigned
+                                    </span>
                                 </div>
 
-                                {/* Right Side: Skills Grid */}
-                                <div className="flex-1 space-y-6">
-                                    <div className="flex items-center justify-between border-b border-gray-800 pb-2">
-                                        <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
-                                            <span className="text-cyan-500">◈</span> Assigned Skills
-                                        </h2>
-                                        <span className="text-xs text-gray-500">
-                                            {selectedNodeId ? `Configuring ${nodes.find(n => n.id === selectedNodeId)?.display_name}` : 'Select a node'}
-                                        </span>
-                                    </div>
-
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        {allSkills.length > 0 ? (
-                                            allSkills.map(skill => (
-                                                <div
-                                                    key={skill.id}
-                                                    onClick={() => !saving && selectedNodeId && toggleSkill(skill.id)}
-                                                    className={`p-5 rounded-2xl border transition-all cursor-pointer group relative overflow-hidden ${assignedSkillIds.includes(skill.id)
-                                                        ? 'bg-cyan-500/5 border-cyan-500/40'
-                                                        : 'bg-gray-900/40 border-gray-800 hover:border-gray-700'}`}
-                                                >
-                                                    <div className="flex justify-between items-start mb-2">
-                                                        <h3 className={`font-bold transition-colors ${assignedSkillIds.includes(skill.id) ? 'text-cyan-400' : 'text-gray-300 group-hover:text-white'}`}>
-                                                            {skill.name}
-                                                        </h3>
-                                                        <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-all ${assignedSkillIds.includes(skill.id) ? 'bg-cyan-500 border-cyan-500' : 'border-gray-700'}`}>
-                                                            {assignedSkillIds.includes(skill.id) && <span className="text-[10px] text-black font-bold">✓</span>}
-                                                        </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    {allSkills.length > 0 ? (
+                                        allSkills.map(skill => (
+                                            <div
+                                                key={skill.id}
+                                                onClick={() => !saving && toggleSkill(skill.id)}
+                                                className={`p-5 rounded-2xl border transition-all cursor-pointer group relative overflow-hidden ${assignedSkillIds.includes(skill.id)
+                                                    ? 'bg-cyan-500/5 border-cyan-500/40'
+                                                    : 'bg-gray-900/40 border-gray-800 hover:border-gray-700'}`}
+                                            >
+                                                <div className="flex justify-between items-start mb-2">
+                                                    <h3 className={`font-bold transition-colors ${assignedSkillIds.includes(skill.id) ? 'text-cyan-400' : 'text-gray-300 group-hover:text-white'}`}>
+                                                        {skill.name}
+                                                    </h3>
+                                                    <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-all ${assignedSkillIds.includes(skill.id) ? 'bg-cyan-500 border-cyan-500' : 'border-gray-700'}`}>
+                                                        {assignedSkillIds.includes(skill.id) && <span className="text-[10px] text-black font-bold">✓</span>}
                                                     </div>
-                                                    <p className="text-xs text-gray-500 leading-relaxed line-clamp-2">
-                                                        {skill.description}
-                                                    </p>
-
-                                                    {/* Active indicator bar */}
-                                                    {assignedSkillIds.includes(skill.id) && (
-                                                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-cyan-500"></div>
-                                                    )}
                                                 </div>
-                                            ))
-                                        ) : (
-                                            <div className="col-span-2 py-12 text-center bg-gray-900/20 rounded-2xl border border-dashed border-gray-800">
-                                                <p className="text-gray-500 italic">No skills available. Skills must be active to appear here.</p>
-                                            </div>
-                                        )}
-                                    </div>
+                                                <p className="text-xs text-gray-500 leading-relaxed line-clamp-2">
+                                                    {skill.description}
+                                                </p>
 
-                                    <div className="mt-8 p-4 bg-cyan-900/10 border border-cyan-800/20 rounded-xl flex items-start gap-4">
-                                        <div className="w-10 h-10 rounded-full bg-cyan-500/20 flex items-center justify-center shrink-0">
-                                            <span className="text-cyan-400">⚡</span>
+                                                {/* Active indicator bar */}
+                                                {assignedSkillIds.includes(skill.id) && (
+                                                    <div className="absolute left-0 top-0 bottom-0 w-1 bg-cyan-500"></div>
+                                                )}
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <div className="col-span-2 py-12 text-center bg-gray-900/20 rounded-2xl border border-dashed border-gray-800">
+                                            <p className="text-gray-500 italic">No skills available. Skills must be active to appear here.</p>
                                         </div>
-                                        <div className="text-xs text-gray-400 leading-relaxed">
-                                            <p className="font-bold text-cyan-400 mb-1">How skills work:</p>
-                                            <p>Attached skills inject specialized instructions and tool guidelines directly into the agent&apos;s system prompt. This allows the agent to behave as a specialist without cluttering the main system instructions.</p>
-                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="mt-8 p-4 bg-cyan-900/10 border border-cyan-800/20 rounded-xl flex items-start gap-4">
+                                    <div className="w-10 h-10 rounded-full bg-cyan-500/20 flex items-center justify-center shrink-0">
+                                        <span className="text-cyan-400">⚡</span>
+                                    </div>
+                                    <div className="text-xs text-gray-400 leading-relaxed">
+                                        <p className="font-bold text-cyan-400 mb-1">How skills work:</p>
+                                        <p>Attached skills inject specialized instructions and tool guidelines directly into the agent&apos;s system prompt. This allows the agent to behave as a specialist without cluttering the main system instructions.</p>
                                     </div>
                                 </div>
                             </div>

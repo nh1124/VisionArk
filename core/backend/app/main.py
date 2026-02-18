@@ -27,9 +27,9 @@ async def lifespan(app: FastAPI):
     init_database()  # Use automatic path detection
     print("Database initialized")
 
-    # Sync Agent Skills
-    from domains.automation.skills import init_skills
-    await init_skills()
+    # Sync Agent Skills - DEPRECATED
+    # from domains.automation.skills import init_skills
+    # await init_skills()
     
     yield
     print("Shutting down...")

@@ -214,10 +214,40 @@ def _get_all_tools() -> list[tuple[ToolDef, Any]]:
     return result
 
 
+
 # ── Prompt loading helpers ────────────────────────────────────────────
 
+async def _fetch_project_skills(db: AsyncSession, project_id: str) -> list[Any]:
+    """Fetch active skills attached to the project agent."""
+    from shared.database import ProjectSkill, Skill, ProjectAgent as AgentModel
+
+    try:
+        # Find project agent
+        agent_res = await db.execute(
+            select(AgentModel).filter(
+                AgentModel.project_id == project_id,
+                AgentModel.role_name == "project",
+                AgentModel.status == "active",
+            )
+        )
+        agent = agent_res.scalars().first()
+        if not agent:
+            return []
+
+        # Find attached active skills
+        skill_res = await db.execute(
+            select(Skill)
+            .join(ProjectSkill, ProjectSkill.skill_id == Skill.id)
+            .filter(ProjectSkill.agent_id == agent.id, Skill.is_active == True)
+        )
+        return skill_res.scalars().all()
+    except Exception as e:
+        logger.warning("Failed to fetch project skills: %s", e)
+        return []
+
+
 async def _load_prompt_components(
-    db: AsyncSession, project_id: str, user_id: str
+    db: AsyncSession, project_id: str, user_id: str, skills: list[Any]
 ) -> dict[str, Any]:
     """Pre-load all data needed by ProjectRole.build_prompt().
 
@@ -266,36 +296,17 @@ async def _load_prompt_components(
     except Exception as e:
         logger.warning("Failed to load project plan: %s", e)
 
-    # 4. Skills text
-    try:
-        from shared.database import ProjectSkill, Skill, ProjectAgent as AgentModel
-
-        agent_res = await db.execute(
-            select(AgentModel).filter(
-                AgentModel.project_id == project_id,
-                AgentModel.role_name == "project",
-            )
-        )
-        agent = agent_res.scalars().first()
-        if agent:
-            skill_res = await db.execute(
-                select(Skill)
-                .join(ProjectSkill, ProjectSkill.skill_id == Skill.id)
-                .filter(ProjectSkill.agent_id == agent.id, Skill.is_active == True)
-            )
-            skills = skill_res.scalars().all()
-            if skills:
-                texts = []
-                skill_map = {}
-                for s in skills:
-                    content = f"### {s.name}\n{s.content}"
-                    texts.append(content)
-                    skill_map[s.name] = content
-                
-                result["skills_text"] = "\n\n".join(texts)
-                result["skill_definitions"] = skill_map
-    except Exception as e:
-        logger.warning("Failed to load skills: %s", e)
+    # 4. Skills text (from passed skills)
+    if skills:
+        texts = []
+        skill_map = {}
+        for s in skills:
+            content = f"### {s.name}\n{s.content}"
+            texts.append(content)
+            skill_map[s.name] = content
+        
+        result["skills_text"] = "\n\n".join(texts)
+        result["skill_definitions"] = skill_map
 
     # 5. User settings
     try:
@@ -335,7 +346,6 @@ async def create_engine_for_project(
     for tool_def, tool_impl in _get_all_tools():
         engine.register_tool(tool_def, tool_impl)
         
-    # 2b. Register integration tools
     # 2b. Register integration tools and reflect them into Skills/Prompts
     integration_tools_text = ""
     dynamic_skills = [s.model_copy() for s in SKILL_DEFS]
@@ -391,9 +401,47 @@ async def create_engine_for_project(
     engine.register_model("default", preferred_model or "gemini-3-pro-preview")
 
     # 7. Register skills (for tool filtering)
-    # 7. Register skills (for tool filtering)
+    # 7a. Static Skills
     for skill_def in dynamic_skills:
         engine.register_skill(skill_def, _NoOpSkill(skill_def))
+    
+    # 7b. DB Skills
+    db_skills = await _fetch_project_skills(db_session, project_id)
+    db_skill_names = []
+    
+    for s in db_skills:
+        try:
+            # Create SkillDef from DB model
+            # metadata_payload.get("tools") should be a list of tool names
+            meta = s.metadata_payload or {}
+            tools_list = meta.get("tools", [])
+            
+            # Normalize tools list (ensure strings)
+            if not isinstance(tools_list, list):
+                tools_list = []
+            
+            s_def = SkillDef(
+                name=s.name,
+                description=s.description or "",
+                tools=tools_list,
+                request_approval=meta.get("request_approval", False)
+            )
+            
+            # Register if not exists (DB skills override static if same name? No, raise error)
+            # We'll suffix if collision to avoid crash, but name is crucial for prompt injection
+            # Actually SkillRegistry raises DuplicateNameError. We should check.
+            if not engine.skills.has(s.name):
+                engine.register_skill(s_def, _NoOpSkill(s_def))
+                db_skill_names.append(s.name)
+            else:
+                logger.warning(f"DB Skill '{s.name}' skipped (shadows existing skill).")
+                # Still add to prompt though? 
+                # If it's shadowed, the static definition prevails for tool filtering.
+                # But we might want the text injection.
+                db_skill_names.append(s.name)
+
+        except Exception as e:
+            logger.warning(f"Failed to register DB skill {s.id}: {e}")
 
     # 8. Register roles
     engine.register_role(PlannerRole())
@@ -405,16 +453,19 @@ async def create_engine_for_project(
     engine.register_graph(PROJECT_GRAPH_YAML)
 
     # 10. Pre-load prompt data
-    prompt_data = await _load_prompt_components(db_session, project_id, user_id)
+    prompt_data = await _load_prompt_components(db_session, project_id, user_id, db_skills)
     if integration_tools_text:
         prompt_data["integration_tools_text"] = integration_tools_text
 
     # 11. Register agent
+    # Assemble all skill names: Static + DB
+    all_skill_names = ALL_SKILL_NAMES + db_skill_names
+
     agent_def = AgentDef(
         name=f"project_{project_id}",
         graph_name="project_assistant",
         default_model="default",
-        skills=ALL_SKILL_NAMES,
+        skills=all_skill_names,
         limits=AgentLimits(max_turns=25),
     )
     agent_id = engine.register_agent(agent_def)
