@@ -27,6 +27,13 @@ export default function AuthGuard({ children }: AuthGuardProps) {
         }
     }, [isAuthenticated, isLoading, isAuthPage, router]);
 
+    // Redirect to dashboard if authenticated and on root page
+    useEffect(() => {
+        if (isAuthenticated && pathname === "/") {
+            router.push("/dashboard");
+        }
+    }, [isAuthenticated, pathname, router]);
+
     // Loading state
     if (isLoading || isMobile === null) {
         return (

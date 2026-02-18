@@ -22,6 +22,7 @@ def make_result(
     output: str,
     *,
     error: str | None = None,
+    provider_parts: list[Any] = Field(default_factory=list),
 ) -> ToolResult:
     """Convenience builder for ToolResult."""
     return ToolResult(
@@ -29,6 +30,7 @@ def make_result(
         call_id=call.call_id,
         output=output,
         error=error,
+        provider_parts=provider_parts,
     )
 
 

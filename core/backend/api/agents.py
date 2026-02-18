@@ -560,7 +560,8 @@ class CreateFromPrompt(BaseModel):
 
 @router.post("/project/create-from-prompt")
 async def create_project_from_prompt(
-    data: CreateFromPrompt,
+    prompt: str = Form(...),
+    files: List[UploadFile] = File(default=[]),
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db),
     x_preferred_model: Optional[str] = Header(None, alias="X-Preferred-Model")
@@ -571,9 +572,11 @@ async def create_project_from_prompt(
     """
     from infrastructure.queue.manager import QueueManager
     from shared.database import TaskType, UserSettings
+    from domains.workspace.file_service import FileService
+    from shared.mimetype_helper import guess_mime_type
     import re
 
-    if not data.prompt.strip():
+    if not prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
 
     try:
@@ -594,18 +597,18 @@ async def create_project_from_prompt(
                 provider = GeminiLLMProvider(api_key=api_key)
 
                 system_instruction = (
-                    "You are a project setup assistant. Given a user's project description, generate:\n"
-                    "1. A concise project name (snake_case, 2-4 words)\n"
-                    "2. A tailored system prompt for an AI assistant that will help with this specific project\n\n"
-                    "OUTPUT FORMAT (JSON only, no markdown):\n"
+                    "You are a project setup assistant. Given a user's project description, generate:\\n"
+                    "1. A concise project name (snake_case, 2-4 words)\\n"
+                    "2. A tailored system prompt for an AI assistant that will help with this specific project\\n\\n"
+                    "OUTPUT FORMAT (JSON only, no markdown):\\n"
                     '{"name": "project_name_here", "system_prompt": "You are a specialized AI assistant for..."}'
                 )
 
-                messages = [V2Message(role=MessageRole.USER, content=f"Create a project setup for: {data.prompt}")]
+                messages = [V2Message(role=MessageRole.USER, content=f"Create a project setup for: {prompt}")]
                 llm_response = await provider.complete(messages, system=system_instruction)
 
                 content = llm_response.content.strip()
-                json_match = re.search(r'\{[^{}]*"name"[^{}]*"system_prompt"[^{}]*\}', content, re.DOTALL)
+                json_match = re.search(r'\\{[^{}]*"name"[^{}]*"system_prompt"[^{}]*\\}', content, re.DOTALL)
                 if json_match:
                     content = json_match.group()
                 parsed = json.loads(content)
@@ -670,6 +673,28 @@ async def create_project_from_prompt(
         (project_dir / "refs").mkdir(exist_ok=True)
 
         await db.commit()
+        
+        # 4.5 Handle File Uploads
+        uploaded_file_ids = []
+        if files:
+            file_service = FileService(db, identity.user_id)
+            print(f"[create-from-prompt] Processing {len(files)} files for project {project_id}")
+            
+            for file in files:
+                try:
+                    content = await file.read()
+                    mime_type = guess_mime_type(file.filename)
+                    
+                    db_file = await file_service.save_file(
+                        content=content,
+                        filename=file.filename,
+                        mime_type=mime_type,
+                        project_id=project_id,
+                        directory="refs" # Default to 'refs' so agent can see them
+                    )
+                    uploaded_file_ids.append(db_file.id)
+                except Exception as e:
+                    print(f"Error saving file {file.filename}: {e}")
 
         # 5. Enqueue the initial prompt
         manager = QueueManager()
@@ -678,9 +703,9 @@ async def create_project_from_prompt(
             "preferred_model": x_preferred_model,
             "env": "v4",
             "project_id": project_id,
-            "files": []
+            "files": uploaded_file_ids
         }
-        task_id = await manager.enqueue(identity.user_id, data.prompt, queue_context, task_type=TaskType.USER_MESSAGE)
+        task_id = await manager.enqueue(identity.user_id, prompt, queue_context, task_type=TaskType.USER_MESSAGE)
 
         return {
             "project_name": display_name,
