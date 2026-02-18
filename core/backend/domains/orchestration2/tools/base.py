@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from pydantic import Field
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +23,7 @@ def make_result(
     output: str,
     *,
     error: str | None = None,
-    provider_parts: list[Any] = Field(default_factory=list),
+    provider_parts: list[Any] | None = None,
 ) -> ToolResult:
     """Convenience builder for ToolResult."""
     return ToolResult(
@@ -30,7 +31,7 @@ def make_result(
         call_id=call.call_id,
         output=output,
         error=error,
-        provider_parts=provider_parts,
+        provider_parts=provider_parts or [],
     )
 
 
