@@ -1,0 +1,43 @@
+graph_name: project_assistant
+start: plan
+steps:
+  - id: plan
+    type: role
+    role: planner
+    skills: [investigation]
+    limits:
+      max_turns: 10
+    on:
+      - when: "event.type == 'done'"
+        next: execute
+      - when: default
+        next: plan
+  - id: execute
+    type: role
+    role: project
+    skills: [investigation, document_creation, file_management, operation]
+    limits:
+      max_turns: 25
+      max_tool_calls: 50
+    on:
+      - when: "event.type == 'done'"
+        next: verify
+      - when: default
+        next: execute
+  - id: verify
+    type: role
+    role: verifier
+    skills: [investigation]
+    limits:
+      max_turns: 5
+      max_tool_calls: 10
+    on:
+      - when: "event.type == 'done'"
+        next: respond
+      - when: default
+        next: verify
+  - id: respond
+    type: role
+    role: responder
+    skills: []
+    terminal: true
