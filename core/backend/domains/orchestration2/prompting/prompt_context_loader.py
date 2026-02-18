@@ -37,8 +37,64 @@ async def fetch_project_skills(db: AsyncSession, project_id: str) -> list[Any]:
         return []
 
 
+def _build_planner_capabilities(skills: list[Any], tool_registry: Any) -> str:
+    """Generate a snapshot of available capabilities for the planner."""
+    lines = ["## Available Capabilities"]
+    
+    # 1. List Skills
+    if skills:
+        lines.append("\n### Skills (High-level groupings)")
+        for s in skills:
+            # Handle both SkillDef objects and DB models
+            name = getattr(s, "name", "")
+            desc = getattr(s, "description", "")
+            lines.append(f"- **{name}**: {desc}")
+            
+    # 2. List Tools by Skill
+    lines.append("\n### Tools (Actionable commands)")
+    
+    # Map skill -> tools
+    skill_tools_map: dict[str, list[str]] = {}
+    
+    # Initialize with skills
+    for s in skills:
+        name = getattr(s, "name", "")
+        skill_tools_map[name] = []
+        
+        # Tools list can be in .tools (SkillDef) or .metadata_payload["tools"] (DB model)
+        tools = getattr(s, "tools", [])
+        if not tools and hasattr(s, "metadata_payload"):
+             tools = s.metadata_payload.get("tools", [])
+             
+        for t_name in tools:
+            skill_tools_map[name].append(t_name)
+
+    # Collect all registered tools to get descriptions
+    for skill_name, tool_names in skill_tools_map.items():
+        if not tool_names:
+            continue
+            
+        lines.append(f"\n#### Skill: {skill_name}")
+        for t_name in tool_names:
+            try:
+                # We need tool registry to get description
+                tool_def = tool_registry.get_def(t_name)
+                desc = tool_def.description.split("\n")[0] if tool_def.description else "No description"
+                lines.append(f"- `{t_name}`: {desc}")
+            except Exception:
+                # Tool might be in skill def but not registered in engine
+                lines.append(f"- `{t_name}`: (Tool definition not found)")
+
+    return "\n".join(lines)
+
+
 async def load_prompt_components(
-    db: AsyncSession, project_id: str, user_id: str, skills: list[Any]
+    db: AsyncSession, 
+    project_id: str, 
+    user_id: str, 
+    skills: list[Any],
+    engine: Any | None = None,  # Added engine
+    all_skills: list[Any] | None = None # Added all_skills
 ) -> dict[str, Any]:
     """Pre-load all data needed by ProjectRole.build_prompt().
 
@@ -111,5 +167,14 @@ async def load_prompt_components(
             result["user_settings"] = settings.general_settings
     except Exception as e:
         logger.warning("Failed to load user settings: %s", e)
+
+    return result
+
+    # 6. Planner capabilities (snapshot)
+    if engine and all_skills:
+        try:
+            result["planner_capabilities"] = _build_planner_capabilities(all_skills, engine.tools)
+        except Exception as e:
+            logger.warning("Failed to build planner capabilities: %s", e)
 
     return result

@@ -21,23 +21,40 @@ class PlannerRole:
     def build_prompt(self, ctx: ExecutionContext) -> str:
         parts: list[str] = []
 
-        # Core planning instruction
+        # Core planning instruction with structured output
         parts.append(
             "You are a planning assistant. Your ONLY job is to analyze the user's "
             "request and produce a short, structured work plan.\n\n"
-            "Rules:\n"
-            "- Output a numbered list of concrete steps (max 7).\n"
-            "- Each step should name the tool or action to use.\n"
-            "- Do NOT execute any tools yourself — only plan.\n"
-            "- If the request is simple (greetings, factual Q&A), output a single "
-            "step: '1. Reply directly.'\n"
-            "- End with a one-line summary of the expected outcome."
+            "## Planning Rules\n"
+            "1. **Analyze Capabilities**: Use ONLY the tools and skills listed in 'Available Capabilities'. Do not hallucinate tools.\n"
+            "2. **Structure**: Output a numbered list of steps. Each step must be actionable.\n"
+            "3. **Format**: Use the following format for each step:\n"
+            "   - **Step N**: [Title]\n"
+            "   - **Goal**: [What this step achieves]\n"
+            "   - **Required Skill**: [Name of the skill from capabilities]\n"
+            "   - **Required Tool**: [Name of the tool to use, if known]\n"
+            "4. **Verification**: If a step involves a major action, consider a follow-up verification step.\n"
+            "5. **Simple Requests**: If the request is simple (greetings, factual Q&A), output: '1. Reply directly.'\n\n"
+            "## Output Example\n"
+            "1. **Step 1**: Search for files\n"
+            "   - **Goal**: Locate the relevant code.\n"
+            "   - **Required Skill**: coding\n"
+            "   - **Required Tool**: list_dir\n"
         )
 
-        # Inject project context so the planner knows what tools/skills exist
-        skills_text = ctx.metadata.get("skills_text")
-        if skills_text:
-            parts.append(f"\n## Available Skills\n{skills_text}")
+        # Inject capabilities (Preferred source of truth)
+        capabilities = ctx.metadata.get("planner_capabilities")
+        if capabilities:
+            parts.append(capabilities)
+        else:
+            # Fallback to old skills text if capabilities missing
+            skills_text = ctx.metadata.get("skills_text")
+            if skills_text:
+                parts.append(f"\n## Available Skills\n{skills_text}")
+
+            integration_tools = ctx.metadata.get("integration_tools_text")
+            if integration_tools:
+                parts.append(f"\n## Available Integration Tools\n{integration_tools}")
 
         plan = ctx.metadata.get("project_plan")
         if plan:
@@ -47,9 +64,6 @@ class PlannerRole:
         if agent_profile:
             parts.append(f"\n## Agent Profile\n{agent_profile}")
 
-        integration_tools = ctx.metadata.get("integration_tools_text")
-        if integration_tools:
-            parts.append(f"\n## Available Integration Tools\n{integration_tools}")
 
         return "\n\n".join(parts)
 

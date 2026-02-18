@@ -109,6 +109,8 @@ async def create_engine_for_project(
             if not engine.skills.has(s.name):
                 engine.register_skill(s_def, NoOpSkill(s_def))
                 db_skill_names.append(s.name)
+                # Keep track of skill def for prompting
+                dynamic_skills.append(s_def)
             else:
                 logger.warning(f"DB Skill '{s.name}' skipped (shadows existing skill).")
                 db_skill_names.append(s.name)
@@ -130,7 +132,14 @@ async def create_engine_for_project(
         logger.warning("Graph definition is empty or missing.")
 
     # 10. Pre-load prompt data
-    prompt_data = await load_prompt_components(db_session, project_id, user_id, db_skills)
+    prompt_data = await load_prompt_components(
+        db_session, 
+        project_id, 
+        user_id, 
+        db_skills,
+        engine=engine,
+        all_skills=dynamic_skills
+    )
     if integration_tools_text:
         prompt_data["integration_tools_text"] = integration_tools_text
 
