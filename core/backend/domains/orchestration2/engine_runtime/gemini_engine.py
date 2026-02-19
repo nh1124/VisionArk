@@ -431,6 +431,40 @@ class GeminiEngine(LLMEngine):
         """Apply output guards to non-reasoning text: block repetition + truncation."""
         original_len = len(text)
 
+        # 0. Collapse single-line repetition (e.g. "(continue)\n" repeated 100x)
+        lines = text.splitlines()
+        if len(lines) > _REPETITION_THRESHOLD:
+            collapsed: list[str] = []
+            streak_line: str | None = None
+            streak_count = 0
+
+            for line in lines:
+                stripped = line.strip()
+                if stripped == streak_line:
+                    streak_count += 1
+                else:
+                    if streak_count >= _REPETITION_THRESHOLD:
+                        collapsed.append(
+                            f"(repeated {streak_count} times, collapsed)"
+                        )
+                    elif streak_line is not None:
+                        for _ in range(streak_count - 1):
+                            collapsed.append(streak_line)
+                    collapsed.append(line)
+                    streak_line = stripped
+                    streak_count = 1
+
+            # flush final streak
+            if streak_count >= _REPETITION_THRESHOLD:
+                collapsed.append(
+                    f"(repeated {streak_count} times, collapsed)"
+                )
+            else:
+                for _ in range(streak_count - 1):
+                    collapsed.append(streak_line or "")
+
+            text = "\n".join(collapsed)
+
         # 1. Collapse multi-line block repetition
         blocks = text.split("\n\n")
         if len(blocks) > _REPETITION_THRESHOLD:
@@ -608,7 +642,10 @@ class GeminiEngine(LLMEngine):
         if not history:
             return history
 
-        _SEP = types.Part.from_text(text="(continue)")
+        # Use a single space — invisible to the model and unlikely to be
+        # echoed back as a repetition pattern (unlike "(continue)" which
+        # the model would treat as content and repeat in a loop).
+        _SEP = types.Part.from_text(text=" ")
 
         result: list[types.Content] = [history[0]]
         for turn in history[1:]:
