@@ -378,7 +378,7 @@ class ChatMessage(Base):
     
     # Relationship
     session = relationship("ChatSession", back_populates="messages")
-    sub_messages = relationship("ChatSubMessage", back_populates="message", cascade="all, delete-orphan")
+    sub_messages = relationship("ChatSubMessage", back_populates="message", cascade="all, delete-orphan", order_by="ChatSubMessage.turn_index")
 
 
 class ChatSubMessage(Base):

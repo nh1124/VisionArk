@@ -522,8 +522,16 @@ class GeminiEngine(LLMEngine):
 
         Performed at the output boundary so the orchestration layer
         receives its expected types.
+
+        TOOL_CALL and TOOL_RESULT submessages share the same ``call_id``
+        so downstream code (worker.py) can correlate them.  Gemini
+        guarantees that function_response parts appear in the same order
+        as the preceding function_call parts, so we match by position.
         """
         result: list[Message] = []
+        # call_ids from the most recent model turn's function_call parts,
+        # consumed positionally by the next tool turn.
+        pending_call_ids: list[str] = []
 
         for content in contents:
             role = content.role
@@ -539,6 +547,7 @@ class GeminiEngine(LLMEngine):
             elif role == "model":
                 submessages: list[SubMessage] = []
                 text_parts: list[str] = []
+                pending_call_ids = []  # reset for this model turn
 
                 for p in parts:
                     is_thought = getattr(p, "thought", None) is True
@@ -550,11 +559,15 @@ class GeminiEngine(LLMEngine):
                             content_str = GeminiEngine._guard_reasoning(
                                 content_str
                             )
+                            # Reasoning/thinking stays in sub-messages only.
+                            # Do NOT add to text_parts — it must not flow into
+                            # ASSISTANT.content (= the user-facing response).
                         else:
                             content_str = GeminiEngine._guard_text(
                                 content_str
                             )
-                        text_parts.append(content_str)
+                            # Only non-thinking text is part of the response.
+                            text_parts.append(content_str)
                         # Preserve as a typed SubMessage for traceability
                         submessages.append(SubMessage(
                             kind=(
@@ -566,6 +579,9 @@ class GeminiEngine(LLMEngine):
                         ))
 
                     if p.function_call:
+                        call_id = str(uuid.uuid4())
+                        pending_call_ids.append(call_id)
+
                         # Capture provider-specific metadata
                         pdata: dict[str, Any] = {}
                         if getattr(p, "thought_signature", None):
@@ -578,7 +594,7 @@ class GeminiEngine(LLMEngine):
                             content="",
                             tool_call=ToolCallRef(
                                 tool_name=p.function_call.name,
-                                call_id=str(uuid.uuid4()),
+                                call_id=call_id,
                                 arguments=dict(p.function_call.args or {}),
                                 provider_data=pdata,
                             ),
@@ -594,19 +610,29 @@ class GeminiEngine(LLMEngine):
 
             elif role == "tool":
                 tool_subs: list[SubMessage] = []
-                for p in parts:
+                for i, p in enumerate(parts):
                     if p.function_response:
                         resp_content = ""
                         if p.function_response.response:
                             resp_content = str(
                                 p.function_response.response.get("result", "")
                             )
+                        # Reuse the call_id from the matching TOOL_CALL
+                        if i < len(pending_call_ids):
+                            call_id = pending_call_ids[i]
+                        else:
+                            call_id = str(uuid.uuid4())
+                            logger.warning(
+                                "TOOL_RESULT at index %d has no matching "
+                                "TOOL_CALL call_id (pending=%d)",
+                                i, len(pending_call_ids),
+                            )
                         tool_subs.append(SubMessage(
                             kind=SubMessageKind.TOOL_RESULT,
                             content=resp_content,
                             tool_call=ToolCallRef(
                                 tool_name=p.function_response.name or "",
-                                call_id=str(uuid.uuid4()),
+                                call_id=call_id,
                             ),
                         ))
                 if tool_subs:

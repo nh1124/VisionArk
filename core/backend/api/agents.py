@@ -274,7 +274,7 @@ async def get_project_history(
             # Convert sub_messages to dicts
             sub_messages_data = []
             if msg.sub_messages:
-                for sub in msg.sub_messages:
+                for sub in sorted(msg.sub_messages, key=lambda s: s.turn_index):
                     tool_calls_data = []
                     if sub.tool_calls:
                         for tc in sub.tool_calls:
