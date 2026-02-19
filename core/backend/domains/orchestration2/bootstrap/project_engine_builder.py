@@ -15,6 +15,7 @@ from ..roles.planner_role import PlannerRole
 from ..roles.project_role import ProjectRole
 from ..roles.verifier_role import VerifierRole
 from ..roles.responder_role import ResponderRole
+from ..roles.direct_role import DirectRole
 
 # New components
 from ..config.skills.default_skills import SKILL_DEFS, ALL_SKILL_NAMES
@@ -25,16 +26,20 @@ from ..skills.noop import NoOpSkill
 
 logger = logging.getLogger(__name__)
 
-def _load_graph_yaml() -> str:
-    """Load the project assistant graph definition."""
-    # Assuming this file is in bootstrap/
-    # And graph is in config/graphs/
+def _load_graph_yamls() -> list[str]:
+    """Load all graph definitions from config/graphs/."""
     current_dir = Path(__file__).parent
-    graph_path = current_dir.parent / "config" / "graphs" / "project_assistant.yaml"
-    if not graph_path.exists():
-        logger.error(f"Graph definition not found at {graph_path}")
-        return ""
-    return graph_path.read_text(encoding="utf-8")
+    graphs_dir = current_dir.parent / "config" / "graphs"
+    if not graphs_dir.exists():
+        logger.error(f"Graphs directory not found at {graphs_dir}")
+        return []
+    yamls = []
+    for graph_path in sorted(graphs_dir.glob("*.yaml")):
+        content = graph_path.read_text(encoding="utf-8")
+        if content.strip():
+            yamls.append(content)
+            logger.debug("Loaded graph definition: %s", graph_path.name)
+    return yamls
 
 
 async def create_engine_for_project(
@@ -123,13 +128,15 @@ async def create_engine_for_project(
     engine.register_role(ProjectRole())
     engine.register_role(VerifierRole())
     engine.register_role(ResponderRole())
+    engine.register_role(DirectRole())
 
-    # 9. Register graph
-    graph_yaml = _load_graph_yaml()
-    if graph_yaml:
-        engine.register_graph(graph_yaml)
+    # 9. Register graphs (all YAML files in config/graphs/)
+    graph_yamls = _load_graph_yamls()
+    if graph_yamls:
+        for graph_yaml in graph_yamls:
+            engine.register_graph(graph_yaml)
     else:
-        logger.warning("Graph definition is empty or missing.")
+        logger.warning("No graph definitions found.")
 
     # 10. Pre-load prompt data
     prompt_data = await load_prompt_components(
@@ -149,7 +156,7 @@ async def create_engine_for_project(
 
     agent_def = AgentDef(
         name=f"project_{project_id}",
-        graph_name="project_assistant",
+        graph_name="direct_assistant", # or "project_assistant"
         default_model="default",
         skills=all_skill_names,
         limits=AgentLimits(max_turns=25),
