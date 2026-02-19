@@ -161,6 +161,10 @@ class StepExecutor:
         # (which engine_setup.py populates) if it wants the full list.
         if active_skills_text:
              ctx.metadata["active_skills_text"] = active_skills_text
+             logger.debug(
+                 "step '%s': active_skills_text set (%d chars, skills=%s)",
+                 step.id, len(active_skills_text), step.skills,
+             )
 
         system_prompt = role_impl.build_prompt(ctx)
         tool_defs = self._gather_tool_definitions(agent_def, step_skills=step.skills)
@@ -192,6 +196,7 @@ class StepExecutor:
         # Determine limits from step or agent defaults
         max_turns = step.limits.max_turns or agent_def.limits.max_turns
         max_tool_calls = step.limits.max_tool_calls or 50
+        max_output_tokens = step.limits.max_output_tokens
 
         engine_input = EngineRunInput(
             run_id=run.run_id,
@@ -209,11 +214,14 @@ class StepExecutor:
         options = RunOptions(
             max_turns=max_turns,
             max_tool_calls=max_tool_calls,
+            max_output_tokens=max_output_tokens,
         )
 
         logger.debug(
-            "role_step '%s': delegating to engine_runtime (max_turns=%d, max_tool_calls=%d)",
-            step.id, max_turns, max_tool_calls,
+            "role_step '%s': delegating to engine_runtime "
+            "(max_turns=%d, max_tool_calls=%d, tool_defs=%d, max_output_tokens=%s)",
+            step.id, max_turns, max_tool_calls, len(tool_defs),
+            max_output_tokens,
         )
         engine_result = await self._engine.run(engine_input, options)
 

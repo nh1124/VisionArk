@@ -168,13 +168,20 @@ async def load_prompt_components(
     except Exception as e:
         logger.warning("Failed to load user settings: %s", e)
 
-    return result
-
     # 6. Planner capabilities (snapshot)
     if engine and all_skills:
         try:
-            result["planner_capabilities"] = _build_planner_capabilities(all_skills, engine.tools)
+            caps = _build_planner_capabilities(all_skills, engine.tools)
+            result["planner_capabilities"] = caps
+            logger.debug(
+                "planner_capabilities built successfully (%d chars)", len(caps)
+            )
         except Exception as e:
             logger.warning("Failed to build planner capabilities: %s", e)
+    else:
+        logger.debug(
+            "Skipped planner_capabilities: engine=%s, all_skills=%s",
+            engine is not None, all_skills is not None,
+        )
 
     return result

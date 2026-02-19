@@ -7,6 +7,7 @@ steps:
     skills: [investigation]
     limits:
       max_turns: 10
+      max_output_tokens: 1024
     on:
       - when: "event.type == 'done'"
         next: execute
@@ -19,6 +20,7 @@ steps:
     limits:
       max_turns: 25
       max_tool_calls: 50
+      max_output_tokens: 4096
     on:
       - when: "event.type == 'done'"
         next: verify
@@ -31,6 +33,7 @@ steps:
     limits:
       max_turns: 5
       max_tool_calls: 10
+      max_output_tokens: 2048
     on:
       - when: "event.type == 'done'"
         next: respond

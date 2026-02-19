@@ -19,6 +19,7 @@ class RunOptions(BaseModel):
 
     max_turns: int = 25
     max_tool_calls: int = 50
+    max_output_tokens: int | None = None
     allow_partial_on_error: bool = True
 
 

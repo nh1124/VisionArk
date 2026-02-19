@@ -31,6 +31,11 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_OPTIONS = RunOptions()
 
+# ── Output guard constants ───────────────────────────────────────────
+_REASONING_CHAR_LIMIT = 5000
+_TEXT_CHAR_LIMIT = 15000  # guard for non-reasoning text output per part
+_REPETITION_THRESHOLD = 3  # collapse after N identical/near-identical lines
+
 
 class GeminiEngine(LLMEngine):
     """Multi-turn inference engine using the Google Gemini SDK directly.
@@ -99,6 +104,7 @@ class GeminiEngine(LLMEngine):
                     temperature=0.2,
                     tools=gemini_tools,
                     system_instruction=system_content,
+                    max_output_tokens=opts.max_output_tokens,
                 )
                 if gemini_tools:
                     config.tool_config = types.ToolConfig(
@@ -220,8 +226,9 @@ class GeminiEngine(LLMEngine):
                 elapsed = time.time() - t0
                 logger.info(
                     "[GeminiEngine] run=%s completed in %.2fs "
-                    "(%d turns, %d tool_calls)",
+                    "(%d turns, %d tool_calls, output=%d chars)",
                     run_id, elapsed, turn + 1, total_tool_calls,
+                    len(output_text),
                 )
 
                 # ── Boundary: convert native → orchestration2 ────
@@ -335,6 +342,147 @@ class GeminiEngine(LLMEngine):
         return result
 
     @staticmethod
+    def _guard_reasoning(text: str) -> str:
+        """Apply output guards to reasoning text: truncation + repetition collapse."""
+        original_len = len(text)
+
+        # 1a. Collapse single-line repetition
+        lines = text.splitlines()
+        if len(lines) > _REPETITION_THRESHOLD:
+            collapsed: list[str] = []
+            streak_line: str | None = None
+            streak_count = 0
+
+            for line in lines:
+                stripped = line.strip()
+                if stripped == streak_line:
+                    streak_count += 1
+                else:
+                    if streak_count >= _REPETITION_THRESHOLD:
+                        collapsed.append(
+                            f"(repeated {streak_count} times, collapsed)"
+                        )
+                    elif streak_line is not None:
+                        for _ in range(streak_count - 1):
+                            collapsed.append(streak_line)
+                    collapsed.append(line)
+                    streak_line = stripped
+                    streak_count = 1
+
+            # flush final streak
+            if streak_count >= _REPETITION_THRESHOLD:
+                collapsed.append(
+                    f"(repeated {streak_count} times, collapsed)"
+                )
+            else:
+                for _ in range(streak_count - 1):
+                    collapsed.append(streak_line or "")
+
+            text = "\n".join(collapsed)
+
+        # 1b. Collapse multi-line block repetition
+        # Split into paragraphs (blocks separated by blank lines) and
+        # detect when the same block appears consecutively.
+        blocks = text.split("\n\n")
+        if len(blocks) > _REPETITION_THRESHOLD:
+            deduped: list[str] = []
+            prev_block: str | None = None
+            block_repeat = 0
+
+            for block in blocks:
+                normalized = block.strip()
+                if normalized == prev_block and normalized:
+                    block_repeat += 1
+                else:
+                    if block_repeat >= _REPETITION_THRESHOLD:
+                        deduped.append(
+                            f"(block repeated {block_repeat} times, collapsed)"
+                        )
+                    elif prev_block is not None:
+                        for _ in range(block_repeat - 1):
+                            deduped.append(prev_block)
+                    deduped.append(block)
+                    prev_block = normalized
+                    block_repeat = 1
+
+            if block_repeat >= _REPETITION_THRESHOLD:
+                deduped.append(
+                    f"(block repeated {block_repeat} times, collapsed)"
+                )
+            else:
+                for _ in range(block_repeat - 1):
+                    deduped.append(prev_block or "")
+
+            text = "\n\n".join(deduped)
+
+        # 2. Truncate if over char limit
+        if len(text) > _REASONING_CHAR_LIMIT:
+            text = text[:_REASONING_CHAR_LIMIT] + "\n(reasoning truncated)"
+
+        if len(text) < original_len:
+            logger.debug(
+                "Reasoning guard: %d -> %d chars", original_len, len(text)
+            )
+
+        return text
+
+    @staticmethod
+    def _guard_text(text: str) -> str:
+        """Apply output guards to non-reasoning text: block repetition + truncation."""
+        original_len = len(text)
+
+        # 1. Collapse multi-line block repetition
+        blocks = text.split("\n\n")
+        if len(blocks) > _REPETITION_THRESHOLD:
+            deduped: list[str] = []
+            prev_block: str | None = None
+            block_repeat = 0
+
+            for block in blocks:
+                normalized = block.strip()
+                if normalized == prev_block and normalized:
+                    block_repeat += 1
+                else:
+                    if block_repeat >= _REPETITION_THRESHOLD:
+                        deduped.append(
+                            f"(block repeated {block_repeat} times, collapsed)"
+                        )
+                    elif prev_block is not None:
+                        for _ in range(block_repeat - 1):
+                            deduped.append(prev_block)
+                    deduped.append(block)
+                    prev_block = normalized
+                    block_repeat = 1
+
+            if block_repeat >= _REPETITION_THRESHOLD:
+                deduped.append(
+                    f"(block repeated {block_repeat} times, collapsed)"
+                )
+            else:
+                for _ in range(block_repeat - 1):
+                    deduped.append(prev_block or "")
+
+            text = "\n\n".join(deduped)
+
+        # 2. Truncate if over char limit
+        if len(text) > _TEXT_CHAR_LIMIT:
+            logger.warning(
+                "Text output guard: truncating %d -> %d chars",
+                len(text), _TEXT_CHAR_LIMIT,
+            )
+            text = (
+                text[:_TEXT_CHAR_LIMIT]
+                + "\n\n(output truncated — exceeded safe limit)"
+            )
+
+        if len(text) < original_len:
+            logger.debug(
+                "Text guard: %d -> %d chars", original_len, len(text)
+            )
+
+        return text
+
+    @staticmethod
     def _contents_to_messages(contents: list[types.Content]) -> list[Message]:
         """Convert Gemini Content objects → orchestration2 Messages.
 
@@ -362,7 +510,17 @@ class GeminiEngine(LLMEngine):
                     is_thought = getattr(p, "thought", None) is True
 
                     if p.text:
-                        text_parts.append(p.text)
+                        content_str = p.text
+                        # Apply output guards
+                        if is_thought:
+                            content_str = GeminiEngine._guard_reasoning(
+                                content_str
+                            )
+                        else:
+                            content_str = GeminiEngine._guard_text(
+                                content_str
+                            )
+                        text_parts.append(content_str)
                         # Preserve as a typed SubMessage for traceability
                         submessages.append(SubMessage(
                             kind=(
@@ -370,7 +528,7 @@ class GeminiEngine(LLMEngine):
                                 if is_thought
                                 else SubMessageKind.TEXT
                             ),
-                            content=p.text,
+                            content=content_str,
                         ))
 
                     if p.function_call:
@@ -441,29 +599,36 @@ class GeminiEngine(LLMEngine):
     def _normalise_turns(
         history: list[types.Content],
     ) -> list[types.Content]:
-        """Merge adjacent same-role turns and ensure user-first ordering."""
+        """Ensure valid alternating turns for the Gemini API.
+
+        Instead of merging consecutive same-role turns (which corrupts
+        content boundaries between orchestration steps), insert a
+        lightweight separator turn of the opposite role.
+        """
         if not history:
             return history
 
-        merged: list[types.Content] = [history[0]]
-        for turn in history[1:]:
-            if turn.role == merged[-1].role:
-                merged[-1] = types.Content(
-                    role=turn.role,
-                    parts=list(merged[-1].parts or []) + list(turn.parts or []),
-                )
-            else:
-                merged.append(turn)
+        _SEP = types.Part.from_text(text="(continue)")
 
-        if merged and merged[0].role != "user":
-            merged.insert(
+        result: list[types.Content] = [history[0]]
+        for turn in history[1:]:
+            if turn.role == result[-1].role:
+                # Insert a separator of the opposite role
+                sep_role = "user" if turn.role == "model" else "model"
+                result.append(
+                    types.Content(role=sep_role, parts=[_SEP])
+                )
+            result.append(turn)
+
+        if result and result[0].role != "user":
+            result.insert(
                 0,
                 types.Content(
                     role="user",
-                    parts=[types.Part.from_text(text="(continue)")],
+                    parts=[_SEP],
                 ),
             )
-        return merged
+        return result
 
     @staticmethod
     def _convert_tools(

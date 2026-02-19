@@ -50,7 +50,28 @@ class ProjectRole:
         else:
             parts.append("You are a helpful AI assistant managing a project.")
 
-        # 2. Agent-specific system prompt (from DB)
+        # 2. Execution behavior (critical for preventing output overflow)
+        parts.append(
+            "## Execution Rules\n"
+            "You are in the EXECUTE phase. A planner has already analyzed the "
+            "user's request and produced a work plan (the previous assistant "
+            "message in conversation history).\n\n"
+            "**Follow these rules strictly:**\n"
+            "1. **Follow the plan**: Execute ONLY what the plan specifies.\n"
+            "2. **Simple requests**: If the plan says 'Reply directly' or has "
+            "only one trivial step, respond to the user immediately in natural "
+            "language. Do NOT call tools or list capabilities.\n"
+            "3. **Tool usage**: Only call tools when the plan explicitly "
+            "requires an action (e.g., 'search files', 'create document'). "
+            "Use function calling to invoke tools — never describe tools "
+            "in your text response.\n"
+            "4. **NEVER list or describe available tools** in your response. "
+            "The user does not need to see tool names or descriptions.\n"
+            "5. **Be concise**: Your response should address the user's "
+            "request directly. Avoid meta-commentary about what you could do."
+        )
+
+        # 3. Agent-specific system prompt (from DB)
         node_prompt = ctx.metadata.get("agent_profile")
         if node_prompt:
             parts.append(f"\n## Role Profile\n{node_prompt}")
@@ -60,6 +81,11 @@ class ProjectRole:
         # Fall back to global skills_text (all skills) if not found (legacy behavior)
         skills_text = ctx.metadata.get("active_skills_text") or ctx.metadata.get("skills_text")
         if skills_text:
+            logger.debug(
+                "ProjectRole injecting skills_text (%d chars, source=%s)",
+                len(skills_text),
+                "active_skills_text" if ctx.metadata.get("active_skills_text") else "skills_text",
+            )
             parts.append(f"\n## Active Skills\n{skills_text}")
 
         # 4. Project plan (PLAN.md)
@@ -98,7 +124,9 @@ class ProjectRole:
                 meta_lines.append(f"- Location: {location}")
             parts.append("\n## User Environment\n" + "\n".join(meta_lines))
 
-        return "\n\n".join(parts)
+        prompt = "\n\n".join(parts)
+        logger.debug("ProjectRole prompt total size: %d chars", len(prompt))
+        return prompt
 
     def post_process(self, llm_output: str, ctx: ExecutionContext) -> RoleResult:
         """Post-process LLM output. For ProjectRole this is a pass-through."""

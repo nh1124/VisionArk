@@ -14,6 +14,7 @@ class StepPolicy(BaseModel):
 class StepLimits(BaseModel):
     max_turns: int | None = None
     max_tool_calls: int | None = None
+    max_output_tokens: int | None = None
     max_parallel_delegations: int | None = None
 
 

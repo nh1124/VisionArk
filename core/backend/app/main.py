@@ -6,6 +6,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
+from shared.logger import setup_logging
+setup_logging()
+
 from shared.database import init_database
 from api import agents, commands, rag, context, files, auth, settings as settings_api, export, notes
 from api import decomposer, suggestions, scheduler, approvals, automation, skills, notifications

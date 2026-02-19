@@ -9,6 +9,9 @@ from datetime import datetime, timedelta
 # Add core/backend root to path so all packages are importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from shared.logger import setup_logging
+setup_logging()
+
 from infrastructure.queue.manager import QueueManager
 from domains.automation.command_parser import parse_command, execute_command
 from shared.database import AsyncSessionLocal, ScheduledTask, ScheduledTaskStatus, TaskType, Project

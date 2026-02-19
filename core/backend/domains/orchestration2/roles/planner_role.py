@@ -6,7 +6,13 @@ Produces a concise plan that subsequent steps can follow.
 
 from __future__ import annotations
 
+import logging
+
 from domains.orchestration2.engine.models.execution import ExecutionContext, RoleResult
+
+logger = logging.getLogger(__name__)
+
+_FALLBACK_MAX_CHARS = 2000
 
 
 class PlannerRole:
@@ -46,15 +52,42 @@ class PlannerRole:
         capabilities = ctx.metadata.get("planner_capabilities")
         if capabilities:
             parts.append(capabilities)
+            logger.debug(
+                "Planner using planner_capabilities (%d chars)", len(capabilities)
+            )
         else:
-            # Fallback to old skills text if capabilities missing
-            skills_text = ctx.metadata.get("skills_text")
-            if skills_text:
-                parts.append(f"\n## Available Skills\n{skills_text}")
+            # Fallback: build a minimal summary (name + description only)
+            # to avoid injecting full skill content which causes output overflow
+            logger.warning(
+                "planner_capabilities missing — using minimal fallback summary"
+            )
+            fallback_lines = ["## Available Skills (summary)"]
+            skill_defs = ctx.metadata.get("skill_definitions", {})
+            if skill_defs:
+                for name in skill_defs:
+                    fallback_lines.append(f"- **{name}**")
+            else:
+                skills_text = ctx.metadata.get("skills_text", "")
+                # Extract only '### SkillName' headers from raw text
+                for line in skills_text.splitlines():
+                    if line.startswith("### "):
+                        fallback_lines.append(f"- **{line[4:].strip()}**")
 
             integration_tools = ctx.metadata.get("integration_tools_text")
             if integration_tools:
-                parts.append(f"\n## Available Integration Tools\n{integration_tools}")
+                fallback_lines.append("\n## Available Integration Tools (summary)")
+                for line in integration_tools.splitlines():
+                    if line.startswith("### "):
+                        fallback_lines.append(f"- **{line[4:].strip()}**")
+
+            fallback_text = "\n".join(fallback_lines)
+            if len(fallback_text) > _FALLBACK_MAX_CHARS:
+                fallback_text = (
+                    fallback_text[:_FALLBACK_MAX_CHARS]
+                    + "\n... (truncated — capability list too long)"
+                )
+            parts.append(fallback_text)
+            logger.debug("Fallback prompt size: %d chars", len(fallback_text))
 
         plan = ctx.metadata.get("project_plan")
         if plan:
@@ -65,7 +98,9 @@ class PlannerRole:
             parts.append(f"\n## Agent Profile\n{agent_profile}")
 
 
-        return "\n\n".join(parts)
+        prompt = "\n\n".join(parts)
+        logger.debug("Planner prompt total size: %d chars", len(prompt))
+        return prompt
 
     def post_process(self, llm_output: str, ctx: ExecutionContext) -> RoleResult:
         """Always signals not-done so the step emits DONE and transitions."""
