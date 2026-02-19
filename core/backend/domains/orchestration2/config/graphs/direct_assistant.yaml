@@ -1,0 +1,12 @@
+graph_name: direct_assistant
+start: act
+steps:
+  - id: act
+    type: role
+    role: direct
+    skills: [investigation, document_creation, file_management, operation]
+    limits:
+      max_turns: 30
+      max_tool_calls: 50
+      max_output_tokens: 8192
+    terminal: true
