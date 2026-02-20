@@ -343,7 +343,7 @@ export default function ProjectChatPage({
         }
     }, [taskIdFromUrl, activeTaskId]);
 
-    // Effect: Start polling + SSE when activeTaskId is set
+    // Effect: Start polling + WS when activeTaskId is set
     useEffect(() => {
         // Skip if no taskId
         if (!activeTaskId) return;
@@ -727,11 +727,11 @@ export default function ProjectChatPage({
                 throw new Error("No task ID returned");
             }
 
-            // Set active task ID (this triggers useEffect for polling + SSE)
+            // Set active task ID (this triggers useEffect for polling + WS)
             setActiveTaskId(taskId);
 
             // NOTE: Do NOT call router.replace here.
-            // It causes a Next.js soft navigation that kills the SSE connection.
+            // It causes a Next.js soft navigation that kills the WebSocket connection.
             // The URL is updated only after the task completes (in pollTask).
             clearInterval(timerInterval);
 
