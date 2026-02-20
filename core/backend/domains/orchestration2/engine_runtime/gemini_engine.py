@@ -156,6 +156,17 @@ class GeminiEngine(LLMEngine):
                 text_parts = [p.text for p in parts if p.text]
                 content_text = "".join(text_parts).strip()
 
+                if content_text:
+                    progress_cb = run_input.metadata.get("progress_cb")
+                    if progress_cb:
+                        try:
+                            await progress_cb(phase="Thinking", message="Generated thought", meta={
+                                "type": "turn_text",
+                                "text": content_text
+                            })
+                        except Exception as e:
+                            logger.error(f"progress_cb error (Thinking): {e}")
+
                 # Collect function_call parts
                 fc_parts = [p for p in parts if p.function_call]
 
@@ -182,10 +193,20 @@ class GeminiEngine(LLMEngine):
 
                         fc = fc_part.function_call
                         call_id = str(uuid.uuid4())
+                        
+                        def _unwrap_proto(obj):
+                            if hasattr(obj, "items"):
+                                return {k: _unwrap_proto(v) for k, v in obj.items()}
+                            elif hasattr(obj, "__iter__") and not isinstance(obj, (str, bytes)):
+                                return [_unwrap_proto(v) for v in obj]
+                            return obj
+                            
+                        native_args = _unwrap_proto(dict(fc.args or {}))
+                        
                         call_ref = ToolCallRef(
                             tool_name=fc.name,
                             call_id=call_id,
-                            arguments=dict(fc.args or {}),
+                            arguments=native_args,
                         )
 
                         # Update status
@@ -195,6 +216,21 @@ class GeminiEngine(LLMEngine):
                             tool_calls=total_tool_calls,
                             tool_progress={"current_tool": fc.name},
                         )
+
+                        progress_cb = run_input.metadata.get("progress_cb")
+                        if progress_cb:
+                            try:
+                                await progress_cb(phase="Tool Execution", message=f"Running tool: {fc.name}", meta={
+                                    "type": "tool_start",
+                                    "tool": fc.name,
+                                    "tool_call": {
+                                        "name": fc.name,
+                                        "args": native_args,
+                                        "call_id": call_id
+                                    }
+                                })
+                            except Exception as e:
+                                logger.error(f"progress_cb error (Tool Start): {e}")
 
                         try:
                             # Direct tool invocation (no dispatcher)
@@ -216,6 +252,22 @@ class GeminiEngine(LLMEngine):
                                 output=f"Error: {exc}",
                                 error=str(exc),
                             )
+
+                        if progress_cb:
+                            try:
+                                result_str = str(result.output)
+                                # Truncate massive results for SSE
+                                if len(result_str) > 1000:
+                                    result_str = result_str[:1000] + "... (truncated)"
+                                await progress_cb(phase="Tool Execution", message=f"Finished tool: {fc.name}", meta={
+                                    "type": "tool_end",
+                                    "call_id": call_id,
+                                    "tool": fc.name,
+                                    "result": result_str,
+                                    "is_success": not bool(result.error)
+                                })
+                            except Exception as e:
+                                logger.error(f"progress_cb error (Tool End): {e}")
 
                         # Build native function_response Part
                         fr_parts.append(

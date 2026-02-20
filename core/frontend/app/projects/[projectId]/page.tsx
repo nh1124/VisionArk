@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import ChatInput from "@/components/ChatInput";
 import MessageWithAttachments from "@/components/MessageWithAttachments";
 import FilesSidebar from "@/components/FilesSidebar";
+import { startWS, stopWS, onWS } from "@/lib/wsManager";
 import CommandAutocomplete, { CommandAutocompleteHandle } from "../../components/CommandAutocomplete";
 import { apiFetch } from "@/lib/api";
 import { Settings, Files, RotateCcw, X, AlarmClock } from "lucide-react";
@@ -79,6 +80,7 @@ export default function ProjectChatPage({
     // Polling and task state
     const searchParams = useSearchParams();
     const taskIdFromUrl = searchParams.get('task_id');
+    const [activeTaskId, setActiveTaskId] = useState<string | null>(taskIdFromUrl);
     const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const isPollingActiveRef = useRef(false);
@@ -87,9 +89,9 @@ export default function ProjectChatPage({
 
     // Stop handler
     const handleStop = async () => {
-        if (!taskIdFromUrl) return;
+        if (!activeTaskId) return;
         try {
-            const response = await apiFetch(`/api/agents/tasks/${taskIdFromUrl}`, {
+            const response = await apiFetch(`/api/agents/tasks/${activeTaskId}`, {
                 method: "DELETE"
             });
             if (response.ok) {
@@ -137,8 +139,8 @@ export default function ProjectChatPage({
         try {
             // Fetch history AND approvals in parallel
             const [historyRes, approvalsRes] = await Promise.all([
-                apiFetch(`/api/agents/project/${projectId}/history`),
-                apiFetch(`/api/approvals/project/${projectId}/list`)
+                apiFetch(`/api/agents/project/${projectId}/history?t=${Date.now()}`),
+                apiFetch(`/api/approvals/project/${projectId}/list?t=${Date.now()}`)
             ]);
 
             const historyData = await historyRes.json();
@@ -315,6 +317,7 @@ export default function ProjectChatPage({
                     clearInterval(pollIntervalRef.current);
                     pollIntervalRef.current = null;
                 }
+                stopWS();
                 isPollingActiveRef.current = false;
                 currentPollingTaskRef.current = null;
             }
@@ -333,30 +336,116 @@ export default function ProjectChatPage({
         }
     }, [projectId]);
 
-    // Effect: Start polling when taskId appears
+    // Sync URL task_id to activeTaskId (for browser refresh recovery)
+    useEffect(() => {
+        if (taskIdFromUrl && !activeTaskId) {
+            setActiveTaskId(taskIdFromUrl);
+        }
+    }, [taskIdFromUrl, activeTaskId]);
+
+    // Effect: Start polling + SSE when activeTaskId is set
     useEffect(() => {
         // Skip if no taskId
-        if (!taskIdFromUrl) return;
+        if (!activeTaskId) return;
 
         // Skip if already polling this task
-        if (isPollingActiveRef.current && currentPollingTaskRef.current === taskIdFromUrl) {
+        if (isPollingActiveRef.current && currentPollingTaskRef.current === activeTaskId) {
             return;
         }
 
         // Mark as polling and store the taskId
         isPollingActiveRef.current = true;
-        currentPollingTaskRef.current = taskIdFromUrl;
+        currentPollingTaskRef.current = activeTaskId;
 
         // Start polling for this task
         setLoading(true);
         setStatusText("Processing your request...");
         const startTime = Date.now();
-        const currentTaskId = taskIdFromUrl; // Capture for closure
+        const currentTaskId = activeTaskId; // Capture for closure
 
         timerIntervalRef.current = setInterval(() => {
             const elapsed = Math.floor((Date.now() - startTime) / 1000);
             setElapsedTime(elapsed);
         }, 1000);
+
+        // Setup WebSocket for real-time progress using the window-level WS manager
+        // (survives HMR rebuilds because connection lives on window object)
+        const token = localStorage.getItem("atmos_access_token");
+        startWS(currentTaskId, token);
+        const unsubscribeWS = onWS((event) => {
+            if (event.type === "meta" && event.data.meta) {
+                const meta = event.data.meta;
+                setMessages(prev => {
+                    const newMsgs = [...prev];
+                    const lastMsg = newMsgs[newMsgs.length - 1];
+                    if (!lastMsg || lastMsg.role !== "assistant") return prev;
+
+                    const subs = lastMsg.sub_messages ? [...lastMsg.sub_messages] : [];
+                    let latestSub = subs.length > 0 ? { ...subs[subs.length - 1] } : null;
+
+                    if (meta.type === "turn_text") {
+                        latestSub = {
+                            sub_id: 'live_' + Date.now(),
+                            content: meta.text,
+                            tool_calls: []
+                        };
+                        subs.push(latestSub);
+                    } else if (meta.type === "tool_start") {
+                        if (!latestSub) {
+                            latestSub = { sub_id: 'live_' + Date.now(), content: "", tool_calls: [] };
+                            subs.push(latestSub);
+                        }
+                        latestSub.tool_calls = [...(latestSub.tool_calls || [])];
+                        latestSub.tool_calls.push({
+                            id: meta.tool_call.call_id,
+                            name: meta.tool_call.name,
+                            args: meta.tool_call.args,
+                            result: "Running...",
+                            is_success: true,
+                            status: "running"
+                        });
+                        subs[subs.length - 1] = latestSub;
+                    } else if (meta.type === "tool_end") {
+                        if (latestSub && latestSub.tool_calls) {
+                            latestSub.tool_calls = latestSub.tool_calls.map(tc => {
+                                if (tc.id === meta.call_id || tc.name === meta.tool) {
+                                    return {
+                                        ...tc,
+                                        result: meta.result,
+                                        is_success: meta.is_success,
+                                        status: "done"
+                                    };
+                                }
+                                return tc;
+                            });
+                            subs[subs.length - 1] = latestSub;
+                        }
+                    }
+
+                    return [
+                        ...newMsgs.slice(0, -1),
+                        { ...lastMsg, sub_messages: subs }
+                    ];
+                });
+            } else if (event.type === "status") {
+                const data = event.data;
+                if (data.phase) {
+                    if (data.message) {
+                        setStatusText(`${data.phase}: ${data.message}...`);
+                    } else {
+                        setStatusText(`${data.phase}...`);
+                    }
+                } else if (data.status) {
+                    if (data.status !== "completed" && data.status !== "failed" && data.status !== "cancelled") {
+                        setStatusText(data.status === "queued" ? "Queued..." : "Processing...");
+                    }
+                }
+            } else if (event.type === "done") {
+                // If WS indicates completion from backend, attempt history fetch
+                console.log("[WS] Stream done received, checking task completion.");
+                pollTask();
+            }
+        });
 
         const pollTask = async (): Promise<boolean> => {
             try {
@@ -375,6 +464,7 @@ export default function ProjectChatPage({
                         clearInterval(pollIntervalRef.current);
                         pollIntervalRef.current = null;
                     }
+                    stopWS();
                     setLoading(false);
                     setStatusText("");
                     // Cleanup optimistic storage
@@ -383,7 +473,7 @@ export default function ProjectChatPage({
                     // Re-fetch history to get complete messages
                     const requestId = ++historyFetchId.current;
                     try {
-                        const historyRes = await apiFetch(`/api/agents/project/${projectId}/history`);
+                        const historyRes = await apiFetch(`/api/agents/project/${projectId}/history?t=${Date.now()}`);
                         const historyData = await historyRes.json();
                         if (requestId === historyFetchId.current && historyData.history && Array.isArray(historyData.history)) {
                             const newMessages = historyData.history.map((m: any) => ({
@@ -419,6 +509,7 @@ export default function ProjectChatPage({
 
                     // Clear URL AFTER task completes
                     router.replace(`/projects/${projectId}`, { scroll: false });
+                    setActiveTaskId(null);
                     isPollingActiveRef.current = false;
                     currentPollingTaskRef.current = null;
                     return true;
@@ -431,6 +522,7 @@ export default function ProjectChatPage({
                         clearInterval(pollIntervalRef.current);
                         pollIntervalRef.current = null;
                     }
+                    stopWS();
                     setLoading(false);
                     setStatusText("");
                     // Cleanup optimistic storage
@@ -445,6 +537,7 @@ export default function ProjectChatPage({
                     });
 
                     router.replace(`/projects/${projectId}`, { scroll: false });
+                    setActiveTaskId(null);
                     isPollingActiveRef.current = false;
                     currentPollingTaskRef.current = null;
                     return true;
@@ -457,6 +550,7 @@ export default function ProjectChatPage({
                         clearInterval(pollIntervalRef.current);
                         pollIntervalRef.current = null;
                     }
+                    stopWS();
                     setLoading(false);
                     setStatusText("");
                     // Cleanup optimistic storage
@@ -470,11 +564,13 @@ export default function ProjectChatPage({
 
                     // Clear URL on failure too
                     router.replace(`/projects/${projectId}`, { scroll: false });
+                    setActiveTaskId(null);
                     isPollingActiveRef.current = false;
                     currentPollingTaskRef.current = null;
                     return true;
                 } else {
-                    setStatusText(status === "queued" ? "Queued..." : "Processing...");
+                    // Only update fallback text if empty to avoid wiping out the live WebSocket phase text
+                    setStatusText(prev => prev || (status === "queued" ? "Queued..." : "Processing..."));
                     return false;
                 }
             } catch (err) {
@@ -489,14 +585,14 @@ export default function ProjectChatPage({
                 clearInterval(pollIntervalRef.current);
                 pollIntervalRef.current = null;
             }
-        }, 1000);
+        }, 3000); // Polling interval slower since WebSocket handles real-time
 
         // Initial poll
         pollTask();
 
         // NO cleanup here - Effect 1 handles unmount cleanup
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [taskIdFromUrl, projectId]);
+    }, [activeTaskId, projectId]);
 
 
     const sendMessage = async (content: string, files: File[]) => {
@@ -631,9 +727,12 @@ export default function ProjectChatPage({
                 throw new Error("No task ID returned");
             }
 
-            // Sync Task ID to URL - this will trigger the URL-based polling useEffect
-            router.replace(`/projects/${projectId}?task_id=${taskId}`, { scroll: false });
-            // Handle timer separately as the URL effect starts its own timer
+            // Set active task ID (this triggers useEffect for polling + SSE)
+            setActiveTaskId(taskId);
+
+            // NOTE: Do NOT call router.replace here.
+            // It causes a Next.js soft navigation that kills the SSE connection.
+            // The URL is updated only after the task completes (in pollTask).
             clearInterval(timerInterval);
 
         } catch (error: any) {

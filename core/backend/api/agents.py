@@ -80,6 +80,86 @@ class WorkspaceStats(BaseModel):
 # TASK STATUS
 # ----------------------------------------------------------------------
 
+from fastapi import WebSocket, WebSocketDisconnect
+
+@router.websocket("/tasks/{task_id}/ws")
+async def websocket_task_progress(
+    websocket: WebSocket,
+    task_id: str,
+):
+    """Stream real-time task progress using WebSocket"""
+    from infrastructure.queue.manager import QueueManager
+    import asyncio
+    import json
+    
+    await websocket.accept()
+    
+    manager = QueueManager()
+    
+    # Check if task exists initially
+    current_status = await manager.get_status(task_id)
+    if not current_status:
+        await websocket.close(code=1008, reason="Task not found")
+        return
+        
+    pubsub = manager.client.pubsub()
+    channel = f"progress:{task_id}"
+    
+    listener_task = None
+    try:
+        await pubsub.subscribe(channel)
+        
+        # Send initial state
+        initial_data = await manager.get_status(task_id)
+        if initial_data:
+            await websocket.send_text(json.dumps(initial_data))
+            if initial_data.get("status") in ["completed", "failed", "cancelled"]:
+                return
+                
+        async def redis_listener():
+            try:
+                # Use a while loop with pubsub.get_message to also check task status periodically
+                while True:
+                    message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=2.0)
+                    if message and message["type"] == "message":
+                        await websocket.send_text(message['data'])
+                        
+                        try:
+                            data = json.loads(message["data"])
+                            if data.get("phase") in ["Completed", "Failed", "Cancelled"]:
+                                # Close normally
+                                await websocket.close(code=1000)
+                                return
+                        except Exception:
+                            pass
+                    else:
+                        # Periodically check DB status if no messages
+                        status_data = await manager.get_status(task_id)
+                        if status_data:
+                            if status_data.get("status") in ["completed", "failed", "cancelled"]:
+                                await websocket.send_text(json.dumps(status_data))
+                                await websocket.close(code=1000)
+                                return
+            except Exception as e:
+                print(f"WebSocket Redis Listener Error: {e}")
+                
+        # Run listener in background
+        listener_task = asyncio.create_task(redis_listener())
+        
+        while True:
+            # Keep connection alive, listen for client messages or disconnects
+            await websocket.receive_text()
+            
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        print(f"Task WebSocket Error: {e}")
+    finally:
+        if listener_task:
+            listener_task.cancel()
+        await pubsub.unsubscribe(channel)
+
+
 @router.get("/tasks/{task_id}")
 async def get_task_status(
     task_id: str,

@@ -141,8 +141,13 @@ class Worker:
         context["task_id"] = task_id
         context["task_type"] = task_type
 
-        print(f"📦 Processing task {task_id} ({task_type}) from {user_id}")
-        await self.manager.update_status(task_id, "processing")
+        print(f"📦 Processing task {task_id} ({task_id}) from {user_id}")
+        await self.manager.update_status(task_id, "processing", phase="Initializing", step="Task picked up")
+        if task_id:
+            try:
+                await self.manager.publish_progress(task_id, phase="Initializing", message="Task picked up", meta={})
+            except Exception as e:
+                print(f"[Worker] Error publishing progress: {e}")
 
         try:
             from shared.database import AsyncSessionLocal
@@ -261,7 +266,12 @@ class Worker:
             if current_task_status and current_task_status.get("status") == "cancelled":
                 print(f"Worker: Task {task_id} was cancelled — skipping completion.")
                 return
-            await self.manager.update_status(task_id, "completed", result)
+            await self.manager.update_status(task_id, "completed", result, phase="Completed", step="Done")
+            if task_id:
+                try:
+                    await self.manager.publish_progress(task_id, phase="Completed", message="Done", meta={})
+                except Exception:
+                    pass
             print(f"Worker: Task {task_id} completed.")
         else:
             print(f"Worker: No project_id in context. Skipping. (Task {task_id})")
@@ -345,6 +355,13 @@ class Worker:
         # 4. Create v2 user message
         user_msg = V2Message(role=MessageRole.USER, content=message)
 
+        if task_id:
+            try:
+                await self.manager.update_status(task_id, "processing", phase="Preparing Context", step="Loading project configuration")
+                await self.manager.publish_progress(task_id, phase="Preparing Context", message="Loading project configuration", meta={})
+            except Exception:
+                pass
+
         # 5. Create engine
         engine, agent_id = await create_engine_for_project(
             project_id=project_id,
@@ -353,6 +370,14 @@ class Worker:
             api_key=api_key,
             preferred_model=preferred_model,
         )
+
+        async def progress_cb(phase: str, message: str, meta: dict = None):
+            if task_id:
+                try:
+                    await self.manager.update_status(task_id, "processing", phase=phase, step=message)
+                    await self.manager.publish_progress(task_id, phase=phase, message=message, meta=meta)
+                except Exception as e:
+                    print(f"[Worker] Error in progress_cb: {e}")
 
         # 6. Build metadata for tools/roles
         prompt_data = getattr(engine, "_prompt_data", {})
@@ -363,8 +388,16 @@ class Worker:
             "api_key": api_key,
             "session_id": session_id,
             "attached_files": context.get("attached_files", []),
+            "progress_cb": progress_cb,
             **prompt_data,
         }
+
+        if task_id:
+            try:
+                await self.manager.update_status(task_id, "processing", phase="Running Model", step="Generating response")
+                await self.manager.publish_progress(task_id, phase="Running Model", message="Generating response", meta={})
+            except Exception:
+                pass
 
         # 7. Start the run asynchronously so the engine-issued run_id is
         #    available before completion — required for cancel API support.

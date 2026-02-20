@@ -80,18 +80,27 @@ class QueueManager:
             return json.loads(result[1])
         return None
 
-    async def update_status(self, task_id: str, status: str, result: Any = None):
+    async def update_status(self, task_id: str, status: str, result: Any = None, phase: Optional[str] = None, step: Optional[str] = None):
         """Update task status"""
         # Fetch current status to preserve metadata like project_id
         current_data = await self.get_status(task_id)
         project_id = current_data.get("project_id") if current_data else None
         task_type = current_data.get("task_type") if current_data else "user_message"
+        
+        # Preserve phase and step if not updated
+        if phase is None and current_data:
+            phase = current_data.get("phase")
+        if step is None and current_data:
+            step = current_data.get("step")
 
         payload = {
             "status": status,
             "result": result,
             "task_type": task_type,
-            "project_id": project_id
+            "project_id": project_id,
+            "phase": phase,
+            "step": step,
+            "updated_at": datetime.utcnow().isoformat()
         }
 
         await self.client.setex(
@@ -157,3 +166,14 @@ class QueueManager:
     async def get_run_for_task(self, task_id: str) -> Optional[str]:
         """Retrieve the orchestration run_id for a given task_id, if available."""
         return await self.client.get(f"run_for_task:{task_id}")
+
+    async def publish_progress(self, task_id: str, phase: str, message: str, meta: Optional[Dict] = None):
+        """Publish a real-time progress event for SSE"""
+        event = {
+            "task_id": task_id,
+            "phase": phase,
+            "message": message,
+            "meta": meta or {},
+            "ts": datetime.utcnow().isoformat()
+        }
+        await self.client.publish(f"progress:{task_id}", json.dumps(event, cls=CustomEncoder))
