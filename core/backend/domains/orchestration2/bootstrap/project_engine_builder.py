@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.database import AsyncSessionLocal
 from ..engine.agent_engine import AgentEngine
 from ..engine.models.agent import AgentDef, AgentLimits
 from ..engine.models.skill import SkillDef
@@ -53,7 +54,11 @@ async def create_engine_for_project(
 
     Returns (engine, agent_id).
     """
-    store = SQLAlchemyStore(db_session)
+    # SQLAlchemyStore must NOT share the caller's db_session because the
+    # orchestration engine runs in a separate asyncio.Task (async_mode=True).
+    # SQLAlchemy's asyncpg dialect must not be shared across Task boundaries.
+    # Pass the session factory so each Store operation uses its own session.
+    store = SQLAlchemyStore(AsyncSessionLocal)
 
     # 1. Create engine
     engine = AgentEngine(store=store)

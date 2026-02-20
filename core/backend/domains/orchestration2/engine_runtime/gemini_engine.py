@@ -60,6 +60,8 @@ class GeminiEngine(LLMEngine):
         self._tools = tool_registry
         # In-memory run status tracking
         self._active_runs: dict[str, EngineRunStatus] = {}
+        # Runs requested to be cancelled cooperatively (checked between turns)
+        self._cancelled_runs: set[str] = set()
 
     # ── LLMEngine interface ──────────────────────────────────────────
 
@@ -99,6 +101,21 @@ class GeminiEngine(LLMEngine):
 
         try:
             for turn in range(opts.max_turns):
+                # ── 0. Cooperative cancel check ───────────────────
+                if run_id in self._cancelled_runs:
+                    logger.info(
+                        "[GeminiEngine] run=%s cancelled at turn %d (cooperative)",
+                        run_id, turn,
+                    )
+                    self._cancelled_runs.discard(run_id)
+                    out_history = self._contents_to_messages(native_history)
+                    return EngineRunResult(
+                        run_id=run_id,
+                        status="cancelled",
+                        history=out_history,
+                        error="Cancelled by user",
+                    )
+
                 # ── 1. Call Gemini ────────────────────────────────
                 config = types.GenerateContentConfig(
                     temperature=0.2,
@@ -272,6 +289,7 @@ class GeminiEngine(LLMEngine):
             raise
 
         finally:
+            self._cancelled_runs.discard(run_id)
             status = self._active_runs.get(run_id)
             if status:
                 status.phase = "completed"
@@ -279,6 +297,11 @@ class GeminiEngine(LLMEngine):
 
     def get_status(self, run_id: str) -> EngineRunStatus | None:
         return self._active_runs.get(run_id)
+
+    def cancel(self, run_id: str) -> None:
+        """Request cooperative cancellation at the next turn boundary."""
+        self._cancelled_runs.add(run_id)
+        logger.info("[GeminiEngine] cancel requested for run=%s", run_id)
 
     # ── Boundary converters: orchestration2 ↔ native ─────────────────
 

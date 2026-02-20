@@ -149,3 +149,11 @@ class QueueManager:
             if tid:
                 tasks.append(tid)
         return tasks
+
+    async def set_run_for_task(self, task_id: str, run_id: str) -> None:
+        """Store the orchestration run_id associated with a task_id."""
+        await self.client.setex(f"run_for_task:{task_id}", 3600, run_id)
+
+    async def get_run_for_task(self, task_id: str) -> Optional[str]:
+        """Retrieve the orchestration run_id for a given task_id, if available."""
+        return await self.client.get(f"run_for_task:{task_id}")

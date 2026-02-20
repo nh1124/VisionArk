@@ -29,6 +29,7 @@ class RunStatus(str, Enum):
     WAITING_DELEGATION = "waiting_delegation"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class ApprovalPolicy(str, Enum):

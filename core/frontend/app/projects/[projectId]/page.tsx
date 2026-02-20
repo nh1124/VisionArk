@@ -89,8 +89,8 @@ export default function ProjectChatPage({
     const handleStop = async () => {
         if (!taskIdFromUrl) return;
         try {
-            const response = await apiFetch(`/api/agents/tasks/${taskIdFromUrl}/stop`, {
-                method: "POST"
+            const response = await apiFetch(`/api/agents/tasks/${taskIdFromUrl}`, {
+                method: "DELETE"
             });
             if (response.ok) {
                 setStatusText("Stopping...");
@@ -422,7 +422,7 @@ export default function ProjectChatPage({
                     isPollingActiveRef.current = false;
                     currentPollingTaskRef.current = null;
                     return true;
-                } else if (status === "failed" || status === "cancelled") {
+                } else if (status === "cancelled") {
                     if (timerIntervalRef.current) {
                         clearInterval(timerIntervalRef.current);
                         timerIntervalRef.current = null;
@@ -436,7 +436,33 @@ export default function ProjectChatPage({
                     // Cleanup optimistic storage
                     sessionStorage.removeItem(`pending_prompt_${projectId}`);
 
-                    const errorMsg = status === "cancelled" ? "Task stopped by user." : (statusData.result || "Task failed");
+                    setMessages((prev) => {
+                        // Remove the trailing empty assistant placeholder added during send
+                        const trimmed = prev[prev.length - 1]?.role === "assistant" && !prev[prev.length - 1]?.content
+                            ? prev.slice(0, -1)
+                            : prev;
+                        return [...trimmed, { role: "assistant", content: "Generation stopped." }];
+                    });
+
+                    router.replace(`/projects/${projectId}`, { scroll: false });
+                    isPollingActiveRef.current = false;
+                    currentPollingTaskRef.current = null;
+                    return true;
+                } else if (status === "failed") {
+                    if (timerIntervalRef.current) {
+                        clearInterval(timerIntervalRef.current);
+                        timerIntervalRef.current = null;
+                    }
+                    if (pollIntervalRef.current) {
+                        clearInterval(pollIntervalRef.current);
+                        pollIntervalRef.current = null;
+                    }
+                    setLoading(false);
+                    setStatusText("");
+                    // Cleanup optimistic storage
+                    sessionStorage.removeItem(`pending_prompt_${projectId}`);
+
+                    const errorMsg = statusData.result || "Task failed";
                     setMessages((prev) => [...prev, {
                         role: "assistant",
                         content: `❌ ${errorMsg}`

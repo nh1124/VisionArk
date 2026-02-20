@@ -36,6 +36,8 @@ class Worker:
         self.manager = QueueManager()
         self.dispatcher = AESDispatcher(AsyncSessionLocal)
         self.semaphore = asyncio.Semaphore(settings.max_worker_concurrency)
+        # Maps task_id → running asyncio.Task for cancel support
+        self._running_tasks: Dict[str, asyncio.Task] = {}
 
     async def wait_for_database(self):
         """Wait for the database to be ready and tables to exist"""
@@ -84,7 +86,8 @@ class Worker:
         # Start AES Dispatcher as a background task
         asyncio.create_task(self.dispatcher.run_forever())
 
-
+        # Start cancel watcher: polls Redis and cancels tasks marked as cancelled
+        asyncio.create_task(self._cancel_watcher())
 
         while True:
             try:
@@ -92,12 +95,34 @@ class Worker:
                 task_data = await self.manager.dequeue()
 
                 if task_data:
+                    task_id = task_data.get("task_id")
                     # Spawn task in background with semaphore control
-                    asyncio.create_task(self._process_task_with_semaphore(task_data))
+                    task = asyncio.create_task(self._process_task_with_semaphore(task_data))
+                    if task_id:
+                        self._running_tasks[task_id] = task
+                        # Auto-remove when done (completed, failed, or cancelled)
+                        task.add_done_callback(
+                            lambda _t, tid=task_id: self._running_tasks.pop(tid, None)
+                        )
 
             except Exception as e:
                 print(f"⚠️ Worker error: {e}")
                 await asyncio.sleep(1)
+
+    async def _cancel_watcher(self):
+        """Background loop: poll Redis every 2 s and cancel tasks marked as cancelled."""
+        while True:
+            try:
+                await asyncio.sleep(2)
+                for task_id, task in list(self._running_tasks.items()):
+                    if task.done():
+                        continue
+                    status_data = await self.manager.get_status(task_id)
+                    if status_data and status_data.get("status") == "cancelled":
+                        print(f"[Worker] Cancel watcher: cancelling task {task_id}")
+                        task.cancel()
+            except Exception as e:
+                print(f"[Worker] Cancel watcher error: {e}")
 
     async def _process_task_with_semaphore(self, task_data: dict):
         """Wrapper to control concurrency using a semaphore"""
@@ -145,6 +170,15 @@ class Worker:
                 else:
                     print(f"❌ Unknown task type: {task_type}")
                     await self.manager.update_status(task_id, "failed", f"Unknown task type: {task_type}")
+
+        except asyncio.CancelledError:
+            print(f"[Worker] Task {task_id} was cancelled.")
+            try:
+                # Best-effort status update; use shield to survive a second cancel
+                await asyncio.shield(self.manager.update_status(task_id, "cancelled"))
+            except Exception:
+                pass
+            raise  # Re-raise so the asyncio.Task is properly marked cancelled
 
         except Exception as e:
             print(f"❌ Task {task_id} failed: {e}")
@@ -222,6 +256,11 @@ class Worker:
             result = await self._run_orchestration2(
                 message, project_id, user_id, context, db_session
             )
+            # Guard: don't overwrite "cancelled" if cooperative cancel fired
+            current_task_status = await self.manager.get_status(task_id)
+            if current_task_status and current_task_status.get("status") == "cancelled":
+                print(f"Worker: Task {task_id} was cancelled — skipping completion.")
+                return
             await self.manager.update_status(task_id, "completed", result)
             print(f"Worker: Task {task_id} completed.")
         else:
@@ -254,6 +293,7 @@ class Worker:
         if not api_key:
             return "Error: No API key configured. Please set your Gemini API key in settings."
 
+        task_id = context.get("task_id")
         preferred_model = context.get("preferred_model")
 
         # 2. Get or create session
@@ -326,24 +366,39 @@ class Worker:
             **prompt_data,
         }
 
-        # 7. Execute run
-        run_response = await engine.execute_run(
+        # 7. Start the run asynchronously so the engine-issued run_id is
+        #    available before completion — required for cancel API support.
+        init_response = await engine.execute_run(
             message=user_msg,
             agent_id=agent_id,
             history=v2_history,
             metadata=metadata,
+            async_mode=True,
         )
+        run_id = init_response.run_id
 
-        # 8. Extract response text
+        # Store task_id → run_id mapping so the cancel endpoint can update
+        # the orchestration run in DB as part of Layer B cancellation.
+        if task_id:
+            await self.manager.set_run_for_task(task_id, run_id)
+
+        # 8. Wait for the run to complete (CancelledError propagates cleanly)
+        run_response = await engine.wait_response(run_id)
+
+        # 9. Extract response text
         response_text = ""
         if run_response.message:
             response_text = run_response.message.content
 
         if not response_text.strip():
             if not run_response.completed:
+                error_detail = getattr(run_response, "error", None) or ""
+                # Distinguish user-initiated cancellation from actual errors
+                if error_detail in ("Cancelled by user", "cancelled"):
+                    print(f"[Worker] Run {run_response.run_id} was cancelled.")
+                    return ""  # Caller will handle empty result for cancelled runs
                 # Run failed — surface the error
-                error_detail = getattr(run_response, "error", None) or "Unknown error"
-                response_text = f"An error occurred during processing: {error_detail}"
+                response_text = f"An error occurred during processing: {error_detail or 'Unknown error'}"
                 print(f"[Worker] Run {run_response.run_id} failed: {error_detail}")
             else:
                 # Run completed but output was empty — pull from last assistant msg
@@ -356,7 +411,7 @@ class Worker:
                 else:
                     response_text = "Task completed."
 
-        # 9. Save user message + assistant response to DB
+        # 10. Save user message + assistant response to DB
         user_msg_id = str(uuid4())
         db_session.add(ChatMessage(
             id=user_msg_id,
@@ -428,7 +483,7 @@ class Worker:
 
         await db_session.commit()
 
-        # 10. Ingest to knowledge core (best-effort)
+        # 11. Ingest to knowledge core (best-effort)
         try:
             from shared.service_helpers import get_kc_service
             kc_svc = get_kc_service(user_id, db_session)

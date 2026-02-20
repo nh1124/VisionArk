@@ -16,7 +16,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.approval import PendingAction
 from ..models.common import ApprovalSourceType, EventSource, EventType, RunStatus
@@ -29,10 +28,23 @@ logger = logging.getLogger(__name__)
 
 
 class SQLAlchemyStore:
-    """Store implementation backed by PostgreSQL via SQLAlchemy async session."""
+    """Store implementation backed by PostgreSQL via SQLAlchemy async session.
 
-    def __init__(self, db_session: AsyncSession) -> None:
-        self._db = db_session
+    Accepts a *session factory* (e.g. ``AsyncSessionLocal``) rather than a
+    shared ``AsyncSession``.  Each Store operation opens its own short-lived
+    session and commits immediately.
+
+    Rationale: the orchestration engine runs inside an ``asyncio.Task`` created
+    by ``AgentEngine._execute_async``.  That Task is different from the caller's
+    Task.  SQLAlchemy's asyncpg dialect uses greenlets internally and must not
+    be shared across asyncio Task boundaries — doing so corrupts the connection
+    state and causes ``InterfaceError: cannot perform operation: another
+    operation is in progress`` at session-close time.
+    """
+
+    def __init__(self, session_factory) -> None:
+        # session_factory: () -> async context manager yielding AsyncSession
+        self._factory = session_factory
         # In-memory event buffer (also persisted to DB)
         self._events: dict[str, list[OrchestrationEvent]] = {}
 
@@ -106,65 +118,67 @@ class SQLAlchemyStore:
         context_data = record.context.model_dump() if record.context else {}
         metadata_data = self._serializable_metadata(record.metadata or {})
 
-        await self._db.execute(
-            text("""
-                INSERT INTO orchestration_runs
-                    (run_id, status, agent_name, graph_name,
-                     project_id, user_id, session_id,
-                     current_step_id, context_json, metadata_json,
-                     pending_approval_ids, pending_delegation_ids,
-                     history_json, input_message_json, output_message_json,
-                     error, created_at, updated_at)
-                VALUES
-                    (:run_id, :status, :agent_name, :graph_name,
-                     :project_id, :user_id, :session_id,
-                     :current_step_id, :context_json, :metadata_json,
-                     :pending_approval_ids, :pending_delegation_ids,
-                     :history_json, :input_message_json, :output_message_json,
-                     :error, :created_at, :updated_at)
-                ON CONFLICT (run_id) DO UPDATE SET
-                    status = :status,
-                    current_step_id = :current_step_id,
-                    context_json = :context_json,
-                    metadata_json = :metadata_json,
-                    pending_approval_ids = :pending_approval_ids,
-                    pending_delegation_ids = :pending_delegation_ids,
-                    history_json = :history_json,
-                    input_message_json = :input_message_json,
-                    output_message_json = :output_message_json,
-                    error = :error,
-                    updated_at = :updated_at
-            """),
-            {
-                "run_id": record.run_id,
-                "status": record.status.value,
-                "agent_name": record.agent_name,
-                "graph_name": record.graph_name,
-                "project_id": metadata_data.get("project_id"),
-                "user_id": metadata_data.get("user_id"),
-                "session_id": metadata_data.get("session_id"),
-                "current_step_id": record.current_step_id,
-                "context_json": json.dumps(context_data),
-                "metadata_json": json.dumps(metadata_data),
-                "pending_approval_ids": json.dumps(record.pending_approval_ids),
-                "pending_delegation_ids": json.dumps(record.pending_delegation_ids),
-                "history_json": json.dumps(self._serialize_history(record.history)),
-                "input_message_json": json.dumps(self._serialize_message(record.input_message)),
-                "output_message_json": json.dumps(self._serialize_message(record.output_message)),
-                "error": record.error,
-                "created_at": record.created_at,
-                "updated_at": record.updated_at,
-            },
-        )
-        await self._db.flush()
+        async with self._factory() as db:
+            await db.execute(
+                text("""
+                    INSERT INTO orchestration_runs
+                        (run_id, status, agent_name, graph_name,
+                         project_id, user_id, session_id,
+                         current_step_id, context_json, metadata_json,
+                         pending_approval_ids, pending_delegation_ids,
+                         history_json, input_message_json, output_message_json,
+                         error, created_at, updated_at)
+                    VALUES
+                        (:run_id, :status, :agent_name, :graph_name,
+                         :project_id, :user_id, :session_id,
+                         :current_step_id, :context_json, :metadata_json,
+                         :pending_approval_ids, :pending_delegation_ids,
+                         :history_json, :input_message_json, :output_message_json,
+                         :error, :created_at, :updated_at)
+                    ON CONFLICT (run_id) DO UPDATE SET
+                        status = :status,
+                        current_step_id = :current_step_id,
+                        context_json = :context_json,
+                        metadata_json = :metadata_json,
+                        pending_approval_ids = :pending_approval_ids,
+                        pending_delegation_ids = :pending_delegation_ids,
+                        history_json = :history_json,
+                        input_message_json = :input_message_json,
+                        output_message_json = :output_message_json,
+                        error = :error,
+                        updated_at = :updated_at
+                """),
+                {
+                    "run_id": record.run_id,
+                    "status": record.status.value,
+                    "agent_name": record.agent_name,
+                    "graph_name": record.graph_name,
+                    "project_id": metadata_data.get("project_id"),
+                    "user_id": metadata_data.get("user_id"),
+                    "session_id": metadata_data.get("session_id"),
+                    "current_step_id": record.current_step_id,
+                    "context_json": json.dumps(context_data),
+                    "metadata_json": json.dumps(metadata_data),
+                    "pending_approval_ids": json.dumps(record.pending_approval_ids),
+                    "pending_delegation_ids": json.dumps(record.pending_delegation_ids),
+                    "history_json": json.dumps(self._serialize_history(record.history)),
+                    "input_message_json": json.dumps(self._serialize_message(record.input_message)),
+                    "output_message_json": json.dumps(self._serialize_message(record.output_message)),
+                    "error": record.error,
+                    "created_at": record.created_at,
+                    "updated_at": record.updated_at,
+                },
+            )
+            await db.commit()
 
     async def get_run(self, run_id: str) -> RunRecord | None:
         """Load a RunRecord from orchestration_runs."""
-        result = await self._db.execute(
-            text("SELECT * FROM orchestration_runs WHERE run_id = :run_id"),
-            {"run_id": run_id},
-        )
-        row = result.mappings().first()
+        async with self._factory() as db:
+            result = await db.execute(
+                text("SELECT * FROM orchestration_runs WHERE run_id = :run_id"),
+                {"run_id": run_id},
+            )
+            row = result.mappings().first()
         if row is None:
             return None
 
@@ -176,7 +190,6 @@ class SQLAlchemyStore:
         if isinstance(metadata_data, str):
             metadata_data = json.loads(metadata_data)
 
-        # Deserialize pending IDs
         pending_approval_ids = row.get("pending_approval_ids") or []
         if isinstance(pending_approval_ids, str):
             pending_approval_ids = json.loads(pending_approval_ids)
@@ -207,34 +220,36 @@ class SQLAlchemyStore:
 
     async def save_approval(self, action: PendingAction) -> None:
         """INSERT into orchestration_pending_actions."""
-        await self._db.execute(
-            text("""
-                INSERT INTO orchestration_pending_actions
-                    (id, run_id, step_id, action_type, action_name, status, created_at)
-                VALUES
-                    (:id, :run_id, :step_id, :action_type, :action_name, :status, :created_at)
-                ON CONFLICT (id) DO UPDATE SET
-                    status = :status
-            """),
-            {
-                "id": action.approval_request_id,
-                "run_id": action.run_id,
-                "step_id": action.step_id,
-                "action_type": action.action_type.value,
-                "action_name": action.action_name,
-                "status": "pending",
-                "created_at": action.created_at,
-            },
-        )
-        await self._db.flush()
+        async with self._factory() as db:
+            await db.execute(
+                text("""
+                    INSERT INTO orchestration_pending_actions
+                        (id, run_id, step_id, action_type, action_name, status, created_at)
+                    VALUES
+                        (:id, :run_id, :step_id, :action_type, :action_name, :status, :created_at)
+                    ON CONFLICT (id) DO UPDATE SET
+                        status = :status
+                """),
+                {
+                    "id": action.approval_request_id,
+                    "run_id": action.run_id,
+                    "step_id": action.step_id,
+                    "action_type": action.action_type.value,
+                    "action_name": action.action_name,
+                    "status": "pending",
+                    "created_at": action.created_at,
+                },
+            )
+            await db.commit()
 
     async def get_approval(self, approval_id: str) -> PendingAction | None:
         """SELECT from orchestration_pending_actions."""
-        result = await self._db.execute(
-            text("SELECT * FROM orchestration_pending_actions WHERE id = :id"),
-            {"id": approval_id},
-        )
-        row = result.mappings().first()
+        async with self._factory() as db:
+            result = await db.execute(
+                text("SELECT * FROM orchestration_pending_actions WHERE id = :id"),
+                {"id": approval_id},
+            )
+            row = result.mappings().first()
         if row is None:
             return None
 
@@ -251,40 +266,42 @@ class SQLAlchemyStore:
 
     async def save_delegation(self, request: DelegationRequest) -> None:
         """INSERT into orchestration_delegations."""
-        await self._db.execute(
-            text("""
-                INSERT INTO orchestration_delegations
-                    (id, parent_run_id, child_agent_name, task, status,
-                     timeout_sec, created_at, updated_at)
-                VALUES
-                    (:id, :parent_run_id, :child_agent_name, :task, :status,
-                     :timeout_sec, :created_at, :updated_at)
-                ON CONFLICT (id) DO UPDATE SET
-                    status = :status,
-                    updated_at = :updated_at
-            """),
-            {
-                "id": request.id,
-                "parent_run_id": request.parent_run_id,
-                "child_agent_name": request.child_agent_name,
-                "task": request.task,
-                "status": "pending",
-                "timeout_sec": request.timeout_sec,
-                "created_at": datetime.utcnow(),
-                "updated_at": datetime.utcnow(),
-            },
-        )
-        await self._db.flush()
+        async with self._factory() as db:
+            await db.execute(
+                text("""
+                    INSERT INTO orchestration_delegations
+                        (id, parent_run_id, child_agent_name, task, status,
+                         timeout_sec, created_at, updated_at)
+                    VALUES
+                        (:id, :parent_run_id, :child_agent_name, :task, :status,
+                         :timeout_sec, :created_at, :updated_at)
+                    ON CONFLICT (id) DO UPDATE SET
+                        status = :status,
+                        updated_at = :updated_at
+                """),
+                {
+                    "id": request.id,
+                    "parent_run_id": request.parent_run_id,
+                    "child_agent_name": request.child_agent_name,
+                    "task": request.task,
+                    "status": "pending",
+                    "timeout_sec": request.timeout_sec,
+                    "created_at": datetime.utcnow(),
+                    "updated_at": datetime.utcnow(),
+                },
+            )
+            await db.commit()
 
     async def get_delegation(
         self, delegation_id: str
     ) -> DelegationRequest | None:
         """SELECT from orchestration_delegations."""
-        result = await self._db.execute(
-            text("SELECT * FROM orchestration_delegations WHERE id = :id"),
-            {"id": delegation_id},
-        )
-        row = result.mappings().first()
+        async with self._factory() as db:
+            result = await db.execute(
+                text("SELECT * FROM orchestration_delegations WHERE id = :id"),
+                {"id": delegation_id},
+            )
+            row = result.mappings().first()
         if row is None:
             return None
 
@@ -302,39 +319,41 @@ class SQLAlchemyStore:
         if result.output_message is not None:
             output_json = json.dumps(self._serialize_message(result.output_message))
 
-        await self._db.execute(
-            text("""
-                UPDATE orchestration_delegations
-                SET child_run_id = :child_run_id,
-                    status = :status,
-                    output_json = :output_json,
-                    error = :error,
-                    updated_at = :updated_at
-                WHERE id = :id
-            """),
-            {
-                "id": result.delegation_id,
-                "child_run_id": result.child_run_id,
-                "status": result.status.value,
-                "output_json": output_json,
-                "error": result.error,
-                "updated_at": datetime.utcnow(),
-            },
-        )
-        await self._db.flush()
+        async with self._factory() as db:
+            await db.execute(
+                text("""
+                    UPDATE orchestration_delegations
+                    SET child_run_id = :child_run_id,
+                        status = :status,
+                        output_json = :output_json,
+                        error = :error,
+                        updated_at = :updated_at
+                    WHERE id = :id
+                """),
+                {
+                    "id": result.delegation_id,
+                    "child_run_id": result.child_run_id,
+                    "status": result.status.value,
+                    "output_json": output_json,
+                    "error": result.error,
+                    "updated_at": datetime.utcnow(),
+                },
+            )
+            await db.commit()
 
     async def get_delegation_result(
         self, delegation_id: str
     ) -> DelegationResult | None:
         """SELECT from orchestration_delegations where child_run_id IS NOT NULL."""
-        result = await self._db.execute(
-            text(
-                "SELECT * FROM orchestration_delegations "
-                "WHERE id = :id AND child_run_id IS NOT NULL"
-            ),
-            {"id": delegation_id},
-        )
-        row = result.mappings().first()
+        async with self._factory() as db:
+            result = await db.execute(
+                text(
+                    "SELECT * FROM orchestration_delegations "
+                    "WHERE id = :id AND child_run_id IS NOT NULL"
+                ),
+                {"id": delegation_id},
+            )
+            row = result.mappings().first()
         if row is None:
             return None
 
@@ -354,45 +373,44 @@ class SQLAlchemyStore:
 
     async def append_event(self, event: OrchestrationEvent) -> None:
         """Persist an event to the DB and buffer it in-memory."""
-        # In-memory buffer for fast access during the run
         if event.run_id not in self._events:
             self._events[event.run_id] = []
         self._events[event.run_id].append(event)
 
-        # Persist to DB
-        await self._db.execute(
-            text("""
-                INSERT INTO orchestration_events
-                    (id, run_id, step_id, event_type, source, detail, created_at)
-                VALUES
-                    (:id, :run_id, :step_id, :event_type, :source, :detail, :created_at)
-            """),
-            {
-                "id": event.id,
-                "run_id": event.run_id,
-                "step_id": event.step_id,
-                "event_type": event.type.value,
-                "source": event.source.value,
-                "detail": event.detail,
-                "created_at": event.created_at,
-            },
-        )
-        await self._db.flush()
+        async with self._factory() as db:
+            await db.execute(
+                text("""
+                    INSERT INTO orchestration_events
+                        (id, run_id, step_id, event_type, source, detail, created_at)
+                    VALUES
+                        (:id, :run_id, :step_id, :event_type, :source, :detail, :created_at)
+                """),
+                {
+                    "id": event.id,
+                    "run_id": event.run_id,
+                    "step_id": event.step_id,
+                    "event_type": event.type.value,
+                    "source": event.source.value,
+                    "detail": event.detail,
+                    "created_at": event.created_at,
+                },
+            )
+            await db.commit()
 
     async def get_events(self, run_id: str) -> list[OrchestrationEvent]:
         """Return events from in-memory buffer first, fall back to DB."""
         if run_id in self._events:
             return list(self._events[run_id])
 
-        # Fall back to DB for historical queries
-        result = await self._db.execute(
-            text(
-                "SELECT * FROM orchestration_events "
-                "WHERE run_id = :run_id ORDER BY created_at"
-            ),
-            {"run_id": run_id},
-        )
-        rows = result.mappings().all()
+        async with self._factory() as db:
+            result = await db.execute(
+                text(
+                    "SELECT * FROM orchestration_events "
+                    "WHERE run_id = :run_id ORDER BY created_at"
+                ),
+                {"run_id": run_id},
+            )
+            rows = result.mappings().all()
         return [
             OrchestrationEvent(
                 id=row["id"],

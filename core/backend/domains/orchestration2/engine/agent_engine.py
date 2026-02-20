@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import Any
 
 from .errors import AgentNotFoundError, RegistryKeyError
@@ -265,6 +266,12 @@ class AgentEngine:
         ``metadata`` is an opaque dict passed through to ``ExecutionContext``
         so that host-app code (tools, roles) can access app-specific data
         like ``project_id``, ``db_session``, etc.
+
+        When ``async_mode=True`` the run starts immediately in the background
+        and a ``RunResponse(completed=False, run_id=...)`` is returned so that
+        the caller can store the ``run_id`` before awaiting completion via
+        ``wait_response()``.  The ``run_id`` is always generated internally by
+        the engine — callers must not supply one.
         """
         # Resolve agent definition
         resolved_def = self._resolve_agent_def(agent_id, agent_def)
@@ -312,8 +319,14 @@ class AgentEngine:
         history: list[Message] | None,
         metadata: dict | None = None,
     ) -> RunResponse:
-        """Start an async run and return immediately with the run_id."""
-        # Create a placeholder run record
+        """Start an async run and return immediately with the engine-generated run_id.
+
+        The ``run_id`` is allocated here so that the caller can record it
+        (e.g. store a task→run mapping for cancellation) before the run
+        completes.  The same ``run_id`` is forwarded to the orchestrator so
+        both the placeholder record and the live run share one identity.
+        """
+        # Allocate the run record (generates run_id via default_factory)
         run = RunRecord(
             status=RunStatus.QUEUED,
             agent_name=agent_def.name,
@@ -324,7 +337,8 @@ class AgentEngine:
         )
         await self._store.save_run(run)
 
-        # Launch task
+        # Launch orchestrator task, forwarding the same run_id so the
+        # orchestrator's RunRecord upsert updates (not duplicates) the record.
         task = asyncio.create_task(
             self._orchestrator.run(
                 agent_def=agent_def,
@@ -332,6 +346,7 @@ class AgentEngine:
                 message=message,
                 history=history,
                 metadata=metadata,
+                run_id=run.run_id,
             )
         )
         self._async_tasks[run.run_id] = task
@@ -347,10 +362,29 @@ class AgentEngine:
         return await self._store.get_run(run_id)
 
     async def wait_response(self, run_id: str) -> RunResponse:
-        """Wait for an async run to complete and return the response."""
+        """Wait for an async run to complete and return the response.
+
+        If the calling task is cancelled while waiting, the inner orchestrator
+        task is also cancelled so no zombie runs are left in-flight.
+        """
         task = self._async_tasks.get(run_id)
         if task is not None:
-            return await task
+            try:
+                return await task
+            except asyncio.CancelledError:
+                # Propagate cancellation into the orchestrator task and drain it
+                # before re-raising.  task.cancel() only schedules a CancelledError
+                # for the background task; it keeps running until its next await.
+                # If we re-raise immediately, the parent's db_session closes while
+                # the task still holds an active asyncpg connection, causing:
+                #   InterfaceError: cannot perform operation: another operation is in progress
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task  # wait for T to actually stop
+                    except (asyncio.CancelledError, Exception):
+                        pass  # expected: task was cancelled or failed
+                raise
 
         # Run may have already completed — check store
         run = await self._store.get_run(run_id)
@@ -364,6 +398,36 @@ class AgentEngine:
             completed=run.status == RunStatus.COMPLETED,
             message=run.output_message,
         )
+
+    async def cancel_run(self, run_id: str) -> bool:
+        """Cancel a run by setting its status to CANCELLED in the store.
+
+        Returns True if the run was found and marked cancelled (or was already
+        in a terminal state), False if the run does not exist.
+        """
+        run = await self._store.get_run(run_id)
+        if run is None:
+            return False
+
+        if run.status in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED):
+            return True  # Already terminal — idempotent
+
+        run.status = RunStatus.CANCELLED
+        run.error = run.error or "Cancelled by user"
+        run.updated_at = datetime.utcnow()
+        await self._store.save_run(run)
+
+        # Cancel in-flight asyncio task if tracking it
+        async_tasks: dict = getattr(self, "_async_tasks", {})
+        task = async_tasks.get(run_id)
+        if task and not task.done():
+            task.cancel()
+
+        # Signal GeminiEngine (or any engine that supports cooperative cancel)
+        if self._engine_runtime and hasattr(self._engine_runtime, "cancel"):
+            self._engine_runtime.cancel(run_id)
+
+        return True
 
     # ── Approval ─────────────────────────────────────────────────────
 

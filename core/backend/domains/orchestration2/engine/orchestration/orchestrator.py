@@ -43,13 +43,14 @@ class Orchestrator:
         history: list[Message] | None = None,
         parent_run_id: str | None = None,
         metadata: dict | None = None,
+        run_id: str | None = None,
     ) -> RunResponse:
         """Execute a full orchestration run and return the response."""
         # Create RunRecord — append input message to history so the
         # conversation is always in correct order (user, model, tool, …).
         combined_history = list(history) if history else []
         combined_history.append(message)
-        run = RunRecord(
+        record_kwargs: dict = dict(
             status=RunStatus.RUNNING,
             agent_name=agent_def.name,
             graph_name=graph.graph_name,
@@ -58,6 +59,9 @@ class Orchestrator:
             current_step_id=graph.start,
             metadata=metadata or {},
         )
+        if run_id is not None:
+            record_kwargs["run_id"] = run_id
+        run = RunRecord(**record_kwargs)
         await self._store.save_run(run)
 
         # Build step lookup and run the main loop
@@ -159,6 +163,12 @@ class Orchestrator:
                 ):
                     return self._build_response(run)
 
+                # Check for external cancellation
+                if run.status == RunStatus.CANCELLED:
+                    logger.info("Run %s was cancelled externally", run.run_id)
+                    run.error = run.error or "Cancelled by user"
+                    break
+
                 # If terminal step, complete
                 if step.terminal:
                     logger.debug("Step '%s' is terminal — completing run", current_step_id)
@@ -237,3 +247,4 @@ class Orchestrator:
             approval_requests=[],  # populated by caller if needed
             delegation_requests=[],
         )
+
