@@ -11,6 +11,7 @@ SKILL_DEFS: list[SkillDef] = [
             "get_project_rules", "get_project_health",
             "list_agents", "get_agent_profile",
             "list_user_projects", "list_members",
+            "list_workspace_items", "read_workspace_item",
         ],
     ),
     SkillDef(
@@ -39,6 +40,17 @@ SKILL_DEFS: list[SkillDef] = [
             "manage_member", "update_agent_description",
             "set_timer", "raise_continue", "run_safe_shell",
             "browser_open", "browser_click", "browser_fill", "browser_screenshot",
+        ],
+    ),
+    SkillDef(
+        name="workspace_management",
+        description="Read and write shared workspace items (profile, company info, reusable context)",
+        tools=[
+            "list_workspace_items",
+            "read_workspace_item",
+            "create_workspace_item",
+            "update_workspace_item",
+            "delete_workspace_item",
         ],
     ),
 ]

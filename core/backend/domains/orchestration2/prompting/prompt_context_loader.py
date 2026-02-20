@@ -123,7 +123,26 @@ async def load_prompt_components(
     except Exception as e:
         logger.warning("Failed to load user settings: %s", e)
 
-    # 5. Planner capabilities (snapshot)
+    # 5. Workspace context (shared items resolved for this project)
+    try:
+        from domains.workspace.workspace_service import WorkspaceService
+
+        ws_service = WorkspaceService(db, user_id)
+        ws_items = await ws_service.resolve_context(project_id)
+        if ws_items:
+            lines = ["## Shared Workspace Context\n"]
+            for item in ws_items:
+                lines.append(f"### {item.title}  (`{item.path}`, scope: {item.scope})")
+                if item.tags:
+                    lines.append(f"*Tags: {', '.join(item.tags)}*")
+                if item.content:
+                    lines.append(item.content)
+                lines.append("")
+            result["workspace_context"] = "\n".join(lines)
+    except Exception as e:
+        logger.warning("Failed to load workspace context: %s", e)
+
+    # 6. Planner capabilities (snapshot)
     if engine and all_skills:
         try:
             caps = _build_planner_capabilities(all_skills, engine.tools)

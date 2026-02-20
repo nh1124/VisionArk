@@ -18,6 +18,10 @@ from ...tools.library.browser import (
 from ...tools.library.canvas import UpdateCanvasTool
 from ...tools.library.governance import GetProjectRulesTool, UpdateProjectRulesTool
 from ...tools.library.notes import ListNotesTool, ReadNoteTool, CreateNoteTool
+from ...tools.library.workspace import (
+    ListWorkspaceItemsTool, ReadWorkspaceItemTool,
+    CreateWorkspaceItemTool, UpdateWorkspaceItemTool, DeleteWorkspaceItemTool,
+)
 from ...tools.library.system import (
     ListAgentsTool, GetAgentProfileTool,
     ListUserProjectsTool, UpdateProjectTool,
@@ -52,6 +56,9 @@ def get_core_tools() -> list[tuple[ToolDef, Any]]:
         GetProjectRulesTool, UpdateProjectRulesTool,
         # Notes
         ListNotesTool, ReadNoteTool, CreateNoteTool,
+        # Workspace
+        ListWorkspaceItemsTool, ReadWorkspaceItemTool,
+        CreateWorkspaceItemTool, UpdateWorkspaceItemTool, DeleteWorkspaceItemTool,
         # System
         ListAgentsTool, GetAgentProfileTool,
         ListUserProjectsTool, UpdateProjectTool,

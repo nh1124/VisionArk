@@ -4,7 +4,7 @@ Implements the LBS (Load Balancing System) schema from BLUEPRINT.md
 """
 from datetime import datetime, date
 from typing import Optional
-from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, Date, DateTime, Text, JSON, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, Date, DateTime, Text, JSON, ForeignKey, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -593,6 +593,79 @@ class FileChunk(Base):
     
     # Relationship
     file = relationship("UploadedFile", back_populates="chunks")
+
+
+class WorkspaceItem(Base):
+    """User-level shared workspace items (profile info, company details, values, etc.)"""
+    __tablename__ = "workspace_items"
+
+    id = Column(String(36), primary_key=True)               # UUID
+    owner_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    scope = Column(String(20), default="private")           # private / org / project
+    path = Column(String(512), nullable=False)              # logical path e.g. 'profile/about.md'
+    title = Column(String(255), nullable=False)
+    content = Column(Text, nullable=True)                   # inline markdown content
+    tags = Column(JSON, default=list)
+    version = Column(Integer, default=1)
+    is_deleted = Column(Boolean, default=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    owner = relationship("User")
+    versions = relationship("WorkspaceItemVersion", back_populates="item", cascade="all, delete-orphan")
+    bindings = relationship("WorkspaceBinding", back_populates="item", cascade="all, delete-orphan")
+    acl_entries = relationship("WorkspaceACL", back_populates="item", cascade="all, delete-orphan")
+
+
+class WorkspaceItemVersion(Base):
+    """Version history snapshots for WorkspaceItem"""
+    __tablename__ = "workspace_item_versions"
+
+    id = Column(String(36), primary_key=True)               # UUID
+    item_id = Column(String(36), ForeignKey("workspace_items.id"), nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    content = Column(Text, nullable=True)
+    created_by = Column(String(36), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    item = relationship("WorkspaceItem", back_populates="versions")
+    creator = relationship("User")
+
+
+class WorkspaceBinding(Base):
+    """Binding of a WorkspaceItem to a Project"""
+    __tablename__ = "workspace_bindings"
+
+    id = Column(String(36), primary_key=True)               # UUID
+    item_id = Column(String(36), ForeignKey("workspace_items.id"), nullable=False, index=True)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    created_by = Column(String(36), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("item_id", "project_id", name="uix_workspace_binding"),
+    )
+
+    # Relationships
+    item = relationship("WorkspaceItem", back_populates="bindings")
+    project = relationship("Project")
+
+
+class WorkspaceACL(Base):
+    """Access control list entries for WorkspaceItem"""
+    __tablename__ = "workspace_acl"
+
+    id = Column(String(36), primary_key=True)               # UUID
+    item_id = Column(String(36), ForeignKey("workspace_items.id"), nullable=False, index=True)
+    subject_type = Column(String(20), nullable=False)       # 'user', 'project', 'org'
+    subject_id = Column(String(36), nullable=False)
+    permission = Column(String(20), nullable=False)         # 'read', 'write', 'admin'
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    item = relationship("WorkspaceItem", back_populates="acl_entries")
 
 
 # Global engine instances (Singletons for connection pooling)

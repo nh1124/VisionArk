@@ -98,17 +98,22 @@ class ProjectRole:
         if user_profile:
             parts.append(f"\n## User Profile\n{user_profile}")
 
-        # 6. Knowledge context (RAG)
+        # 6. Workspace context (shared items)
+        workspace_context = ctx.metadata.get("workspace_context")
+        if workspace_context:
+            parts.append(workspace_context)
+
+        # 7. Knowledge context (RAG)
         knowledge = ctx.metadata.get("knowledge_context")
         if knowledge:
             parts.append(f"\n## Relevant Knowledge\n{knowledge}")
 
-        # 7. Team roster
+        # 8. Team roster
         roster = ctx.metadata.get("team_roster")
         if roster:
             parts.append(roster)
 
-        # 8b. Integration Tools
+        # 9. Integration Tools
         integration_tools = ctx.metadata.get("integration_tools_text")
         if integration_tools:
             parts.append(f"\n## Available Integration Tools\n{integration_tools}")

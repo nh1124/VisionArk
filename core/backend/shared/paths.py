@@ -282,6 +282,22 @@ def get_user_global_assets_dir(user_id: str) -> Path:
     return user_assets
 
 
+def get_workspace_dir(user_id: str) -> Path:
+    """data/users/{user_id}/workspace/ – user's shared workspace root"""
+    user_root = get_user_root_dir(user_id)
+    workspace_dir = user_root / "workspace"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    return workspace_dir
+
+
+def get_workspace_item_path(user_id: str, item_path: str) -> Path:
+    """Resolve and validate a workspace item's filesystem path.
+    item_path is the logical path, e.g. 'profile/about.md'
+    """
+    workspace_dir = get_workspace_dir(user_id)
+    return secure_path_join(workspace_dir, item_path)
+
+
 def get_default_assets_dir() -> Path:
     """
     Get the internal assets directory (source of default prompts/templates).

@@ -19,6 +19,8 @@ class IntegrationContext:
     api_key: Optional[str] = None
     user_settings: dict = field(default_factory=dict)
     metadata: dict = field(default_factory=dict)
+    workspace_scope: str = "private"
+    bound_item_ids: list = field(default_factory=list)
 
 
 @dataclass
