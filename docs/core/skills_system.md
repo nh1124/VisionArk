@@ -1,117 +1,77 @@
 # Agent Skills System
 
-Agent Skills are reusable packages of specialized domain knowledge and procedural instructions that can be "attached" to AI agents in VisionArk. Unlike raw LLM tools, Skills provide the **procedural intelligence** (the "how-to") for using those tools and navigating specific domains.
-
-## Core Concept: "Pluggable Intelligence"
-
-Skills are managed through two complementary channels:
-
-1. **Static Skills** — Defined in code via `SKILL_DEFS` in `engine_setup.py` and registered at engine bootstrap time. These define tool-filtering groups (e.g., `investigation`, `document_creation`, `operation`).
-2. **DB Skills** — Stored in the `skills` table and assigned to projects via the `project_skills` join table. These provide prompt-injected procedural instructions to augment agent behavior at runtime.
+Skills は「能力境界の宣言」と「実行時ガードレール」を提供します。
+正本は `orchestration2` の `SkillDef` / `SkillRegistry` のみです。
 
 ---
 
-## 1. Authoritative Specification: `orchestration2`
+## 1. 正本: orchestration2
 
-All skill behavior is governed by the `orchestration2` engine:
+### SkillDef（仕様の唯一の型）
 
-### SkillDef (Source of Truth)
 ```python
 class SkillDef(BaseModel):
     name: str
     description: str | None = None
-    tools: list[str] = []        # Tool names this skill can access
+    tools: list[str] = []          # このスキルが使用できるツール名
     request_approval: bool = False
 ```
 
 ### SkillRegistry
-- Located at `core/backend/domains/orchestration2/engine/registry/skill_registry.py`
-- Manages `name → (SkillDef, impl)` mappings
-- Used by `StepExecutor` to resolve tool visibility per step
 
-### Engine Setup
-- Located at `core/backend/domains/orchestration2/engine_setup.py`
-- Registers static `SKILL_DEFS` at engine creation
-- Loads DB skills via `_load_prompt_components()` and injects them into agent prompts
-- Integration tools are dynamically added to the `operation` skill
+- `core/backend/domains/orchestration2/engine/registry/skill_registry.py`
+- `name → (SkillDef, impl)` マッピングを管理
+- `StepExecutor` が step 単位で使用可能ツールを解決するために参照する
 
 ---
 
-## 2. DB Skill Model
+## 2. エンジン起動フロー
 
-Skills in the database use the `Skill` ORM model:
+1. `config/skills/default_skills.py` の `SKILL_DEFS` を読み込む
+2. Integration が提供するツールをエンジンへ登録
+3. 必要に応じて integration ツールを適切な `SkillDef.tools` へマージ
+4. `SkillRegistry` 登録後、agent に skill 名を割り当てる
 
-| Column | Type | Purpose |
-|---|---|---|
-| `id` | `VARCHAR(100)` | Unique identifier (kebab-case) |
-| `name` | `VARCHAR(100)` | Human-readable name |
-| `description` | `VARCHAR(500)` | Summary shown in UI |
-| `content` | `TEXT` | Procedural instructions (Markdown) |
-| `metadata_payload` | `JSON` | Additional metadata (e.g., `tools` list) |
-| `is_active` | `BOOLEAN` | Active/inactive toggle |
-| `is_draft` | `BOOLEAN` | Draft skills from skill mining |
-
-### Project Assignment
-- Skills are assigned to a project's main agent via the `project_skills` table (`agent_id → skill_id`)
-- The API endpoint `/api/skills/project/{project_id}` manages these assignments
+実装: `core/backend/domains/orchestration2/bootstrap/project_engine_builder.py`
 
 ---
 
-## 3. How to Add a New Skill
+## 3. 静的スキルの追加方法
 
-### Method A: Static Skill (Code)
-Add a `SkillDef` entry to `SKILL_DEFS` in `engine_setup.py`:
+`config/skills/default_skills.py` に `SkillDef` エントリを追加します:
+
 ```python
 SkillDef(
     name="my_skill",
-    description="What this skill does",
+    description="このスキルの概要",
     tools=["tool_a", "tool_b"],
 )
 ```
 
-### Method B: DB Skill (UI)
-1. Navigate to the **Skills** page in the VisionArk sidebar.
-2. Create or edit a skill with Markdown content and metadata.
-3. Assign the skill to a project via **Project Settings → Skills** tab.
-4. The skill content will be injected into the agent's system prompt at runtime.
-
 ---
 
-## 4. Best Practices for Skill Writing
-
-- **Be Procedural**: Give the agent numbered steps to follow.
-- **Define Boundaries**: Tell the agent what *not* to do (e.g., "Do not share customer data during analysis").
-- **Tool Context**: Explicitly mention which tools should be used for which steps.
-- **Language**: Skills can be written in any language (Japanese, English, etc.), and the agent will adapt based on the system's localization settings.
-
----
-
-## 5. Dynamic Knowledge Acquisition (Skill Mining)
-
-VisionArk includes a dynamic learning mechanism (`skill_mining.py`) that automatically extracts new skills from high-value user interactions.
-
-### Mining Logic & Safeguards
-1. **Conservative Triggering (AES)**: Skill mining is enqueued as a `SYSTEM_SKILL_MINING` task in the Automated Execution System (AES).
-2. **Complexity Heuristics**: A skill is only drafted if the interaction uses ≥2 distinct tool types and ≥3 total tool calls.
-3. **Project-based Throttling**: Mining is restricted to once every 10 minutes per project.
-4. **Deduplication**: The system checks for existing skills with the same name before saving.
-
-### Lifecycle of a Mined Skill
-1. **Extraction**: The `SkillMiningService` uses an LLM to distill procedural knowledge from interactions.
-2. **Drafting**: The extracted skill is saved to the database with `is_draft=True`.
-3. **Review**: Users can see mined drafts in the Skills UI, where they can refine, approve (activate), or discard them.
-
----
-
-## 6. Deprecated Components
+## 4. 廃止済みコンポーネント
 
 > [!WARNING]
-> The following components have been deprecated and removed as of 2026-02-18.
-> See [ADR: Skills Deprecation](../decisions/ADR-skills-deprecation.md) for details.
+> 以下のコンポーネントは廃止・除去されています。
+> 詳細は [ADR: Skills Deprecation](../decisions/ADR-skills-deprecation.md) を参照してください。
 
-| Component | Status | Replacement |
+| コンポーネント | 状態 | 代替 |
 |---|---|---|
-| `automation/skill_service.py` (`SkillService`) | **Removed** | orchestration2 `SkillDef` + prompt injection via `engine_setup.py` |
-| `automation/skills/registry.py` (FS → DB sync) | **Removed** | Skills are managed via UI / API only |
-| `node_skills` table | **Removed** | `project_skills` table (agent-based) |
-| `/api/skills/node/{nodeId}` | **Never existed** | `/api/skills/project/{project_id}` |
+| `automation/skill_service.py` | **除去済み** | `orchestration2` の `SkillDef` |
+| `automation/skills/registry.py` | **除去済み** | UI/API によるスキル管理（現在も廃止） |
+| DB `skills` テーブル + `/api/skills` | **廃止済み** | `config/skills/default_skills.py` |
+| `integrations/*/SKILL.md` の runtime 参照 | **廃止済み** | `orchestration2/config/skills/` で一元管理 |
+| Frontend Skills ページ | **廃止済み** | 廃止案内ページを表示 |
+
+---
+
+## 5. 将来の拡張（DB再導入）
+
+DB保存は現在保留中です。将来再導入する場合は:
+
+- `SkillDef` と 1:1 で対応するシリアライズ形式（JSON/YAML）を使用する
+- `version` フィールドを含む互換方針を策定する
+- backend では「保存先」を抽象化（in-memory provider / DB provider）する
+
+詳細は `docs/proposals/Skill_refactoring.md` の Phase 2〜3 を参照してください。

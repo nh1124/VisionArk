@@ -8,34 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-async def fetch_project_skills(db: AsyncSession, project_id: str) -> list[Any]:
-    """Fetch active skills attached to the project agent."""
-    from shared.database import ProjectSkill, Skill, ProjectAgent as AgentModel
-
-    try:
-        # Find project agent
-        agent_res = await db.execute(
-            select(AgentModel).filter(
-                AgentModel.project_id == project_id,
-                AgentModel.role_name == "project",
-                AgentModel.status == "active",
-            )
-        )
-        agent = agent_res.scalars().first()
-        if not agent:
-            return []
-
-        # Find attached active skills
-        skill_res = await db.execute(
-            select(Skill)
-            .join(ProjectSkill, ProjectSkill.skill_id == Skill.id)
-            .filter(ProjectSkill.agent_id == agent.id, Skill.is_active == True)
-        )
-        return skill_res.scalars().all()
-    except Exception as e:
-        logger.warning("Failed to fetch project skills: %s", e)
-        return []
-
 
 def _build_planner_capabilities(skills: list[Any], tool_registry: Any) -> str:
     """Generate a snapshot of available capabilities for the planner."""
@@ -45,7 +17,6 @@ def _build_planner_capabilities(skills: list[Any], tool_registry: Any) -> str:
     if skills:
         lines.append("\n### Skills (High-level groupings)")
         for s in skills:
-            # Handle both SkillDef objects and DB models
             name = getattr(s, "name", "")
             desc = getattr(s, "description", "")
             lines.append(f"- **{name}**: {desc}")
@@ -61,10 +32,7 @@ def _build_planner_capabilities(skills: list[Any], tool_registry: Any) -> str:
         name = getattr(s, "name", "")
         skill_tools_map[name] = []
         
-        # Tools list can be in .tools (SkillDef) or .metadata_payload["tools"] (DB model)
         tools = getattr(s, "tools", [])
-        if not tools and hasattr(s, "metadata_payload"):
-             tools = s.metadata_payload.get("tools", [])
              
         for t_name in tools:
             skill_tools_map[name].append(t_name)
@@ -89,12 +57,11 @@ def _build_planner_capabilities(skills: list[Any], tool_registry: Any) -> str:
 
 
 async def load_prompt_components(
-    db: AsyncSession, 
-    project_id: str, 
-    user_id: str, 
-    skills: list[Any],
-    engine: Any | None = None,  # Added engine
-    all_skills: list[Any] | None = None # Added all_skills
+    db: AsyncSession,
+    project_id: str,
+    user_id: str,
+    engine: Any | None = None,
+    all_skills: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Pre-load all data needed by ProjectRole.build_prompt().
 
@@ -143,19 +110,7 @@ async def load_prompt_components(
     except Exception as e:
         logger.warning("Failed to load project plan: %s", e)
 
-    # 4. Skills text (from passed skills)
-    if skills:
-        texts = []
-        skill_map = {}
-        for s in skills:
-            content = f"### {s.name}\n{s.content}"
-            texts.append(content)
-            skill_map[s.name] = content
-        
-        result["skills_text"] = "\n\n".join(texts)
-        result["skill_definitions"] = skill_map
-
-    # 5. User settings
+    # 4. User settings
     try:
         from shared.database import UserSettings
 
@@ -168,7 +123,7 @@ async def load_prompt_components(
     except Exception as e:
         logger.warning("Failed to load user settings: %s", e)
 
-    # 6. Planner capabilities (snapshot)
+    # 5. Planner capabilities (snapshot)
     if engine and all_skills:
         try:
             caps = _build_planner_capabilities(all_skills, engine.tools)

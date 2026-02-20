@@ -11,7 +11,7 @@ setup_logging()
 
 from shared.database import init_database
 from api import agents, commands, rag, context, files, auth, settings as settings_api, export, notes
-from api import decomposer, suggestions, scheduler, approvals, automation, skills, notifications
+from api import decomposer, suggestions, scheduler, approvals, automation, notifications
 from va_sdk.discovery import include_integration_routers
 
 from app.config import settings
@@ -78,7 +78,6 @@ app.include_router(export.router)
 app.include_router(scheduler.router)
 app.include_router(approvals.router)
 app.include_router(automation.router)
-app.include_router(skills.router)
 app.include_router(notes.router)
 app.include_router(notifications.router)
 

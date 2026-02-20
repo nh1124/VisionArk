@@ -20,7 +20,7 @@ from ..roles.direct_role import DirectRole
 # New components
 from ..config.skills.default_skills import SKILL_DEFS, ALL_SKILL_NAMES
 from ..config.tools.default_catalog import get_core_tools
-from ..prompting.prompt_context_loader import fetch_project_skills, load_prompt_components
+from ..prompting.prompt_context_loader import load_prompt_components
 from ..integrations.tool_reflection import register_and_reflect_integrations
 from ..skills.noop import NoOpSkill
 
@@ -84,44 +84,9 @@ async def create_engine_for_project(
     engine.register_model("default", preferred_model or "gemini-3-pro-preview")
 
     # 7. Register skills (for tool filtering)
-    # 7a. Static Skills
     for skill_def in dynamic_skills:
         # Use simple NoOpSkill wrapper
         engine.register_skill(skill_def, NoOpSkill(skill_def))
-    
-    # 7b. DB Skills
-    db_skills = await fetch_project_skills(db_session, project_id)
-    db_skill_names = []
-    
-    for s in db_skills:
-        try:
-            # Create SkillDef from DB model
-            meta = s.metadata_payload or {}
-            tools_list = meta.get("tools", [])
-            
-            # Normalize tools list
-            if not isinstance(tools_list, list):
-                tools_list = []
-            
-            s_def = SkillDef(
-                name=s.name,
-                description=s.description or "",
-                tools=tools_list,
-                request_approval=meta.get("request_approval", False)
-            )
-            
-            # Register if not exists
-            if not engine.skills.has(s.name):
-                engine.register_skill(s_def, NoOpSkill(s_def))
-                db_skill_names.append(s.name)
-                # Keep track of skill def for prompting
-                dynamic_skills.append(s_def)
-            else:
-                logger.warning(f"DB Skill '{s.name}' skipped (shadows existing skill).")
-                db_skill_names.append(s.name)
-
-        except Exception as e:
-            logger.warning(f"Failed to register DB skill {s.id}: {e}")
 
     # 8. Register roles
     engine.register_role(PlannerRole())
@@ -140,25 +105,21 @@ async def create_engine_for_project(
 
     # 10. Pre-load prompt data
     prompt_data = await load_prompt_components(
-        db_session, 
-        project_id, 
-        user_id, 
-        db_skills,
+        db_session,
+        project_id,
+        user_id,
         engine=engine,
-        all_skills=dynamic_skills
+        all_skills=dynamic_skills,
     )
     if integration_tools_text:
         prompt_data["integration_tools_text"] = integration_tools_text
 
     # 11. Register agent
-    # Assemble all skill names: Static + DB
-    all_skill_names = ALL_SKILL_NAMES + db_skill_names
-
     agent_def = AgentDef(
         name=f"project_{project_id}",
         graph_name="direct_assistant", # or "project_assistant"
         default_model="default",
-        skills=all_skill_names,
+        skills=ALL_SKILL_NAMES,
         limits=AgentLimits(max_turns=25),
     )
     agent_id = engine.register_agent(agent_def)

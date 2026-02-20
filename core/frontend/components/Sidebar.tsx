@@ -7,7 +7,7 @@ import { apiFetch, getFileToken } from "@/lib/api";
 
 import { useProjects } from "@/hooks/useProjects";
 import { useNotification } from "@/lib/NotificationContext";
-import { LayoutGrid, Folder, Bot, BarChart3, Settings as SettingsIcon, ChevronLeft, Sparkles, ClipboardList, AlarmClock, StickyNote } from "lucide-react";
+import { LayoutGrid, Folder, Bot, BarChart3, Settings as SettingsIcon, ChevronLeft, ClipboardList, AlarmClock, StickyNote } from "lucide-react";
 import TaskSidebar from "./TaskSidebar";
 
 interface SidebarProps {
@@ -102,7 +102,6 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
         { name: "Dashboard", path: "/dashboard", icon: <LayoutGrid size={20} /> },
         { name: "Projects", path: "/projects", icon: <Folder size={20} /> },
         { name: "Tasks", path: "/tasks", icon: <ClipboardList size={20} /> },
-        { name: "Skills", path: "/skills", icon: <Sparkles size={20} /> },
         { name: "Cron Tasks", path: "/cron", icon: <AlarmClock size={20} /> },
         { name: "Notes", path: "/notes", icon: <StickyNote size={20} /> },
     ];
