@@ -201,6 +201,153 @@ class DeleteWorkspaceItemTool:
             return fail(call, f"Failed to delete workspace item: {e}")
 
 
+class CreateWorkspaceDirectoryTool:
+    definition = ToolDef(
+        name="create_workspace_directory",
+        description=(
+            "Create a directory node in the shared workspace to organise files and notes. "
+            "Use a logical path like 'reports/2025' or 'templates'. "
+            "Directories are structural; they do not hold content themselves."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Logical path of the directory, e.g. 'reports/2025'.",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Human-readable label for the directory.",
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["private", "org", "project"],
+                    "description": "Visibility scope. Defaults to 'private'.",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional tags.",
+                },
+            },
+            "required": ["path", "title"],
+        },
+    )
+
+    async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
+        path = call.arguments.get("path", "")
+        title = call.arguments.get("title", "")
+        scope = call.arguments.get("scope", "private")
+        tags = call.arguments.get("tags") or []
+        user_id = get_user_id(ctx)
+        db = get_db(ctx)
+
+        try:
+            from domains.workspace.workspace_service import WorkspaceService
+
+            svc = WorkspaceService(db, user_id)
+            item = await svc.create_directory(path=path, title=title, scope=scope, tags=tags)
+            return make_result(
+                call,
+                f"Workspace directory '{title}' created (id: {item.id}, path: {item.path}).",
+            )
+        except Exception as e:
+            return fail(call, f"Failed to create workspace directory: {e}")
+
+
+class ReadWorkspaceFileTool:
+    definition = ToolDef(
+        name="read_workspace_file",
+        description=(
+            "Read the text content of a workspace file item by its ID. "
+            "Only suitable for text-based files (plain text, markdown, JSON, XML, etc.). "
+            "Use list_workspace_items first to find the file's ID."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "item_id": {
+                    "type": "string",
+                    "description": "UUID of the workspace file item.",
+                },
+                "encoding": {
+                    "type": "string",
+                    "description": "Text encoding. Defaults to 'utf-8'.",
+                },
+            },
+            "required": ["item_id"],
+        },
+    )
+
+    async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
+        item_id = call.arguments.get("item_id", "")
+        encoding = call.arguments.get("encoding", "utf-8")
+        user_id = get_user_id(ctx)
+        db = get_db(ctx)
+
+        try:
+            from domains.workspace.workspace_service import WorkspaceService
+
+            svc = WorkspaceService(db, user_id)
+            content_bytes, mime_type = await svc.get_file_content(item_id)
+            try:
+                text = content_bytes.decode(encoding)
+            except (UnicodeDecodeError, LookupError):
+                return fail(call, f"File is not readable as text with encoding '{encoding}'.")
+            return make_result(call, f"[{mime_type}]\n{text}")
+        except Exception as e:
+            return fail(call, f"Failed to read workspace file: {e}")
+
+
+class MoveWorkspaceItemTool:
+    definition = ToolDef(
+        name="move_workspace_item",
+        description=(
+            "Move or rename a workspace item (note, file, or directory) to a new path. "
+            "For files, the underlying file is also moved on disk. "
+            "Provide only new_path; new_title is optional."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "item_id": {
+                    "type": "string",
+                    "description": "UUID of the workspace item to move.",
+                },
+                "new_path": {
+                    "type": "string",
+                    "description": "New logical path, e.g. 'archive/old-report.pdf'.",
+                },
+                "new_title": {
+                    "type": "string",
+                    "description": "Optional new title.",
+                },
+            },
+            "required": ["item_id", "new_path"],
+        },
+    )
+
+    async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
+        item_id = call.arguments.get("item_id", "")
+        new_path = call.arguments.get("new_path", "")
+        new_title = call.arguments.get("new_title")
+        user_id = get_user_id(ctx)
+        db = get_db(ctx)
+
+        try:
+            from domains.workspace.workspace_service import WorkspaceService
+
+            svc = WorkspaceService(db, user_id)
+            item = await svc.move_item(item_id, new_path, new_title)
+            return make_result(
+                call,
+                f"Workspace item moved to '{item.path}' (title: '{item.title}', version: {item.version}).",
+            )
+        except Exception as e:
+            return fail(call, f"Failed to move workspace item: {e}")
+
+
 class UpdateWorkspaceItemTool:
     definition = ToolDef(
         name="update_workspace_item",

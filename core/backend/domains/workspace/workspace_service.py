@@ -1,9 +1,13 @@
 """
 Workspace Service
 CRUD, versioning, ACL, and priority resolver for shared workspace items.
+Supports three item types: note (text), file (binary/text), directory.
 """
+import hashlib
+import shutil
 from datetime import datetime
-from typing import List, Optional
+from pathlib import Path
+from typing import List, Optional, Tuple
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -11,6 +15,28 @@ from sqlalchemy import select, and_, or_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.database import WorkspaceItem, WorkspaceItemVersion, WorkspaceBinding, WorkspaceACL
+from shared.paths import get_workspace_item_path, get_workspace_dir
+
+# 25 MB upload limit for workspace files
+MAX_FILE_SIZE = 25 * 1024 * 1024
+
+ALLOWED_MIME_PREFIXES = (
+    "text/", "application/pdf", "application/json",
+    "application/xml", "application/zip",
+    "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml",
+)
+
+
+def _validate_path(path: str) -> None:
+    """Reject paths with traversal or hidden segments."""
+    parts = path.replace("\\", "/").split("/")
+    for part in parts:
+        if part in ("", ".", "..") or part.startswith("."):
+            raise HTTPException(status_code=400, detail=f"Invalid path segment: '{part}'")
+
+
+def _compute_checksum(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
 class WorkspaceService:
@@ -30,9 +56,11 @@ class WorkspaceService:
         scope: str = "private",
         tags: Optional[List[str]] = None,
     ) -> WorkspaceItem:
+        _validate_path(path)
         item = WorkspaceItem(
             id=str(uuid4()),
             owner_id=self.user_id,
+            item_type="note",
             scope=scope,
             path=path,
             title=title,
@@ -44,6 +72,168 @@ class WorkspaceService:
         await self.db.commit()
         await self.db.refresh(item)
         return item
+
+    async def create_directory(
+        self,
+        path: str,
+        title: str,
+        scope: str = "private",
+        tags: Optional[List[str]] = None,
+    ) -> WorkspaceItem:
+        """Create a directory node in the workspace."""
+        _validate_path(path)
+        item = WorkspaceItem(
+            id=str(uuid4()),
+            owner_id=self.user_id,
+            item_type="directory",
+            scope=scope,
+            path=path,
+            title=title,
+            tags=tags or [],
+            version=1,
+        )
+        self.db.add(item)
+        await self.db.commit()
+        await self.db.refresh(item)
+        return item
+
+    async def upload_file(
+        self,
+        path: str,
+        title: str,
+        content_bytes: bytes,
+        mime_type: str,
+        scope: str = "private",
+        tags: Optional[List[str]] = None,
+    ) -> WorkspaceItem:
+        """Save a file to the workspace and record it in the DB."""
+        _validate_path(path)
+        if len(content_bytes) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=413, detail=f"File exceeds {MAX_FILE_SIZE // (1024*1024)} MB limit")
+        if not any(mime_type.startswith(p) for p in ALLOWED_MIME_PREFIXES):
+            raise HTTPException(status_code=415, detail=f"Unsupported MIME type: {mime_type}")
+
+        # Write to disk
+        dest = get_workspace_item_path(self.user_id, path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(content_bytes)
+
+        checksum = _compute_checksum(content_bytes)
+        item = WorkspaceItem(
+            id=str(uuid4()),
+            owner_id=self.user_id,
+            item_type="file",
+            scope=scope,
+            path=path,
+            title=title,
+            storage_path=str(dest),
+            mime_type=mime_type,
+            size_bytes=len(content_bytes),
+            checksum=checksum,
+            tags=tags or [],
+            version=1,
+        )
+        self.db.add(item)
+        await self.db.commit()
+        await self.db.refresh(item)
+        return item
+
+    async def get_file_content(self, item_id: str) -> Tuple[bytes, str]:
+        """Return (bytes, mime_type) for a file workspace item."""
+        item = await self.get_item(item_id)
+        if item.item_type != "file":
+            raise HTTPException(status_code=400, detail="Item is not a file")
+        dest = Path(item.storage_path) if item.storage_path else get_workspace_item_path(self.user_id, item.path)
+        if not dest.exists():
+            raise HTTPException(status_code=404, detail="File content not found on disk")
+        return dest.read_bytes(), item.mime_type or "application/octet-stream"
+
+    async def replace_file(
+        self,
+        item_id: str,
+        content_bytes: bytes,
+        mime_type: str,
+    ) -> WorkspaceItem:
+        """Replace the content of an existing file workspace item."""
+        item = await self.get_item(item_id)
+        if item.item_type != "file":
+            raise HTTPException(status_code=400, detail="Item is not a file")
+        if len(content_bytes) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=413, detail=f"File exceeds {MAX_FILE_SIZE // (1024*1024)} MB limit")
+        if not any(mime_type.startswith(p) for p in ALLOWED_MIME_PREFIXES):
+            raise HTTPException(status_code=415, detail=f"Unsupported MIME type: {mime_type}")
+
+        dest = Path(item.storage_path) if item.storage_path else get_workspace_item_path(self.user_id, item.path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(content_bytes)
+
+        # Snapshot metadata before update
+        snapshot = WorkspaceItemVersion(
+            id=str(uuid4()),
+            item_id=item.id,
+            version=item.version,
+            content=None,
+            created_by=self.user_id,
+        )
+        self.db.add(snapshot)
+
+        item.mime_type = mime_type
+        item.size_bytes = len(content_bytes)
+        item.checksum = _compute_checksum(content_bytes)
+        item.version = item.version + 1
+        item.updated_at = datetime.utcnow()
+
+        await self.db.commit()
+        await self.db.refresh(item)
+        return item
+
+    async def move_item(self, item_id: str, new_path: str, new_title: Optional[str] = None) -> WorkspaceItem:
+        """Move/rename a workspace item (updates path and, for files, moves the file on disk)."""
+        _validate_path(new_path)
+        item = await self.get_item(item_id)
+
+        if item.item_type == "file":
+            old_dest = Path(item.storage_path) if item.storage_path else get_workspace_item_path(self.user_id, item.path)
+            new_dest = get_workspace_item_path(self.user_id, new_path)
+            new_dest.parent.mkdir(parents=True, exist_ok=True)
+            if old_dest.exists():
+                shutil.move(str(old_dest), str(new_dest))
+            item.storage_path = str(new_dest)
+
+        snapshot = WorkspaceItemVersion(
+            id=str(uuid4()),
+            item_id=item.id,
+            version=item.version,
+            content=item.content,
+            created_by=self.user_id,
+        )
+        self.db.add(snapshot)
+
+        item.path = new_path
+        if new_title is not None:
+            item.title = new_title
+        item.version = item.version + 1
+        item.updated_at = datetime.utcnow()
+
+        await self.db.commit()
+        await self.db.refresh(item)
+        return item
+
+    async def list_tree(self, path_prefix: Optional[str] = None) -> List[WorkspaceItem]:
+        """List all non-deleted items under an optional path prefix."""
+        conditions = [
+            WorkspaceItem.owner_id == self.user_id,
+            WorkspaceItem.is_deleted == False,
+        ]
+        if path_prefix:
+            # Match items whose path starts with the prefix
+            from sqlalchemy import String
+            conditions.append(WorkspaceItem.path.like(f"{path_prefix}%"))
+
+        result = await self.db.execute(
+            select(WorkspaceItem).where(and_(*conditions)).order_by(WorkspaceItem.path)
+        )
+        return result.scalars().all()
 
     async def get_item(self, item_id: str) -> WorkspaceItem:
         result = await self.db.execute(
@@ -119,6 +309,23 @@ class WorkspaceService:
 
     async def delete_item(self, item_id: str) -> bool:
         item = await self.get_item(item_id)
+
+        # For directories: recursively soft-delete all children
+        if item.item_type == "directory":
+            prefix = item.path.rstrip("/") + "/"
+            result = await self.db.execute(
+                select(WorkspaceItem).where(
+                    WorkspaceItem.owner_id == self.user_id,
+                    WorkspaceItem.path.like(f"{prefix}%"),
+                    WorkspaceItem.is_deleted == False,
+                )
+            )
+            children = result.scalars().all()
+            now = datetime.utcnow()
+            for child in children:
+                child.is_deleted = True
+                child.updated_at = now
+
         item.is_deleted = True
         item.updated_at = datetime.utcnow()
         await self.db.commit()

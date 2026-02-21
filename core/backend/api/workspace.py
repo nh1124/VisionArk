@@ -1,9 +1,11 @@
 """
 Workspace API
 REST endpoints for managing shared workspace items, version history, and project bindings.
+Supports note, file, and directory item types.
 """
 from typing import List, Optional
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, UploadFile, File
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,6 +39,7 @@ class WorkspaceItemUpdate(BaseModel):
 class WorkspaceItemResponse(BaseModel):
     id: str
     owner_id: str
+    item_type: str
     scope: str
     path: str
     title: str
@@ -44,6 +47,8 @@ class WorkspaceItemResponse(BaseModel):
     tags: List[str]
     version: int
     is_deleted: bool
+    mime_type: Optional[str]
+    size_bytes: Optional[int]
     created_at: str
     updated_at: str
 
@@ -55,6 +60,7 @@ class WorkspaceItemResponse(BaseModel):
         return cls(
             id=item.id,
             owner_id=item.owner_id,
+            item_type=getattr(item, "item_type", "note") or "note",
             scope=item.scope,
             path=item.path,
             title=item.title,
@@ -62,6 +68,8 @@ class WorkspaceItemResponse(BaseModel):
             tags=item.tags or [],
             version=item.version,
             is_deleted=item.is_deleted,
+            mime_type=getattr(item, "mime_type", None),
+            size_bytes=getattr(item, "size_bytes", None),
             created_at=item.created_at.isoformat() if item.created_at else "",
             updated_at=item.updated_at.isoformat() if item.updated_at else "",
         )
@@ -85,6 +93,13 @@ class WorkspaceItemVersionResponse(BaseModel):
             created_by=v.created_by,
             created_at=v.created_at.isoformat() if v.created_at else "",
         )
+
+
+class WorkspaceDirectoryCreate(BaseModel):
+    path: str
+    title: str
+    scope: str = "private"
+    tags: List[str] = []
 
 
 class WorkspaceBindingCreate(BaseModel):
@@ -247,3 +262,115 @@ async def resolve_project_context(
     service = WorkspaceService(db, identity.user_id)
     items = await service.resolve_context(project_id)
     return [WorkspaceItemResponse.from_orm_item(i) for i in items]
+
+
+# ------------------------------------------------------------------
+# Directory endpoints
+# ------------------------------------------------------------------
+
+@workspace_router.post("/directories", response_model=WorkspaceItemResponse)
+async def create_workspace_directory(
+    body: WorkspaceDirectoryCreate,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Create a directory node in the workspace."""
+    service = WorkspaceService(db, identity.user_id)
+    item = await service.create_directory(
+        path=body.path,
+        title=body.title,
+        scope=body.scope,
+        tags=body.tags,
+    )
+    return WorkspaceItemResponse.from_orm_item(item)
+
+
+# ------------------------------------------------------------------
+# File endpoints
+# ------------------------------------------------------------------
+
+@workspace_router.post("/files", response_model=WorkspaceItemResponse)
+async def upload_workspace_file(
+    path: str = Query(..., description="Logical path, e.g. 'reports/q1.pdf'"),
+    title: str = Query(..., description="Human-readable title"),
+    scope: str = Query("private"),
+    tags: Optional[str] = Query(None, description="Comma-separated tags"),
+    file: UploadFile = File(...),
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Upload a file to the workspace (multipart/form-data)."""
+    content_bytes = await file.read()
+    mime_type = file.content_type or "application/octet-stream"
+    tag_list = [t.strip() for t in tags.split(",")] if tags else []
+    service = WorkspaceService(db, identity.user_id)
+    item = await service.upload_file(
+        path=path,
+        title=title,
+        content_bytes=content_bytes,
+        mime_type=mime_type,
+        scope=scope,
+        tags=tag_list,
+    )
+    return WorkspaceItemResponse.from_orm_item(item)
+
+
+@workspace_router.get("/files/{item_id}/content")
+async def download_workspace_file(
+    item_id: str,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Download the binary content of a workspace file item."""
+    service = WorkspaceService(db, identity.user_id)
+    content_bytes, mime_type = await service.get_file_content(item_id)
+    return Response(content=content_bytes, media_type=mime_type)
+
+
+@workspace_router.put("/files/{item_id}", response_model=WorkspaceItemResponse)
+async def replace_workspace_file(
+    item_id: str,
+    file: UploadFile = File(...),
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Replace the content of an existing workspace file."""
+    content_bytes = await file.read()
+    mime_type = file.content_type or "application/octet-stream"
+    service = WorkspaceService(db, identity.user_id)
+    item = await service.replace_file(item_id, content_bytes, mime_type)
+    return WorkspaceItemResponse.from_orm_item(item)
+
+
+# ------------------------------------------------------------------
+# Tree endpoint
+# ------------------------------------------------------------------
+
+@workspace_router.get("/tree", response_model=List[WorkspaceItemResponse])
+async def get_workspace_tree(
+    path: Optional[str] = Query(None, description="Path prefix to filter (e.g. 'reports/')"),
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List all workspace items (notes, files, directories) sorted by path."""
+    service = WorkspaceService(db, identity.user_id)
+    items = await service.list_tree(path_prefix=path)
+    return [WorkspaceItemResponse.from_orm_item(i) for i in items]
+
+
+# ------------------------------------------------------------------
+# Move endpoint
+# ------------------------------------------------------------------
+
+@workspace_router.post("/items/{item_id}/move", response_model=WorkspaceItemResponse)
+async def move_workspace_item(
+    item_id: str,
+    new_path: str = Query(..., description="New logical path"),
+    new_title: Optional[str] = Query(None, description="New title (optional)"),
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Move or rename a workspace item."""
+    service = WorkspaceService(db, identity.user_id)
+    item = await service.move_item(item_id, new_path, new_title)
+    return WorkspaceItemResponse.from_orm_item(item)

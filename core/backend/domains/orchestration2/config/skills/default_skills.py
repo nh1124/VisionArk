@@ -44,13 +44,16 @@ SKILL_DEFS: list[SkillDef] = [
     ),
     SkillDef(
         name="workspace_management",
-        description="Read and write shared workspace items (profile, company info, reusable context)",
+        description="Read and write shared workspace items (profile, company info, reusable context), including file and directory management",
         tools=[
             "list_workspace_items",
             "read_workspace_item",
             "create_workspace_item",
             "update_workspace_item",
             "delete_workspace_item",
+            "create_workspace_directory",
+            "read_workspace_file",
+            "move_workspace_item",
         ],
     ),
 ]

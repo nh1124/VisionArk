@@ -21,6 +21,7 @@ from ...tools.library.notes import ListNotesTool, ReadNoteTool, CreateNoteTool
 from ...tools.library.workspace import (
     ListWorkspaceItemsTool, ReadWorkspaceItemTool,
     CreateWorkspaceItemTool, UpdateWorkspaceItemTool, DeleteWorkspaceItemTool,
+    CreateWorkspaceDirectoryTool, ReadWorkspaceFileTool, MoveWorkspaceItemTool,
 )
 from ...tools.library.system import (
     ListAgentsTool, GetAgentProfileTool,
@@ -59,6 +60,7 @@ def get_core_tools() -> list[tuple[ToolDef, Any]]:
         # Workspace
         ListWorkspaceItemsTool, ReadWorkspaceItemTool,
         CreateWorkspaceItemTool, UpdateWorkspaceItemTool, DeleteWorkspaceItemTool,
+        CreateWorkspaceDirectoryTool, ReadWorkspaceFileTool, MoveWorkspaceItemTool,
         # System
         ListAgentsTool, GetAgentProfileTool,
         ListUserProjectsTool, UpdateProjectTool,

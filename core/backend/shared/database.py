@@ -601,13 +601,19 @@ class WorkspaceItem(Base):
 
     id = Column(String(36), primary_key=True)               # UUID
     owner_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    item_type = Column(String(20), default="note")          # note | file | directory
     scope = Column(String(20), default="private")           # private / org / project
     path = Column(String(512), nullable=False)              # logical path e.g. 'profile/about.md'
     title = Column(String(255), nullable=False)
-    content = Column(Text, nullable=True)                   # inline markdown content
+    content = Column(Text, nullable=True)                   # inline markdown content (note only)
     tags = Column(JSON, default=list)
     version = Column(Integer, default=1)
     is_deleted = Column(Boolean, default=False, index=True)
+    # File-specific columns
+    storage_path = Column(String(512), nullable=True)       # physical path relative to workspace dir
+    mime_type = Column(String(100), nullable=True)
+    size_bytes = Column(Integer, nullable=True)
+    checksum = Column(String(64), nullable=True)            # SHA-256 hex
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -971,6 +977,23 @@ def _run_migrations(engine):
                 conn.execute(text("ALTER TABLE approval_requests ADD COLUMN run_id VARCHAR(36)"))
                 conn.commit()
                 print("✅ Migration: Added run_id column to approval_requests")
+
+    # Migration: Add file/directory support columns to workspace_items
+    if 'workspace_items' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('workspace_items')]
+        new_cols = {
+            'item_type': "VARCHAR(20) DEFAULT 'note'",
+            'storage_path': "VARCHAR(512)",
+            'mime_type': "VARCHAR(100)",
+            'size_bytes': "INTEGER",
+            'checksum': "VARCHAR(64)",
+        }
+        with engine.connect() as conn:
+            for col_name, col_def in new_cols.items():
+                if col_name not in columns:
+                    conn.execute(text(f"ALTER TABLE workspace_items ADD COLUMN {col_name} {col_def}"))
+                    print(f"✅ Migration: Added {col_name} column to workspace_items")
+            conn.commit()
 
 
 # Global sync session maker

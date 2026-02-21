@@ -132,11 +132,25 @@ async def load_prompt_components(
         if ws_items:
             lines = ["## Shared Workspace Context\n"]
             for item in ws_items:
-                lines.append(f"### {item.title}  (`{item.path}`, scope: {item.scope})")
+                item_type = getattr(item, "item_type", "note") or "note"
+                if item_type == "directory":
+                    # Directories are structural; skip injecting them directly
+                    continue
+                lines.append(f"### {item.title}  (`{item.path}`, type: {item_type}, scope: {item.scope})")
                 if item.tags:
                     lines.append(f"*Tags: {', '.join(item.tags)}*")
-                if item.content:
-                    lines.append(item.content)
+                if item_type == "file":
+                    # Inject file metadata; content is fetched on demand to avoid token bloat
+                    size = item.size_bytes or 0
+                    size_str = f"{size / 1024:.1f} KB" if size >= 1024 else f"{size} B"
+                    lines.append(
+                        f"*File — MIME: {item.mime_type or 'unknown'}, Size: {size_str}, "
+                        f"fetch via GET /api/workspace/files/{item.id}/content*"
+                    )
+                else:
+                    # note: inject inline content
+                    if item.content:
+                        lines.append(item.content)
                 lines.append("")
             result["workspace_context"] = "\n".join(lines)
     except Exception as e:
