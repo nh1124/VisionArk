@@ -181,17 +181,18 @@ async def get_task_status(
 async def cancel_task(
     task_id: str,
     identity: Identity = Depends(resolve_identity),
-    db: AsyncSession = Depends(get_async_db),
 ):
     """Cancel an in-progress task.
 
     Marks the Redis task as cancelled (picked up by the Worker's cancel
-    watcher within ~2 s) and immediately updates the orchestration run
-    in the DB so that the Orchestrator cooperative-cancel check stops the
-    next step.  Idempotent: already-terminal tasks return 200.
+    watcher within ~2 s) and updates the orchestration run via the engine's
+    cancel_run() so the Orchestrator cooperative-cancel check stops the next
+    step.  Idempotent: already-terminal tasks return 200.
     """
     from infrastructure.queue.manager import QueueManager
-    from sqlalchemy import text
+    from domains.orchestration2.engine.agent_engine import AgentEngine
+    from domains.orchestration2.engine.store.sqlalchemy_store import SQLAlchemyStore
+    from shared.database import AsyncSessionLocal
 
     manager = QueueManager()
     status_data = await manager.get_status(task_id)
@@ -206,19 +207,11 @@ async def cancel_task(
     # Layer A: mark Redis cancelled (Worker cancel watcher detects this)
     await manager.cancel_task(task_id)
 
-    # Layer B: update orchestration run in DB so the Orchestrator loop exits
+    # Layer B: update orchestration run via engine abstraction
     run_id = await manager.get_run_for_task(task_id)
     if run_id:
-        await db.execute(
-            text(
-                "UPDATE orchestration_runs "
-                "SET status = 'cancelled', error = 'Cancelled by user', updated_at = NOW() "
-                "WHERE run_id = :run_id "
-                "AND status NOT IN ('completed', 'failed', 'cancelled')"
-            ),
-            {"run_id": run_id},
-        )
-        await db.commit()
+        cancel_engine = AgentEngine(store=SQLAlchemyStore(AsyncSessionLocal))
+        await cancel_engine.cancel_run(run_id)
 
     return {"status": "cancelled", "message": "Cancellation signal sent"}
 

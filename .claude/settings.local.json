@@ -8,7 +8,8 @@
       "Bash(do sed -i 's/from domains\\\\.orchestration2\\\\.models\\\\./from domains.orchestration2.engine.models./g' \"$f\")",
       "Bash(done)",
       "Bash(find:*)",
-      "Bash(xargs ls:*)"
+      "Bash(xargs ls:*)",
+      "Bash(git -C \"/c/Users/nh112/programming/project/VisionArk\" show HEAD:docs/proposals/interruption_design.md)"
     ]
   }
 }

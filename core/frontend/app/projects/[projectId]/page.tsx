@@ -407,7 +407,7 @@ export default function ProjectChatPage({
                         subs[subs.length - 1] = latestSub;
                     } else if (meta.type === "tool_end") {
                         if (latestSub && latestSub.tool_calls) {
-                            latestSub.tool_calls = latestSub.tool_calls.map(tc => {
+                            latestSub.tool_calls = latestSub.tool_calls.map((tc: any) => {
                                 if (tc.id === meta.call_id || tc.name === meta.tool) {
                                     return {
                                         ...tc,
