@@ -674,6 +674,85 @@ class WorkspaceACL(Base):
     item = relationship("WorkspaceItem", back_populates="acl_entries")
 
 
+class SkillRegistry(Base):
+    """Per-user skill definitions, seeded from SKILL_DEFS at user creation time"""
+    __tablename__ = "skill_registry"
+
+    id = Column(String(36), primary_key=True)               # UUID
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)               # e.g. "investigation"
+    description = Column(String(500), nullable=True)
+    tools = Column(JSON, default=list)                      # List of tool names
+    is_builtin = Column(Boolean, default=True)              # True = seeded from static config
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uix_skill_registry_user_name"),
+    )
+
+    user = relationship("User")
+
+
+class GraphRegistry(Base):
+    """Per-user graph definitions, seeded from YAML files at user creation time"""
+    __tablename__ = "graph_registry"
+
+    id = Column(String(36), primary_key=True)               # UUID
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)               # e.g. "direct_assistant"
+    description = Column(String(500), nullable=True)
+    yaml_content = Column(Text, nullable=True)              # Raw YAML definition
+    is_builtin = Column(Boolean, default=True)              # True = seeded from static config
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uix_graph_registry_user_name"),
+    )
+
+    user = relationship("User")
+
+
+class Agent(Base):
+    """User-level agent entity for cross-project reuse"""
+    __tablename__ = "agents"
+
+    id = Column(String(36), primary_key=True)               # UUID
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    display_name = Column(String(200), nullable=False)
+    description = Column(String(500), nullable=True)
+    skill_ids = Column(JSON, default=list)                  # List of skill names (from skill_registry.name)
+    graph_id = Column(String(100), nullable=True)
+    # graph_id stores the graph name (e.g. "direct_assistant"), validated against graph_registry.name.
+    # No FK constraint — graph_registry is per-user, validated at the API layer.
+    # None → engine defaults to "direct_assistant".
+    status = Column(String(20), default="active")           # active / archived
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User")
+
+
+class ProjectAgentAssignment(Base):
+    """Junction table: maps projects to their enabled agents"""
+    __tablename__ = "project_agent_assignments"
+
+    id = Column(String(36), primary_key=True)               # UUID
+    project_id = Column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    agent_id = Column(String(36), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    is_default = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("project_id", "agent_id", name="uix_project_agent_assignment"),
+    )
+
+    # Relationships
+    project = relationship("Project")
+    agent = relationship("Agent")
+
+
 # Global engine instances (Singletons for connection pooling)
 _engine = None
 _async_engine = None
@@ -721,6 +800,29 @@ def init_database(database_url: str = None):
             conn.execute(text("DROP TABLE IF EXISTS node_skills CASCADE"))
             conn.execute(text("DROP TABLE IF EXISTS nodes CASCADE"))
             print("[INFO] Pre-migration: Dropped legacy 'nodes' and 'node_skills' tables")
+
+    # Pre-migration: drop old global skill_registry / graph_registry (no user_id → per-user schema)
+    # These tables contain only seeded data; dropping and recreating is safe.
+    if 'agents' in existing_tables:
+        try:
+            fks = inspector.get_foreign_keys('agents')
+            for fk in fks:
+                if fk.get('referred_table') == 'graph_registry' and fk.get('name'):
+                    with engine.begin() as conn:
+                        conn.execute(text(
+                            f"ALTER TABLE agents DROP CONSTRAINT IF EXISTS {fk['name']}"
+                        ))
+                    print(f"[INFO] Pre-migration: Dropped agents.graph_id FK ({fk['name']})")
+        except Exception as e:
+            print(f"[WARN] Pre-migration: Could not inspect/drop agents FK: {e}")
+
+    for tbl in ('skill_registry', 'graph_registry'):
+        if tbl in existing_tables:
+            cols = [c['name'] for c in inspector.get_columns(tbl)]
+            if 'user_id' not in cols:
+                with engine.begin() as conn:
+                    conn.execute(text(f"DROP TABLE IF EXISTS {tbl} CASCADE"))
+                print(f"[INFO] Pre-migration: Dropped legacy '{tbl}' (recreating with user_id)")
 
     Base.metadata.create_all(engine)
     
@@ -977,6 +1079,15 @@ def _run_migrations(engine):
                 conn.execute(text("ALTER TABLE approval_requests ADD COLUMN run_id VARCHAR(36)"))
                 conn.commit()
                 print("✅ Migration: Added run_id column to approval_requests")
+
+    # Migration: Add graph_id to agents if missing (plain string — no FK to graph_registry)
+    if 'agents' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('agents')]
+        if 'graph_id' not in columns:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE agents ADD COLUMN graph_id VARCHAR(100)"))
+                conn.commit()
+                print("✅ Migration: Added graph_id column to agents")
 
     # Migration: Add file/directory support columns to workspace_items
     if 'workspace_items' in inspector.get_table_names():

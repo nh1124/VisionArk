@@ -17,7 +17,7 @@ from typing import Optional, List, Dict
 
 
 from domains.identity.auth import resolve_identity, Identity, resolve_identity_for_download
-from shared.database import ProjectAgent, Project, ChatSession, ChatMessage, ChatSubMessage, UploadedFile, get_async_db
+from shared.database import ProjectAgent, Project, ChatSession, ChatMessage, ChatSubMessage, UploadedFile, get_async_db, Agent, ProjectAgentAssignment, SkillRegistry, GraphRegistry
 from shared.paths import get_project_dir, get_user_projects_dir, validate_name, secure_path_join, update_project_name_cache as update_cache
 from uuid import uuid4
 from datetime import datetime, timedelta
@@ -72,6 +72,39 @@ class WorkspaceStats(BaseModel):
     upcoming_deadlines: int
 
 
+
+
+# ---------------------------------------------------------------------------
+# Internal helper
+# ---------------------------------------------------------------------------
+
+async def _add_default_agent_assignment(
+    db: AsyncSession,
+    user_id: str,
+    project_id: str,
+) -> None:
+    """Auto-assign the user's first active Agent to the project as default.
+
+    Does NOT create a new Agent — the Agent is created once at user registration.
+    If no Agent exists yet (legacy account predating this feature), the assignment
+    is skipped silently; the engine builder will fall back to ALL_SKILL_NAMES.
+    """
+    result = await db.execute(
+        select(Agent)
+        .where(Agent.user_id == user_id, Agent.status == "active")
+        .order_by(Agent.created_at.asc())
+        .limit(1)
+    )
+    agent = result.scalar_one_or_none()
+    if agent is None:
+        return  # legacy user — engine falls back to ALL_SKILL_NAMES
+
+    db.add(ProjectAgentAssignment(
+        id=str(uuid4()),
+        project_id=project_id,
+        agent_id=agent.id,
+        is_default=True,
+    ))
 
 
 # Endpoints
@@ -582,10 +615,13 @@ async def branch_project_chat(
         (project_dir / "files").mkdir(exist_ok=True)
         (project_dir / "artifacts").mkdir(exist_ok=True)
         (project_dir / "refs").mkdir(exist_ok=True)
-        
+
+        # 10. Assign user's default Agent to the branched project
+        await _add_default_agent_assignment(db, identity.user_id, new_project_id)
+
         await db.commit()
         return {
-            "success": True, 
+            "success": True,
             "new_project_id": new_project_id,
             "new_project_name": new_project_name,
             "new_agent_id": new_agent_id
@@ -634,7 +670,7 @@ async def create_project(
         )
         db.add(new_project)
         
-        # 4. Create main ProjectAgent
+        # 4. Create main ProjectAgent (engine-internal)
         agent_id = str(uuid4())
         system_prompt = project.custom_prompt or "You are a specialized AI assistant for this project. Help the user manage tasks, analyze data, and generate insights."
         new_agent = ProjectAgent(
@@ -647,6 +683,9 @@ async def create_project(
         )
         db.add(new_agent)
         update_cache(identity.user_id, project_id, project.project_name)
+
+        # 4b. Assign user's default Agent to this project
+        await _add_default_agent_assignment(db, identity.user_id, project_id)
 
         # 5. Create project directory on disk
         project_dir = get_project_dir(identity.user_id, project_id)
@@ -781,6 +820,9 @@ async def create_project_from_prompt(
         )
         db.add(new_agent)
         update_cache(identity.user_id, project_id, display_name)
+
+        # Create default Agent + assignment so engine_builder always finds a DB record
+        await _add_default_agent_assignment(db, identity.user_id, project_id)
 
         # 4. Create project directory
         project_dir = get_project_dir(identity.user_id, project_id)
@@ -1400,7 +1442,10 @@ async def clone_project(
                 if src_sub.exists():
                     dest_sub = new_project_dir / sub
                     shutil.copytree(src_sub, dest_sub, dirs_exist_ok=True)
-                    
+
+        # 8. Create default Agent + assignment for the cloned project
+        await _add_default_agent_assignment(db, identity.user_id, new_project_id)
+
         await db.commit()
         return {"success": True, "message": f"Project cloned to '{new_name}'", "new_project_id": new_project_id, "new_name": new_name}
         
@@ -1409,3 +1454,336 @@ async def clone_project(
         print(f"[agents/clone_project] Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ==============================================================================
+# AGENT REGISTRY
+# ==============================================================================
+
+class CreateAgent(BaseModel):
+    display_name: str
+    description: Optional[str] = None
+    skill_ids: List[str] = []
+    graph_id: Optional[str] = None  # None → engine defaults to "direct_assistant"
+
+
+class UpdateAgent(BaseModel):
+    display_name: Optional[str] = None
+    description: Optional[str] = None
+    skill_ids: Optional[List[str]] = None
+    graph_id: Optional[str] = None
+
+
+class UpdateProjectEnabledAgents(BaseModel):
+    enabled_agent_ids: List[str]
+    default_agent_id: Optional[str] = None
+
+
+@router.get("/skills")
+async def list_available_skills(
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return the current user's skills from skill_registry.
+
+    If the user has no skills yet (e.g. registered before per-user seeding was
+    introduced), seeds them on demand so the page always shows skill options.
+    """
+    result = await db.execute(
+        select(SkillRegistry)
+        .where(SkillRegistry.user_id == identity.user_id)
+        .order_by(SkillRegistry.name)
+    )
+    skills = result.scalars().all()
+
+    if not skills:
+        # Lazy seed: user pre-dates per-user skill seeding; run it now.
+        try:
+            from shared.seed import seed_user_definitions
+            from shared.database import get_engine
+            import asyncio
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None, seed_user_definitions, get_engine(), identity.user_id
+            )
+            # Re-query after seeding
+            result2 = await db.execute(
+                select(SkillRegistry)
+                .where(SkillRegistry.user_id == identity.user_id)
+                .order_by(SkillRegistry.name)
+            )
+            skills = result2.scalars().all()
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Lazy skill seeding failed for user %s: %s", identity.user_id, exc
+            )
+
+    return {
+        "skills": [
+            {"name": s.name, "description": s.description, "tools": s.tools or []}
+            for s in skills
+        ]
+    }
+
+
+@router.get("/graphs")
+async def list_available_graphs(
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return the current user's graphs from graph_registry.
+
+    Seeds on demand if the user has no graphs yet (same lazy-seed as /skills).
+    """
+    result = await db.execute(
+        select(GraphRegistry)
+        .where(GraphRegistry.user_id == identity.user_id)
+        .order_by(GraphRegistry.name)
+    )
+    graphs = result.scalars().all()
+
+    if not graphs:
+        try:
+            from shared.seed import seed_user_definitions
+            from shared.database import get_engine
+            import asyncio
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None, seed_user_definitions, get_engine(), identity.user_id
+            )
+            result2 = await db.execute(
+                select(GraphRegistry)
+                .where(GraphRegistry.user_id == identity.user_id)
+                .order_by(GraphRegistry.name)
+            )
+            graphs = result2.scalars().all()
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Lazy graph seeding failed for user %s: %s", identity.user_id, exc
+            )
+
+    return {
+        "graphs": [
+            # name is used as the option value in the frontend (stored as Agent.graph_id)
+            {"id": g.name, "name": g.name, "description": g.description}
+            for g in graphs
+        ]
+    }
+
+
+def _agent_to_dict(a: Agent) -> dict:
+    """Serialize an Agent row to a response dict."""
+    return {
+        "id": a.id,
+        "display_name": a.display_name,
+        "description": a.description,
+        "skill_ids": a.skill_ids or [],
+        "graph_id": a.graph_id,   # None = engine will default to "direct_assistant"
+        "status": a.status,
+        "created_at": a.created_at.isoformat() if a.created_at else None,
+        "updated_at": a.updated_at.isoformat() if a.updated_at else None,
+    }
+
+
+@router.get("/registry")
+async def list_agents(
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List all agents for the current user"""
+    result = await db.execute(
+        select(Agent).where(
+            Agent.user_id == identity.user_id,
+            Agent.status == "active",
+        ).order_by(Agent.created_at.desc())
+    )
+    agents = result.scalars().all()
+    return {"agents": [_agent_to_dict(a) for a in agents]}
+
+
+@router.post("/registry")
+async def create_agent(
+    body: CreateAgent,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Create a new user-level agent"""
+    # Validate graph_id (stores graph name) against user's graph_registry
+    if body.graph_id:
+        gr = await db.execute(
+            select(GraphRegistry).where(
+                GraphRegistry.user_id == identity.user_id,
+                GraphRegistry.name == body.graph_id,
+            )
+        )
+        if not gr.scalar_one_or_none():
+            raise HTTPException(status_code=422, detail=f"Unknown graph: {body.graph_id}")
+
+    agent = Agent(
+        id=str(uuid4()),
+        user_id=identity.user_id,
+        display_name=body.display_name,
+        description=body.description,
+        skill_ids=body.skill_ids,
+        graph_id=body.graph_id,
+        status="active",
+    )
+    db.add(agent)
+    await db.commit()
+    return _agent_to_dict(agent)
+
+
+@router.get("/registry/{agent_id}")
+async def get_agent(
+    agent_id: str,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Get a single agent by ID"""
+    result = await db.execute(
+        select(Agent).where(Agent.id == agent_id, Agent.user_id == identity.user_id)
+    )
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return _agent_to_dict(agent)
+
+
+@router.put("/registry/{agent_id}")
+async def update_agent(
+    agent_id: str,
+    body: UpdateAgent,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Update an agent's display_name, description, skill_ids, or graph_id"""
+    result = await db.execute(
+        select(Agent).where(Agent.id == agent_id, Agent.user_id == identity.user_id)
+    )
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if body.display_name is not None:
+        agent.display_name = body.display_name
+    if body.description is not None:
+        agent.description = body.description
+    if body.skill_ids is not None:
+        agent.skill_ids = body.skill_ids
+    if body.graph_id is not None:
+        gr = await db.execute(
+            select(GraphRegistry).where(
+                GraphRegistry.user_id == identity.user_id,
+                GraphRegistry.name == body.graph_id,
+            )
+        )
+        if not gr.scalar_one_or_none():
+            raise HTTPException(status_code=422, detail=f"Unknown graph: {body.graph_id}")
+        agent.graph_id = body.graph_id
+    await db.commit()
+    return {"success": True, "id": agent.id}
+
+
+@router.delete("/registry/{agent_id}")
+async def delete_agent(
+    agent_id: str,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Soft-delete an agent (status=archived)"""
+    result = await db.execute(
+        select(Agent).where(Agent.id == agent_id, Agent.user_id == identity.user_id)
+    )
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    agent.status = "archived"
+    await db.commit()
+    return {"success": True}
+
+
+@router.get("/project/{project_id}/enabled-agents")
+async def get_project_enabled_agents(
+    project_id: str,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Get enabled agents and default agent for a project"""
+    # Verify project ownership
+    proj_res = await db.execute(
+        select(Project).where(Project.id == project_id, Project.user_id == identity.user_id)
+    )
+    if not proj_res.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    result = await db.execute(
+        select(ProjectAgentAssignment).where(
+            ProjectAgentAssignment.project_id == project_id
+        )
+    )
+    assignments = result.scalars().all()
+
+    enabled_agent_ids = [a.agent_id for a in assignments]
+    default_agent_id = next((a.agent_id for a in assignments if a.is_default), None)
+
+    return {
+        "enabled_agent_ids": enabled_agent_ids,
+        "default_agent_id": default_agent_id,
+    }
+
+
+@router.put("/project/{project_id}/enabled-agents")
+async def update_project_enabled_agents(
+    project_id: str,
+    body: UpdateProjectEnabledAgents,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Update enabled agents and default agent for a project"""
+    # Verify project ownership
+    proj_res = await db.execute(
+        select(Project).where(Project.id == project_id, Project.user_id == identity.user_id)
+    )
+    if not proj_res.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Validate default_agent_id is in enabled list
+    if body.default_agent_id and body.default_agent_id not in body.enabled_agent_ids:
+        raise HTTPException(
+            status_code=422,
+            detail="default_agent_id must be included in enabled_agent_ids",
+        )
+
+    # Validate all agent_ids belong to the user
+    if body.enabled_agent_ids:
+        agent_res = await db.execute(
+            select(Agent.id).where(
+                Agent.id.in_(body.enabled_agent_ids),
+                Agent.user_id == identity.user_id,
+                Agent.status == "active",
+            )
+        )
+        valid_ids = {row[0] for row in agent_res.all()}
+        invalid = set(body.enabled_agent_ids) - valid_ids
+        if invalid:
+            raise HTTPException(status_code=422, detail=f"Unknown agent IDs: {invalid}")
+
+    # Delete existing assignments for this project
+    await db.execute(
+        delete(ProjectAgentAssignment).where(
+            ProjectAgentAssignment.project_id == project_id
+        )
+    )
+
+    # Insert new assignments
+    for agent_id in body.enabled_agent_ids:
+        assignment = ProjectAgentAssignment(
+            id=str(uuid4()),
+            project_id=project_id,
+            agent_id=agent_id,
+            is_default=(agent_id == body.default_agent_id),
+        )
+        db.add(assignment)
+
+    await db.commit()
+    return {"success": True}

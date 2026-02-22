@@ -28,7 +28,7 @@ async def lifespan(app: FastAPI):
     if settings.atmos_env == "prod" and settings.atmos_api_key_pepper == "dev_pepper_change_in_prod":
         print("WARNING: ATMOS_API_KEY_PEPPER not changed from default in production!")
     
-    init_database()  # Use automatic path detection
+    init_database()  # Schema creation + migrations
     print("Database initialized")
 
     # Sync Agent Skills - DEPRECATED

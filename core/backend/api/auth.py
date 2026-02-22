@@ -10,7 +10,8 @@ from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
-from shared.database import User, ServiceRegistry, UserSettings
+from shared.database import User, ServiceRegistry, UserSettings, Agent as UserAgent, get_engine
+from shared.seed import seed_user_definitions
 from app.config import settings
 from domains.identity.auth import get_db, resolve_identity, Identity
 from shared.password import hash_password, verify_password, MIN_PASSWORD_LENGTH
@@ -183,15 +184,35 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
         }
     )
     
+    # Create user-level default Agent (one per user, shared across all projects)
+    # skill_ids=[] → engine treats as ALL_SKILL_NAMES; graph_id=None → direct_assistant
+    default_agent = UserAgent(
+        id=str(uuid.uuid4()),
+        user_id=user_id,
+        display_name="Default Agent",
+        description=None,
+        skill_ids=[],
+        graph_id=None,
+        status="active",
+    )
+
     try:
         db.add(user)
         db.add(lbs_service)
         db.add(kc_service)
         db.add(user_settings)
+        db.add(default_agent)
         db.commit()
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to create account: {str(e)}")
+
+    # Seed per-user skill_registry and graph_registry
+    # (done after commit so the user row exists before FK constraints are checked)
+    try:
+        seed_user_definitions(get_engine(), user_id)
+    except Exception as e:
+        logger.warning("Skill/graph seeding failed for user %s: %s", user_id, e)
     
     # Generate access token
     access_token = create_access_token(user_id=user_id, username=req.username)

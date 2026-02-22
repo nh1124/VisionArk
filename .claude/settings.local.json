@@ -9,7 +9,8 @@
       "Bash(done)",
       "Bash(find:*)",
       "Bash(xargs ls:*)",
-      "Bash(git -C \"/c/Users/nh112/programming/project/VisionArk\" show HEAD:docs/proposals/interruption_design.md)"
+      "Bash(git -C \"/c/Users/nh112/programming/project/VisionArk\" show HEAD:docs/proposals/interruption_design.md)",
+      "Bash(npx tsc:*)"
     ]
   }
 }

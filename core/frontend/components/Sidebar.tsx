@@ -101,6 +101,7 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
     const navItems = [
         { name: "Dashboard", path: "/dashboard", icon: <LayoutGrid size={20} /> },
         { name: "Projects", path: "/projects", icon: <Folder size={20} /> },
+        { name: "Agents", path: "/agents", icon: <Bot size={20} /> },
         { name: "Tasks", path: "/tasks", icon: <ClipboardList size={20} /> },
         { name: "Cron Tasks", path: "/cron", icon: <AlarmClock size={20} /> },
         { name: "Notes", path: "/notes", icon: <StickyNote size={20} /> },
