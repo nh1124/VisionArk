@@ -56,6 +56,11 @@ SKILL_DEFS: list[SkillDef] = [
             "move_workspace_item",
         ],
     ),
+    SkillDef(
+        name="delegation",
+        description="Delegate subtasks to specialized sub-agents (researcher, writer)",
+        tools=["delegate_task"],
+    ),
 ]
 
 ALL_SKILL_NAMES = [s.name for s in SKILL_DEFS]

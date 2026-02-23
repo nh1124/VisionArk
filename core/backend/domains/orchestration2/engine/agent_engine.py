@@ -83,6 +83,7 @@ class AgentEngine:
         """Register an LLMEngine and propagate it to the step executor."""
         self._engine_runtime = engine
         self._step_executor._engine = engine
+        self._step_executor._delegate_fn = self.delegate_task
 
         # Orchestrator
         self._orchestrator = Orchestrator(self._store, self._step_executor)
@@ -496,12 +497,16 @@ class AgentEngine:
         # Execute child run
         from .models.common import MessageRole
 
+        # Propagate parent metadata (project_id, user_id, db_session, etc.)
+        parent_metadata = parent_run.metadata if parent_run else {}
+
         child_message = Message(role=MessageRole.USER, content=task)
         try:
             child_response = await self._orchestrator.run(
                 agent_def=child_def,
                 graph=child_graph,
                 message=child_message,
+                metadata=parent_metadata,
             )
 
             status = (

@@ -4,7 +4,7 @@ steps:
   - id: act
     type: role
     role: direct
-    skills: [investigation, document_creation, file_management, operation]
+    skills: [investigation, document_creation, file_management, operation, delegation]
     limits:
       max_turns: 30
       max_tool_calls: 50

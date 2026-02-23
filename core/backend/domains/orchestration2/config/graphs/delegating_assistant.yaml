@@ -1,0 +1,60 @@
+version: 1
+graph_name: delegating_assistant
+start: research
+
+steps:
+  - id: research
+    type: role
+    role: planner
+    skills: [investigation]
+    limits:
+      max_turns: 15
+      max_tool_calls: 30
+    on:
+      - when: "event.type == 'done'"
+        next: delegate_write
+      - when: "event.type == 'error'"
+        next: fallback_write
+      - when: default
+        next: research
+
+  - id: delegate_write
+    type: delegation
+    delegate_to: writer
+    on:
+      - when: "event.type == 'delegation_done'"
+        next: review
+      - when: "event.type == 'delegation_failed'"
+        next: fallback_write
+      - when: default
+        next: delegate_write
+
+  - id: review
+    type: role
+    role: verifier
+    skills: [investigation]
+    limits:
+      max_turns: 10
+    on:
+      - when: "event.type == 'done'"
+        next: respond
+      - when: default
+        next: respond
+
+  - id: fallback_write
+    type: role
+    role: project
+    skills: [investigation, document_creation]
+    limits:
+      max_turns: 20
+    on:
+      - when: "event.type == 'done'"
+        next: respond
+      - when: default
+        next: respond
+
+  - id: respond
+    type: role
+    role: responder
+    skills: []
+    terminal: true

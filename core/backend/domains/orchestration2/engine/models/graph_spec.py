@@ -29,6 +29,7 @@ class GraphStep(BaseModel):
     role: str | None = None
     skill: str | None = None
     skills: list[str] = Field(default_factory=list)
+    delegate_to: str | None = None  # Graph-based delegation: target sub-agent name
     policy: StepPolicy = Field(default_factory=StepPolicy)
     limits: StepLimits = Field(default_factory=StepLimits)
     on: list[StepTransition] = Field(default_factory=list)

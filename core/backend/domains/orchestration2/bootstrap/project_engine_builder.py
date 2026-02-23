@@ -21,7 +21,7 @@ from ..roles.direct_role import DirectRole
 
 # New components
 from ..config.skills.default_skills import SKILL_DEFS, ALL_SKILL_NAMES
-from ..config.tools.default_catalog import get_core_tools
+from ..config.tools.default_catalog import get_core_tools, get_delegation_tool
 from ..prompting.prompt_context_loader import load_prompt_components
 from ..integrations.tool_reflection import register_and_reflect_integrations
 from ..skills.noop import NoOpSkill
@@ -85,6 +85,10 @@ async def create_engine_for_project(
 
     # 5. Register engine runtime via public API
     engine.register_engine(gemini_engine)
+
+    # 5b. Register delegation tool (requires engine reference — _orchestrator must exist)
+    delegation_tool_def, delegation_tool_impl = get_delegation_tool(engine)
+    engine.register_tool(delegation_tool_def, delegation_tool_impl)
 
     # 6. Register model config
     engine.register_model("default", preferred_model or "gemini-3-pro-preview")
@@ -175,5 +179,32 @@ async def create_engine_for_project(
 
     # Store prompt data
     engine._prompt_data = prompt_data  # type: ignore[attr-defined]
+
+    # 13. Register sub-agents for delegation
+    # NOTE: delegation skill is intentionally excluded from sub-agents
+    #       to prevent infinite recursive delegation.
+    researcher_def = AgentDef(
+        name="researcher",
+        graph_name="direct_assistant",
+        skills=["investigation"],
+        limits=AgentLimits(max_turns=15),
+    )
+    engine.register_agent(researcher_def)
+
+    writer_def = AgentDef(
+        name="writer",
+        graph_name="direct_assistant",
+        skills=["investigation", "document_creation"],
+        limits=AgentLimits(max_turns=15),
+    )
+    engine.register_agent(writer_def)
+
+    reviewer_def = AgentDef(
+        name="reviewer",
+        graph_name="direct_assistant",
+        skills=["investigation"],
+        limits=AgentLimits(max_turns=10),
+    )
+    engine.register_agent(reviewer_def)
 
     return engine, agent_id

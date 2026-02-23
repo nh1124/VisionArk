@@ -55,6 +55,7 @@ class StepExecutor:
         approval_manager: ApprovalManager,
         delegation_manager: DelegationManager,
         engine_runtime: LLMEngine | None = None,
+        delegate_fn: Any | None = None,
     ) -> None:
         self._store = store
         self._tools = tool_registry
@@ -64,6 +65,7 @@ class StepExecutor:
         self._approval_mgr = approval_manager
         self._delegation_mgr = delegation_manager
         self._engine = engine_runtime
+        self._delegate_fn = delegate_fn
 
     async def execute_step(
         self,
@@ -539,14 +541,75 @@ class StepExecutor:
         step: GraphStep,
         run: RunRecord,
     ) -> list[OrchestrationEvent]:
-        """Execute a delegation step - check for pending delegations."""
-        # Check if there are pending delegation results
+        """Execute a delegation step.
+
+        If step.delegate_to is set and _delegate_fn is available:
+          → Initiate child run synchronously using last assistant message as task.
+        Otherwise:
+          → Legacy behavior: check for existing delegation events.
+        """
+        # ── Graph-native delegation (Phase B) ─────────────────────────
+        if step.delegate_to and self._delegate_fn:
+            # Extract task from last LLM output, or fallback to input
+            last_msgs = [m for m in run.history if m.role == MessageRole.ASSISTANT]
+            task = (
+                last_msgs[-1].content
+                if last_msgs
+                else (run.input_message.content if run.input_message else "")
+            )
+
+            event_type: EventType
+            detail: str
+            try:
+                result = await self._delegate_fn(
+                    run.run_id,
+                    step.delegate_to,
+                    task,
+                    timeout_sec=step.limits.max_turns,
+                )
+
+                # Inject child result into parent history
+                if result.output_message:
+                    child_msg = Message(
+                        role=MessageRole.ASSISTANT,
+                        content=(
+                            f"[Result from sub-agent '{step.delegate_to}']\n"
+                            f"{result.output_message.content}"
+                        ),
+                    )
+                    run.history.append(child_msg)
+                    run.metadata["last_delegation_result"] = result.model_dump()
+
+                if result.status == "completed":
+                    event_type = EventType.DELEGATION_DONE
+                    detail = f"Delegation to '{step.delegate_to}' completed"
+                else:
+                    event_type = EventType.DELEGATION_FAILED
+                    detail = (
+                        f"Delegation to '{step.delegate_to}' failed: "
+                        f"{result.error or 'Unknown error'}"
+                    )
+
+            except Exception as exc:
+                event_type = EventType.DELEGATION_FAILED
+                detail = f"Delegation error: {exc}"
+
+            event = OrchestrationEvent(
+                type=event_type,
+                run_id=run.run_id,
+                step_id=step.id,
+                source=EventSource.DELEGATION,
+                detail=detail,
+            )
+            await self._store.append_event(event)
+            return [event]
+
+        # ── Legacy behavior: check existing events ─────────────────────
         events = await self._store.get_events(run.run_id)
         recent = [
             e
             for e in events
-            if e.type
-            in (EventType.DELEGATION_DONE, EventType.DELEGATION_FAILED)
+            if e.type in (EventType.DELEGATION_DONE, EventType.DELEGATION_FAILED)
         ]
         if recent:
             return [recent[-1]]

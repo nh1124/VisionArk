@@ -39,6 +39,14 @@ from ...tools.library.markdown import (
     GetCurrentStatusTool, UpdateMDSectionTool,
 )
 
+def get_delegation_tool(engine: Any) -> tuple[ToolDef, Any]:
+    """Return (ToolDef, DelegateTaskTool) bound to the given engine."""
+    from ...tools.library.delegation import DelegateTaskTool
+
+    impl = DelegateTaskTool(engine)
+    return impl.definition, impl
+
+
 def get_core_tools() -> list[tuple[ToolDef, Any]]:
     """Return all tool (definition, implementation) pairs."""
     tool_classes = [
