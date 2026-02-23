@@ -345,7 +345,7 @@ function ChatInputComponent({
                     onPaste={handlePaste}
                     placeholder={isDragging ? "Drop files here..." : placeholder}
                     className={`w-full bg-transparent border-none focus:outline-none resize-none px-4 text-gray-100 placeholder-gray-600 
-                        ${isExpanded ? "flex-1 text-lg p-6" : (compact || isMobile) ? "py-2.5 text-sm" : "py-2.5"}`}
+                        ${isExpanded ? "flex-1 text-lg p-6" : (compact || isMobile) ? "py-2.5 text-[16px]" : "py-2.5"}`}
                     disabled={disabled}
                     style={{
                         minHeight: (compact || isMobile) ? "40px" : (isExpanded ? "100%" : "40px"),
