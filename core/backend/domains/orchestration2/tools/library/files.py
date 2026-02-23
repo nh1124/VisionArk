@@ -140,21 +140,28 @@ class ReadFileChunkTool:
     definition = ToolDef(
         name="read_file_chunk",
         description=(
-            "Read a file (or a line range) from the project. "
-            "Searches project root, refs/, files/, and artifacts/ automatically. "
-            "Use start_line/end_line to read a subset of lines (1-indexed)."
+            "Read ANY file from the project — text, PDF, images, and other binary formats are all supported. "
+            "PDF and binary files are processed via the Gemini File API and made available as full file context. "
+            "ALWAYS call this tool when a user asks you to read or analyse a file, regardless of format. "
+            "Searches refs/, files/, artifacts/, and project root automatically — "
+            "just pass the filename or relative path. "
+            "For text files, start_line/end_line can optionally limit the range returned. "
+            "Example: read_file_chunk(file_path=\"report.pdf\") or read_file_chunk(file_path=\"refs/manual.pdf\")"
         ),
         parameters={
             "type": "object",
             "properties": {
-                "file_path": {"type": "string", "description": "Relative path to the file"},
+                "file_path": {
+                    "type": "string",
+                    "description": "Relative path to the file (e.g. 'report.pdf', 'refs/manual.pdf', 'artifacts/notes.md'). Supports all file types including PDF and binary.",
+                },
                 "start_line": {
                     "type": "integer",
-                    "description": "First line to return (1-indexed, default 1)",
+                    "description": "For text files only: first line to return (1-indexed, default 1)",
                 },
                 "end_line": {
                     "type": "integer",
-                    "description": "Last line to return (inclusive). Omit for end of file.",
+                    "description": "For text files only: last line to return (inclusive). Omit for end of file.",
                 },
             },
             "required": ["file_path"],
@@ -207,8 +214,12 @@ class ReadFileChunkTool:
                                 file_uri=gemini_uri, mime_type=gemini_mime,
                             )
                         )
-            except Exception:
-                pass
+                    else:
+                        print(f"[ReadFileChunkTool] Gemini upload returned no URI for {p.name}")
+                else:
+                    print(f"[ReadFileChunkTool] No API key available, skipping Gemini upload for {p.name}")
+            except Exception as e:
+                print(f"[ReadFileChunkTool] Gemini upload failed for {p.name}: {e}")
 
             rel = p.relative_to(root).as_posix()
             if gemini_uri:
