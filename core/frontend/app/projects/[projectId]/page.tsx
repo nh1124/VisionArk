@@ -1146,8 +1146,8 @@ export default function ProjectChatPage({
             )}
 
             {/* Input - Fixed at bottom */}
-            <div className={`px-4 pt-4 z-10 grid transition-all duration-300 ease-in-out ${isUIHidden && isMobile ? "grid-rows-[0fr] opacity-0 translate-y-4 pointer-events-none pb-0" : "grid-rows-[1fr] opacity-100 translate-y-0 pb-[80px] sm:pb-6"}`}>
-                <div className="max-w-4xl mx-auto flex flex-col min-h-0 min-w-0 overflow-hidden w-full relative">
+            <div className={`px-4 pt-4 z-50 grid overflow-visible transition-all duration-300 ease-in-out ${isUIHidden && isMobile ? "grid-rows-[0fr] opacity-0 translate-y-4 pointer-events-none pb-0" : "grid-rows-[1fr] opacity-100 translate-y-0 pb-[80px] sm:pb-6"}`}>
+                <div className="max-w-4xl mx-auto flex flex-col min-h-0 min-w-0 overflow-visible w-full relative">
                     {/* Fixed floating gradient fade above chat container to hide text abruptly scrolling past input */}
                     <div className="absolute -top-10 left-0 right-0 h-10 bg-gradient-to-t from-gray-950 to-transparent pointer-events-none z-10" />
 

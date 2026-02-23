@@ -55,7 +55,9 @@ function ChatInputComponent({
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const modelMenuRef = useRef<HTMLDivElement>(null);
+    const modelButtonRef = useRef<HTMLButtonElement>(null);
     const toolsMenuRef = useRef<HTMLDivElement>(null);
+    const toolsButtonRef = useRef<HTMLButtonElement>(null);
     const [showToolsMenu, setShowToolsMenu] = useState(false);
     const [isRecording, setIsRecording] = useState(false);
     const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
@@ -325,8 +327,8 @@ function ChatInputComponent({
         <div
             className={`flex flex-col shadow-2xl transition-[inset,transform,background-color,border-color,border-radius] duration-500 ease-in-out
                 ${isExpanded
-                    ? "fixed inset-4 md:inset-x-20 md:inset-y-10 z-[1000] bg-gray-900 border border-gray-700 rounded-3xl overflow-hidden"
-                    : `relative ${compact ? "rounded-2xl" : "rounded-3xl"} border ${isDragging ? "border-purple-500 bg-purple-500/10" : "border-gray-700 bg-gray-900/80 backdrop-blur-sm"}`
+                    ? "fixed inset-4 md:inset-x-20 md:inset-y-10 z-[1000] bg-gray-900 border border-gray-700 rounded-3xl overflow-visible"
+                    : `relative ${compact ? "rounded-2xl" : "rounded-3xl"} border overflow-visible ${isDragging ? "border-purple-500 bg-purple-500/10" : "border-gray-700 bg-gray-900"}`
                 }`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -336,7 +338,7 @@ function ChatInputComponent({
                 If we wanted true full screen overlay we might use a Portal, but this works for "pop out". 
                 Actually, let's make it a modal overlay if expanded. */}
 
-            <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden">
+            <div className="relative flex-1 flex flex-col min-h-0 overflow-visible">
                 <textarea
                     ref={textareaRef}
                     value={internalValue}
@@ -407,6 +409,7 @@ function ChatInputComponent({
                     {!compact && (
                         <div className="relative" ref={toolsMenuRef}>
                             <button
+                                ref={toolsButtonRef}
                                 onClick={() => setShowToolsMenu(!showToolsMenu)}
                                 className="p-3 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-all flex items-center gap-2 px-3 sm:px-4 group min-h-[44px]"
                                 title="Tools"
@@ -419,9 +422,24 @@ function ChatInputComponent({
                                 <span className="text-sm font-medium hidden xs:inline whitespace-nowrap">Tools</span>
                             </button>
 
-                            {/* Tools Dropdown */}
-                            {showToolsMenu && (
-                                <div className="absolute bottom-full left-0 mb-4 bg-gray-900 border border-gray-700/50 rounded-2xl shadow-2xl py-2 min-w-[200px] z-50 overflow-hidden backdrop-blur-xl">
+                            {/* Tools Dropdown - rendered via Portal */}
+                            {showToolsMenu && mounted && toolsButtonRef.current && createPortal(
+                                <div
+                                    className="fixed bg-gray-900 border border-gray-700/50 rounded-2xl shadow-2xl py-2 min-w-[200px] max-h-[50vh] overflow-y-auto overflow-x-hidden backdrop-blur-xl custom-scrollbar"
+                                    style={{
+                                        zIndex: 9999,
+                                        bottom: window.innerHeight - toolsButtonRef.current.getBoundingClientRect().top + 8,
+                                        left: toolsButtonRef.current.getBoundingClientRect().left,
+                                    }}
+                                    ref={(el) => {
+                                        // Update position on mount
+                                        if (el && toolsButtonRef.current) {
+                                            const rect = toolsButtonRef.current.getBoundingClientRect();
+                                            el.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+                                            el.style.left = `${rect.left}px`;
+                                        }
+                                    }}
+                                >
                                     <button
                                         onClick={() => {
                                             onClone?.();
@@ -440,7 +458,8 @@ function ChatInputComponent({
                                     >
                                         <span className="text-blue-400">📅</span> Schedule Message
                                     </button>
-                                </div>
+                                </div>,
+                                document.body
                             )}
                         </div>
                     )}
@@ -462,6 +481,7 @@ function ChatInputComponent({
                     {showModelSelector && !compact && (
                         <div className="relative" ref={modelMenuRef}>
                             <button
+                                ref={modelButtonRef}
                                 onClick={() => setShowModelMenu(!showModelMenu)}
                                 className="px-3 sm:px-4 py-2 text-gray-300 hover:text-white hover:bg-gray-800 rounded-full transition-all text-xs sm:text-sm flex items-center gap-1.5 sm:gap-2 border border-gray-700/50 whitespace-nowrap min-h-[44px] flex-shrink-0"
                                 title="Select model"
@@ -473,9 +493,24 @@ function ChatInputComponent({
                                 </svg>
                             </button>
 
-                            {/* Model Dropdown */}
-                            {showModelMenu && (
-                                <div className="absolute bottom-full right-0 mb-4 bg-gray-900 border border-gray-700/50 rounded-2xl shadow-2xl py-3 min-w-[240px] z-50 overflow-hidden backdrop-blur-xl">
+                            {/* Model Dropdown - rendered via Portal */}
+                            {showModelMenu && mounted && modelButtonRef.current && createPortal(
+                                <div
+                                    className="fixed bg-gray-900 border border-gray-700/50 rounded-2xl shadow-2xl py-3 min-w-[240px] max-h-[50vh] overflow-y-auto overflow-x-hidden backdrop-blur-xl custom-scrollbar"
+                                    style={{
+                                        zIndex: 9999,
+                                        bottom: window.innerHeight - modelButtonRef.current.getBoundingClientRect().top + 8,
+                                        right: window.innerWidth - modelButtonRef.current.getBoundingClientRect().right,
+                                    }}
+                                    ref={(el) => {
+                                        // Update position on mount
+                                        if (el && modelButtonRef.current) {
+                                            const rect = modelButtonRef.current.getBoundingClientRect();
+                                            el.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+                                            el.style.right = `${window.innerWidth - rect.right}px`;
+                                        }
+                                    }}
+                                >
                                     {MODEL_OPTIONS.map((group) => (
                                         <div key={group.group}>
                                             <div className="px-4 py-2 text-[10px] text-gray-500 font-bold uppercase tracking-widest">{group.group}</div>
@@ -492,7 +527,8 @@ function ChatInputComponent({
                                             ))}
                                         </div>
                                     ))}
-                                </div>
+                                </div>,
+                                document.body
                             )}
                         </div>
                     )}
