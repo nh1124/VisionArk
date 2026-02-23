@@ -1043,9 +1043,9 @@ export default function ProjectChatPage({
             <div
                 ref={scrollContainerRef}
                 onScroll={handleScroll}
-                className="flex-1 overflow-y-auto px-4 py-8"
+                className={`flex-1 overflow-y-auto px-4 ${isMobile ? 'pt-[72px] pb-[160px]' : 'py-8'} min-w-0 flex flex-col`}
             >
-                <div className="max-w-4xl mx-auto space-y-6 min-w-0 w-full" key={`messages-${messages.length}`}>
+                <div className="max-w-4xl mx-auto space-y-6 min-w-0 w-full pb-8" key={`messages-${messages.length}`}>
                     {messages.length === 0 && !loading && (
                         <div className="text-center text-gray-500 py-20">
                             <div className="w-16 h-16 bg-cyan-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6">
@@ -1132,8 +1132,11 @@ export default function ProjectChatPage({
             )}
 
             {/* Input - Fixed at bottom */}
-            <div className={`pb-4 px-4 transition-all duration-300 ${isUIHidden && isMobile ? "opacity-0 translate-y-4 pointer-events-none" : "opacity-100 translate-y-0"}`}>
-                <div className="max-w-4xl mx-auto flex flex-col min-h-0 min-w-0">
+            <div className={`px-4 pt-4 pb-0 z-10 grid transition-all duration-300 ease-in-out ${isUIHidden && isMobile ? "grid-rows-[0fr] opacity-0 translate-y-4 pointer-events-none" : "grid-rows-[1fr] opacity-100 translate-y-0"}`}>
+                <div className="max-w-4xl mx-auto flex flex-col min-h-0 min-w-0 overflow-hidden w-full relative">
+                    {/* Fixed floating gradient fade above chat container to hide text abruptly scrolling past input, replacing old space gap logic */}
+                    <div className="absolute -top-10 left-0 right-0 h-10 bg-gradient-to-t from-gray-950 to-transparent pointer-events-none z-10" />
+
                     {!isMobile && (
                         <div className="flex justify-between items-center mb-2 px-4">
                             <div className="text-[10px] text-gray-500 font-mono uppercase tracking-widest">

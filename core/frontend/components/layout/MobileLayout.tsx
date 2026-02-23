@@ -39,7 +39,7 @@ export default function MobileLayout({ children }: MobileLayoutProps) {
     }, []);
 
     return (
-        <div className="flex flex-col h-[100dvh] w-full bg-gray-950 overflow-hidden">
+        <div className="flex flex-col relative h-[100dvh] w-full bg-gray-950 overflow-hidden">
             {/* Mobile Sidebar Overlay */}
             <MobileSidebar
                 isOpen={isSidebarOpen}
@@ -47,7 +47,7 @@ export default function MobileLayout({ children }: MobileLayoutProps) {
             />
 
             {/* Mobile Header: Simple & Focused */}
-            <header className={`h-14 border-b border-gray-800 flex items-center justify-between px-4 bg-gray-950/80 backdrop-blur-xl z-20 flex-shrink-0 transition-transform duration-300 ease-in-out ${isUIHidden ? "-translate-y-full" : "translate-y-0"}`}>
+            <header className={`absolute top-0 w-full h-14 border-b border-gray-800 flex items-center justify-between px-4 bg-gray-950/80 backdrop-blur-xl z-30 transition-transform duration-300 ease-in-out ${isUIHidden ? "-translate-y-full" : "translate-y-0"}`}>
                 <div className="flex items-center gap-3">
                     <Link href="/" className="flex items-center gap-2">
                         <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center font-bold text-white text-sm shadow-[0_0_15px_rgba(37,99,235,0.3)]">
@@ -97,13 +97,13 @@ export default function MobileLayout({ children }: MobileLayoutProps) {
                 </div>
             </header>
 
-            {/* Content Area: Single Column, 100% Width */}
-            <main className="flex-1 relative flex flex-col min-w-0 overflow-y-auto">
+            {/* Content Area: Full Width, Allows Overlays */}
+            <main className="flex-1 w-full h-full relative flex flex-col min-w-0 overflow-y-auto">
                 {children}
             </main>
 
             {/* Mobile Bottom Navigation */}
-            <div className={`transition-transform duration-300 ease-in-out ${isUIHidden ? "translate-y-full" : "translate-y-0"}`}>
+            <div className={`absolute bottom-0 w-full z-30 transition-transform duration-300 ease-in-out ${isUIHidden ? "translate-y-full" : "translate-y-0"}`}>
                 <BottomNav />
             </div>
 
