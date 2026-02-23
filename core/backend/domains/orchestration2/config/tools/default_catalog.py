@@ -3,8 +3,9 @@ from ...engine.models.tool import ToolDef
 
 # Import all tools
 from ...tools.library.files import (
-    SaveArtifactTool, ReadReferenceTool, ListFilesTool,
-    DeleteArtifactTool, ImportGitHubRepoTool,
+    WriteFileTool, ReadFileChunkTool, ListFilesTool, DeleteFileTool,
+    ApplyTextPatchTool, MoveFileTool, CopyFileTool, MakeDirectoryTool,
+    GetFileStatTool, ImportGitHubRepoTool,
 )
 from ...tools.library.search import (
     GoogleSearchTool, ResearchURLTool, SearchPlacesTool, DeepResearchTool,
@@ -51,8 +52,9 @@ def get_core_tools() -> list[tuple[ToolDef, Any]]:
     """Return all tool (definition, implementation) pairs."""
     tool_classes = [
         # Files
-        SaveArtifactTool, ReadReferenceTool, ListFilesTool,
-        DeleteArtifactTool, ImportGitHubRepoTool,
+        WriteFileTool, ReadFileChunkTool, ListFilesTool, DeleteFileTool,
+        ApplyTextPatchTool, MoveFileTool, CopyFileTool, MakeDirectoryTool,
+        GetFileStatTool, ImportGitHubRepoTool,
         # Search
         GoogleSearchTool, ResearchURLTool, SearchPlacesTool, DeepResearchTool,
         # AI

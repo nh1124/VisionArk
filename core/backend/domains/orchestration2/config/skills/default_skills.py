@@ -6,7 +6,7 @@ SKILL_DEFS: list[SkillDef] = [
         description="Research & information gathering",
         tools=[
             "google_search", "research_url", "search_places", "deep_research",
-            "read_reference", "list_files", "read_md_section",
+            "read_file_chunk", "list_files", "get_file_stat", "read_md_section",
             "get_current_status", "list_notes", "read_note",
             "get_project_rules", "get_project_health",
             "list_agents", "get_agent_profile",
@@ -18,7 +18,7 @@ SKILL_DEFS: list[SkillDef] = [
         name="document_creation",
         description="Writing & content generation",
         tools=[
-            "save_artifact", "recursive_writer",
+            "write_file", "apply_text_patch", "recursive_writer",
             "generate_image", "generate_mermaid_visualizer", "execute_code",
             "create_note", "init_plan", "update_plan_progress",
             "update_md_section", "update_canvas",
@@ -28,8 +28,9 @@ SKILL_DEFS: list[SkillDef] = [
         name="file_management",
         description="File CRUD & imports",
         tools=[
-            "save_artifact", "read_reference", "list_files",
-            "delete_artifact", "import_github_repo",
+            "write_file", "read_file_chunk", "list_files", "delete_file",
+            "apply_text_patch", "move_file", "copy_file",
+            "make_directory", "get_file_stat", "import_github_repo",
         ],
     ),
     SkillDef(

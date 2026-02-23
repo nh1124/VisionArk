@@ -570,3 +570,68 @@ class FileService:
         Note: With current simplified approach, this returns an empty list as we don't track persistent uploads in DB.
         """
         return []
+
+    @staticmethod
+    def compute_hash(p: Path) -> str:
+        """SHA-256 hash of a file (with prefix)."""
+        return "sha256:" + hashlib.sha256(p.read_bytes()).hexdigest()
+
+    async def stat_path(self, project_id: str, rel_path: str) -> Optional[Dict[str, Any]]:
+        """Return stat info for a project-root-relative path, or None if not found."""
+        root = get_project_dir(self.user_id, project_id)
+        p = secure_path_join(root, rel_path)
+        if not p.exists():
+            return None
+        st = p.stat()
+        return {
+            "path": p.relative_to(root).as_posix(),
+            "size_bytes": st.st_size if not p.is_dir() else 0,
+            "hash": self.compute_hash(p) if p.is_file() else None,
+            "mtime": datetime.fromtimestamp(st.st_mtime).isoformat(),
+            "is_dir": p.is_dir(),
+        }
+
+    async def move_file_path(self, project_id: str, src: str, dst: str, overwrite: bool = False) -> bool:
+        """Move src to dst within the project root, then sync DB."""
+        root = get_project_dir(self.user_id, project_id)
+        src_p = secure_path_join(root, src)
+        dst_p = secure_path_join(root, dst)
+
+        if not src_p.exists():
+            return False
+        if dst_p.exists() and not overwrite:
+            return False
+
+        dst_p.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src_p), str(dst_p))
+        await self.sync_project_directory(project_id)
+        return True
+
+    async def copy_file_path(self, project_id: str, src: str, dst: str, overwrite: bool = False) -> bool:
+        """Copy src to dst within the project root, then sync DB."""
+        root = get_project_dir(self.user_id, project_id)
+        src_p = secure_path_join(root, src)
+        dst_p = secure_path_join(root, dst)
+
+        if not src_p.exists():
+            return False
+        if dst_p.exists() and not overwrite:
+            return False
+
+        dst_p.parent.mkdir(parents=True, exist_ok=True)
+        if src_p.is_dir():
+            if dst_p.exists():
+                shutil.rmtree(dst_p)
+            shutil.copytree(str(src_p), str(dst_p))
+        else:
+            shutil.copy2(str(src_p), str(dst_p))
+        await self.sync_project_directory(project_id)
+        return True
+
+    async def make_directory_path(self, project_id: str, rel_path: str) -> bool:
+        """Create a directory (and parents) within the project root, then sync DB."""
+        root = get_project_dir(self.user_id, project_id)
+        p = secure_path_join(root, rel_path)
+        p.mkdir(parents=True, exist_ok=True)
+        await self.sync_project_directory(project_id)
+        return True
