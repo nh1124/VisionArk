@@ -308,6 +308,19 @@ class Worker:
 
         # 2. Get or create session
         session_id = context.get("session_id")
+        if session_id:
+            sess_res = await db_session.execute(
+                select(ChatSession).filter(ChatSession.id == session_id)
+            )
+            if not sess_res.scalars().first():
+                db_session.add(ChatSession(
+                    id=session_id,
+                    project_id=project_id,
+                    title="New Session",
+                    is_archived=False,
+                ))
+                await db_session.commit()
+
         if not session_id:
             sess_res = await db_session.execute(
                 select(ChatSession).filter(
@@ -326,7 +339,7 @@ class Worker:
                     title="New Session",
                     is_archived=False,
                 ))
-                await db_session.flush()
+                await db_session.commit()
 
         # 3. Load chat history as v2 Messages
         history_res = await db_session.execute(

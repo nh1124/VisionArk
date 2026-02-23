@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
@@ -7,7 +8,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.database import AsyncSessionLocal, ProjectAgentAssignment, Agent as UserAgent
+from shared.database import AsyncSessionLocal, ProjectAgentAssignment, Agent as UserAgent, get_engine
 from ..engine.agent_engine import AgentEngine
 from ..engine.models.agent import AgentDef, AgentLimits
 from ..engine.models.skill import SkillDef
@@ -180,31 +181,68 @@ async def create_engine_for_project(
     # Store prompt data
     engine._prompt_data = prompt_data  # type: ignore[attr-defined]
 
-    # 13. Register sub-agents for delegation
-    # NOTE: delegation skill is intentionally excluded from sub-agents
-    #       to prevent infinite recursive delegation.
-    researcher_def = AgentDef(
-        name="researcher",
-        graph_name="direct_assistant",
-        skills=["investigation"],
-        limits=AgentLimits(max_turns=15),
-    )
-    engine.register_agent(researcher_def)
+    # 13. Load delegation sub-agents from DB and register them in the engine.
+    # Sub-agents are seeded at user registration (shared/seed.py).
+    # If missing (pre-existing users), seed them lazily here.
+    _SUB_AGENT_NAMES = ["researcher", "writer", "reviewer"]
+    # Max turns per sub-agent (DB has no limits field; use sensible defaults).
+    _SUB_AGENT_MAX_TURNS: dict[str, int] = {
+        "researcher": 15,
+        "writer": 15,
+        "reviewer": 10,
+    }
+    try:
+        # Fetch all known sub-agents for this user in one query
+        sub_agents_result = await db_session.execute(
+            select(UserAgent).where(
+                UserAgent.user_id == user_id,
+                UserAgent.display_name.in_(_SUB_AGENT_NAMES),
+                UserAgent.status == "active",
+            )
+        )
+        sub_agents_by_name = {
+            row.display_name: row for row in sub_agents_result.scalars().all()
+        }
 
-    writer_def = AgentDef(
-        name="writer",
-        graph_name="direct_assistant",
-        skills=["investigation", "document_creation"],
-        limits=AgentLimits(max_turns=15),
-    )
-    engine.register_agent(writer_def)
+        # Lazy-seed any missing sub-agents (handles users registered before this feature)
+        missing = [n for n in _SUB_AGENT_NAMES if n not in sub_agents_by_name]
+        if missing:
+            logger.info(
+                "Sub-agents %s not found for user %s — seeding now", missing, user_id
+            )
+            from shared.seed import seed_user_agents
+            await asyncio.to_thread(seed_user_agents, get_engine(), user_id)
 
-    reviewer_def = AgentDef(
-        name="reviewer",
-        graph_name="direct_assistant",
-        skills=["investigation"],
-        limits=AgentLimits(max_turns=10),
-    )
-    engine.register_agent(reviewer_def)
+            # Re-fetch after seeding
+            sub_agents_result2 = await db_session.execute(
+                select(UserAgent).where(
+                    UserAgent.user_id == user_id,
+                    UserAgent.display_name.in_(_SUB_AGENT_NAMES),
+                    UserAgent.status == "active",
+                )
+            )
+            sub_agents_by_name = {
+                row.display_name: row for row in sub_agents_result2.scalars().all()
+            }
+
+        for sub_name in _SUB_AGENT_NAMES:
+            row = sub_agents_by_name.get(sub_name)
+            if row is None:
+                logger.warning("Sub-agent '%s' still missing after seed — skipping", sub_name)
+                continue
+            sub_def = AgentDef(
+                name=sub_name,
+                graph_name=row.graph_id or "direct_assistant",
+                default_model="default",
+                skills=row.skill_ids if row.skill_ids else ["investigation"],
+                limits=AgentLimits(max_turns=_SUB_AGENT_MAX_TURNS.get(sub_name, 15)),
+            )
+            engine.register_agent(sub_def)
+            logger.debug(
+                "Registered sub-agent '%s' (graph=%s, skills=%s)",
+                sub_name, sub_def.graph_name, sub_def.skills,
+            )
+    except Exception as exc:
+        logger.warning("Failed to load delegation sub-agents from DB: %s", exc)
 
     return engine, agent_id

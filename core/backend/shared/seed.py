@@ -1,7 +1,7 @@
 """
-Per-user skill / graph seeder.
+Per-user skill / graph / agent seeder.
 Called once at user creation time (auth.py) — NOT at server startup.
-Idempotent: ON CONFLICT (user_id, name) DO UPDATE.
+Idempotent: skills/graphs use ON CONFLICT DO UPDATE; agents use WHERE NOT EXISTS.
 """
 from __future__ import annotations
 
@@ -25,13 +25,47 @@ _GRAPHS_DIR = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Delegation sub-agent definitions
+# ---------------------------------------------------------------------------
+# These agents are seeded once per user and loaded from DB at runtime.
+# display_name is used as the engine agent name (must match delegate_task calls).
+# NOTE: delegation skill is intentionally excluded to prevent recursive loops.
+_SUB_AGENT_DEFS: list[dict] = [
+    {
+        "display_name": "researcher",
+        "description": "Delegation sub-agent: research & investigation tasks",
+        "skill_ids": ["investigation"],
+        "graph_id": "direct_assistant",
+    },
+    {
+        "display_name": "writer",
+        "description": "Delegation sub-agent: document creation & writing tasks",
+        "skill_ids": ["investigation", "document_creation"],
+        "graph_id": "direct_assistant",
+    },
+    {
+        "display_name": "reviewer",
+        "description": "Delegation sub-agent: research & review tasks",
+        "skill_ids": ["investigation"],
+        "graph_id": "direct_assistant",
+    },
+]
+
+
 def seed_user_definitions(engine: Engine, user_id: str) -> None:
-    """Seed skill_registry and graph_registry for a specific user.
+    """Seed skill_registry, graph_registry, and delegation agents for a user.
 
     Creates one row per skill/graph per user.  Safe to re-run (upsert).
     """
     _seed_skills(engine, user_id)
     _seed_graphs(engine, user_id)
+    _seed_agents(engine, user_id)
+
+
+def seed_user_agents(engine: Engine, user_id: str) -> None:
+    """Seed only the delegation sub-agents for a user (lazy-seed entry point)."""
+    _seed_agents(engine, user_id)
 
 
 # ---------------------------------------------------------------------------
@@ -134,3 +168,50 @@ def _seed_graphs(engine: Engine, user_id: str) -> None:
                 logger.error("Failed to seed graph '%s': %s", yaml_path.name, exc)
 
     logger.info("✅ Seeded %d graphs into graph_registry for user %s", count, user_id)
+
+
+# ---------------------------------------------------------------------------
+# Delegation sub-agents
+# ---------------------------------------------------------------------------
+
+def _seed_agents(engine: Engine, user_id: str) -> None:
+    """Seed delegation sub-agents into the agents table for a user.
+
+    Uses WHERE NOT EXISTS so it is safe to re-run without creating duplicates.
+    No unique constraint on (user_id, display_name) exists, so ON CONFLICT
+    cannot be used here.
+    """
+    now = datetime.utcnow()
+    seeded = 0
+    with engine.begin() as conn:
+        for agent in _SUB_AGENT_DEFS:
+            result = conn.execute(
+                text("""
+                    INSERT INTO agents
+                        (id, user_id, display_name, description,
+                         skill_ids, graph_id, status, created_at, updated_at)
+                    SELECT
+                        :id, :user_id, :display_name, :description,
+                        CAST(:skill_ids AS JSON), :graph_id, 'active', :created_at, :updated_at
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM agents
+                        WHERE user_id = :user_id AND display_name = :display_name
+                    )
+                """),
+                {
+                    "id": str(uuid.uuid4()),
+                    "user_id": user_id,
+                    "display_name": agent["display_name"],
+                    "description": agent["description"],
+                    "skill_ids": json.dumps(agent["skill_ids"]),
+                    "graph_id": agent["graph_id"],
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            if result.rowcount:
+                seeded += 1
+
+    logger.info(
+        "✅ Seeded %d delegation sub-agents into agents for user %s", seeded, user_id
+    )
