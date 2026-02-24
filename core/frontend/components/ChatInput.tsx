@@ -4,6 +4,7 @@ import { useState, useRef, DragEvent, useEffect, memo } from "react";
 import { createPortal } from "react-dom";
 import { useNotification } from "@/lib/NotificationContext";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { Copy, Calendar } from "lucide-react";
 
 interface ChatInputProps {
     value?: string;
@@ -447,7 +448,7 @@ function ChatInputComponent({
                                         }}
                                         className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-white/5 transition-all flex items-center gap-3"
                                     >
-                                        <span className="text-purple-400">📋</span> Clone Spoke (Branch)
+                                        <Copy size={16} className="text-purple-400" /> Clone
                                     </button>
                                     <button
                                         onClick={() => {
@@ -456,7 +457,7 @@ function ChatInputComponent({
                                         }}
                                         className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-white/5 transition-all flex items-center gap-3"
                                     >
-                                        <span className="text-blue-400">📅</span> Schedule Message
+                                        <Calendar size={16} className="text-blue-400" /> Schedule Message
                                     </button>
                                 </div>,
                                 document.body
