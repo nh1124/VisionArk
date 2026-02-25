@@ -13,7 +13,6 @@ from ..engine.agent_engine import AgentEngine
 from ..engine.models.agent import AgentDef, AgentLimits
 from ..engine.models.skill import SkillDef
 from ..engine.store.sqlalchemy_store import SQLAlchemyStore
-from ..engine_runtime.gemini_engine import GeminiEngine
 from ..roles.planner_role import PlannerRole
 from ..roles.project_role import ProjectRole
 from ..roles.verifier_role import VerifierRole
@@ -51,6 +50,7 @@ async def create_engine_for_project(
     db_session: AsyncSession,
     api_key: str,
     preferred_model: str | None = None,
+    provider_id: str = "gemini",
 ) -> tuple[AgentEngine, str]:
     """Bootstrap an AgentEngine for a project context. Called per-request.
 
@@ -77,15 +77,31 @@ async def create_engine_for_project(
         user_id, db_session, engine, dynamic_skills
     )
 
-    # 3. Create GeminiEngine
-    gemini_engine = GeminiEngine(
-        api_key=api_key,
-        tool_registry=engine.tools,
-        model=preferred_model,
-    )
+    # 3. Create LLM Engine based on provider
+    if provider_id == "openai":
+        from ..engine_runtime.openai_engine import OpenAIEngine
+        llm_engine = OpenAIEngine(
+            api_key=api_key,
+            tool_registry=engine.tools,
+            model=preferred_model,
+        )
+    elif provider_id == "anthropic":
+        from ..engine_runtime.anthropic_engine import AnthropicEngine
+        llm_engine = AnthropicEngine(
+            api_key=api_key,
+            tool_registry=engine.tools,
+            model=preferred_model,
+        )
+    else:
+        from ..engine_runtime.gemini_engine import GeminiEngine
+        llm_engine = GeminiEngine(
+            api_key=api_key,
+            tool_registry=engine.tools,
+            model=preferred_model,
+        )
 
     # 5. Register engine runtime via public API
-    engine.register_engine(gemini_engine)
+    engine.register_engine(llm_engine)
 
     # 5b. Register delegation tool (requires engine reference — _orchestrator must exist)
     delegation_tool_def, delegation_tool_impl = get_delegation_tool(engine)

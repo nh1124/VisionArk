@@ -8,7 +8,8 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from shared.database import UserSettings
-from infrastructure.llm.orchestration2_provider import GeminiLLMProvider
+from infrastructure.llm.provider_registry import resolve_provider
+from infrastructure.llm.model_router import get_configured_providers, get_api_key_for_provider
 from domains.orchestration2.engine.models.message import Message
 from domains.orchestration2.engine.models.common import MessageRole
 from api.auth import get_current_user
@@ -38,12 +39,17 @@ class DecomposeResponse(BaseModel):
     suggested_tasks: List[SuggestedTask]
 
 
-def _get_gemini_api_key(user_id: str, session: Session) -> str:
-    """Retrieve Gemini API key for the user (already decrypted by property)"""
+def _get_llm_api_key(user_id: str, session: Session) -> tuple[str, str]:
+    """Retrieve first available LLM API key for the user. Returns (provider_id, api_key)."""
     settings = session.query(UserSettings).filter_by(user_id=user_id).first()
-    if not settings or not settings.gemini_api_key:
-        raise HTTPException(status_code=400, detail="Gemini API key not configured")
-    return settings.gemini_api_key
+    if not settings:
+        raise HTTPException(status_code=400, detail="No AI provider configured")
+    configured = get_configured_providers(settings)
+    if not configured:
+        raise HTTPException(status_code=400, detail="No AI provider API key configured")
+    provider_id = configured[0]
+    api_key = get_api_key_for_provider(settings, provider_id)
+    return provider_id, api_key
 
 
 @router.post("", response_model=DecomposeResponse)
@@ -59,7 +65,7 @@ async def decompose_task(
     user_id = current_user.user_id
     
     # Get API key
-    api_key = _get_gemini_api_key(user_id, db)
+    provider_id, api_key = _get_llm_api_key(user_id, db)
     
     # Build the prompt for task decomposition
     prompt = f"""You are a task decomposition assistant. Given a high-level task description, break it down into actionable subtasks.
@@ -85,11 +91,10 @@ Example output:
 """
     
     try:
-        # Use Gemini to generate subtasks
-        provider = GeminiLLMProvider(api_key=api_key)
+        # Use LLM provider to generate subtasks
+        provider = resolve_provider(provider_id, api_key)
         response = await provider.complete(
             messages=[Message(role=MessageRole.USER, content=prompt)],
-            model="gemini-2.5-flash-lite",
         )
         
         # Parse the JSON response

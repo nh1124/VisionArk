@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { apiFetch, apiJson } from "@/lib/api";
 import { useNotification } from "@/lib/NotificationContext";
+import { Sparkles, Bot, BrainCircuit, Calendar, Database } from "lucide-react";
 
 type Tab = "account" | "general" | "services" | "integrations" | "ai";
 
@@ -31,7 +32,7 @@ export default function SettingsPage() {
 
     // Data states
     const [profile, setProfile] = useState({ id: "", username: "", email: "" });
-    const [aiConfig, setAiConfig] = useState({ gemini_api_key: "" });
+    const [aiConfig, setAiConfig] = useState({ gemini_api_key: "", openai_api_key: "", anthropic_api_key: "" });
     const [generalSettings, setGeneralSettings] = useState({ language: "en", timezone: "UTC", location: "", notification_sound: "timer" });
     const [services, setServices] = useState<Service[]>([]);
     const [integrations, setIntegrations] = useState<Integration[]>([]);
@@ -54,7 +55,11 @@ export default function SettingsPage() {
         try {
             const data = await apiJson<any>("/api/settings");
             setProfile(data.profile || { id: "", username: "", email: "" });
-            setAiConfig({ gemini_api_key: data.ai_config?.gemini_api_key || "" });
+            setAiConfig({
+                gemini_api_key: data.ai_config?.gemini_api_key || "",
+                openai_api_key: data.ai_config?.openai_api_key || "",
+                anthropic_api_key: data.ai_config?.anthropic_api_key || "",
+            });
             const g = data.general_settings || {};
             setGeneralSettings({
                 language: g.language || "en",
@@ -660,46 +665,90 @@ export default function SettingsPage() {
 
                     {/* AI Providers Tab */}
                     {activeTab === "ai" && (
-                        <div className="animate-in fade-in duration-300">
+                        <div className="animate-in fade-in duration-300 space-y-6">
                             <div className="bg-gray-900 border border-gray-800 rounded-xl p-8">
-                                <h2 className="text-xl font-bold mb-4">Gemini Configuration</h2>
+                                <h2 className="text-xl font-bold mb-2">AI Providers</h2>
                                 <p className="text-gray-400 mb-6 text-sm">
-                                    Configure your Google Gemini API key here. Model selection is now available directly in the chat interface.
+                                    Configure API keys for your LLM providers. At least one provider is required. Model selection is available in the chat interface.
                                 </p>
 
                                 <div className="space-y-6">
+                                    {/* Gemini */}
                                     <div className="bg-gray-800/50 border border-gray-700/50 p-6 rounded-xl">
                                         <div className="flex items-center mb-4">
                                             <div className="w-10 h-10 bg-blue-600/20 rounded-lg flex items-center justify-center mr-3">
-                                                <span className="text-xl">♊</span>
+                                                <Sparkles className="w-5 h-5 text-blue-400" />
                                             </div>
                                             <div>
                                                 <h3 className="font-semibold">Google Gemini</h3>
                                                 <p className="text-xs text-gray-500">Native multimodal support</p>
                                             </div>
                                         </div>
-                                        <div className="space-y-4">
-                                            <div>
-                                                <label className="block text-sm font-medium text-gray-400 mb-2">
-                                                    API Key
-                                                </label>
-                                                <input
-                                                    type="password"
-                                                    value={aiConfig.gemini_api_key}
-                                                    onChange={(e) => setAiConfig({ ...aiConfig, gemini_api_key: e.target.value })}
-                                                    placeholder="Enter your Gemini API key"
-                                                    className="w-full px-4 py-2.5 bg-gray-900 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors"
-                                                />
-                                            </div>
-                                            <button
-                                                onClick={saveAiConfig}
-                                                disabled={saving}
-                                                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
-                                            >
-                                                {saving ? 'Saving...' : 'Update Gemini Key'}
-                                            </button>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-400 mb-2">API Key</label>
+                                            <input
+                                                type="password"
+                                                value={aiConfig.gemini_api_key}
+                                                onChange={(e) => setAiConfig({ ...aiConfig, gemini_api_key: e.target.value })}
+                                                placeholder="Enter your Gemini API key"
+                                                className="w-full px-4 py-2.5 bg-gray-900 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors"
+                                            />
                                         </div>
                                     </div>
+
+                                    {/* OpenAI */}
+                                    <div className="bg-gray-800/50 border border-gray-700/50 p-6 rounded-xl">
+                                        <div className="flex items-center mb-4">
+                                            <div className="w-10 h-10 bg-emerald-600/20 rounded-lg flex items-center justify-center mr-3">
+                                                <Bot className="w-5 h-5 text-emerald-400" />
+                                            </div>
+                                            <div>
+                                                <h3 className="font-semibold">OpenAI</h3>
+                                                <p className="text-xs text-gray-500">GPT-4.1, o4 series</p>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-400 mb-2">API Key</label>
+                                            <input
+                                                type="password"
+                                                value={aiConfig.openai_api_key}
+                                                onChange={(e) => setAiConfig({ ...aiConfig, openai_api_key: e.target.value })}
+                                                placeholder="sk-..."
+                                                className="w-full px-4 py-2.5 bg-gray-900 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-emerald-500 transition-colors"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    {/* Anthropic */}
+                                    <div className="bg-gray-800/50 border border-gray-700/50 p-6 rounded-xl">
+                                        <div className="flex items-center mb-4">
+                                            <div className="w-10 h-10 bg-orange-600/20 rounded-lg flex items-center justify-center mr-3">
+                                                <BrainCircuit className="w-5 h-5 text-orange-400" />
+                                            </div>
+                                            <div>
+                                                <h3 className="font-semibold">Anthropic</h3>
+                                                <p className="text-xs text-gray-500">Claude Sonnet 4, Haiku</p>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-400 mb-2">API Key</label>
+                                            <input
+                                                type="password"
+                                                value={aiConfig.anthropic_api_key}
+                                                onChange={(e) => setAiConfig({ ...aiConfig, anthropic_api_key: e.target.value })}
+                                                placeholder="sk-ant-..."
+                                                className="w-full px-4 py-2.5 bg-gray-900 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-orange-500 transition-colors"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <button
+                                        onClick={saveAiConfig}
+                                        disabled={saving}
+                                        className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+                                    >
+                                        {saving ? 'Saving...' : 'Save All API Keys'}
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -715,7 +764,7 @@ export default function SettingsPage() {
                                 <div className="mb-8 bg-gradient-to-r from-blue-900/20 to-purple-900/20 border border-blue-700/30 p-6 rounded-xl">
                                     <div className="flex items-center gap-3 mb-4">
                                         <div className="w-10 h-10 bg-blue-600/20 rounded-lg flex items-center justify-center">
-                                            <span className="text-xl">📅</span>
+                                            <Calendar className="w-5 h-5 text-blue-400" />
                                         </div>
                                         <div>
                                             <h3 className="font-bold text-blue-300">LBS - Load Balancing System</h3>
@@ -773,7 +822,7 @@ export default function SettingsPage() {
                                 <div className="mb-8 bg-gradient-to-r from-blue-900/20 to-green-900/20 border border-green-700/30 p-6 rounded-xl">
                                     <div className="flex items-center gap-3 mb-4">
                                         <div className="w-10 h-10 bg-green-600/20 rounded-lg flex items-center justify-center">
-                                            <span className="text-xl">🧠</span>
+                                            <Database className="w-5 h-5 text-green-400" />
                                         </div>
                                         <div>
                                             <h3 className="font-bold text-green-300">KnowledgeCore - Persistent Memory</h3>

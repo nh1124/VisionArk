@@ -35,9 +35,9 @@ export default function SystemStatus() {
     }
 
     const missing = [];
-    if (!status.details.gemini.configured) missing.push("Gemini");
-    if (!status.details.lbs.configured) missing.push("LBS");
-    if (!status.details.knowledge_core.configured) missing.push("KC");
+    if (!status.details.llm?.configured) missing.push("LLM");
+    if (!status.details.lbs?.configured) missing.push("LBS");
+    if (!status.details.knowledge_core?.configured) missing.push("KC");
 
     return (
         <Link href="/settings" className="flex items-center space-x-2 px-3 py-1 bg-red-500/10 text-red-400 rounded-full border border-red-500/20 text-xs font-medium hover:bg-red-500/20 transition-all cursor-pointer">

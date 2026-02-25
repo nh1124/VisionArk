@@ -14,12 +14,15 @@ export default function SignUpPage() {
         lbs_api_key: "",
         kc_api_key: "",
         gemini_api_key: "",
+        openai_api_key: "",
+        anthropic_api_key: "",
     });
 
     const isUsernameValid = formData.username.trim().length >= 3;
     const isPasswordValid = formData.password.length >= 8;
     const isConfirmValid = formData.password === formData.confirmPassword && formData.password !== "";
-    const isFormValid = isUsernameValid && isPasswordValid && isConfirmValid && formData.lbs_api_key !== "" && formData.kc_api_key !== "" && formData.gemini_api_key !== "";
+    const hasAtLeastOneLLMKey = formData.gemini_api_key !== "" || formData.openai_api_key !== "" || formData.anthropic_api_key !== "";
+    const isFormValid = isUsernameValid && isPasswordValid && isConfirmValid && formData.lbs_api_key !== "" && formData.kc_api_key !== "" && hasAtLeastOneLLMKey;
     const [testStatus, setTestStatus] = useState<{ type: "success" | "error" | "loading", message: string } | null>(null);
     const [kcTestStatus, setKcTestStatus] = useState<{ type: "success" | "error" | "loading", message: string } | null>(null);
     const [error, setError] = useState("");
@@ -53,7 +56,9 @@ export default function SignUpPage() {
                     password: formData.password,
                     lbs_api_key: formData.lbs_api_key,
                     kc_api_key: formData.kc_api_key,
-                    gemini_api_key: formData.gemini_api_key,
+                    gemini_api_key: formData.gemini_api_key || undefined,
+                    openai_api_key: formData.openai_api_key || undefined,
+                    anthropic_api_key: formData.anthropic_api_key || undefined,
                 }),
             });
 
@@ -288,20 +293,52 @@ export default function SignUpPage() {
                         </div>
 
                         <div>
-                            <label htmlFor="gemini_api_key" className="block text-sm font-medium text-blue-300 mb-2">
-                                Gemini API Key *
+                            <label className="block text-sm font-medium text-blue-300 mb-2">
+                                LLM API Keys <span className="text-gray-500">(at least one required)</span>
                             </label>
-                            <input
-                                type="password"
-                                id="gemini_api_key"
-                                name="gemini_api_key"
-                                value={formData.gemini_api_key}
-                                onChange={handleChange}
-                                placeholder="AIzaSy..."
-                                className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
-                            />
+                            <div className="space-y-3">
+                                <div>
+                                    <label htmlFor="gemini_api_key" className="block text-xs text-gray-400 mb-1">Gemini</label>
+                                    <input
+                                        type="password"
+                                        id="gemini_api_key"
+                                        name="gemini_api_key"
+                                        value={formData.gemini_api_key}
+                                        onChange={handleChange}
+                                        placeholder="AIzaSy..."
+                                        className="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors"
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="openai_api_key" className="block text-xs text-gray-400 mb-1">OpenAI</label>
+                                    <input
+                                        type="password"
+                                        id="openai_api_key"
+                                        name="openai_api_key"
+                                        value={formData.openai_api_key}
+                                        onChange={handleChange}
+                                        placeholder="sk-..."
+                                        className="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500 transition-colors"
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="anthropic_api_key" className="block text-xs text-gray-400 mb-1">Anthropic</label>
+                                    <input
+                                        type="password"
+                                        id="anthropic_api_key"
+                                        name="anthropic_api_key"
+                                        value={formData.anthropic_api_key}
+                                        onChange={handleChange}
+                                        placeholder="sk-ant-..."
+                                        className="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-orange-500 transition-colors"
+                                    />
+                                </div>
+                            </div>
+                            {!hasAtLeastOneLLMKey && (
+                                <p className="text-yellow-400 text-xs mt-2">⚠ Provide at least one LLM API key</p>
+                            )}
                             <p className="text-[10px] text-gray-500 mt-1">
-                                Your Gemini API Key is required for the system agents.
+                                Configure at least one LLM provider. You can add more in settings later.
                             </p>
                         </div>
 

@@ -11,7 +11,8 @@ from typing import Dict, Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
-from infrastructure.llm import GeminiLLMProvider
+from infrastructure.llm.provider_registry import resolve_provider
+from infrastructure.llm.model_router import get_configured_providers, get_api_key_for_provider
 from domains.orchestration2.engine.models.message import Message
 from domains.orchestration2.engine.models.common import MessageRole
 from shared.paths import get_project_dir, get_prompts_dir
@@ -105,9 +106,16 @@ class ContextManager:
         
         result = await self.db_session.execute(select(UserSettings).filter(UserSettings.user_id == self.user_id))
         settings = result.scalars().first()
-        api_key = settings.gemini_api_key if settings else None
-        
-        self._llm = GeminiLLMProvider(api_key=api_key)
+
+        configured = get_configured_providers(settings) if settings else []
+        if configured:
+            provider_id = configured[0]
+            api_key = get_api_key_for_provider(settings, provider_id)
+            self._llm = resolve_provider(provider_id, api_key)
+        else:
+            # Fallback to Gemini (original behavior)
+            api_key = settings.gemini_api_key if settings else None
+            self._llm = resolve_provider('gemini', api_key)
         return self._llm
 
     async def generate_summary(self, conversation: List[Dict[str, str]]) -> str:

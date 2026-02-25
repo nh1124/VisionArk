@@ -931,18 +931,30 @@ async def create_project_from_prompt(
         # 1. Generate project name + system prompt via LLM
         res = await db.execute(select(UserSettings).filter(UserSettings.user_id == identity.user_id))
         settings = res.scalars().first()
-        api_key = settings.gemini_api_key if settings else None
 
         generated_name = None
         generated_prompt = None
 
-        if api_key:
+        # Use whichever LLM provider is configured
+        if settings:
             try:
-                from infrastructure.llm.orchestration2_provider import GeminiLLMProvider
+                from infrastructure.llm.model_router import parse_model_spec, get_api_key_for_provider, get_configured_providers
+                from infrastructure.llm.provider_registry import resolve_provider
                 from domains.orchestration2.engine.models.message import Message as V2Message
                 from domains.orchestration2.engine.models.common import MessageRole
 
-                provider = GeminiLLMProvider(api_key=api_key)
+                # Resolve provider from preferred model or first available
+                provider_id, model_id = parse_model_spec(x_preferred_model)
+                api_key = get_api_key_for_provider(settings, provider_id)
+                if not api_key:
+                    # Fallback to first available provider
+                    configured = get_configured_providers(settings)
+                    if configured:
+                        provider_id = configured[0]
+                        api_key = get_api_key_for_provider(settings, provider_id)
+
+                if api_key:
+                    provider = resolve_provider(provider_id, api_key, model_id)
 
                 system_instruction = (
                     "You are a project setup assistant. Given a user's project description, generate:\\n"

@@ -50,7 +50,7 @@ export default function ProjectChatPage({
     const [loading, setLoading] = useState(false);
     const [showSidebar, setShowSidebar] = useState(false);
     const [showCommandHelp, setShowCommandHelp] = useState(false);
-    const { selectedModel, setSelectedModel } = useModel();
+    const { selectedModel, setSelectedModel, configuredProviders, setConfiguredProviders } = useModel();
     const isMobile = useIsMobile();
     const router = useRouter();
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -113,6 +113,22 @@ export default function ProjectChatPage({
     useEffect(() => {
         activeSessionIdRef.current = activeSessionId;
     }, [activeSessionId]);
+
+    // Fetch configured LLM providers for model selector filtering
+    useEffect(() => {
+        const fetchProviders = async () => {
+            try {
+                const res = await apiFetch("/api/settings/status");
+                const data = await res.json();
+                const providers = data?.details?.llm?.providers || [];
+                setConfiguredProviders(providers);
+            } catch (e) {
+                // ignore — will show all models
+            }
+        };
+        fetchProviders();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // Stop handler
     const handleStop = async () => {
@@ -1334,10 +1350,11 @@ export default function ProjectChatPage({
                         selectedModel={selectedModel}
                         onModelChange={setSelectedModel}
                         showModelSelector={!isMobile}
+                        configuredProviders={configuredProviders}
                         onClone={handleClone}
                         loading={loading}
                         onStop={handleStop}
-                        onScheduleMessage={() => setIsScheduleModalOpen(true)} // Added prop
+                        onScheduleMessage={() => setIsScheduleModalOpen(true)}
                     />
                     <div className="mt-2 flex items-center justify-center gap-4">
                         {!isMobile && (

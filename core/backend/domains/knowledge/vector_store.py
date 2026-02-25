@@ -15,7 +15,7 @@ try:
 except ImportError:
     CHROMADB_AVAILABLE = False
 
-from infrastructure.llm import GeminiLLMProvider
+from infrastructure.llm.provider_registry import resolve_provider
 from shared.paths import get_project_dir, get_user_projects_dir
 
 
@@ -49,11 +49,12 @@ class VectorStore:
         # LLM provider for embeddings (lazy loaded)
         self._llm = None
         self._api_key = None
+        self._provider_id = "gemini"  # Embeddings are primarily Gemini-based
 
     @property
     def llm(self):
         if self._llm is None:
-            self._llm = GeminiLLMProvider(api_key=self._api_key)
+            self._llm = resolve_provider(self._provider_id, self._api_key)
         return self._llm
 
     def set_api_key(self, api_key: str):

@@ -19,6 +19,7 @@ interface ChatInputProps {
     selectedModel?: string;
     onModelChange?: (model: string) => void;
     showModelSelector?: boolean;
+    configuredProviders?: string[];
     onClone?: () => void;
     onScheduleMessage?: () => void;
     loading?: boolean;
@@ -40,6 +41,7 @@ function ChatInputComponent({
     selectedModel = "gemini-3-pro-preview",
     onModelChange,
     showModelSelector = false,
+    configuredProviders = [],
     onClone,
     onScheduleMessage,
     loading = false,
@@ -488,7 +490,7 @@ function ChatInputComponent({
                                 title="Select model"
                             >
                                 <span className="font-medium text-[10px] uppercase tracking-wider text-gray-500 hidden xs:inline">Model:</span>
-                                <span className="max-w-[100px] sm:max-w-none truncate font-semibold">{selectedModel.includes("pro") ? "Gemini Pro" : selectedModel.includes("flash-lite") ? "Flash Lite" : "Gemini Flash"}</span>
+                                <span className="max-w-[100px] sm:max-w-none truncate font-semibold">{getModelDisplayName(selectedModel)}</span>
                                 <svg className="w-4 h-4 text-gray-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                                 </svg>
@@ -512,18 +514,18 @@ function ChatInputComponent({
                                         }
                                     }}
                                 >
-                                    {MODEL_OPTIONS.map((group) => (
+                                    {MODEL_OPTIONS.filter(group => configuredProviders.length === 0 || configuredProviders.includes(group.provider)).map((group) => (
                                         <div key={group.group}>
                                             <div className="px-4 py-2 text-[10px] text-gray-500 font-bold uppercase tracking-widest">{group.group}</div>
                                             {group.models.map((model) => (
                                                 <button
-                                                    key={model}
-                                                    onClick={() => handleModelSelect(model)}
-                                                    className={`w-full text-left px-4 py-2.5 text-sm hover:bg-white/5 transition-all flex items-center justify-between ${selectedModel === model ? "text-purple-400 bg-purple-500/5" : "text-gray-300"
+                                                    key={model.id}
+                                                    onClick={() => handleModelSelect(model.id)}
+                                                    className={`w-full text-left px-4 py-2.5 text-sm hover:bg-white/5 transition-all flex items-center justify-between ${selectedModel === model.id ? "text-purple-400 bg-purple-500/5" : "text-gray-300"
                                                         }`}
                                                 >
-                                                    <span>{getModelDisplayName(model)}</span>
-                                                    {selectedModel === model && <div className="w-1.5 h-1.5 rounded-full bg-purple-400 shadow-[0_0_8px_rgba(168,85,247,0.5)]"></div>}
+                                                    <span>{model.name}</span>
+                                                    {selectedModel === model.id && <div className="w-1.5 h-1.5 rounded-full bg-purple-400 shadow-[0_0_8px_rgba(168,85,247,0.5)]"></div>}
                                                 </button>
                                             ))}
                                         </div>

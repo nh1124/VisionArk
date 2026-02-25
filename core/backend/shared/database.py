@@ -190,27 +190,33 @@ class UserSettings(Base):
     @property
     def gemini_api_key(self) -> Optional[str]:
         """Automatically decrypt and return the Gemini API key"""
+        return self._decrypt_ai_key("gemini_api_key")
+
+    @property
+    def openai_api_key(self) -> Optional[str]:
+        """Automatically decrypt and return the OpenAI API key"""
+        return self._decrypt_ai_key("openai_api_key")
+
+    @property
+    def anthropic_api_key(self) -> Optional[str]:
+        """Automatically decrypt and return the Anthropic API key"""
+        return self._decrypt_ai_key("anthropic_api_key")
+
+    def _decrypt_ai_key(self, key_name: str) -> Optional[str]:
+        """Generic decryption helper for AI provider keys."""
         if not self.ai_config:
-            print("[UserSettings] ai_config is empty/None")
             return None
-            
-        encrypted_key = self.ai_config.get("gemini_api_key")
+        encrypted_key = self.ai_config.get(key_name)
         if not encrypted_key:
-             print("[UserSettings] gemini_api_key missing in ai_config")
-             return None
-        
+            return None
         if encrypted_key == "********":
-             print("[UserSettings] Key is masked '********' (not real key)")
-             return None
-            
+            return None
         from shared.encryption import decrypt_string
         try:
             val = decrypt_string(encrypted_key)
-            if not val:
-                 print("[UserSettings] Decrypted key is empty")
-            return val
+            return val if val else None
         except Exception as e:
-            print(f"[UserSettings] Decryption failed: {e}")
+            print(f"[UserSettings] Decryption failed for {key_name}: {e}")
             return None
 
 

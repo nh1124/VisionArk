@@ -34,7 +34,9 @@ class RegisterRequest(BaseModel):
     email: str | None = None
     lbs_api_key: str
     kc_api_key: str
-    gemini_api_key: str
+    gemini_api_key: str | None = None
+    openai_api_key: str | None = None
+    anthropic_api_key: str | None = None
     
     @field_validator('username')
     @classmethod
@@ -176,12 +178,22 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
         is_active=True
     )
     
-    # Create UserSettings with Gemini API Key
+    # Validate at least one LLM key is provided
+    if not any([req.gemini_api_key, req.openai_api_key, req.anthropic_api_key]):
+        raise HTTPException(status_code=400, detail="At least one LLM API key is required (Gemini, OpenAI, or Anthropic)")
+
+    # Create UserSettings with all provided LLM API keys
+    ai_config = {}
+    if req.gemini_api_key:
+        ai_config["gemini_api_key"] = encrypt_string(req.gemini_api_key)
+    if req.openai_api_key:
+        ai_config["openai_api_key"] = encrypt_string(req.openai_api_key)
+    if req.anthropic_api_key:
+        ai_config["anthropic_api_key"] = encrypt_string(req.anthropic_api_key)
+
     user_settings = UserSettings(
         user_id=user_id,
-        ai_config={
-            "gemini_api_key": encrypt_string(req.gemini_api_key)
-        }
+        ai_config=ai_config
     )
     
     # Create user-level default Agent (one per user, shared across all projects)

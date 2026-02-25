@@ -294,17 +294,21 @@ class Worker:
         from domains.orchestration2.engine.models.common import MessageRole
         from domains.orchestration2.engine.models.message import Message as V2Message
 
-        # 1. Get API key
+        # 1. Get API key (resolve provider from preferred model)
+        from infrastructure.llm.model_router import parse_model_spec, get_api_key_for_provider
         res = await db_session.execute(
             select(UserSettings).filter(UserSettings.user_id == user_id)
         )
         settings = res.scalars().first()
-        api_key = settings.gemini_api_key if settings else None
-        if not api_key:
-            return "Error: No API key configured. Please set your Gemini API key in settings."
 
         task_id = context.get("task_id")
         preferred_model = context.get("preferred_model")
+
+        # Parse provider:model format (e.g. "openai:gpt-4.1-mini")
+        provider_id, model_id = parse_model_spec(preferred_model)
+        api_key = get_api_key_for_provider(settings, provider_id)
+        if not api_key:
+            return f"Error: No API key configured for {provider_id}. Please set your API key in settings."
 
         # 2. Get or create session
         session_id = context.get("session_id")
@@ -392,7 +396,8 @@ class Worker:
             user_id=user_id,
             db_session=db_session,
             api_key=api_key,
-            preferred_model=preferred_model,
+            preferred_model=model_id,
+            provider_id=provider_id,
         )
 
         async def progress_cb(phase: str, message: str, meta: dict = None):

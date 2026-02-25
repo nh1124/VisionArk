@@ -26,6 +26,7 @@ async def get_integration_hub_catalog():
 class AIConfigUpdate(BaseModel):
     gemini_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
     default_model: Optional[str] = None
 
 class GeneralSettingsUpdate(BaseModel):
@@ -85,7 +86,7 @@ async def get_settings(
     
     # Mask API keys in response
     masked_ai_config = ai_config.copy()
-    for key in ["gemini_api_key"]:
+    for key in ["gemini_api_key", "openai_api_key", "anthropic_api_key"]:
         if masked_ai_config.get(key):
             masked_ai_config[key] = "********"
             
@@ -206,12 +207,14 @@ async def update_ai_settings(
     
     current_config = dict(settings_obj.ai_config) if settings_obj.ai_config else {}
     
-    if update.gemini_api_key:
-        # Only update if it's not the masked value
-        if update.gemini_api_key != "********":
-            encrypted = encrypt_string(update.gemini_api_key)
-            current_config["gemini_api_key"] = encrypted
-        
+    for key_name in ["gemini_api_key", "openai_api_key", "anthropic_api_key"]:
+        key_value = getattr(update, key_name, None)
+        if key_value and key_value != "********":
+            current_config[key_name] = encrypt_string(key_value)
+
+    if update.default_model is not None:
+        current_config["default_model"] = update.default_model
+
     settings_obj.ai_config = current_config
     # Force SQLAlchemy to detect the JSON change
     flag_modified(settings_obj, "ai_config")
@@ -350,21 +353,36 @@ async def get_system_status(
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
-    """Check if all mandatory services (Gemini, LBS, KnowledgeCore) are configured and healthy"""
-    # 1. Check Gemini
+    """Check if all mandatory services (at least one LLM, LBS, KnowledgeCore) are configured"""
+    # 1. Check LLM providers
     result = await db.execute(select(UserSettings).filter(UserSettings.user_id == identity.user_id))
     settings_obj = result.scalars().first()
     gemini_configured = False
+    openai_configured = False
+    anthropic_configured = False
+    configured_providers: list[str] = []
     if settings_obj and settings_obj.ai_config:
         if settings_obj.ai_config.get("gemini_api_key"):
             gemini_configured = True
-            
+            configured_providers.append("gemini")
+        if settings_obj.ai_config.get("openai_api_key"):
+            openai_configured = True
+            configured_providers.append("openai")
+        if settings_obj.ai_config.get("anthropic_api_key"):
+            anthropic_configured = True
+            configured_providers.append("anthropic")
+
+    llm_configured = gemini_configured or openai_configured or anthropic_configured
+
     # 2. Check Services
     result = await db.execute(select(ServiceRegistry).filter(ServiceRegistry.user_id == identity.user_id))
     services = result.scalars().all()
     
     status_map = {
-        "gemini": {"configured": gemini_configured},
+        "llm": {
+            "configured": llm_configured,
+            "providers": configured_providers,
+        },
         "lbs": {"configured": False, "url": None},
         "knowledge_core": {"configured": False, "url": None}
     }
@@ -375,7 +393,7 @@ async def get_system_status(
             status_map[s.service_name]["url"] = s.base_url
     
     # Overall summary
-    all_mandatory_met = gemini_configured and status_map["lbs"]["configured"] and status_map["knowledge_core"]["configured"]
+    all_mandatory_met = llm_configured and status_map["lbs"]["configured"] and status_map["knowledge_core"]["configured"]
     
     return {
         "all_mandatory_met": all_mandatory_met,

@@ -50,9 +50,10 @@ class RecursiveWriterTool:
             if not api_key:
                 return fail(call, "No API key available for content generation.")
 
-            from infrastructure.llm.orchestration2_provider import GeminiLLMProvider
-
-            provider = GeminiLLMProvider(api_key=api_key)
+            from infrastructure.llm.provider_registry import resolve_provider
+            # Determine provider from the engine kind in execution context
+            provider_id = getattr(ctx, 'engine_kind', 'gemini') or 'gemini'
+            provider = resolve_provider(provider_id, api_key)
 
             # Resolve path
             root_dir = get_project_dir(user_id, project_id)
