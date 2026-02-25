@@ -95,48 +95,127 @@ def _session_to_dict(s: ChatSession) -> dict:
     }
 
 
-async def _get_history_for_session(session_id: str, db: AsyncSession) -> list:
-    """Shared helper: return serialized message list for a given session."""
+def _serialize_message(msg) -> dict:
+    """Serialize a ChatMessage ORM object (with pre-loaded relationships) to dict."""
+    sub_messages_data = []
+    if msg.sub_messages:
+        for sub in sorted(msg.sub_messages, key=lambda s: s.turn_index):
+            tool_calls_data = []
+            if sub.tool_calls:
+                for tc in sub.tool_calls:
+                    tool_calls_data.append({
+                        "name": tc.name,
+                        "args": tc.args,
+                        "result": tc.result,
+                        "is_success": tc.is_success
+                    })
+            sub_messages_data.append({
+                "sub_id": sub.id,
+                "content": sub.content,
+                "tool_calls": tool_calls_data,
+                "meta_info": sub.meta_payload or {},
+                "timestamp": sub.created_at.isoformat() if sub.created_at else None
+            })
+    return {
+        "id": msg.id,
+        "role": msg.role,
+        "content": msg.content,
+        "timestamp": msg.created_at.isoformat() if msg.created_at else None,
+        "meta_payload": msg.meta_payload or {},
+        "sub_messages": sub_messages_data
+    }
+
+
+async def _get_history_for_session(
+    session_id: str,
+    db: AsyncSession,
+    limit: Optional[int] = None,
+    before_id: Optional[str] = None,
+) -> tuple:
+    """Shared helper: return (items, next_cursor, has_more) for a given session.
+
+    - limit / before_id: cursor-based pagination (newest-first window).
+    - No limit → returns all messages (legacy behaviour), has_more=False.
+    """
     from sqlalchemy.orm import selectinload
-    result = await db.execute(
+
+    base_query = (
         select(ChatMessage)
         .filter(ChatMessage.session_id == session_id)
         .options(
             selectinload(ChatMessage.sub_messages).selectinload(ChatSubMessage.tool_calls)
         )
-        .order_by(ChatMessage.created_at.asc())
     )
+
+    if limit is not None:
+        # If a cursor (before_id) is given, resolve its created_at for range filtering
+        if before_id:
+            cursor_res = await db.execute(
+                select(ChatMessage.created_at).filter(ChatMessage.id == before_id)
+            )
+            cursor_ts = cursor_res.scalar_one_or_none()
+            if cursor_ts:
+                base_query = base_query.filter(ChatMessage.created_at < cursor_ts)
+
+        # Fetch limit+1 rows (DESC) to determine has_more
+        query = base_query.order_by(ChatMessage.created_at.desc()).limit(limit + 1)
+        result = await db.execute(query)
+        rows = result.scalars().unique().all()
+
+        has_more = len(rows) > limit
+        rows = rows[:limit]  # trim sentinel
+        rows = list(reversed(rows))  # ASC order for the client
+
+        next_cursor = rows[0].id if (has_more and rows) else None
+        items = [_serialize_message(m) for m in rows]
+        return items, next_cursor, has_more
+    else:
+        # Legacy: return all in ASC order
+        result = await db.execute(
+            base_query.order_by(ChatMessage.created_at.asc())
+        )
+        messages = result.scalars().unique().all()
+        items = [_serialize_message(m) for m in messages]
+        return items, None, False
+
+
+async def _get_history_for_session_legacy(session_id: str, db: AsyncSession) -> list:
+    """Backward-compat wrapper that returns a flat list (used by legacy callers)."""
+    items, _, _ = await _get_history_for_session(session_id, db)
+    return items
+
+
+async def _get_delta_for_session(
+    session_id: str,
+    db: AsyncSession,
+    after_id: Optional[str] = None,
+) -> list:
+    """Return messages created strictly after the message with after_id (ASC order).
+
+    Used by the /history/delta endpoint to avoid resending already-seen messages.
+    If after_id is None, returns all messages (full history fallback).
+    """
+    from sqlalchemy.orm import selectinload
+
+    base_query = (
+        select(ChatMessage)
+        .filter(ChatMessage.session_id == session_id)
+        .options(
+            selectinload(ChatMessage.sub_messages).selectinload(ChatSubMessage.tool_calls)
+        )
+    )
+
+    if after_id:
+        cursor_res = await db.execute(
+            select(ChatMessage.created_at).filter(ChatMessage.id == after_id)
+        )
+        cursor_ts = cursor_res.scalar_one_or_none()
+        if cursor_ts:
+            base_query = base_query.filter(ChatMessage.created_at > cursor_ts)
+
+    result = await db.execute(base_query.order_by(ChatMessage.created_at.asc()))
     messages = result.scalars().unique().all()
-    history = []
-    for msg in messages:
-        sub_messages_data = []
-        if msg.sub_messages:
-            for sub in sorted(msg.sub_messages, key=lambda s: s.turn_index):
-                tool_calls_data = []
-                if sub.tool_calls:
-                    for tc in sub.tool_calls:
-                        tool_calls_data.append({
-                            "name": tc.name,
-                            "args": tc.args,
-                            "result": tc.result,
-                            "is_success": tc.is_success
-                        })
-                sub_messages_data.append({
-                    "sub_id": sub.id,
-                    "content": sub.content,
-                    "tool_calls": tool_calls_data,
-                    "meta_info": sub.meta_payload or {},
-                    "timestamp": sub.created_at.isoformat() if sub.created_at else None
-                })
-        history.append({
-            "id": msg.id,
-            "role": msg.role,
-            "content": msg.content,
-            "timestamp": msg.created_at.isoformat() if msg.created_at else None,
-            "meta_payload": msg.meta_payload or {},
-            "sub_messages": sub_messages_data
-        })
-    return history
+    return [_serialize_message(m) for m in messages]
 
 
 
@@ -467,26 +546,32 @@ async def chat_with_project(
 @router.get("/project/{project_id}/history")
 async def get_project_history(
     project_id: str,
+    limit: Optional[int] = None,
+    cursor: Optional[str] = None,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
-    """Get Project conversation history"""
-    
+    """Get Project conversation history.
+
+    Optional query params:
+      - limit (int): number of messages per page
+      - cursor (str): message id to paginate before (older-page cursor)
+
+    Without limit, returns legacy format: { history, message_count }.
+    With limit, returns paginated format: { items, next_cursor, has_more }.
+    """
     try:
-        # Get project node or project itself
         result = await db.execute(select(Project).filter(
             Project.user_id == identity.user_id,
             Project.id == project_id
         ))
         proj = result.scalars().first()
-        
         if not proj:
             raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
-        target_project_id = proj.id
-        
+
         # Prefer the default session; fall back to most recent non-archived
         result = await db.execute(select(ChatSession).filter(
-            ChatSession.project_id == target_project_id,
+            ChatSession.project_id == proj.id,
             ChatSession.is_archived == False,
             ChatSession.is_default == True,
         ).order_by(ChatSession.created_at.desc()))
@@ -494,22 +579,78 @@ async def get_project_history(
 
         if not active_session:
             result = await db.execute(select(ChatSession).filter(
-                ChatSession.project_id == target_project_id,
+                ChatSession.project_id == proj.id,
                 ChatSession.is_archived == False,
             ).order_by(ChatSession.created_at.desc()))
             active_session = result.scalars().first()
 
         if not active_session:
+            if limit is not None:
+                return {"items": [], "next_cursor": None, "has_more": False}
             return {"history": [], "message_count": 0}
 
-        history = await _get_history_for_session(active_session.id, db)
-        print(f"📖 [History API] Found {len(history)} messages for project {project_id}")
-        return {"history": history, "message_count": len(history)}
+        items, next_cursor, has_more = await _get_history_for_session(
+            active_session.id, db, limit=limit, before_id=cursor
+        )
+        print(f"📖 [History API] Found {len(items)} messages for project {project_id} (limit={limit}, cursor={cursor})")
+
+        if limit is not None:
+            return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
+        # Legacy format
+        return {"history": items, "message_count": len(items)}
     except HTTPException:
         raise
     except Exception as e:
         import traceback
         print(f"!!! Error in get_project_history for {project_id}: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/project/{project_id}/history/delta")
+async def get_project_history_delta(
+    project_id: str,
+    after_id: Optional[str] = None,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Return messages created after `after_id` for the project's active session.
+
+    Returns: { items: [...] }
+    If after_id is omitted, returns all messages (same as full history).
+    """
+    from sqlalchemy.orm import selectinload
+    try:
+        result = await db.execute(select(Project).filter(
+            Project.user_id == identity.user_id,
+            Project.id == project_id
+        ))
+        proj = result.scalars().first()
+        if not proj:
+            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+
+        result = await db.execute(select(ChatSession).filter(
+            ChatSession.project_id == proj.id,
+            ChatSession.is_archived == False,
+            ChatSession.is_default == True,
+        ).order_by(ChatSession.created_at.desc()))
+        active_session = result.scalars().first()
+        if not active_session:
+            result = await db.execute(select(ChatSession).filter(
+                ChatSession.project_id == proj.id,
+                ChatSession.is_archived == False,
+            ).order_by(ChatSession.created_at.desc()))
+            active_session = result.scalars().first()
+
+        if not active_session:
+            return {"items": []}
+
+        items = await _get_delta_for_session(active_session.id, db, after_id=after_id)
+        return {"items": items}
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1228,11 +1369,20 @@ async def update_session(
 @router.get("/sessions/{session_id}/history")
 async def get_session_history(
     session_id: str,
+    limit: Optional[int] = None,
+    cursor: Optional[str] = None,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Get conversation history for a specific session"""
-    # Verify ownership via project join
+    """Get conversation history for a specific session.
+
+    Optional query params:
+      - limit (int): number of messages per page
+      - cursor (str): message id to paginate before (older-page cursor)
+
+    Without limit, returns legacy format: { history, message_count }.
+    With limit, returns paginated format: { items, next_cursor, has_more }.
+    """
     sess_res = await db.execute(
         select(ChatSession).join(Project).filter(
             ChatSession.id == session_id,
@@ -1244,8 +1394,43 @@ async def get_session_history(
         raise HTTPException(status_code=404, detail="Session not found")
 
     try:
-        history = await _get_history_for_session(session_id, db)
-        return {"history": history, "message_count": len(history)}
+        items, next_cursor, has_more = await _get_history_for_session(
+            session_id, db, limit=limit, before_id=cursor
+        )
+        if limit is not None:
+            return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
+        # Legacy format
+        return {"history": items, "message_count": len(items)}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/sessions/{session_id}/history/delta")
+async def get_session_history_delta(
+    session_id: str,
+    after_id: Optional[str] = None,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return messages created after `after_id` for this session.
+
+    Returns: { items: [...] }
+    If after_id is omitted, returns all messages (same as full history).
+    """
+    sess_res = await db.execute(
+        select(ChatSession).join(Project).filter(
+            ChatSession.id == session_id,
+            Project.user_id == identity.user_id,
+        )
+    )
+    if not sess_res.scalars().first():
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        items = await _get_delta_for_session(session_id, db, after_id=after_id)
+        return {"items": items}
     except Exception as e:
         import traceback
         traceback.print_exc()

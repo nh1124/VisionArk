@@ -92,6 +92,13 @@ export default function ProjectChatPage({
     const currentPollingTaskRef = useRef<string | null>(null);
     const historyFetchId = useRef(0);
 
+    // Pagination state
+    const [hasMoreHistory, setHasMoreHistory] = useState(false);
+    const nextCursorRef = useRef<string | null>(null);
+    const lastFetchedMsgIdRef = useRef<string | null>(null);
+    const isLoadingMoreRef = useRef(false);
+    const topSentinelRef = useRef<HTMLDivElement>(null);
+
     // Sync activeSessionId when URL session_id changes (e.g. sidebar navigation)
     useEffect(() => {
         if (sessionIdFromUrl !== activeSessionIdRef.current) {
@@ -99,7 +106,7 @@ export default function ProjectChatPage({
             setMessages([]);
             activeSessionIdRef.current = sessionIdFromUrl;
         }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sessionIdFromUrl]);
 
     // Keep activeSessionIdRef in sync so polling closures can read current value
@@ -156,11 +163,13 @@ export default function ProjectChatPage({
 
     const fetchHistory = useCallback(async () => {
         const requestId = ++historyFetchId.current;
+        const LIMIT = 50;
         try {
             // Use session-specific endpoint when an active session is set
-            const historyUrl = activeSessionId
-                ? `/api/agents/sessions/${activeSessionId}/history?t=${Date.now()}`
-                : `/api/agents/project/${projectId}/history?t=${Date.now()}`;
+            const baseUrl = activeSessionId
+                ? `/api/agents/sessions/${activeSessionId}/history`
+                : `/api/agents/project/${projectId}/history`;
+            const historyUrl = `${baseUrl}?limit=${LIMIT}&t=${Date.now()}`;
 
             // Fetch history AND approvals in parallel
             const [historyRes, approvalsRes] = await Promise.all([
@@ -189,8 +198,13 @@ export default function ProjectChatPage({
             // If a newer request has started, ignore this result
             if (requestId !== historyFetchId.current) return;
 
-            if (historyData.history && Array.isArray(historyData.history)) {
-                const newMessages = historyData.history.map((m: any) => ({
+            // Support both paginated format { items } and legacy format { history }
+            const rawItems: any[] = historyData.items ?? historyData.history ?? [];
+            const hasMore: boolean = historyData.has_more ?? false;
+            const nextCursor: string | null = historyData.next_cursor ?? null;
+
+            if (rawItems && Array.isArray(rawItems)) {
+                const newMessages = rawItems.map((m: any) => ({
                     role: m.role,
                     content: m.content,
                     attached_files: m.meta_payload?.attached_files || [],
@@ -198,6 +212,13 @@ export default function ProjectChatPage({
                     sub_messages: m.sub_messages || [],
                     meta_payload: m.meta_payload || {}
                 }));
+
+                // Store pagination cursors
+                nextCursorRef.current = nextCursor;
+                setHasMoreHistory(hasMore);
+                if (rawItems.length > 0) {
+                    lastFetchedMsgIdRef.current = rawItems[rawItems.length - 1].id ?? null;
+                }
 
                 setMessages((prev) => {
                     const storageKey = `pending_prompt_${projectId}`;
@@ -250,6 +271,49 @@ export default function ProjectChatPage({
             console.error("Failed to load history:", error);
         }
     }, [projectId, activeSessionId, taskIdFromUrl]);
+
+    // Load older messages (upward infinite scroll)
+    const loadOlderMessages = useCallback(async () => {
+        if (!hasMoreHistory || isLoadingMoreRef.current || !nextCursorRef.current) return;
+        isLoadingMoreRef.current = true;
+        const LIMIT = 50;
+        const container = scrollContainerRef.current;
+        const prevScrollHeight = container?.scrollHeight ?? 0;
+        try {
+            const baseUrl = activeSessionId
+                ? `/api/agents/sessions/${activeSessionId}/history`
+                : `/api/agents/project/${projectId}/history`;
+            const url = `${baseUrl}?limit=${LIMIT}&cursor=${nextCursorRef.current}&t=${Date.now()}`;
+            const res = await apiFetch(url);
+            const data = await res.json();
+            const rawItems: any[] = data.items ?? data.history ?? [];
+            if (rawItems.length > 0) {
+                const olderMessages = rawItems.map((m: any) => ({
+                    role: m.role,
+                    content: m.content,
+                    attached_files: m.meta_payload?.attached_files || [],
+                    tool_calls: m.meta_payload?.tool_calls || [],
+                    sub_messages: m.sub_messages || [],
+                    meta_payload: m.meta_payload || {}
+                }));
+                nextCursorRef.current = data.next_cursor ?? null;
+                setHasMoreHistory(data.has_more ?? false);
+                setMessages(prev => [...olderMessages, ...prev]);
+                // Restore scroll position so the user stays at the same message
+                requestAnimationFrame(() => {
+                    if (container) {
+                        container.scrollTop = container.scrollHeight - prevScrollHeight;
+                    }
+                });
+            } else {
+                setHasMoreHistory(false);
+            }
+        } catch (error) {
+            console.error("Failed to load older messages:", error);
+        } finally {
+            isLoadingMoreRef.current = false;
+        }
+    }, [hasMoreHistory, projectId, activeSessionId]);
 
     // Scroll listener for mobile UI hiding - specifically relying on direction to avoid layout loops
     const lastScrollYRef = useRef(0);
@@ -346,6 +410,22 @@ export default function ProjectChatPage({
 
         return () => window.removeEventListener('toggle-project-sidebar', handleSidebarToggle);
     }, [projectId, fetchHistory, taskIdFromUrl, router]);
+
+    // Intersection Observer: trigger loadOlderMessages when top sentinel enters view
+    useEffect(() => {
+        const sentinel = topSentinelRef.current;
+        if (!sentinel) return;
+        const observer = new IntersectionObserver(
+            ([entry]) => {
+                if (entry.isIntersecting) {
+                    loadOlderMessages();
+                }
+            },
+            { threshold: 0 }
+        );
+        observer.observe(sentinel);
+        return () => observer.disconnect();
+    }, [loadOlderMessages]);
 
     // Cleanup function - only clears intervals if this component started them
     useEffect(() => {
@@ -514,45 +594,56 @@ export default function ProjectChatPage({
                     // Cleanup optimistic storage
                     sessionStorage.removeItem(`pending_prompt_${projectId}`);
 
-                    // Re-fetch history to get complete messages
+                    // Delta sync: only fetch messages added since the last known
                     const requestId = ++historyFetchId.current;
                     try {
                         const sessionId = activeSessionIdRef.current;
-                        const historyUrl = sessionId
-                            ? `/api/agents/sessions/${sessionId}/history?t=${Date.now()}`
-                            : `/api/agents/project/${projectId}/history?t=${Date.now()}`;
-                        const historyRes = await apiFetch(historyUrl);
-                        const historyData = await historyRes.json();
-                        if (requestId === historyFetchId.current && historyData.history && Array.isArray(historyData.history)) {
-                            const newMessages = historyData.history.map((m: any) => ({
-                                role: m.role,
-                                content: m.content,
-                                attached_files: m.meta_payload?.attached_files || [],
-                                tool_calls: m.meta_payload?.tool_calls || [],
-                                sub_messages: m.sub_messages || [],
-                                meta_payload: m.meta_payload || {}
-                            }));
-                            setMessages(newMessages);
-
-                            // Check for update_canvas in tool calls
-                            newMessages.forEach((msg: Message) => {
-                                if (msg.tool_calls) {
-                                    msg.tool_calls.forEach((tc: any) => {
-                                        if (tc.name === "update_canvas") {
-                                            const args = tc.args || {};
-                                            if (args.content) {
-                                                setCanvasContent(args.content);
-                                                setCanvasFormat(args.format || "markdown");
-                                                setCanvasFilePath(args.file_path);
-                                                setShowCanvas(true);
+                        const afterId = lastFetchedMsgIdRef.current;
+                        const deltaUrl = sessionId
+                            ? `/api/agents/sessions/${sessionId}/history/delta${afterId ? `?after_id=${afterId}` : ''}${afterId ? `&t=${Date.now()}` : `?t=${Date.now()}`}`
+                            : `/api/agents/project/${projectId}/history/delta${afterId ? `?after_id=${afterId}` : ''}${afterId ? `&t=${Date.now()}` : `?t=${Date.now()}`}`;
+                        const deltaRes = await apiFetch(deltaUrl);
+                        const deltaData = await deltaRes.json();
+                        if (requestId === historyFetchId.current) {
+                            const rawItems: any[] = deltaData.items ?? [];
+                            if (rawItems.length > 0) {
+                                const newMsgs = rawItems.map((m: any) => ({
+                                    role: m.role,
+                                    content: m.content,
+                                    attached_files: m.meta_payload?.attached_files || [],
+                                    tool_calls: m.meta_payload?.tool_calls || [],
+                                    sub_messages: m.sub_messages || [],
+                                    meta_payload: m.meta_payload || {}
+                                }));
+                                // Update the last known message ID
+                                lastFetchedMsgIdRef.current = rawItems[rawItems.length - 1].id ?? lastFetchedMsgIdRef.current;
+                                setMessages(prev => {
+                                    // Remove trailing empty assistant placeholder added during send
+                                    const trimmed = prev[prev.length - 1]?.role === "assistant" && !prev[prev.length - 1]?.content
+                                        ? prev.slice(0, -1)
+                                        : prev;
+                                    return [...trimmed, ...newMsgs];
+                                });
+                                // Check for update_canvas in delta
+                                newMsgs.forEach((msg: Message) => {
+                                    if (msg.tool_calls) {
+                                        msg.tool_calls.forEach((tc: any) => {
+                                            if (tc.name === "update_canvas") {
+                                                const args = tc.args || {};
+                                                if (args.content) {
+                                                    setCanvasContent(args.content);
+                                                    setCanvasFormat(args.format || "markdown");
+                                                    setCanvasFilePath(args.file_path);
+                                                    setShowCanvas(true);
+                                                }
                                             }
-                                        }
-                                    });
-                                }
-                            });
+                                        });
+                                    }
+                                });
+                            }
                         }
                     } catch (e) {
-                        console.error("Failed to refresh history:", e);
+                        console.error("Failed to delta-sync history:", e);
                     }
 
                     // Clear task_id from URL but preserve session_id
@@ -1102,6 +1193,13 @@ export default function ProjectChatPage({
                 className={`flex-1 overflow-y-auto px-4 ${isMobile ? 'pt-[72px] pb-[72px]' : 'py-8'} min-w-0 flex flex-col relative`}
             >
                 <div className="max-w-4xl mx-auto space-y-6 min-w-0 w-full" key={`messages-${messages.length}`}>
+                    {/* Top sentinel: triggers loadOlderMessages when scrolled into view */}
+                    <div ref={topSentinelRef} style={{ height: 1 }} />
+                    {hasMoreHistory && (
+                        <div className="flex justify-center py-2">
+                            <span className="text-xs text-gray-500 animate-pulse">Loading older messages…</span>
+                        </div>
+                    )}
                     {messages.length === 0 && !loading && (
                         <div className="text-center text-gray-500 py-20">
                             <div className="w-16 h-16 bg-cyan-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6">
