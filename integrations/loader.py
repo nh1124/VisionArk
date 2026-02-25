@@ -40,8 +40,10 @@ async def load_integration_tools(user_id: str, db: AsyncSession) -> List[Tuple[T
                 continue
 
             try:
-                # Import integrations.{pkg_name}.agent_tools
-                module_path = f"integrations.{pkg_name}.agent_tools"
+                # Import integrations.{pkg_name} (__init__.py) which defines get_tools()
+                # with proper user activation gate (is_active check).
+                # Do NOT import agent_tools directly — that bypasses the auth guard.
+                module_path = f"integrations.{pkg_name}"
                 module = importlib.import_module(module_path)
                 
                 tools_instances: List[BaseTool] = []
@@ -53,7 +55,14 @@ async def load_integration_tools(user_id: str, db: AsyncSession) -> List[Tuple[T
                     else:
                         tools_instances = func(user_id, db)
                 else:
-                    # Fallback: scan for tool classes
+                    # Fallback: scan for tool classes directly.
+                    # WARNING: This bypasses the is_active check in get_tools().
+                    # All integration packages MUST define get_tools() in __init__.py.
+                    logger.warning(
+                        "Integration '%s' has no get_tools() in __init__.py. "
+                        "Falling back to direct class scan — is_active check is SKIPPED.",
+                        pkg_name
+                    )
                     tools_instances = _scan_module_for_tools(module)
 
                 if tools_instances:
