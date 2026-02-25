@@ -18,6 +18,7 @@ from typing import Optional, List, Dict
 
 from domains.identity.auth import resolve_identity, Identity, resolve_identity_for_download
 from shared.database import ProjectAgent, Project, ChatSession, ChatMessage, ChatSubMessage, UploadedFile, get_async_db, Agent, ProjectAgentAssignment, SkillRegistry, GraphRegistry
+from sqlalchemy import func
 from shared.paths import get_project_dir, get_user_projects_dir, validate_name, secure_path_join, update_project_name_cache as update_cache
 from uuid import uuid4
 from datetime import datetime, timedelta
@@ -70,6 +71,72 @@ class WorkspaceStats(BaseModel):
     tasks_completed: int
     system_efficiency: str
     upcoming_deadlines: int
+
+
+class CreateSession(BaseModel):
+    title: Optional[str] = None
+
+
+class UpdateSession(BaseModel):
+    title: Optional[str] = None
+    is_archived: Optional[bool] = None
+
+
+def _session_to_dict(s: ChatSession) -> dict:
+    return {
+        "id": s.id,
+        "project_id": s.project_id,
+        "title": s.title,
+        "is_default": s.is_default,
+        "is_archived": s.is_archived,
+        "last_message_at": s.last_message_at.isoformat() if s.last_message_at else None,
+        "created_at": s.created_at.isoformat() if s.created_at else None,
+        "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+    }
+
+
+async def _get_history_for_session(session_id: str, db: AsyncSession) -> list:
+    """Shared helper: return serialized message list for a given session."""
+    from sqlalchemy.orm import selectinload
+    result = await db.execute(
+        select(ChatMessage)
+        .filter(ChatMessage.session_id == session_id)
+        .options(
+            selectinload(ChatMessage.sub_messages).selectinload(ChatSubMessage.tool_calls)
+        )
+        .order_by(ChatMessage.created_at.asc())
+    )
+    messages = result.scalars().unique().all()
+    history = []
+    for msg in messages:
+        sub_messages_data = []
+        if msg.sub_messages:
+            for sub in sorted(msg.sub_messages, key=lambda s: s.turn_index):
+                tool_calls_data = []
+                if sub.tool_calls:
+                    for tc in sub.tool_calls:
+                        tool_calls_data.append({
+                            "name": tc.name,
+                            "args": tc.args,
+                            "result": tc.result,
+                            "is_success": tc.is_success
+                        })
+                sub_messages_data.append({
+                    "sub_id": sub.id,
+                    "content": sub.content,
+                    "tool_calls": tool_calls_data,
+                    "meta_info": sub.meta_payload or {},
+                    "timestamp": sub.created_at.isoformat() if sub.created_at else None
+                })
+        history.append({
+            "id": msg.id,
+            "role": msg.role,
+            "content": msg.content,
+            "timestamp": msg.created_at.isoformat() if msg.created_at else None,
+            "meta_payload": msg.meta_payload or {},
+            "sub_messages": sub_messages_data
+        })
+    return history
 
 
 
@@ -347,18 +414,41 @@ async def chat_with_project(
         uploaded_files = await upload_files(file_service, files)
         print(f"[Project Chat] Uploaded {len(uploaded_files)} files")
    
-    # 3. Enqueue Task
+    # 3. Find default session to pass in context (backward compat)
+    default_session_id = None
+    sess_res = await db.execute(
+        select(ChatSession).filter(
+            ChatSession.project_id == project_id,
+            ChatSession.is_archived == False,
+            ChatSession.is_default == True,
+        ).limit(1)
+    )
+    default_sess = sess_res.scalars().first()
+    if not default_sess:
+        # Fallback: most recent non-archived session
+        sess_res2 = await db.execute(
+            select(ChatSession).filter(
+                ChatSession.project_id == project_id,
+                ChatSession.is_archived == False,
+            ).order_by(ChatSession.created_at.desc()).limit(1)
+        )
+        default_sess = sess_res2.scalars().first()
+    if default_sess:
+        default_session_id = default_sess.id
+
+    # 4. Enqueue Task
     manager = QueueManager()
-    
+
     from shared.database import TaskType
     context = {
         "user_id": identity.user_id,
         "preferred_model": x_preferred_model,
         "env": "v4",
         "project_id": project_id,
-        "files": [uploaded_file.id for uploaded_file in uploaded_files] if uploaded_files else []
+        "files": [uploaded_file.id for uploaded_file in uploaded_files] if uploaded_files else [],
+        "session_id": default_session_id,
     }
-    
+
     task_id = await manager.enqueue(identity.user_id, message, context, task_type=TaskType.USER_MESSAGE)
     print(f"[Project Chat] Enqueued task {task_id} for project {project_id}")
 
@@ -394,63 +484,26 @@ async def get_project_history(
             raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
         target_project_id = proj.id
         
-        # Get active session using project_id
+        # Prefer the default session; fall back to most recent non-archived
         result = await db.execute(select(ChatSession).filter(
             ChatSession.project_id == target_project_id,
-            ChatSession.is_archived == False
+            ChatSession.is_archived == False,
+            ChatSession.is_default == True,
         ).order_by(ChatSession.created_at.desc()))
         active_session = result.scalars().first()
-        
+
+        if not active_session:
+            result = await db.execute(select(ChatSession).filter(
+                ChatSession.project_id == target_project_id,
+                ChatSession.is_archived == False,
+            ).order_by(ChatSession.created_at.desc()))
+            active_session = result.scalars().first()
+
         if not active_session:
             return {"history": [], "message_count": 0}
-        
-        # Query messages with sub_messages and tool_calls
-        from sqlalchemy.orm import selectinload
-        result = await db.execute(
-            select(ChatMessage)
-            .filter(ChatMessage.session_id == active_session.id)
-            .options(
-                selectinload(ChatMessage.sub_messages).selectinload(ChatSubMessage.tool_calls)
-            )
-            .order_by(ChatMessage.created_at.asc())
-        )
-        messages = result.scalars().unique().all()
-        print(f"📖 [History API] Found {len(messages)} messages for project {project_id}")
-        
-        history = []
-        for msg in messages:
-            # Convert sub_messages to dicts
-            sub_messages_data = []
-            if msg.sub_messages:
-                for sub in sorted(msg.sub_messages, key=lambda s: s.turn_index):
-                    tool_calls_data = []
-                    if sub.tool_calls:
-                        for tc in sub.tool_calls:
-                            tool_calls_data.append({
-                                "name": tc.name,
-                                "args": tc.args,
-                                "result": tc.result,
-                                "is_success": tc.is_success
-                            })
-                    
-                    sub_messages_data.append({
-                        "sub_id": sub.id,
-                        "content": sub.content,
-                        "tool_calls": tool_calls_data,
-                        "meta_info": sub.meta_payload or {},
-                        "timestamp": sub.created_at.isoformat() if sub.created_at else None
-                    })
 
-            print(f"  - Msg ({msg.role}): {len(sub_messages_data)} sub_messages.")
-            history.append({
-                "id": msg.id,
-                "role": msg.role,
-                "content": msg.content,
-                "timestamp": msg.created_at.isoformat() if msg.created_at else None,
-                "meta_payload": msg.meta_payload or {},
-                "sub_messages": sub_messages_data
-            })
-        
+        history = await _get_history_for_session(active_session.id, db)
+        print(f"📖 [History API] Found {len(history)} messages for project {project_id}")
         return {"history": history, "message_count": len(history)}
     except HTTPException:
         raise
@@ -1044,14 +1097,255 @@ async def list_project_agents(
 async def get_project_active_task(
     project_id: str,
     identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Retrieve any active task ID for this project from Redis"""
     from infrastructure.queue.manager import QueueManager
-    
+
     manager = QueueManager()
     task_id = await manager.get_active_task_for_project(project_id)
-    
+
+    if not task_id:
+        # Also check the default session's active task
+        sess_res = await db.execute(
+            select(ChatSession).filter(
+                ChatSession.project_id == project_id,
+                ChatSession.is_archived == False,
+                ChatSession.is_default == True,
+            ).limit(1)
+        )
+        default_sess = sess_res.scalars().first()
+        if default_sess:
+            task_id = await manager.get_active_task_for_session(default_sess.id)
+
     return {"task_id": task_id}
+
+# ==============================================================================
+# SESSION CRUD
+# ==============================================================================
+
+@router.get("/project/{project_id}/sessions")
+async def list_project_sessions(
+    project_id: str,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List non-archived chat sessions for a project"""
+    result = await db.execute(select(Project).filter(
+        Project.user_id == identity.user_id,
+        Project.id == project_id
+    ))
+    if not result.scalars().first():
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+
+    sess_res = await db.execute(
+        select(ChatSession).filter(
+            ChatSession.project_id == project_id,
+            ChatSession.is_archived == False,
+        ).order_by(ChatSession.last_message_at.desc().nullslast(), ChatSession.created_at.desc())
+    )
+    sessions = sess_res.scalars().all()
+    return {"sessions": [_session_to_dict(s) for s in sessions]}
+
+
+@router.post("/project/{project_id}/sessions")
+async def create_project_session(
+    project_id: str,
+    body: CreateSession,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Create a new chat session for a project"""
+    result = await db.execute(select(Project).filter(
+        Project.user_id == identity.user_id,
+        Project.id == project_id
+    ))
+    if not result.scalars().first():
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+
+    # Check if project has any sessions (for is_default determination)
+    count_res = await db.execute(
+        select(func.count(ChatSession.id)).filter(
+            ChatSession.project_id == project_id,
+            ChatSession.is_archived == False,
+        )
+    )
+    session_count = count_res.scalar() or 0
+
+    new_session = ChatSession(
+        id=str(uuid4()),
+        project_id=project_id,
+        title=body.title or "New Chat",
+        is_archived=False,
+        is_default=(session_count == 0),
+    )
+    db.add(new_session)
+    await db.commit()
+    return _session_to_dict(new_session)
+
+
+@router.patch("/sessions/{session_id}")
+async def update_session(
+    session_id: str,
+    body: UpdateSession,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Update a session's title or archive status"""
+    # Verify ownership via project
+    sess_res = await db.execute(
+        select(ChatSession).join(Project).filter(
+            ChatSession.id == session_id,
+            Project.user_id == identity.user_id,
+        )
+    )
+    session = sess_res.scalars().first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if body.title is not None:
+        session.title = body.title
+    if body.is_archived is not None:
+        session.is_archived = body.is_archived
+        # If archiving the default session, promote the next most recent session
+        if body.is_archived and session.is_default:
+            session.is_default = False
+            next_res = await db.execute(
+                select(ChatSession).filter(
+                    ChatSession.project_id == session.project_id,
+                    ChatSession.is_archived == False,
+                    ChatSession.id != session_id,
+                ).order_by(ChatSession.created_at.desc()).limit(1)
+            )
+            next_session = next_res.scalars().first()
+            if next_session:
+                next_session.is_default = True
+
+    await db.commit()
+    return _session_to_dict(session)
+
+
+@router.get("/sessions/{session_id}/history")
+async def get_session_history(
+    session_id: str,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Get conversation history for a specific session"""
+    # Verify ownership via project join
+    sess_res = await db.execute(
+        select(ChatSession).join(Project).filter(
+            ChatSession.id == session_id,
+            Project.user_id == identity.user_id,
+        )
+    )
+    session = sess_res.scalars().first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        history = await _get_history_for_session(session_id, db)
+        return {"history": history, "message_count": len(history)}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sessions/{session_id}/chat")
+async def chat_with_session(
+    session_id: str,
+    message: str = Form(""),
+    files: List[UploadFile] = File(default=[]),
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+    x_preferred_model: Optional[str] = Header(None, alias="X-Preferred-Model"),
+):
+    """Send a message to a specific session"""
+    from infrastructure.queue.manager import QueueManager
+    from domains.workspace.file_service import FileService
+    from shared.mimetype_helper import guess_mime_type
+
+    # Verify session ownership via project
+    sess_res = await db.execute(
+        select(ChatSession).join(Project).filter(
+            ChatSession.id == session_id,
+            Project.user_id == identity.user_id,
+            ChatSession.is_archived == False,
+        )
+    )
+    session = sess_res.scalars().first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    project_id = session.project_id
+
+    # Handle file uploads
+    uploaded_file_ids = []
+    if files:
+        file_service = FileService(db, identity.user_id)
+        for file in files:
+            try:
+                content = await file.read()
+                from shared.mimetype_helper import guess_mime_type
+                mime_type = guess_mime_type(file.filename)
+                db_file = await file_service.save_file(
+                    content=content,
+                    filename=file.filename,
+                    mime_type=mime_type,
+                    project_id=project_id,
+                )
+                uploaded_file_ids.append(db_file.id)
+            except Exception as e:
+                print(f"[Session Chat] Error saving file: {e}")
+
+    manager = QueueManager()
+    from shared.database import TaskType
+    context = {
+        "user_id": identity.user_id,
+        "preferred_model": x_preferred_model,
+        "env": "v4",
+        "project_id": project_id,
+        "session_id": session_id,
+        "files": uploaded_file_ids,
+    }
+
+    task_id = await manager.enqueue(identity.user_id, message, context, task_type=TaskType.USER_MESSAGE)
+    print(f"[Session Chat] Enqueued task {task_id} for session {session_id}")
+
+    return ChatResponse(
+        response=f"Task enqueued. Track ID: {task_id}",
+        meta_actions=[],
+        executed_commands=[],
+        attached_files=[],
+        tool_calls=[],
+        task_id=task_id,
+    )
+
+
+@router.get("/sessions/{session_id}/active-task")
+async def get_session_active_task(
+    session_id: str,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Retrieve any active task ID for this session from Redis"""
+    from infrastructure.queue.manager import QueueManager
+
+    # Verify ownership
+    sess_res = await db.execute(
+        select(ChatSession).join(Project).filter(
+            ChatSession.id == session_id,
+            Project.user_id == identity.user_id,
+        )
+    )
+    if not sess_res.scalars().first():
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    manager = QueueManager()
+    task_id = await manager.get_active_task_for_session(session_id)
+    return {"task_id": task_id}
+
 
 @router.delete("/project/{project_id}")
 async def delete_project(

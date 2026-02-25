@@ -48,28 +48,34 @@ class QueueManager:
             "context": context or {},
             "status": "queued"
         }
-        
+
         # Add to list
         await self.client.rpush("task_queue", json.dumps(payload, cls=CustomEncoder))
-        
+
         project_id = (context or {}).get("project_id")
+        session_id = (context or {}).get("session_id")
 
         # Set initial status
         await self.client.setex(
-            f"task:{task_id}", 
+            f"task:{task_id}",
             3600, # 1 hour TTL
             json.dumps({
-                "status": "queued", 
-                "result": None, 
+                "status": "queued",
+                "result": None,
                 "task_type": task_type,
-                "project_id": project_id
+                "project_id": project_id,
+                "session_id": session_id,
             }, cls=CustomEncoder)
         )
 
         # Track active task for project recovery if project_id is present
         if project_id:
             await self.client.setex(f"active_task:{project_id}", 3600, task_id)
-        
+
+        # Track active task for session-level recovery
+        if session_id:
+            await self.client.setex(f"active_task:{session_id}", 3600, task_id)
+
         return task_id
 
     async def dequeue(self) -> Dict[str, Any]:
@@ -85,8 +91,9 @@ class QueueManager:
         # Fetch current status to preserve metadata like project_id
         current_data = await self.get_status(task_id)
         project_id = current_data.get("project_id") if current_data else None
+        session_id = current_data.get("session_id") if current_data else None
         task_type = current_data.get("task_type") if current_data else "user_message"
-        
+
         # Preserve phase and step if not updated
         if phase is None and current_data:
             phase = current_data.get("phase")
@@ -98,6 +105,7 @@ class QueueManager:
             "result": result,
             "task_type": task_type,
             "project_id": project_id,
+            "session_id": session_id,
             "phase": phase,
             "step": step,
             "updated_at": datetime.utcnow().isoformat()
@@ -105,13 +113,16 @@ class QueueManager:
 
         await self.client.setex(
             f"task:{task_id}",
-            3600, 
+            3600,
             json.dumps(payload, cls=CustomEncoder)
         )
 
-        # If terminal state, clear project mapping if it exists
-        if status in ["completed", "failed"] and project_id:
-            await self.clear_active_task(project_id)
+        # If terminal state, clear project and session mappings
+        if status in ["completed", "failed"]:
+            if project_id:
+                await self.clear_active_task(project_id)
+            if session_id:
+                await self.clear_active_task_for_session(session_id)
 
     async def get_status(self, task_id: str) -> Optional[Dict]:
         """Get task status"""
@@ -128,6 +139,14 @@ class QueueManager:
         """Manually clear the active task mapping"""
         await self.client.delete(f"active_task:{project_id}")
 
+    async def get_active_task_for_session(self, session_id: str) -> Optional[str]:
+        """Retrieve active task ID for a session"""
+        return await self.client.get(f"active_task:{session_id}")
+
+    async def clear_active_task_for_session(self, session_id: str):
+        """Manually clear the session-level active task mapping"""
+        await self.client.delete(f"active_task:{session_id}")
+
     async def cancel_task(self, task_id: str):
         """Set task status to cancelled"""
         current_data = await self.get_status(task_id)
@@ -136,6 +155,7 @@ class QueueManager:
 
         current_data["status"] = "cancelled"
         project_id = current_data.get("project_id")
+        session_id = current_data.get("session_id")
 
         await self.client.setex(
             f"task:{task_id}",
@@ -143,11 +163,17 @@ class QueueManager:
             json.dumps(current_data)
         )
 
-        # Also clear active task mapping if it belongs to this task
+        # Clear project active task mapping if it belongs to this task
         if project_id:
             active_task_id = await self.get_active_task_for_project(project_id)
             if active_task_id == task_id:
                 await self.clear_active_task(project_id)
+
+        # Clear session active task mapping if it belongs to this task
+        if session_id:
+            active_task_id_sess = await self.get_active_task_for_session(session_id)
+            if active_task_id_sess == task_id:
+                await self.clear_active_task_for_session(session_id)
 
     async def get_all_active_tasks(self) -> list:
         """Get all active task IDs currently tracked"""

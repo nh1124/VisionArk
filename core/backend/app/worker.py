@@ -332,12 +332,21 @@ class Worker:
             if session:
                 session_id = session.id
             else:
+                # Check if this is the first session for this project
+                first_check = await db_session.execute(
+                    select(ChatSession.id).filter(
+                        ChatSession.project_id == project_id,
+                        ChatSession.is_archived == False,
+                    ).limit(1)
+                )
+                is_first_session = first_check.scalars().first() is None
                 session_id = str(uuid4())
                 db_session.add(ChatSession(
                     id=session_id,
                     project_id=project_id,
                     title="New Session",
                     is_archived=False,
+                    is_default=is_first_session,
                 ))
                 await db_session.commit()
 
@@ -526,6 +535,11 @@ class Worker:
                         tu.is_success = not bool(sub.content and sub.content.startswith("Error:"))
 
                 turn_idx += 1
+
+        # Update last_message_at on the session
+        sess_update = await db_session.get(ChatSession, session_id)
+        if sess_update:
+            sess_update.last_message_at = datetime.utcnow()
 
         await db_session.commit()
 

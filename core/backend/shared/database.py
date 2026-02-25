@@ -347,13 +347,15 @@ class ProjectSkill(Base):
 class ChatSession(Base):
     """Grouped conversation history"""
     __tablename__ = "chat_sessions"
-    
+
     id = Column(String(36), primary_key=True)
     project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
     parent_session_id = Column(String(36), ForeignKey("chat_sessions.id"), nullable=True)
     title = Column(String(255), nullable=True)
     summary = Column(Text, nullable=True)
     is_archived = Column(Boolean, default=False)
+    is_default = Column(Boolean, default=False, nullable=False)
+    last_message_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -1104,6 +1106,44 @@ def _run_migrations(engine):
                 if col_name not in columns:
                     conn.execute(text(f"ALTER TABLE workspace_items ADD COLUMN {col_name} {col_def}"))
                     print(f"✅ Migration: Added {col_name} column to workspace_items")
+            conn.commit()
+
+    # Migration: Add is_default and last_message_at to chat_sessions
+    if 'chat_sessions' in inspector.get_table_names():
+        cols = {c['name'] for c in inspector.get_columns('chat_sessions')}
+        if 'is_default' not in cols:
+            with engine.connect() as conn:
+                conn.execute(text(
+                    "ALTER TABLE chat_sessions ADD COLUMN is_default BOOLEAN NOT NULL DEFAULT FALSE"
+                ))
+                # Mark the most recent active session per project as default
+                conn.execute(text("""
+                    UPDATE chat_sessions SET is_default = TRUE
+                    WHERE id IN (
+                        SELECT DISTINCT ON (project_id) id
+                        FROM chat_sessions
+                        WHERE is_archived = FALSE
+                        ORDER BY project_id, created_at DESC
+                    )
+                """))
+                conn.commit()
+                print("✅ Migration: Added is_default column to chat_sessions")
+        if 'last_message_at' not in cols:
+            with engine.connect() as conn:
+                conn.execute(text(
+                    "ALTER TABLE chat_sessions ADD COLUMN last_message_at TIMESTAMP"
+                ))
+                conn.commit()
+                print("✅ Migration: Added last_message_at column to chat_sessions")
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_chat_sessions_project_archived_updated
+                ON chat_sessions(project_id, is_archived, updated_at)
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_chat_sessions_project_default
+                ON chat_sessions(project_id, is_default)
+            """))
             conn.commit()
 
 

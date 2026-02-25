@@ -81,11 +81,31 @@ export default function ProjectChatPage({
     const searchParams = useSearchParams();
     const taskIdFromUrl = searchParams.get('task_id');
     const [activeTaskId, setActiveTaskId] = useState<string | null>(taskIdFromUrl);
+
+    // Multi-session state (must be after searchParams is declared)
+    const sessionIdFromUrl = searchParams.get('session_id');
+    const [activeSessionId, setActiveSessionId] = useState<string | null>(sessionIdFromUrl);
+    const activeSessionIdRef = useRef<string | null>(sessionIdFromUrl);
     const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const isPollingActiveRef = useRef(false);
     const currentPollingTaskRef = useRef<string | null>(null);
     const historyFetchId = useRef(0);
+
+    // Sync activeSessionId when URL session_id changes (e.g. sidebar navigation)
+    useEffect(() => {
+        if (sessionIdFromUrl !== activeSessionIdRef.current) {
+            setActiveSessionId(sessionIdFromUrl);
+            setMessages([]);
+            activeSessionIdRef.current = sessionIdFromUrl;
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [sessionIdFromUrl]);
+
+    // Keep activeSessionIdRef in sync so polling closures can read current value
+    useEffect(() => {
+        activeSessionIdRef.current = activeSessionId;
+    }, [activeSessionId]);
 
     // Stop handler
     const handleStop = async () => {
@@ -116,8 +136,8 @@ export default function ProjectChatPage({
 
             if (data.task_id) {
                 // Update URL to trigger the existing polling mechanism
-                // This will show "Processing..." and then automatically fetch history when done
-                router.replace(`/projects/${projectId}?task_id=${data.task_id}`, { scroll: false });
+                const sessionSuffix = activeSessionIdRef.current ? `&session_id=${activeSessionIdRef.current}` : '';
+                router.replace(`/projects/${projectId}?task_id=${data.task_id}${sessionSuffix}`, { scroll: false });
             } else {
                 // Fallback for immediate responses (e.g. rejection might not be async)
                 await fetchHistory();
@@ -137,9 +157,14 @@ export default function ProjectChatPage({
     const fetchHistory = useCallback(async () => {
         const requestId = ++historyFetchId.current;
         try {
+            // Use session-specific endpoint when an active session is set
+            const historyUrl = activeSessionId
+                ? `/api/agents/sessions/${activeSessionId}/history?t=${Date.now()}`
+                : `/api/agents/project/${projectId}/history?t=${Date.now()}`;
+
             // Fetch history AND approvals in parallel
             const [historyRes, approvalsRes] = await Promise.all([
-                apiFetch(`/api/agents/project/${projectId}/history?t=${Date.now()}`),
+                apiFetch(historyUrl),
                 apiFetch(`/api/approvals/project/${projectId}/list?t=${Date.now()}`)
             ]);
 
@@ -224,7 +249,7 @@ export default function ProjectChatPage({
         } catch (error) {
             console.error("Failed to load history:", error);
         }
-    }, [projectId, taskIdFromUrl]);
+    }, [projectId, activeSessionId, taskIdFromUrl]);
 
     // Scroll listener for mobile UI hiding - specifically relying on direction to avoid layout loops
     const lastScrollYRef = useRef(0);
@@ -278,11 +303,16 @@ export default function ProjectChatPage({
 
         const recoverActiveTask = async () => {
             try {
-                const response = await apiFetch(`/api/agents/project/${projectId}/active-task`);
+                const sessionId = activeSessionIdRef.current;
+                const url = sessionId
+                    ? `/api/agents/sessions/${sessionId}/active-task`
+                    : `/api/agents/project/${projectId}/active-task`;
+                const response = await apiFetch(url);
                 const data = await response.json();
                 if (data.task_id && !taskIdFromUrl) {
                     console.log("Recovered active task:", data.task_id);
-                    router.replace(`/projects/${projectId}?task_id=${data.task_id}`, { scroll: false });
+                    const sessionSuffix = sessionId ? `&session_id=${sessionId}` : '';
+                    router.replace(`/projects/${projectId}?task_id=${data.task_id}${sessionSuffix}`, { scroll: false });
                 }
             } catch (error) {
                 console.error("Failed to recover active task:", error);
@@ -487,7 +517,11 @@ export default function ProjectChatPage({
                     // Re-fetch history to get complete messages
                     const requestId = ++historyFetchId.current;
                     try {
-                        const historyRes = await apiFetch(`/api/agents/project/${projectId}/history?t=${Date.now()}`);
+                        const sessionId = activeSessionIdRef.current;
+                        const historyUrl = sessionId
+                            ? `/api/agents/sessions/${sessionId}/history?t=${Date.now()}`
+                            : `/api/agents/project/${projectId}/history?t=${Date.now()}`;
+                        const historyRes = await apiFetch(historyUrl);
                         const historyData = await historyRes.json();
                         if (requestId === historyFetchId.current && historyData.history && Array.isArray(historyData.history)) {
                             const newMessages = historyData.history.map((m: any) => ({
@@ -521,8 +555,10 @@ export default function ProjectChatPage({
                         console.error("Failed to refresh history:", e);
                     }
 
-                    // Clear URL AFTER task completes
-                    router.replace(`/projects/${projectId}`, { scroll: false });
+                    // Clear task_id from URL but preserve session_id
+                    const sessionId = activeSessionIdRef.current;
+                    const urlSuffix = sessionId ? `?session_id=${sessionId}` : '';
+                    router.replace(`/projects/${projectId}${urlSuffix}`, { scroll: false });
                     setActiveTaskId(null);
                     isPollingActiveRef.current = false;
                     currentPollingTaskRef.current = null;
@@ -550,7 +586,9 @@ export default function ProjectChatPage({
                         return [...trimmed, { role: "assistant", content: "Generation stopped." }];
                     });
 
-                    router.replace(`/projects/${projectId}`, { scroll: false });
+                    const sessionIdC = activeSessionIdRef.current;
+                    const urlSuffixC = sessionIdC ? `?session_id=${sessionIdC}` : '';
+                    router.replace(`/projects/${projectId}${urlSuffixC}`, { scroll: false });
                     setActiveTaskId(null);
                     isPollingActiveRef.current = false;
                     currentPollingTaskRef.current = null;
@@ -576,8 +614,9 @@ export default function ProjectChatPage({
                         content: `❌ ${errorMsg}`
                     }]);
 
-                    // Clear URL on failure too
-                    router.replace(`/projects/${projectId}`, { scroll: false });
+                    const sessionIdF = activeSessionIdRef.current;
+                    const urlSuffixF = sessionIdF ? `?session_id=${sessionIdF}` : '';
+                    router.replace(`/projects/${projectId}${urlSuffixF}`, { scroll: false });
                     setActiveTaskId(null);
                     isPollingActiveRef.current = false;
                     currentPollingTaskRef.current = null;
@@ -710,7 +749,10 @@ export default function ProjectChatPage({
             files.forEach((file) => formData.append("files", file));
             formData.append("stream", "false"); // Polling mode
 
-            const response = await apiFetch(`/api/agents/project/${projectId}/chat`, {
+            const chatUrl = activeSessionId
+                ? `/api/agents/sessions/${activeSessionId}/chat`
+                : `/api/agents/project/${projectId}/chat`;
+            const response = await apiFetch(chatUrl, {
                 method: "POST",
                 body: formData,
                 headers: {
