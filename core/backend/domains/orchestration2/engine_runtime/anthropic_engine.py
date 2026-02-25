@@ -41,7 +41,7 @@ class AnthropicEngine(LLMEngine):
         model: str | None = None,
     ) -> None:
         self._client = AsyncAnthropic(api_key=api_key, timeout=600.0)
-        self._model = model or "claude-sonnet-4-20250514"
+        self._model = model or "claude-opus-4-6-20260220"
         self._tools = tool_registry
         self._active_runs: dict[str, EngineRunStatus] = {}
         self._cancelled_runs: set[str] = set()

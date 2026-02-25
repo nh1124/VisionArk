@@ -31,16 +31,22 @@ export const MODEL_OPTIONS: ModelGroup[] = [
     },
     {
         group: "OpenAI", provider: "openai", models: [
+            { id: "openai:gpt-5", name: "GPT-5" },
+            { id: "openai:gpt-5-mini", name: "GPT-5 Mini" },
+            { id: "openai:gpt-5-nano", name: "GPT-5 Nano" },
+            { id: "openai:gpt-5.1", name: "GPT-5.1" },
             { id: "openai:gpt-4.1", name: "GPT-4.1" },
             { id: "openai:gpt-4.1-mini", name: "GPT-4.1 Mini" },
-            { id: "openai:gpt-4.1-nano", name: "GPT-4.1 Nano" },
-            { id: "openai:o4-mini", name: "o4 Mini" },
+            { id: "openai:o4-mini", name: "o4 Mini (reasoning)" },
+            { id: "openai:o3", name: "o3 (reasoning)" },
         ]
     },
     {
         group: "Claude", provider: "anthropic", models: [
+            { id: "anthropic:claude-opus-4-6-20260220", name: "Claude Opus 4.6" },
+            { id: "anthropic:claude-opus-4-5-20251101", name: "Claude Opus 4.5" },
             { id: "anthropic:claude-sonnet-4-20250514", name: "Claude Sonnet 4" },
-            { id: "anthropic:claude-3-5-haiku-latest", name: "Claude 3.5 Haiku" },
+            { id: "anthropic:claude-haiku-4-5", name: "Claude Haiku 4.5" },
         ]
     },
 ];

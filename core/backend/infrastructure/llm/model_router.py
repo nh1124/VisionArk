@@ -13,6 +13,7 @@ _PREFIX_MAP = {
     "gpt-": "openai",
     "o1-": "openai",
     "o3-": "openai",
+    "o3": "openai",
     "o4-": "openai",
     "claude-": "anthropic",
     "gemini-": "gemini",
