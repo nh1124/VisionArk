@@ -216,13 +216,13 @@ export default function NewProjectPage() {
                                                 <div className="px-4 py-2 text-[10px] text-gray-500 font-bold uppercase tracking-widest">{group.group}</div>
                                                 {group.models.map((model) => (
                                                     <button
-                                                        key={model}
-                                                        onClick={() => handleModelSelect(model)}
-                                                        className={`w-full text-left px-4 py-2.5 text-sm hover:bg-white/5 transition-all flex items-center justify-between ${selectedModel === model ? "text-purple-400 bg-purple-500/5" : "text-gray-300"
+                                                        key={model.id}
+                                                        onClick={() => handleModelSelect(model.id)}
+                                                        className={`w-full text-left px-4 py-2.5 text-sm hover:bg-white/5 transition-all flex items-center justify-between ${selectedModel === model.id ? "text-purple-400 bg-purple-500/5" : "text-gray-300"
                                                             }`}
                                                     >
-                                                        <span>{getModelDisplayName(model)}</span>
-                                                        {selectedModel === model && <div className="w-1.5 h-1.5 rounded-full bg-purple-400 shadow-[0_0_8px_rgba(168,85,247,0.5)]"></div>}
+                                                        <span>{getModelDisplayName(model.id)}</span>
+                                                        {selectedModel === model.id && <div className="w-1.5 h-1.5 rounded-full bg-purple-400 shadow-[0_0_8px_rgba(168,85,247,0.5)]"></div>}
                                                     </button>
                                                 ))}
                                             </div>
