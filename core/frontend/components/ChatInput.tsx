@@ -170,7 +170,7 @@ function ChatInputComponent({
             return;
         }
 
-        if (e.key === "Enter" && !e.shiftKey) {
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
             handleSend();
         }

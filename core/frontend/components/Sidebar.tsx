@@ -47,6 +47,10 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
     const [editSessionTitle, setEditSessionTitle] = useState("");
     const sessionEditRef = useRef<HTMLInputElement>(null);
 
+    const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
+    const [editProjectTitle, setEditProjectTitle] = useState("");
+    const projectEditRef = useRef<HTMLInputElement>(null);
+
     const { showConfirm, showToast } = useNotification();
 
     // Extract current projectId from pathname
@@ -63,7 +67,7 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
         apiFetch(`/api/agents/project/${currentProjectId}/sessions`)
             .then((res) => res.json())
             .then((data) => setSessions(data.sessions || []))
-            .catch(() => {});
+            .catch(() => { });
     }, [currentProjectId]);
 
     // Close menus when clicking outside
@@ -184,6 +188,35 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
         }
     };
 
+    const startEditProject = (project: { id: string; display_name?: string | null; name: string }) => {
+        setEditingProjectId(project.id);
+        setEditProjectTitle(project.display_name || project.name || "");
+        setMenuOpen(null);
+        setMenuPos(null);
+        setTimeout(() => projectEditRef.current?.focus(), 50);
+    };
+
+    const handleRenameProject = async (projectId: string, newTitle: string) => {
+        if (!newTitle.trim()) { setEditingProjectId(null); return; }
+        try {
+            const res = await apiFetch(`/api/agents/project/${projectId}/rename`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ new_display_name: newTitle.trim() }),
+            });
+            if (res.ok) {
+                window.location.reload();
+            } else {
+                const err = await res.json();
+                showToast(`Failed to rename project: ${err.detail || "Unknown error"}`, "error");
+            }
+        } catch (e) {
+            console.error("Rename project failed:", e);
+        } finally {
+            setEditingProjectId(null);
+        }
+    };
+
     const startEditSession = (session: SessionItem) => {
         setEditingSessionId(session.id);
         setEditSessionTitle(session.title || "");
@@ -245,9 +278,8 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
     return (
         <div
             id="vision-ark-sidebar"
-            className={`bg-gray-950 border-r border-gray-800/50 flex flex-col h-full transition-all duration-200 relative flex-shrink-0 ${
-                isCollapsed ? "w-16" : "w-64"
-            }`}
+            className={`bg-gray-950 border-r border-gray-800/50 flex flex-col h-full transition-all duration-200 relative flex-shrink-0 ${isCollapsed ? "w-16" : "w-64"
+                }`}
         >
             {/* Toggle Button */}
             <button
@@ -279,13 +311,11 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                             <Link
                                 key={item.path}
                                 href={item.path}
-                                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${
-                                    isCollapsed ? "justify-center" : ""
-                                } ${
-                                    isActive
+                                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${isCollapsed ? "justify-center" : ""
+                                    } ${isActive
                                         ? "bg-cyan-500 text-white shadow-lg shadow-cyan-500/20"
                                         : "text-gray-500 hover:bg-gray-800/50 hover:text-gray-300"
-                                }`}
+                                    }`}
                                 title={isCollapsed ? item.name : ""}
                             >
                                 <span className={isActive ? "text-white" : "text-gray-500"}>
@@ -307,9 +337,8 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                         {/* ── Projects Section ── */}
                         <button
                             onClick={() => setProjectsExpanded(!projectsExpanded)}
-                            className={`flex items-center w-full px-4 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-300 transition-colors flex-shrink-0 ${
-                                isCollapsed ? "justify-center px-2" : ""
-                            }`}
+                            className={`flex items-center w-full px-4 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-300 transition-colors flex-shrink-0 ${isCollapsed ? "justify-center px-2" : ""
+                                }`}
                         >
                             {isCollapsed ? (
                                 <span>P</span>
@@ -355,21 +384,34 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                                                             setHoveredProject(null);
                                                     }}
                                                 >
-                                                    <Link
-                                                        href={projectPath}
-                                                        className={`flex items-center px-3 py-2 rounded-lg text-sm transition-colors ${
-                                                            isActive
-                                                                ? "bg-gray-800 text-white"
-                                                                : "text-gray-400 hover:bg-gray-800/50 hover:text-white"
-                                                        }`}
-                                                    >
-                                                        <span className="truncate flex-1">
-                                                            {project.display_name || project.name}
-                                                        </span>
-                                                    </Link>
+                                                    {editingProjectId === project.id ? (
+                                                        <input
+                                                            ref={projectEditRef}
+                                                            value={editProjectTitle}
+                                                            onChange={(e) => setEditProjectTitle(e.target.value)}
+                                                            onBlur={() => handleRenameProject(project.id, editProjectTitle)}
+                                                            onKeyDown={(e) => {
+                                                                if (e.key === "Enter") handleRenameProject(project.id, editProjectTitle);
+                                                                if (e.key === "Escape") setEditingProjectId(null);
+                                                            }}
+                                                            className="w-full px-3 py-2 text-sm bg-gray-800 text-white rounded-lg border border-cyan-500/50 outline-none"
+                                                        />
+                                                    ) : (
+                                                        <Link
+                                                            href={projectPath}
+                                                            className={`flex items-center px-3 py-2 rounded-lg text-sm transition-colors ${isActive
+                                                                    ? "bg-gray-800 text-white"
+                                                                    : "text-gray-400 hover:bg-gray-800/50 hover:text-white"
+                                                                }`}
+                                                        >
+                                                            <span className="truncate flex-1">
+                                                                {project.display_name || project.name}
+                                                            </span>
+                                                        </Link>
+                                                    )}
 
                                                     {/* Three-dot menu button */}
-                                                    {(isHovered || menuOpen === project.id) && (
+                                                    {(isHovered || menuOpen === project.id) && editingProjectId !== project.id && (
                                                         <button
                                                             onClick={(e) => openProjectMenu(e, project.id)}
                                                             className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 text-gray-500 hover:text-white hover:bg-gray-700 rounded transition-colors"
@@ -443,11 +485,10 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                                                             ) : (
                                                                 <Link
                                                                     href={`/projects/${currentProjectId}?session_id=${session.id}`}
-                                                                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs transition-colors ${
-                                                                        isActive
+                                                                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs transition-colors ${isActive
                                                                             ? "bg-cyan-500/15 text-white"
                                                                             : "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200"
-                                                                    }`}
+                                                                        }`}
                                                                 >
                                                                     <MessageSquare size={11} className="flex-shrink-0 opacity-40" />
                                                                     <span className="truncate flex-1">
@@ -487,13 +528,11 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
             <div className="p-3 border-t border-gray-800/50 flex-shrink-0">
                 <Link
                     href="/settings"
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${
-                        isCollapsed ? "justify-center" : ""
-                    } ${
-                        pathname === "/settings"
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${isCollapsed ? "justify-center" : ""
+                        } ${pathname === "/settings"
                             ? "bg-gray-800 text-white"
                             : "text-gray-500 hover:bg-gray-800/50 hover:text-gray-300"
-                    }`}
+                        }`}
                     title={isCollapsed ? "Settings" : ""}
                 >
                     <SettingsIcon size={20} />
@@ -516,6 +555,13 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                         <SettingsIcon size={14} />
                         Settings
                     </Link>
+                    <button
+                        onClick={() => startEditProject(openMenuProject)}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
+                    >
+                        <Pencil size={14} />
+                        Rename Project
+                    </button>
                     <button
                         onClick={() =>
                             handleCloneProject(
