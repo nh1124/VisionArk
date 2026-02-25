@@ -79,6 +79,28 @@ async def list_scheduled_tasks(
         for t in tasks
     ]
 
+async def _validate_post_message_session(request: "ScheduleTaskRequest", db: AsyncSession):
+    """If a POST_MESSAGE task specifies a session_id in its payload, verify the session exists."""
+    if request.task_type != "POST_MESSAGE":
+        return
+    session_id = request.payload.get("session_id")
+    if not session_id:
+        return
+    from shared.database import ChatSession
+    sess_res = await db.execute(
+        select(ChatSession).filter(
+            ChatSession.id == session_id,
+            ChatSession.project_id == request.project_id,
+            ChatSession.is_archived == False,
+        )
+    )
+    if not sess_res.scalars().first():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Session {session_id} not found in project {request.project_id}"
+        )
+
+
 @router.post("/schedule")
 async def schedule_task(
     request: ScheduleTaskRequest,
@@ -93,6 +115,8 @@ async def schedule_task(
         res = await db.execute(select(Project).filter(Project.id == request.project_id))
         if not res.scalars().first():
             raise HTTPException(status_code=400, detail=f"Project {request.project_id} not found")
+
+    await _validate_post_message_session(request, db)
 
     svc = AESSchedulerService(db)
     task_id = await svc.create_task(
@@ -129,6 +153,8 @@ async def update_task(
         res = await db.execute(select(Project).filter(Project.id == request.project_id))
         if not res.scalars().first():
             raise HTTPException(status_code=400, detail=f"Project {request.project_id} not found")
+
+    await _validate_post_message_session(request, db)
 
     svc = AESSchedulerService(db)
     await svc.update_task(

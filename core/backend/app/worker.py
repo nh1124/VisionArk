@@ -322,33 +322,35 @@ class Worker:
                 await db_session.commit()
 
         if not session_id:
+            # Fallback priority: is_default → last_message_at DESC → created_at DESC
             sess_res = await db_session.execute(
                 select(ChatSession).filter(
                     ChatSession.project_id == project_id,
                     ChatSession.is_archived == False,
-                ).order_by(ChatSession.created_at.desc())
+                ).order_by(
+                    ChatSession.is_default.desc(),
+                    ChatSession.last_message_at.desc().nullslast(),
+                    ChatSession.created_at.desc(),
+                )
             )
             session = sess_res.scalars().first()
             if session:
                 session_id = session.id
+                print(f"[Worker] Resolved session via fallback: {session_id} (is_default={session.is_default})")
             else:
-                # Check if this is the first session for this project
-                first_check = await db_session.execute(
-                    select(ChatSession.id).filter(
-                        ChatSession.project_id == project_id,
-                        ChatSession.is_archived == False,
-                    ).limit(1)
-                )
-                is_first_session = first_check.scalars().first() is None
+                # No sessions exist — create first session as default
                 session_id = str(uuid4())
                 db_session.add(ChatSession(
                     id=session_id,
                     project_id=project_id,
                     title="New Session",
                     is_archived=False,
-                    is_default=is_first_session,
+                    is_default=True,
                 ))
                 await db_session.commit()
+                print(f"[Worker] Created new default session: {session_id}")
+        else:
+            print(f"[Worker] Using explicit session_id from context: {session_id}")
 
         # 3. Load chat history as v2 Messages
         history_res = await db_session.execute(

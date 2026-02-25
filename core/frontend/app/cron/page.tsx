@@ -36,12 +36,21 @@ interface ProjectMinimal {
     name: string;
 }
 
+interface SessionMinimal {
+    id: string;
+    title: string | null;
+    is_default: boolean;
+    last_message_at: string | null;
+}
+
 type TabType = "upcoming" | "history";
 
 export default function CronTasksPage() {
     const [tasks, setTasks] = useState<ScheduledTask[]>([]);
     const [loading, setLoading] = useState(true);
     const [projects, setProjects] = useState<ProjectMinimal[]>([]);
+    const [sessions, setSessions] = useState<SessionMinimal[]>([]);
+    const [sessionsLoading, setSessionsLoading] = useState(false);
     const [activeTab, setActiveTab] = useState<TabType>("upcoming");
     const { showToast, showConfirm } = useNotification();
 
@@ -50,6 +59,7 @@ export default function CronTasksPage() {
     const [editingTask, setEditingTask] = useState<ScheduledTask | null>(null);
     const [formData, setFormData] = useState({
         project_id: "",
+        session_id: "",
         message: "",
         scheduled_at: "",
         recurring_rule: ""
@@ -88,10 +98,43 @@ export default function CronTasksPage() {
         }
     };
 
+    const loadSessions = async (projectId: string) => {
+        if (!projectId) {
+            setSessions([]);
+            return;
+        }
+        setSessionsLoading(true);
+        try {
+            const response = await apiFetch(`/api/agents/project/${projectId}/sessions`);
+            if (response.ok) {
+                const data = await response.json();
+                setSessions((data.sessions || []).map((s: any) => ({
+                    id: s.id,
+                    title: s.title,
+                    is_default: s.is_default,
+                    last_message_at: s.last_message_at,
+                })));
+            }
+        } catch (e) {
+            console.error("Failed to load sessions", e);
+            setSessions([]);
+        } finally {
+            setSessionsLoading(false);
+        }
+    };
+
     useEffect(() => {
         loadTasks();
         loadProjects();
     }, []);
+
+    useEffect(() => {
+        if (isModalOpen && formData.project_id) {
+            loadSessions(formData.project_id);
+        } else {
+            setSessions([]);
+        }
+    }, [formData.project_id, isModalOpen]);
 
     const filteredTasks = useMemo(() => {
         if (activeTab === "upcoming") {
@@ -130,6 +173,7 @@ export default function CronTasksPage() {
 
         setFormData({
             project_id: task.project_id || "",
+            session_id: task.payload?.session_id || "",
             message: task.payload?.message || "",
             scheduled_at: dateStr,
             recurring_rule: task.recurring_rule || ""
@@ -145,6 +189,7 @@ export default function CronTasksPage() {
 
         setFormData({
             project_id: projects[0]?.id || "",
+            session_id: "",
             message: "",
             scheduled_at: dateStr,
             recurring_rule: ""
@@ -158,14 +203,17 @@ export default function CronTasksPage() {
             return;
         }
 
+        const taskPayload: Record<string, string> = { message: formData.message };
+        if (formData.session_id) {
+            taskPayload.session_id = formData.session_id;
+        }
+
         const payload = {
             project_id: formData.project_id,
             task_type: "POST_MESSAGE",
             scheduled_at: new Date(formData.scheduled_at).toISOString(),
             recurring_rule: formData.recurring_rule || null,
-            payload: {
-                message: formData.message
-            }
+            payload: taskPayload,
         };
 
         try {
@@ -304,9 +352,20 @@ export default function CronTasksPage() {
                                             </div>
                                         </td>
                                         <td className="px-6 py-4">
-                                            {task.task_type === 'POST_MESSAGE' && task.payload?.message ? (
-                                                <div className="max-w-[200px] truncate text-xs text-gray-300 italic">
-                                                    "{task.payload.message}"
+                                            {task.task_type === 'POST_MESSAGE' ? (
+                                                <div className="flex flex-col gap-0.5">
+                                                    {task.payload?.message && (
+                                                        <div className="max-w-[200px] truncate text-xs text-gray-300 italic">
+                                                            "{task.payload.message}"
+                                                        </div>
+                                                    )}
+                                                    {task.payload?.session_id ? (
+                                                        <span className="text-[10px] text-cyan-700 font-mono">
+                                                            Session: ...{task.payload.session_id.slice(-8)}
+                                                        </span>
+                                                    ) : (
+                                                        <span className="text-[10px] text-yellow-700">Auto session</span>
+                                                    )}
                                                 </div>
                                             ) : (
                                                 <span className="text-xs text-gray-500">-</span>
@@ -384,7 +443,7 @@ export default function CronTasksPage() {
                                 <select
                                     className="w-full bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-cyan-500"
                                     value={formData.project_id}
-                                    onChange={e => setFormData({ ...formData, project_id: e.target.value })}
+                                    onChange={e => setFormData({ ...formData, project_id: e.target.value, session_id: "" })}
                                 >
                                     <option value="" disabled>Select a project</option>
                                     {projects.map(p => (
@@ -393,6 +452,34 @@ export default function CronTasksPage() {
                                 </select>
                                 {projects.length === 0 && (
                                     <p className="text-[10px] text-yellow-600 mt-1">No projects loaded. Please wait...</p>
+                                )}
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                                    Target Session
+                                    <span className="ml-1 text-gray-600 normal-case font-normal">(Optional)</span>
+                                </label>
+                                <select
+                                    className="w-full bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-cyan-500 disabled:opacity-40"
+                                    value={formData.session_id}
+                                    onChange={e => setFormData({ ...formData, session_id: e.target.value })}
+                                    disabled={!formData.project_id || sessionsLoading}
+                                >
+                                    <option value="">— Auto (fallback to default session) —</option>
+                                    {sessions.map(s => (
+                                        <option key={s.id} value={s.id}>
+                                            {s.title || "Untitled"}{s.is_default ? " ★" : ""}
+                                        </option>
+                                    ))}
+                                </select>
+                                {!formData.session_id && formData.project_id && (
+                                    <p className="text-[10px] text-yellow-600 mt-1">
+                                        ⚠ Session not fixed — post target may change if new sessions are added.
+                                    </p>
+                                )}
+                                {sessionsLoading && (
+                                    <p className="text-[10px] text-gray-500 mt-1">Loading sessions...</p>
                                 )}
                             </div>
 

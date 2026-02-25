@@ -100,24 +100,32 @@ class PostMessageHandler(BaseAESHandler):
     async def run(self, context: Dict[str, Any]):
         project_id = context.get("project_id")
         message = context.get("message")
-        
+        session_id = context.get("session_id")  # optional: from payload via dispatcher
+
         if not project_id or not message:
             raise ValueError("project_id and message are required for POST_MESSAGE")
 
-        print(f"[AES] Posting scheduled message to project {project_id}")
-        
+        if session_id:
+            print(f"[AES] Posting scheduled message to project {project_id}, session {session_id}")
+        else:
+            print(f"[AES] Posting scheduled message to project {project_id} (no session_id, fallback will apply)")
+
         from infrastructure.queue.manager import QueueManager
         from shared.database import TaskType
-        
+
         queue_manager = QueueManager()
+        task_context: Dict[str, Any] = {
+            "user_id": self.user_id,
+            "project_id": project_id,
+            "env": "v4",
+        }
+        if session_id:
+            task_context["session_id"] = session_id
+
         await queue_manager.enqueue(
             user_id=self.user_id,
             message=message,
-            context={
-                "user_id": self.user_id,
-                "project_id": project_id,
-                "env": "v4"
-            },
+            context=task_context,
             task_type=TaskType.USER_MESSAGE
         )
 
