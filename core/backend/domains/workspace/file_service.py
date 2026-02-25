@@ -66,13 +66,17 @@ class FileService:
             self.client = Client(api_key=self.api_key, http_options={'api_version': 'v1alpha'})
         return self.client
     
-    def get_files_dir(self, project_id: str, directory: str = "refs") -> Path:
+    def get_files_dir(self, project_id: Optional[str] = None, directory: str = "refs") -> Path:
         """Get files directory based on project ID and type (refs/artifacts/files)"""
-        # Map legacy 'root' to 'hub' for project ID
-        p_id = project_id
-        
-        base = get_project_dir(self.user_id, p_id)
-        
+        if project_id:
+            # Map legacy 'root' to 'hub' for project ID
+            p_id = project_id
+            
+            base = get_project_dir(self.user_id, p_id)
+        else:
+            from shared.paths import get_user_global_assets_dir
+            base = get_user_global_assets_dir(self.user_id)
+            
         path = base / directory
         path.mkdir(parents=True, exist_ok=True)
         return path
@@ -90,7 +94,7 @@ class FileService:
         content: bytes,
         filename: str,
         mime_type: str,
-        project_id: str,
+        project_id: Optional[str] = None,
         directory: str = "refs"
     ) -> UploadedFile:
         """
@@ -99,9 +103,11 @@ class FileService:
         if len(content) > MAX_FILE_SIZE_BYTES:
             raise ValueError(f"File size exceeds limit of {MAX_FILE_SIZE_BYTES // (1024*1024)}MB")
         
-        proj = await self._get_project(project_id)
-        if not proj:
-            raise ValueError(f"Project '{project_id}' not found.")
+        proj = None
+        if project_id:
+            proj = await self._get_project(project_id)
+            if not proj:
+                raise ValueError(f"Project '{project_id}' not found.")
         
         file_id = str(uuid4())
         ext = Path(filename).suffix
@@ -116,7 +122,7 @@ class FileService:
         mime_type = mime_type or "application/octet-stream"
         uploaded_file = UploadedFile(
             id=file_id,
-            project_id=proj.id,
+            project_id=proj.id if proj else None,
             filename=filename,
             directory=directory,
             storage_path=str(file_path),
@@ -129,7 +135,8 @@ class FileService:
         await self.db.commit()
         
         # Trigger Watchers
-        asyncio.create_task(self._trigger_watchers(uploaded_file))
+        if project_id:
+            asyncio.create_task(self._trigger_watchers(uploaded_file))
         
         return uploaded_file
     

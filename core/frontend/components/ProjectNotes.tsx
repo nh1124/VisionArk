@@ -13,6 +13,7 @@ export default function ProjectNotes({ projectId }: ProjectNotesProps) {
     const { notes, loading, fetchNotes, addNote, updateNote, deleteNote } = useNoteStore();
     const [noteType, setNoteType] = useState<"text" | "audio" | null>(null);
     const [newNote, setNewNote] = useState({ title: "", content: "" });
+    const [audioTitle, setAudioTitle] = useState(""); // custom title for new audio note
     const [searchQuery, setSearchQuery] = useState("");
     const [token, setToken] = useState("");
     const [isUploading, setIsUploading] = useState(false);
@@ -70,15 +71,18 @@ export default function ProjectNotes({ projectId }: ProjectNotesProps) {
             if (!uploadRes.ok) throw new Error("Upload failed");
             const fileData = await uploadRes.json();
 
+            // Use provided title or fallback to timestamp
+            const title = audioTitle.trim() || `Audio Note - ${format(new Date(), "MMM d, HH:mm")}`;
+
             await addNote({
-                title: `Audio Note - ${format(new Date(), "MMM d, HH:mm")}`,
+                title,
                 project_id: projectId,
                 audio_file_id: fileData.id,
                 content: "",
                 tags: tempTags
             });
             setTempTags([]);
-
+            setAudioTitle("");
             setNoteType(null);
         } catch (err) {
             console.error("Audio upload failed:", err);
@@ -86,6 +90,11 @@ export default function ProjectNotes({ projectId }: ProjectNotesProps) {
         } finally {
             setIsUploading(false);
         }
+    };
+
+    const resetAudioCreate = () => {
+        setNoteType(null);
+        setAudioTitle("");
     };
 
     const filteredNotes = notes.filter(n =>
@@ -208,7 +217,16 @@ export default function ProjectNotes({ projectId }: ProjectNotesProps) {
                 )}
 
                 {noteType === "audio" && (
-                    <div className="animate-in slide-in-from-top-2 duration-200">
+                    <div className="animate-in slide-in-from-top-2 duration-200 space-y-2">
+                        {/* Title input for new audio note */}
+                        <input
+                            type="text"
+                            placeholder={`Audio Note - ${format(new Date(), "MMM d, HH:mm")}`}
+                            value={audioTitle}
+                            onChange={(e) => setAudioTitle(e.target.value)}
+                            disabled={isUploading}
+                            className="w-full bg-black/40 border border-gray-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500/30"
+                        />
                         {isUploading ? (
                             <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 flex flex-col items-center gap-3">
                                 <Loader2 size={24} className="text-cyan-500 animate-spin" />
@@ -217,7 +235,7 @@ export default function ProjectNotes({ projectId }: ProjectNotesProps) {
                         ) : (
                             <AudioRecorder
                                 onRecordingComplete={handleAudioCapture}
-                                onCancel={() => setNoteType(null)}
+                                onCancel={resetAudioCreate}
                             />
                         )}
                     </div>
@@ -256,7 +274,7 @@ export default function ProjectNotes({ projectId }: ProjectNotesProps) {
                                 <div className="mb-3 p-1.5 bg-black/40 rounded-lg border border-white/5">
                                     <audio
                                         controls
-                                        src={`/api/files/download?file_id=${note.audio_file_id}&token=${token}`}
+                                        src={`/api/files/download/${note.audio_file_id}?token=${token}`}
                                         className="w-full h-6"
                                     />
                                 </div>

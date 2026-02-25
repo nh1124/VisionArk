@@ -461,7 +461,7 @@ class UploadedFile(Base):
     __tablename__ = "uploaded_files"
     
     id = Column(String(36), primary_key=True)
-    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
     filename = Column(String(255), nullable=False)
     directory = Column(String(50), nullable=True)  # 'refs', 'artifacts', or 'files'
     is_directory = Column(Boolean, default=False)
@@ -1145,6 +1145,24 @@ def _run_migrations(engine):
                 ON chat_sessions(project_id, is_default)
             """))
             conn.commit()
+
+    # Migration: Allow uploaded_files.project_id to be NULL (for global notes without a project)
+    if 'uploaded_files' in inspector.get_table_names():
+        col_info = inspector.get_columns('uploaded_files')
+        for col in col_info:
+            if col['name'] == 'project_id':
+                # nullable is False means NOT NULL constraint is still present
+                if not col.get('nullable', True):
+                    try:
+                        with engine.connect() as conn:
+                            conn.execute(text(
+                                "ALTER TABLE uploaded_files ALTER COLUMN project_id DROP NOT NULL"
+                            ))
+                            conn.commit()
+                            print("✅ Migration: uploaded_files.project_id is now nullable (supports global notes)")
+                    except Exception as e:
+                        print(f"[WARN] Migration: Could not make uploaded_files.project_id nullable: {e}")
+                break
 
 
 # Global sync session maker

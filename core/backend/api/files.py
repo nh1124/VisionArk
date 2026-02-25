@@ -12,7 +12,7 @@ import mimetypes
 from uuid import uuid4
 
 from domains.identity.auth import resolve_identity, Identity, resolve_identity_for_download
-from shared.database import UploadedFile, Project, get_async_db, UserSettings
+from shared.database import UploadedFile, Project, Note, get_async_db, UserSettings
 from domains.workspace.file_service import FileService
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -33,6 +33,46 @@ async def _get_user_api_key(db: AsyncSession, user_id: str) -> Optional[str]:
 
 
 # --- Specific Routes (IDs or fixed paths) First to avoid shadowing ---
+@files_router.post("/global/{directory}/upload")
+@files_router.post("/global/upload")
+async def upload_global_file(
+    directory: str = "notes", # Default to notes for global uploads
+    file: UploadFile = File(...),
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Upload a file to global storage (e.g., personal notes audio)"""
+    if directory not in ["refs", "artifacts", "files", "notes"]:
+         raise HTTPException(status_code=400, detail="Directory must be 'refs', 'artifacts', 'files', or 'notes'")
+
+    # Read file content
+    content = await file.read()
+    
+    # Get MIME type
+    mime_type, _ = mimetypes.guess_type(file.filename)
+    mime_type = mime_type or file.content_type or "application/octet-stream"
+    
+    # FileService handles storage and DB recording
+    service = FileService(db, identity.user_id)
+    
+    # FileService now accepts directory
+    db_file = await service.save_file(
+        content=content,
+        filename=file.filename,
+        mime_type=mime_type,
+        project_id=None,
+        directory=directory
+    )
+    
+    return {
+        "id": db_file.id,
+        "filename": db_file.filename,
+        "size_bytes": db_file.size_bytes,
+        "mime_type": db_file.mime_type,
+        "directory": db_file.directory,
+        "is_directory": db_file.is_directory
+    }
+
 @files_router.post("/project/{project_id}/{directory}/upload")
 @files_router.post("/project/{project_id}/upload")
 async def upload_node_file(
@@ -81,6 +121,7 @@ async def upload_node_file(
         "directory": db_file.directory,
         "is_directory": db_file.is_directory
     }
+
 
 
 @files_router.get("/project/{project_id}/list")
@@ -147,28 +188,49 @@ async def download_file_by_id(
 ):
     """
     Download a file by its database ID (UUID).
+    Supports both project-scoped and global (project_id=NULL) files.
+    Ownership of global files is verified by checking the Note that references this audio file.
     """
+    from sqlalchemy import or_, and_
+
+    # Sub-query: all project IDs belonging to this user
+    user_project_ids = select(Project.id).filter(Project.user_id == identity.user_id)
+
+    # Sub-query: all note audio_file_ids owned by this user (covers global note audio)
+    user_note_audio_ids = select(Note.audio_file_id).filter(
+        Note.user_id == identity.user_id,
+        Note.audio_file_id.isnot(None)
+    )
+
     stmt = select(UploadedFile).filter(
         UploadedFile.id == file_id,
-        UploadedFile.project_id.in_(
-            select(Project.id).filter(Project.user_id == identity.user_id)
+        or_(
+            # Case 1: File belongs to one of the user's projects
+            UploadedFile.project_id.in_(user_project_ids),
+            # Case 2: Global file (no project) referenced by the user's own note
+            and_(
+                UploadedFile.project_id.is_(None),
+                UploadedFile.id.in_(user_note_audio_ids)
+            )
         )
     )
     result = await db.execute(stmt)
     file_record = result.scalars().first()
-    
+
     if not file_record:
         raise HTTPException(status_code=404, detail="File not found")
-    
-    full_path = Path(file_record.storage_path)
+
+    from domains.workspace.file_service import _resolve_portable_path
+    full_path = _resolve_portable_path(file_record.storage_path)
     if not full_path.exists():
         raise HTTPException(status_code=404, detail="Physical file missing")
-        
+
     return FileResponse(
-        full_path, 
-        media_type=file_record.mime_type, 
+        full_path,
+        media_type=file_record.mime_type,
         filename=file_record.filename
     )
+
 
 @files_router.get("/project/{project_id}/{directory}/{file_path:path}")
 async def get_node_file(

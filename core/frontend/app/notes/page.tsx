@@ -6,7 +6,8 @@ import { useProjects } from "@/hooks/useProjects";
 import { Search, Plus, Trash2, Edit2, Play, Pause, Music, StickyNote, Filter, Link as LinkIcon, ExternalLink, Calendar, Loader2, X, Pencil, Mic } from "lucide-react";
 import { format } from "date-fns";
 import Link from "next/link";
-import { getFileToken } from "@/lib/api";
+import { getFileToken, apiFetch } from "@/lib/api";
+import AudioRecorder from "@/components/AudioRecorder";
 
 export default function NotesPage() {
     const { notes, loading, fetchNotes, addNote, updateNote, deleteNote } = useNoteStore();
@@ -14,6 +15,10 @@ export default function NotesPage() {
     const [searchQuery, setSearchQuery] = useState("");
     const [selectedProject, setSelectedProject] = useState<string>("all");
     const [isCreating, setIsCreating] = useState(false);
+    const [isCreatingAudio, setIsCreatingAudio] = useState(false);
+    const [isUploading, setIsUploading] = useState(false);
+    const [audioProjectId, setAudioProjectId] = useState<string>(""); // "" = personal / no project
+    const [audioTitle, setAudioTitle] = useState<string>(""); // custom title for the audio note
     const [editingNote, setEditingNote] = useState<Note | null>(null);
     const [newNote, setNewNote] = useState({ title: "", content: "", project_id: "", tags: [] as string[] });
     const [tagInput, setTagInput] = useState("");
@@ -23,6 +28,56 @@ export default function NotesPage() {
         fetchNotes();
         getFileToken().then(setToken);
     }, []);
+
+    const handleAudioCapture = async (blob: Blob) => {
+        setIsUploading(true);
+        try {
+            const formData = new FormData();
+            const filename = `recording_${format(new Date(), "yyyyMMdd_HHmmss")}.webm`;
+            const file = new File([blob], filename, { type: "audio/webm" });
+            formData.append("file", file);
+
+            // Route upload to project-specific or global endpoint based on selection
+            const uploadUrl = audioProjectId
+                ? `/api/files/project/${audioProjectId}/notes/upload`
+                : `/api/files/global/notes/upload`;
+
+            const uploadRes = await apiFetch(uploadUrl, {
+                method: "POST",
+                body: formData
+            });
+
+            if (!uploadRes.ok) throw new Error("Upload failed");
+            const fileData = await uploadRes.json();
+
+            // Use provided title or fallback to timestamp
+            const title = audioTitle.trim() || `Audio Note - ${format(new Date(), "MMM d, HH:mm")}`;
+
+            await addNote({
+                title,
+                project_id: audioProjectId || undefined,
+                audio_file_id: fileData.id,
+                content: "",
+                tags: []
+            });
+
+            // Reset state after successful save
+            setIsCreatingAudio(false);
+            setAudioProjectId("");
+            setAudioTitle("");
+        } catch (err) {
+            console.error("Audio upload failed:", err);
+            alert("Failed to save audio note.");
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
+    const resetAudioModal = () => {
+        setIsCreatingAudio(false);
+        setAudioProjectId("");
+        setAudioTitle("");
+    };
 
     const handleSave = async () => {
         if (!newNote.title && !newNote.content) return;
@@ -203,6 +258,66 @@ export default function NotesPage() {
                     </div>
                 )}
 
+                {/* Create Audio Note Overlay */}
+                {isCreatingAudio && (
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                        <div className="bg-gray-900 border border-gray-800 w-full max-w-md rounded-3xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+                            <div className="p-6 border-b border-gray-800 flex justify-between items-center">
+                                <h2 className="text-xl font-bold text-white">Audio Capture</h2>
+                                <button
+                                    onClick={resetAudioModal}
+                                    className="text-gray-500 hover:text-white transition-colors text-xl"
+                                >&times;</button>
+                            </div>
+                            <div className="p-6 space-y-4">
+                                {/* Title */}
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">Title</label>
+                                    <input
+                                        type="text"
+                                        placeholder={`Audio Note - ${format(new Date(), "MMM d, HH:mm")}`}
+                                        value={audioTitle}
+                                        onChange={(e) => setAudioTitle(e.target.value)}
+                                        disabled={isUploading}
+                                        className="w-full bg-black/40 border border-gray-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500/50"
+                                    />
+                                </div>
+
+                                {/* Project selector */}
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">Associate with Project</label>
+                                    <select
+                                        value={audioProjectId}
+                                        onChange={(e) => setAudioProjectId(e.target.value)}
+                                        disabled={isUploading}
+                                        className="w-full bg-black/40 border border-gray-800 rounded-xl px-4 py-3 text-gray-300 focus:outline-none focus:border-cyan-500/50 [color-scheme:dark]"
+                                    >
+                                        <option value="" className="bg-gray-900 text-white">None (Personal)</option>
+                                        {projects.map(p => (
+                                            <option key={p.id} value={p.id} className="bg-gray-900 text-white">
+                                                {p.display_name || p.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                {/* Recorder */}
+                                {isUploading ? (
+                                    <div className="flex flex-col items-center gap-3 py-8">
+                                        <Loader2 size={32} className="text-cyan-500 animate-spin" />
+                                        <p className="text-sm text-gray-400 italic">Saving audio note...</p>
+                                    </div>
+                                ) : (
+                                    <AudioRecorder
+                                        onRecordingComplete={handleAudioCapture}
+                                        onCancel={resetAudioModal}
+                                    />
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* Quick Actions (Persistent) */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
                     <button
@@ -218,16 +333,16 @@ export default function NotesPage() {
                         </div>
                     </button>
                     <button
-                        className="flex items-center gap-4 p-4 bg-gray-800/20 border border-gray-800 rounded-2xl transition-all opacity-50 cursor-not-allowed"
-                        title="Audio capture is available in the project sidebar"
-                        disabled
+                        onClick={() => setIsCreatingAudio(true)}
+                        className="flex items-center gap-4 p-4 bg-cyan-500/5 hover:bg-cyan-500/10 border border-cyan-500/10 rounded-2xl transition-all group"
+                        title="New Audio Note"
                     >
-                        <div className="p-2 bg-gray-800/40 rounded-lg">
-                            <Mic size={18} className="text-gray-600" />
+                        <div className="p-2 bg-cyan-500/10 rounded-lg group-hover:scale-110 transition-transform">
+                            <Mic size={18} className="text-cyan-400" />
                         </div>
                         <div className="text-left">
-                            <span className="block text-xs font-bold text-gray-600 uppercase tracking-wider">Audio capture</span>
-                            <span className="block text-[10px] text-gray-700">Available in Project Sidebar</span>
+                            <span className="block text-xs font-bold text-white uppercase tracking-wider">Audio capture</span>
+                            <span className="block text-[10px] text-gray-500">Record a quick voice note</span>
                         </div>
                     </button>
                 </div>
@@ -259,12 +374,11 @@ export default function NotesPage() {
                                 <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Create Text Note</span>
                             </button>
                             <button
-                                onClick={() => {/* Note: Audio recording on global page not yet implemented similarly to project sidebar, but button can trigger text note or future audio modal */ setIsCreating(true); }}
-                                className="flex flex-col items-center gap-4 p-8 bg-red-500/5 hover:bg-red-500/10 border border-red-500/20 rounded-3xl transition-all group opacity-50 cursor-not-allowed"
-                                title="Audio recording available in Project Sidebar"
-                                disabled
+                                onClick={() => setIsCreatingAudio(true)}
+                                className="flex flex-col items-center gap-4 p-8 bg-red-500/5 hover:bg-red-500/10 border border-red-500/20 rounded-3xl transition-all group"
+                                title="New Audio Note"
                             >
-                                <div className="p-4 bg-red-500/10 rounded-2xl">
+                                <div className="p-4 bg-red-500/10 rounded-2xl group-hover:scale-110 transition-transform">
                                     <Mic size={32} className="text-red-400" />
                                 </div>
                                 <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Audio Recording</span>
@@ -327,7 +441,7 @@ export default function NotesPage() {
                                     <div className="mb-6 p-3 bg-black/40 rounded-2xl border border-white/5">
                                         <audio
                                             controls
-                                            src={`/api/files/download?file_id=${note.audio_file_id}&token=${token}`}
+                                            src={`/api/files/download/${note.audio_file_id}?token=${token}`}
                                             className="w-full h-8"
                                         />
                                     </div>
@@ -359,6 +473,6 @@ export default function NotesPage() {
                     </div>
                 )}
             </div>
-        </div>
+        </div >
     );
 }
