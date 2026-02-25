@@ -43,23 +43,37 @@ def _get_command_map() -> Dict[str, Type[BaseCommand]]:
     # Import here to avoid circular dependencies
     from domains.automation.commands.library import (
         ArchiveCommand, MoveCommand, CreateProjectCommand, DeleteProjectCommand, CloneProjectCommand,
-        SendMessageCommand, ResendCommand, UndoCommand, TimerCommand, NoteCommand
+        SendMessageCommand, ResendCommand, UndoCommand, TimerCommand, NoteCommand, HelpCommand,
+        TaskCommand
     )
     
     return {
+        # Primary commands
+        "new": CreateProjectCommand,        # primary (replaces create_project)
         "archive": ArchiveCommand,
         "move": MoveCommand,
-        "mv": MoveCommand,
-        "create_project": CreateProjectCommand,
         "delete_project": DeleteProjectCommand,
-        "kill": DeleteProjectCommand,
         "clone": CloneProjectCommand,
-        "send_message": SendMessageCommand,
+        "report": SendMessageCommand,       # primary (replaces send_message)
+        "task": TaskCommand,
         "resend": ResendCommand,
         "undo": UndoCommand,
         "timer": TimerCommand,
         "note": NoteCommand,
+        "help": HelpCommand,
+        # Aliases (kept for backward compatibility)
+        "create_project": CreateProjectCommand,  # deprecated alias -> /new
+        "mv": MoveCommand,
+        "switch": MoveCommand,              # alias for /move
+        "kill": DeleteProjectCommand,       # deprecated: use /delete_project
     }
+
+
+# Commands that show deprecation/transition notices
+_DEPRECATED_ALIAS_NOTICES: Dict[str, str] = {
+    "create_project": "💡 `/create_project` is deprecated. Please use `/new` instead.",
+    "kill": "⚠️ `/kill` is a destructive command. Consider using `/delete_project` for clarity.",
+}
 
 
 async def execute_command(
@@ -79,7 +93,18 @@ async def execute_command(
     try:
         command_instance = command_cls()
         # Execute the command logic
-        return await command_instance.run(command.args, **kwargs)
+        result = await command_instance.run(command.args, **kwargs)
+
+        # Append deprecation/transition notice when an alias is used
+        notice = _DEPRECATED_ALIAS_NOTICES.get(command.name)
+        if notice and result.success:
+            result = CommandResult(
+                success=result.success,
+                message=f"{result.message}\n\n{notice}",
+                data=result.data
+            )
+
+        return result
 
     except Exception as e:
         return CommandResult(success=False, message=f"Command execution failed: {str(e)}")

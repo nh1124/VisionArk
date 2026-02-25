@@ -99,9 +99,9 @@ class MoveCommand(BaseCommand):
             return CommandResult(success=False, message=f"❌ Project '{target}' not found.")
 
 class CreateProjectCommand(BaseCommand):
-    name = "create_project"
+    name = "new"
     description = "Create a new project workspace."
-    usage = "/create_project <name> [prompt]"
+    usage = "/new <name> [prompt]"
     arg_names = ["name", "prompt"]
 
     async def run(self, raw_args: List[str], **kwargs) -> CommandResult:
@@ -287,9 +287,9 @@ class CloneProjectCommand(BaseCommand):
             return CommandResult(success=False, message=f"Cloning failed: {str(e)}")
 
 class SendMessageCommand(BaseCommand):
-    name = "send_message"
-    description = "Send a message to a project's chat history."
-    usage = "/send_message <project_id> <message>"
+    name = "report"
+    description = "Send a message to another project's chat history."
+    usage = "/report <project_id> <message>"
     arg_names = ["project", "message"]
 
     async def run(self, raw_args: List[str], **kwargs) -> CommandResult:
@@ -544,3 +544,52 @@ class NoteCommand(BaseCommand):
         except Exception as e:
             if db_session: await db_session.rollback()
             return CommandResult(success=False, message=f"Failed to create note: {str(e)}")
+
+
+class HelpCommand(BaseCommand):
+    name = "help"
+    description = "Show available commands and their usage."
+    usage = "/help"
+    arg_names = []
+
+    async def run(self, raw_args: List[str], **kwargs) -> CommandResult:
+        from domains.automation.command_parser import get_command_help
+        help_text = get_command_help()
+        return CommandResult(success=True, message=help_text)
+
+
+class TaskCommand(BaseCommand):
+    name = "task"
+    description = "Enqueue a task message for the current project's AI agent to process immediately."
+    usage = "/task <message>"
+    arg_names = ["message"]
+
+    async def run(self, raw_args: List[str], **kwargs) -> CommandResult:
+        message = " ".join(raw_args).strip() if raw_args else ""
+        if not message:
+            return CommandResult(success=False, message="Message is required. Usage: /task <message>")
+
+        user_id: str = kwargs.get("user_id")
+        project_id: str = kwargs.get("project_id")
+        if not user_id or not project_id:
+            return CommandResult(success=False, message="Missing required IDs")
+
+        try:
+            from infrastructure.queue.manager import QueueManager
+            from shared.database import TaskType
+            manager = QueueManager()
+            context = {
+                "user_id": user_id,
+                "project_id": project_id,
+                "env": "v4"
+            }
+            task_id = await manager.enqueue(
+                user_id, message, context, task_type=TaskType.USER_MESSAGE
+            )
+            return CommandResult(
+                success=True,
+                message=f"📋 Task queued: \"{message[:80]}{'...' if len(message) > 80 else ''}\"",
+                data={"task_id": task_id, "project_id": project_id}
+            )
+        except Exception as e:
+            return CommandResult(success=False, message=f"Failed to queue task: {str(e)}")

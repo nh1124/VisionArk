@@ -85,18 +85,28 @@ async def list_commands(scope: Optional[str] = None):
     commands = []
     shown_classes = set()
 
-    for name, command_cls in sorted(command_map.items()):
+    for name, command_cls in command_map.items():
         if command_cls in shown_classes:
             continue
-            
+
         instance = command_cls()
+        # Use the class's own .name attribute as the canonical primary name
+        primary_name = instance.name
+
+        # Collect all aliases: keys in the map that map to the same class but are NOT the primary name
+        aliases = [k for k, v in command_map.items() if v == command_cls and k != primary_name]
+
         commands.append({
-            "name": name,
+            "name": primary_name,
             "description": instance.description or "No description available.",
-            "usage": instance.usage or f"/{name}",
+            "usage": instance.usage or f"/{primary_name}",
             "scopes": ["main", "project"],  # Modern commands are available everywhere
-            "aliases": [n for n, t in command_map.items() if t == command_cls and n != name]
+            "aliases": aliases
         })
         shown_classes.add(command_cls)
+
+    # Sort: primary commands first (alphabetically), then stable
+    commands.sort(key=lambda c: c["name"])
     
     return {"commands": commands}
+

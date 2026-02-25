@@ -15,6 +15,7 @@ interface Command {
     name: string;
     description: string;
     usage: string;
+    isAlias?: boolean;
 }
 
 interface CommandAutocompleteProps {
@@ -60,27 +61,30 @@ const CommandAutocomplete = forwardRef<CommandAutocompleteHandle, CommandAutocom
                 if (!response.ok) throw new Error(`Failed to fetch commands: ${response.status}`);
                 const data = await response.json();
 
-                // Map API response to frontend Command interface
-                const cmds: Command[] = (data.commands || []).map((c: any) => ({
+                // Map primary commands first
+                const primaryCmds: Command[] = (data.commands || []).map((c: any) => ({
                     name: `/${c.name}`,
                     description: c.description,
-                    usage: c.usage
+                    usage: c.usage,
+                    isAlias: false
                 }));
 
-                // Add aliases if they exist in the API
+                // Append aliases at the end with a [alias] label
+                const aliasCmds: Command[] = [];
                 (data.commands || []).forEach((c: any) => {
                     if (c.aliases && c.aliases.length > 0) {
                         c.aliases.forEach((alias: string) => {
-                            cmds.push({
+                            aliasCmds.push({
                                 name: `/${alias}`,
-                                description: `Alias for ${c.name}: ${c.description}`,
-                                usage: c.usage.replace(`/${c.name}`, `/${alias}`)
+                                description: `[alias → /${c.name}] ${c.description}`,
+                                usage: c.usage.replace(`/${c.name}`, `/${alias}`),
+                                isAlias: true
                             });
                         });
                     }
                 });
 
-                setAvailableCommands(cmds);
+                setAvailableCommands([...primaryCmds, ...aliasCmds]);
             } catch (error) {
                 console.error("Error fetching commands:", error);
             }
