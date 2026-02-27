@@ -179,7 +179,12 @@ async def update_general_settings(
     if update.language is not None:
         current_general["language"] = update.language
     if update.timezone is not None:
-        current_general["timezone"] = update.timezone
+        try:
+            from zoneinfo import ZoneInfo
+            ZoneInfo(update.timezone)
+            current_general["timezone"] = update.timezone
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Invalid timezone: '{update.timezone}'. Must be a valid IANA timezone (e.g. 'Asia/Tokyo').")
     if update.location is not None:
         current_general["location"] = update.location
     if update.notification_sound is not None:

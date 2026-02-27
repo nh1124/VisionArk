@@ -13,7 +13,7 @@ import {
 
 export type NavView =
   | "dashboard" | "projects" | "agents" | "tasks" | "jobs"
-  | "approvals" | "cron" | "notes" | "workspace" | "chat"
+  | "approvals" | "cron" | "notes" | "workspace" | "chat" | "settings"
 
 export type TaskFilter = "today" | "my-day" | "planned" | "overdue" | "inbox" | "project"
 
@@ -560,13 +560,17 @@ export default function NavSidebar({
       {/* ── Footer (fixed) ────────────────────────────────────────────────── */}
       <div className="p-3 border-t border-gray-800/50 flex-shrink-0">
         <button
-          onClick={() => onChange("dashboard")}
+          onClick={() => onChange("settings")}
           className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${
             isCollapsed ? "justify-center" : ""
-          } text-gray-500 hover:bg-gray-800/50 hover:text-gray-300`}
+          } ${
+            active === "settings"
+              ? "bg-cyan-500 text-white shadow-lg shadow-cyan-500/20"
+              : "text-gray-500 hover:bg-gray-800/50 hover:text-gray-300"
+          }`}
           title={isCollapsed ? "Settings" : ""}
         >
-          <Settings size={20} />
+          <Settings size={20} className={active === "settings" ? "text-white" : "text-gray-500"} />
           {!isCollapsed && <span>Settings</span>}
         </button>
       </div>

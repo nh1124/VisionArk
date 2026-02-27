@@ -27,6 +27,11 @@ export async function apiFetch(
         }
     }
 
+    // Inject browser timezone for LBS date-boundary accuracy
+    if (typeof Intl !== "undefined") {
+        headers["X-Timezone"] = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    }
+
     // Use relative URL - Next.js rewrites will proxy /api/* to backend
     const response = await fetch(url, {
         ...restOptions,

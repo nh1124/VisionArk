@@ -80,14 +80,15 @@ class CreateTaskTool(BaseTool):
         db_session = ctx.db
         user_id = ctx.user_id
         context_name = ctx.user_settings.get("context_name", "general")
-        
+        user_timezone = ctx.user_settings.get("timezone", "UTC") or "UTC"
+
         try:
             client = await get_lbs_client(user_id, db_session)
             task_name = kwargs.get("task_name")
             context = kwargs.get("context")
             workload = kwargs.get("workload")
             rule_type = kwargs.get("rule_type", "ONCE").upper()
-            
+
             data = {
                 "task_name": task_name,
                 "context": context or context_name,
@@ -96,7 +97,8 @@ class CreateTaskTool(BaseTool):
                 "active": True,
                 "is_locked": kwargs.get("is_locked", False),
                 "metadata": kwargs.get("metadata") or {},
-                "notes": kwargs.get("notes")
+                "notes": kwargs.get("notes"),
+                "timezone": user_timezone,
             }
             
             if kwargs.get("start_time"): data["start_time"] = kwargs.get("start_time")
@@ -143,11 +145,13 @@ class UpdateTaskTool(BaseTool):
         if not ctx: return ToolResult(content="Context error", is_success=False)
         db_session = ctx.db
         user_id = ctx.user_id
-        
+        user_timezone = ctx.user_settings.get("timezone", "UTC") or "UTC"
+
         try:
             client = await get_lbs_client(user_id, db_session)
             upd = {k: v for k,v in kwargs.items() if v is not None}
             if 'workload' in upd: upd['base_load_score'] = float(upd.pop('workload'))
+            if 'timezone' not in upd: upd['timezone'] = user_timezone
             
             if not upd:
                 return ToolResult(content="No changes provided", is_success=False)

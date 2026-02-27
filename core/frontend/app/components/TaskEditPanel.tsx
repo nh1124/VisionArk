@@ -40,6 +40,7 @@ interface Task {
     is_locked?: boolean;
     start_time?: string | null;
     end_time?: string | null;
+    timezone?: string | null;
     meta_payload?: {
         steps?: Subtask[];
         is_my_day?: boolean;
@@ -111,15 +112,22 @@ export default function TaskEditPanel({
                     return res.json();
                 })
                 .then(data => {
+                    const browserTz = typeof Intl !== "undefined"
+                        ? Intl.DateTimeFormat().resolvedOptions().timeZone
+                        : "UTC";
                     setEditedTask({
                         ...task, // Keep original data as fallback
                         ...data,
-                        due_date: data.due_date || targetDate
+                        due_date: data.due_date || targetDate,
+                        timezone: data.timezone || task.timezone || browserTz,
                     });
                 })
                 .catch(err => {
                     console.error("Failed to load task details:", err);
-                    setEditedTask(task);
+                    const browserTz = typeof Intl !== "undefined"
+                        ? Intl.DateTimeFormat().resolvedOptions().timeZone
+                        : "UTC";
+                    setEditedTask({ ...task, timezone: task.timezone || browserTz });
                 })
                 .finally(() => setLoading(false));
 
@@ -695,6 +703,23 @@ export default function TaskEditPanel({
                                         />
                                     </div>
                                 </div>
+                            </div>
+
+                            {/* Timezone */}
+                            <div className="pt-2 border-t border-gray-800/50">
+                                <label className="block text-sm font-medium text-gray-400 mb-2">
+                                    Timezone
+                                </label>
+                                <select
+                                    value={editedTask.timezone || "UTC"}
+                                    onChange={(e) => setEditedTask({ ...editedTask, timezone: e.target.value })}
+                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500"
+                                >
+                                    <option value="UTC">UTC</option>
+                                    {typeof Intl !== "undefined" && Intl.supportedValuesOf('timeZone').map((tz) => (
+                                        <option key={tz} value={tz}>{tz}</option>
+                                    ))}
+                                </select>
                             </div>
                         </div>
                     </details>

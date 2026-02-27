@@ -15,6 +15,7 @@ import WorkspaceView from "./components/WorkspaceView"
 import ProjectsView from "./components/ProjectsView"
 import AgentsView from "./components/AgentsView"
 import TasksView from "./components/TasksView"
+import SettingsView from "./components/SettingsView"
 import { isLoggedIn, listProjects, type Project } from "./lib/api"
 
 export default function App() {
@@ -163,6 +164,7 @@ export default function App() {
             {view === "workspace" && <WorkspaceView />}
             {view === "projects" && <ProjectsView onOpenProject={(id) => handleNavChange("chat", id)} />}
             {view === "agents" && <AgentsView />}
+            {view === "settings" && <SettingsView />}
           </div>
         </main>
       </div>

@@ -1,8 +1,11 @@
 import httpx
 import os
 import enum
+import logging
 from datetime import date, datetime
 from typing import List, Optional, Dict, Any, Union
+
+logger = logging.getLogger(__name__)
 
 class TaskStatus(str, enum.Enum):
     """Possible statuses for an LBS task execution."""
@@ -10,12 +13,26 @@ class TaskStatus(str, enum.Enum):
     DONE = "done"
     SKIPPED = "skipped"
 
-async def get_lbs_client(user_id: str, session: Any) -> 'LBSClient':
+
+def _validate_iana_timezone(tz: Optional[str]) -> Optional[str]:
+    """Validate an IANA timezone string. Returns the tz if valid, else None."""
+    if not tz:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+        ZoneInfo(tz)
+        return tz
+    except Exception:
+        logger.warning("Invalid IANA timezone %r — falling back to UTC", tz)
+        return None
+
+
+async def get_lbs_client(user_id: str, session: Any, x_timezone: Optional[str] = None) -> 'LBSClient':
     """Helper to fetch LBS client for a user from the database."""
-    from shared.database import ServiceRegistry
+    from shared.database import ServiceRegistry, UserSettings
     from shared.encryption import decrypt_string
     from sqlalchemy import select
-    
+
     lbs_api_key = None
     lbs_url = None
     res = await session.execute(select(ServiceRegistry).filter(ServiceRegistry.user_id==user_id, ServiceRegistry.service_name=="lbs"))
@@ -25,7 +42,20 @@ async def get_lbs_client(user_id: str, session: Any) -> 'LBSClient':
         if service.api_key_encrypted:
             try: lbs_api_key = decrypt_string(service.api_key_encrypted)
             except: pass
-    return LBSClient(base_url=lbs_url, api_key=lbs_api_key)
+
+    # Resolve timezone: explicit arg > user setting > UTC
+    resolved_tz = x_timezone
+    if not resolved_tz:
+        try:
+            tz_res = await session.execute(select(UserSettings).filter(UserSettings.user_id == user_id))
+            user_settings = tz_res.scalars().first()
+            if user_settings and user_settings.general_settings:
+                resolved_tz = user_settings.general_settings.get("timezone")
+        except Exception:
+            pass
+    resolved_tz = _validate_iana_timezone(resolved_tz) or "UTC"
+
+    return LBSClient(base_url=lbs_url, api_key=lbs_api_key, x_timezone=resolved_tz)
 
 class LBSClient:
     """
@@ -33,32 +63,34 @@ class LBSClient:
     Aligned with the latest LBS Python SDK.
     """
     def __init__(
-        self, 
-        base_url: Optional[str] = None, 
-        api_key: Optional[str] = None, 
+        self,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
         token: Optional[str] = None,
         external_jwt: Optional[str] = None,
-        timeout: float = 300.0
+        timeout: float = 300.0,
+        x_timezone: Optional[str] = None,
     ):
         from app.config import settings
-        
+
         # Determine default URL
         env_url = os.getenv("LBS_SERVICE_URL")
         hardcoded_fallback = "http://localhost:8100/api/lbs"
         final_url = base_url or env_url or settings.lbs_service_url or hardcoded_fallback
-        
+
         # Docker networking adjustment
         if "localhost" in final_url and os.path.exists("/.dockerenv"):
             final_url = final_url.replace("localhost", "host.docker.internal")
-            
+
         self.base_url = final_url.rstrip("/")
         if not self.base_url.startswith("http"):
             self.base_url = f"http://{self.base_url}"
-            
+
         self.api_key = api_key or os.getenv("LBS_API_KEY")
         self.token = token
         self.external_jwt = external_jwt
         self.timeout = timeout
+        self.x_timezone: str = _validate_iana_timezone(x_timezone) or "UTC"
         self._client: Optional[httpx.AsyncClient] = None
 
     async def __aenter__(self):
@@ -73,17 +105,18 @@ class LBSClient:
     def _get_headers(self) -> Dict[str, str]:
         headers = {
             "Content-Type": "application/json",
-            "Accept": "application/json"
+            "Accept": "application/json",
+            "X-Timezone": self.x_timezone,
         }
-        
+
         if self.api_key:
             headers["X-API-KEY"] = self.api_key
         elif self.token:
             headers["Authorization"] = f"Bearer {self.token}"
-            
+
         if self.external_jwt:
             headers["X-EXTERNAL-JWT"] = self.external_jwt
-            
+
         return headers
 
     async def _request(self, method: str, path: str, **kwargs) -> Any:

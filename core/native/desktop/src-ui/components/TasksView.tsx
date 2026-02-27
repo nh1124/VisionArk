@@ -181,6 +181,7 @@ function AddTaskForm({ onAdd, onCancel, defaultContext }: AddTaskFormProps) {
   const [ruleType, setRuleType] = useState("daily")
   const [dueDate, setDueDate] = useState("")
   const [notes, setNotes] = useState("")
+  const [timezone, setTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC")
   const [saving, setSaving] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
 
@@ -198,6 +199,7 @@ function AddTaskForm({ onAdd, onCancel, defaultContext }: AddTaskFormProps) {
         rule_type: ruleType,
         due_date: dueDate || null,
         notes: notes.trim() || null,
+        timezone,
       })
     } finally {
       setSaving(false)
@@ -246,6 +248,17 @@ function AddTaskForm({ onAdd, onCancel, defaultContext }: AddTaskFormProps) {
           className="flex-1 bg-gray-800 rounded-xl px-3 py-2 text-sm text-white border border-gray-700 focus:outline-none focus:border-cyan-500"
         />
       </div>
+      <select
+        value={timezone}
+        onChange={(e) => setTimezone(e.target.value)}
+        className="w-full bg-gray-800 rounded-xl px-3 py-2 text-sm text-white border border-gray-700 focus:outline-none focus:border-cyan-500"
+        title="Timezone"
+      >
+        <option value="UTC">UTC</option>
+        {Intl.supportedValuesOf('timeZone').map((tz) => (
+          <option key={tz} value={tz}>{tz}</option>
+        ))}
+      </select>
       <input
         value={notes}
         onChange={(e) => setNotes(e.target.value)}

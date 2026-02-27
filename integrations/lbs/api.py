@@ -22,32 +22,41 @@ async def get_lbs_client(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_async_db)
 ):
-    """Get LBS client with user's registered LBS API key and remote user ID from ServiceRegistry"""
-    from shared.database import ServiceRegistry
+    """Get LBS client with user's registered LBS API key and timezone from ServiceRegistry / UserSettings"""
+    from shared.database import ServiceRegistry, UserSettings
     from shared.encryption import decrypt_string
-    from sqlalchemy import select
-    
+    from .client import _validate_iana_timezone
+
     # Try to get user's registered LBS service config
     lbs_api_key = None
     lbs_url = None
-    
+
     result = await db.execute(select(ServiceRegistry).filter(
         ServiceRegistry.user_id == identity.user_id,
         ServiceRegistry.service_name == "lbs"
     ))
     service = result.scalars().first()
-    
+
     if service:
         lbs_url = service.base_url
-        # Decrypt API key
         if service.api_key_encrypted:
             try:
                 lbs_api_key = decrypt_string(service.api_key_encrypted)
             except Exception:
-                pass  # Fall back to env var logic in LBSClient if decryption fails
-    
-    # Use API key auth only
-    return LBSClient(base_url=lbs_url, api_key=lbs_api_key)
+                pass
+
+    # Resolve user timezone: general_settings.timezone > UTC
+    x_timezone = "UTC"
+    try:
+        tz_result = await db.execute(select(UserSettings).filter(UserSettings.user_id == identity.user_id))
+        user_settings = tz_result.scalars().first()
+        if user_settings and user_settings.general_settings:
+            tz = user_settings.general_settings.get("timezone")
+            x_timezone = _validate_iana_timezone(tz) or "UTC"
+    except Exception:
+        pass
+
+    return LBSClient(base_url=lbs_url, api_key=lbs_api_key, x_timezone=x_timezone)
 
 
 # Pydantic models (kept for compatibility with frontend and Hub logic)
@@ -77,6 +86,7 @@ class TaskCreate(BaseModel):
     start_time: Optional[str] = None
     end_time: Optional[str] = None
     meta_payload: Optional[Dict] = None
+    timezone: Optional[str] = None
 
 
 class TaskUpdate(BaseModel):
@@ -106,6 +116,7 @@ class TaskUpdate(BaseModel):
     start_time: Optional[str] = None
     end_time: Optional[str] = None
     meta_payload: Optional[Dict] = None
+    timezone: Optional[str] = None
 
 
 class ExceptionCreate(BaseModel):

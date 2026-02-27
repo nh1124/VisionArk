@@ -21,6 +21,10 @@ export default function TaskCreateModal({
     const [loading, setLoading] = useState(false);
     const [status, setStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
     const [isNewProject, setIsNewProject] = useState(false);
+    const browserTz = typeof Intl !== "undefined"
+        ? Intl.DateTimeFormat().resolvedOptions().timeZone
+        : "UTC";
+
     const [formData, setFormData] = useState({
         task_name: "",
         context: "",
@@ -50,6 +54,7 @@ export default function TaskCreateModal({
         is_locked: false,
         start_time: "",
         end_time: "",
+        timezone: browserTz,
     });
 
     if (!isOpen) return null;
@@ -86,6 +91,7 @@ export default function TaskCreateModal({
                 is_locked: formData.is_locked,
                 start_time: formData.start_time || null,
                 end_time: formData.end_time || null,
+                timezone: formData.timezone,
             };
 
             // Add rule-specific fields
@@ -143,6 +149,7 @@ export default function TaskCreateModal({
                     is_locked: false,
                     start_time: "",
                     end_time: "",
+                    timezone: browserTz,
                 });
                 setStatus(null);
                 setIsNewProject(false);
@@ -571,6 +578,23 @@ export default function TaskCreateModal({
                                     />
                                 </div>
                             </div>
+                        </div>
+
+                        {/* Timezone */}
+                        <div>
+                            <label className="block text-sm font-medium text-gray-400 mb-2">
+                                Timezone
+                            </label>
+                            <select
+                                value={formData.timezone}
+                                onChange={(e) => setFormData({ ...formData, timezone: e.target.value })}
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500"
+                            >
+                                <option value="UTC">UTC</option>
+                                {typeof Intl !== "undefined" && Intl.supportedValuesOf('timeZone').map((tz) => (
+                                    <option key={tz} value={tz}>{tz}</option>
+                                ))}
+                            </select>
                         </div>
 
                         {/* Notes */}

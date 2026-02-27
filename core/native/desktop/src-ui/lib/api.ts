@@ -140,6 +140,8 @@ export async function apiFetch(
     if (token) {
         headers["Authorization"] = `Bearer ${token}`
     }
+    // Inject browser/system timezone for LBS date-boundary accuracy
+    headers["X-Timezone"] = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
     console.log(`[AuthDebug] apiFetch ${path} - Token: ${token ? 'Yes' : 'No'}`);
     let res = await fetch(`${BASE_URL}${path}`, { ...init, headers })
 
@@ -166,6 +168,8 @@ export async function apiJson<T>(
     if (token) {
         headers["Authorization"] = `Bearer ${token}`
     }
+    // Inject browser/system timezone for LBS date-boundary accuracy
+    headers["X-Timezone"] = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
     let res = await fetch(`${BASE_URL}${path}`, { ...init, headers })
 
     if (res.status === 401 && (await getRefreshToken())) {
@@ -385,6 +389,7 @@ export interface LBSTaskCreate {
     rule_type: string
     due_date?: string | null
     notes?: string | null
+    timezone?: string | null
 }
 
 export async function createLBSTask(task: LBSTaskCreate): Promise<LBSTask> {
