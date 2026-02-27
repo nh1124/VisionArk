@@ -761,6 +761,83 @@ class ProjectAgentAssignment(Base):
     agent = relationship("Agent")
 
 
+# ─── Jobs (統合テーブル: native/web/cloud 共用) ──────────────────────────────
+
+class JobStatus(str, Enum):
+    QUEUED         = "queued"
+    RUNNING        = "running"
+    NEEDS_APPROVAL = "needs_approval"
+    SUCCEEDED      = "succeeded"
+    FAILED         = "failed"
+    REJECTED       = "rejected"
+
+
+class RiskLevel(str, Enum):
+    LOW      = "low"
+    MEDIUM   = "medium"
+    HIGH     = "high"
+    CRITICAL = "critical"
+
+
+class Job(Base):
+    __tablename__ = "jobs"
+    id           = Column(String(36), primary_key=True)
+    user_id      = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    project_id   = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
+    source       = Column(String(20), default="native", index=True)
+    type         = Column(String(100), nullable=False, index=True)
+    tags         = Column(JSON, default=list)
+    status       = Column(String(30), default="queued", index=True)
+    risk_level   = Column(String(20), default="low")
+    payload      = Column(JSON, default=dict)
+    result       = Column(JSON, nullable=True)
+    approved_by  = Column(String(36), nullable=True)
+    error_log    = Column(Text, nullable=True)
+    started_at   = Column(DateTime, nullable=True)
+    finished_at  = Column(DateTime, nullable=True)
+    created_at   = Column(DateTime, default=datetime.utcnow)
+    updated_at   = Column(DateTime, onupdate=datetime.utcnow)
+
+
+class JobApproval(Base):
+    __tablename__ = "job_approvals"
+    id           = Column(String(36), primary_key=True)
+    job_id       = Column(String(36), ForeignKey("jobs.id"), nullable=False, index=True)
+    user_id      = Column(String(36), ForeignKey("users.id"), nullable=False)
+    action_type  = Column(String(50), nullable=False)
+    policy_mode  = Column(String(20), default="manual")
+    expires_at   = Column(DateTime, nullable=True)
+    decision     = Column(String(20), nullable=True)
+    decided_at   = Column(DateTime, nullable=True)
+    created_at   = Column(DateTime, default=datetime.utcnow)
+
+
+class IntegrationConnection(Base):
+    __tablename__ = "integration_connections"
+    id            = Column(String(36), primary_key=True)
+    user_id       = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    provider      = Column(String(50), nullable=False)
+    account_ref   = Column(String(200), nullable=True)
+    scopes        = Column(JSON, default=list)
+    secret_ref    = Column(String(200), nullable=True)
+    health_status = Column(String(20), default="unknown")
+    created_at    = Column(DateTime, default=datetime.utcnow)
+
+
+class AutomationRule(Base):
+    __tablename__ = "automation_rules"
+    id              = Column(String(36), primary_key=True)
+    user_id         = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    name            = Column(String(100), nullable=False)
+    trigger         = Column(JSON, nullable=False)
+    condition       = Column(JSON, nullable=True)
+    action          = Column(JSON, nullable=False)
+    approval_policy = Column(String(20), default="manual")
+    limit           = Column(JSON, nullable=True)
+    is_active       = Column(Boolean, default=True)
+    created_at      = Column(DateTime, default=datetime.utcnow)
+
+
 # Global engine instances (Singletons for connection pooling)
 _engine = None
 _async_engine = None

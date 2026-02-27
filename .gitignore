@@ -58,3 +58,8 @@ spokes/*/artifacts/
 # Coding agent
 .claude/
 
+# Rust
+target/
+**/*.rs.bk
+*.pdb
+*.exe

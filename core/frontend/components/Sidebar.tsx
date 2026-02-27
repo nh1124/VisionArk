@@ -10,6 +10,7 @@ import { useNotification } from "@/lib/NotificationContext";
 import {
     LayoutGrid, Folder, Bot, Settings as SettingsIcon, ClipboardList, AlarmClock, StickyNote,
     Library, MessageSquare, Plus, Copy, ExternalLink, Download, Trash2, MoreVertical, Pencil, Archive,
+    Play, ShieldCheck,
 } from "lucide-react";
 import TaskSidebar from "./TaskSidebar";
 
@@ -267,6 +268,8 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
         { name: "Projects", path: "/projects", icon: <Folder size={20} /> },
         { name: "Agents", path: "/agents", icon: <Bot size={20} /> },
         { name: "Tasks", path: "/tasks", icon: <ClipboardList size={20} /> },
+        { name: "Jobs", path: "/jobs", icon: <Play size={20} /> },
+        { name: "Approvals", path: "/approvals", icon: <ShieldCheck size={20} /> },
         { name: "Cron Tasks", path: "/cron", icon: <AlarmClock size={20} /> },
         { name: "Notes", path: "/notes", icon: <StickyNote size={20} /> },
         { name: "Workspace", path: "/workspace", icon: <Library size={20} /> },

@@ -1,0 +1,153 @@
+import React, { useCallback, useEffect, useState } from "react"
+import { listen } from "@tauri-apps/api/event"
+import { getCurrentWindow } from "@tauri-apps/api/window"
+export type ProjectSidebarMode = "files" | "automation" | "notes" | "activity" | null;
+import NavSidebar, { type NavView, type TaskFilter } from "./components/NavSidebar"
+import TopBar from "./components/TopBar"
+import DashboardView from "./components/DashboardView"
+import JobsView from "./components/JobsView"
+import ApprovalsView from "./components/ApprovalsView"
+import ChatView from "./components/ChatView"
+import LoginScreen from "./components/LoginScreen"
+import NotesView from "./components/NotesView"
+import CronTasksView from "./components/CronTasksView"
+import WorkspaceView from "./components/WorkspaceView"
+import ProjectsView from "./components/ProjectsView"
+import AgentsView from "./components/AgentsView"
+import TasksView from "./components/TasksView"
+import { isLoggedIn, listProjects, type Project } from "./lib/api"
+
+export default function App() {
+  const [loggedIn, setLoggedIn] = useState(isLoggedIn())
+  const [username, setUsername] = useState("")
+  const [view, setView] = useState<NavView>("dashboard")
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
+  const [selectedProjectName, setSelectedProjectName] = useState("")
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [pendingApprovals, setPendingApprovals] = useState(0)
+  const [projects, setProjects] = useState<Project[]>([])
+  const [taskFilter, setTaskFilter] = useState<TaskFilter>("today")
+  const [taskFilterContext, setTaskFilterContext] = useState<string | undefined>(undefined)
+  const [projectSidebarMode, setProjectSidebarMode] = useState<ProjectSidebarMode>(null)
+
+  useEffect(() => {
+    if (!loggedIn) return
+    listProjects().then(setProjects).catch(() => { })
+  }, [loggedIn])
+
+  const handleNavChange = useCallback(
+    (newView: NavView, projectId?: string, sessionId?: string) => {
+      setView(newView)
+      if (projectId) {
+        setSelectedProjectId(projectId)
+        setSelectedSessionId(sessionId || null)
+        const project = projects.find((p) => p.id === projectId)
+        setSelectedProjectName(project?.display_name || project?.name || "Project")
+        setProjectSidebarMode(null) // Reset sidebar when switching projects
+      }
+    },
+    [projects]
+  )
+
+  const handleTaskFilterChange = useCallback((filter: TaskFilter, context?: string) => {
+    setTaskFilter(filter)
+    setTaskFilterContext(context)
+  }, [])
+
+  // Window close → hide to tray; listen for approval events
+  useEffect(() => {
+    const cleanups: Array<Promise<() => void>> = []
+    try {
+      const appWindow = getCurrentWindow()
+      cleanups.push(
+        appWindow.onCloseRequested((event) => {
+          event.preventDefault()
+          appWindow.hide()
+        })
+      )
+    } catch {
+      // Not in Tauri (browser dev mode)
+    }
+
+    try {
+      cleanups.push(
+        listen<{ job_id: string }>("show-approval", () => {
+          setView("approvals")
+        })
+      )
+    } catch {
+      // Not in Tauri
+    }
+
+    return () => {
+      cleanups.forEach((p) => p.then((f) => f()).catch(() => { }))
+    }
+  }, [])
+
+  if (!loggedIn) {
+    return (
+      <LoginScreen
+        onLogin={(user) => {
+          setLoggedIn(true)
+          setUsername(user)
+        }}
+      />
+    )
+  }
+
+  const topBarProjectName = view === "chat" ? selectedProjectName : undefined
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-gray-950 text-white select-none">
+      {/* Left: Sidebar */}
+      <NavSidebar
+        active={view}
+        onChange={handleNavChange}
+        selectedProjectId={selectedProjectId}
+        selectedSessionId={selectedSessionId}
+        pendingApprovals={pendingApprovals}
+        isCollapsed={sidebarCollapsed}
+        onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+        taskFilter={taskFilter}
+        taskFilterContext={taskFilterContext}
+        onTaskFilterChange={handleTaskFilterChange}
+      />
+
+      {/* Right: Main Content */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <TopBar
+          projectName={topBarProjectName}
+          username={username}
+          sidebarMode={projectSidebarMode}
+          setSidebarMode={setProjectSidebarMode}
+        />
+
+        <main className="flex-1 min-w-0 flex overflow-hidden">
+          <div className="flex-1 overflow-hidden">
+            {view === "dashboard" && <DashboardView />}
+            {view === "jobs" && <JobsView />}
+            {view === "approvals" && <ApprovalsView highlightJobId={null} />}
+            {view === "notes" && <NotesView onOpenProject={(id) => handleNavChange("chat", id)} />}
+            {view === "cron" && <CronTasksView />}
+            {view === "tasks" && (
+              <TasksView filter={taskFilter} filterContext={taskFilterContext} />
+            )}
+            {view === "chat" && selectedProjectId && (
+              <ChatView
+                projectId={selectedProjectId}
+                sessionId={selectedSessionId}
+                projectName={selectedProjectName}
+                sidebarMode={projectSidebarMode}
+                setSidebarMode={setProjectSidebarMode}
+              />
+            )}
+            {view === "workspace" && <WorkspaceView />}
+            {view === "projects" && <ProjectsView onOpenProject={(id) => handleNavChange("chat", id)} />}
+            {view === "agents" && <AgentsView />}
+          </div>
+        </main>
+      </div>
+    </div>
+  )
+}
