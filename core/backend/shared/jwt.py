@@ -37,8 +37,34 @@ def create_access_token(
         "iat": datetime.utcnow(),
         "type": token_type
     }
-    
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
+def create_refresh_token(
+    user_id: str, 
+    username: str, 
+    expires_delta: Optional[timedelta] = None
+) -> str:
+    """
+    Create a JWT refresh token.
+    
+    Args:
+        user_id: User's UUID
+        username: User's username
+        expires_delta: Custom expiration time (default: from settings)
+        
+    Returns:
+        Encoded JWT token string
+    """
+    if expires_delta is None:
+        expires_delta = timedelta(minutes=settings.jwt_refresh_expire_minutes)
+    
+    return create_access_token(
+        user_id=user_id,
+        username=username,
+        expires_delta=expires_delta,
+        token_type="refresh"
+    )
 
 
 def decode_token(token: str, required_type: Optional[str] = "access") -> Optional[dict]:

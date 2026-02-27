@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "dev_jwt_secret_change_in_production_must_be_32_chars"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24  # 24 hours
+    jwt_refresh_expire_minutes: int = 60 * 24 * 30  # 30 days
     
     # Database Settings (PostgreSQL required)
     database_url: str = ""  # postgresql://user:pass@host:5432/dbname

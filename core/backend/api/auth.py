@@ -15,7 +15,7 @@ from shared.seed import seed_user_definitions
 from app.config import settings
 from domains.identity.auth import get_db, resolve_identity, Identity
 from shared.password import hash_password, verify_password, MIN_PASSWORD_LENGTH
-from shared.jwt import create_access_token, decode_access_token, decode_token
+from shared.jwt import create_access_token, decode_access_token, decode_token, create_refresh_token
 from datetime import timedelta
 from shared.paths import get_user_projects_dir, get_project_dir, get_user_global_assets_dir, get_default_assets_dir
 from shared.encryption import encrypt_string
@@ -64,6 +64,7 @@ class LoginRequest(BaseModel):
 
 class AuthResponse(BaseModel):
     access_token: str
+    refresh_token: str | None = None
     token_type: str = "bearer"
     user_id: str
     username: str
@@ -89,12 +90,15 @@ class ConnectionTest(BaseModel):
     base_url: str | None = None
 
 
+class AuthRefreshRequest(BaseModel):
+    refresh_token: str
+
 @router.post("/register", response_model=AuthResponse)
 async def register(req: RegisterRequest, db: Session = Depends(get_db)):
     """
     Register a new user account.
     
-    Returns an access token on successful registration.
+    Returns an access token and refresh token on successful registration.
     """
     # Check if username already exists
     existing = db.query(User).filter(User.username == req.username).first()
@@ -226,8 +230,9 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
     except Exception as e:
         logger.warning("Skill/graph seeding failed for user %s: %s", user_id, e)
     
-    # Generate access token
+    # Generate access and refresh tokens
     access_token = create_access_token(user_id=user_id, username=req.username)
+    refresh_token = create_refresh_token(user_id=user_id, username=req.username)
     
     # Create user directories for projects and hub
     try:
@@ -252,6 +257,7 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
     
     return AuthResponse(
         access_token=access_token,
+        refresh_token=refresh_token,
         user_id=user_id,
         username=req.username
     )
@@ -309,7 +315,7 @@ async def test_kc_connection(test: ConnectionTest):
 @router.post("/login", response_model=AuthResponse)
 async def login(req: LoginRequest, db: Session = Depends(get_db)):
     """
-    Authenticate user and return access token.
+    Authenticate user and return access token and refresh token.
     
     Accepts username or email as the 'username' field.
     """
@@ -329,11 +335,45 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
     if not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
-    # Generate access token
+    # Generate access and refresh tokens
     access_token = create_access_token(user_id=user.id, username=user.username)
+    refresh_token = create_refresh_token(user_id=user.id, username=user.username)
     
     return AuthResponse(
         access_token=access_token,
+        refresh_token=refresh_token,
+        user_id=user.id,
+        username=user.username
+    )
+
+
+@router.post("/refresh", response_model=AuthResponse)
+async def refresh_token(req: AuthRefreshRequest, db: Session = Depends(get_db)):
+    """
+    Issue a new pair of access and refresh tokens based on a valid refresh token.
+    """
+    payload = decode_token(req.refresh_token, required_type="refresh")
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+        
+    user_id = payload.get("sub")
+    username = payload.get("username")
+    
+    if not user_id or not username:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+        
+    # Verify user still exists and is active
+    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+        
+    # Issue new tokens
+    new_access_token = create_access_token(user_id=user.id, username=user.username)
+    new_refresh_token = create_refresh_token(user_id=user.id, username=user.username)
+    
+    return AuthResponse(
+        access_token=new_access_token,
+        refresh_token=new_refresh_token,
         user_id=user.id,
         username=user.username
     )
