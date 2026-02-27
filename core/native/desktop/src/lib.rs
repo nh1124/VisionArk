@@ -56,6 +56,9 @@ pub fn run() {
             commands::toggle_window,
             commands::send_notification,
             commands::get_pending_count,
+            commands::set_secure_token,
+            commands::get_secure_token,
+            commands::delete_secure_token,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VisionArk");

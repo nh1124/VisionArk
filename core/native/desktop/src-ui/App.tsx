@@ -18,7 +18,8 @@ import TasksView from "./components/TasksView"
 import { isLoggedIn, listProjects, type Project } from "./lib/api"
 
 export default function App() {
-  const [loggedIn, setLoggedIn] = useState(isLoggedIn())
+  const [loggedIn, setLoggedIn] = useState(false)
+  const [authChecked, setAuthChecked] = useState(false)
   const [username, setUsername] = useState("")
   const [view, setView] = useState<NavView>("dashboard")
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
@@ -30,6 +31,13 @@ export default function App() {
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("today")
   const [taskFilterContext, setTaskFilterContext] = useState<string | undefined>(undefined)
   const [projectSidebarMode, setProjectSidebarMode] = useState<ProjectSidebarMode>(null)
+
+  useEffect(() => {
+    isLoggedIn().then(status => {
+      setLoggedIn(status)
+      setAuthChecked(true)
+    })
+  }, [])
 
   useEffect(() => {
     if (!loggedIn) return
@@ -64,6 +72,9 @@ export default function App() {
         appWindow.onCloseRequested((event) => {
           event.preventDefault()
           appWindow.hide()
+        }).catch((e) => {
+          console.warn("Could not attach onCloseRequested:", e);
+          return () => { };
         })
       )
     } catch {
@@ -74,6 +85,9 @@ export default function App() {
       cleanups.push(
         listen<{ job_id: string }>("show-approval", () => {
           setView("approvals")
+        }).catch((e) => {
+          console.warn("Could not listen to show-approval:", e);
+          return () => { };
         })
       )
     } catch {
@@ -81,9 +95,13 @@ export default function App() {
     }
 
     return () => {
-      cleanups.forEach((p) => p.then((f) => f()).catch(() => { }))
+      cleanups.forEach((c) => c.then((unlisten) => unlisten()))
     }
   }, [])
+
+  if (!authChecked) {
+    return <div className="h-screen bg-black flex items-center justify-center text-gray-400">Loading...</div>
+  }
 
   if (!loggedIn) {
     return (

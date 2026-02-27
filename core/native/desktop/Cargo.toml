@@ -19,3 +19,14 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3.6.3", features = ["windows-native"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+keyring = { version = "3.6.3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3.6.3", features = ["linux-native"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+keyring = { version = "3.6.3" } # Note: Android requires a custom Tauri plugin (e.g. tauri-plugin-stronghold) for true secure storage. Memory mock is used as fallback.

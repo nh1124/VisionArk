@@ -5,19 +5,128 @@
  */
 
 // Detect Tauri environment
-const IS_TAURI = !!(window as any).__TAURI_INTERNALS__ || !!(window as any).__TAURI__
+import { invoke, isTauri } from '@tauri-apps/api/core';
+
+const IS_TAURI = isTauri()
 export const BASE_URL = IS_TAURI ? "http://localhost:8000" : "http://localhost:8000" // For local native dev, force 8000
 
-function getToken(): string | null {
-    try {
+export async function getToken(): Promise<string | null> {
+    if (!IS_TAURI) {
         return localStorage.getItem("atmos_access_token")
-    } catch {
-        return null
+    }
+    try {
+        const token = await invoke<string>("get_secure_token", { key: "atmos_access_token" });
+        return token || null; // Return null if empty string
+    } catch (e) {
+        console.error("Keychain GetToken Error:", e);
+        return null;
     }
 }
 
-export function setToken(token: string) {
-    localStorage.setItem("atmos_access_token", token)
+export async function getRefreshToken(): Promise<string | null> {
+    if (!IS_TAURI) {
+        return localStorage.getItem("atmos_refresh_token")
+    }
+    try {
+        const token = await invoke<string>("get_secure_token", { key: "atmos_refresh_token" });
+        return token || null; // Return null if empty string
+    } catch (e) {
+        console.error("Keychain GetRefreshToken Error:", e);
+        return null;
+    }
+}
+
+export async function setToken(token: string): Promise<void> {
+    if (!IS_TAURI) {
+        localStorage.setItem("atmos_access_token", token)
+        return;
+    }
+    try {
+        await invoke("set_secure_token", { key: "atmos_access_token", value: token });
+    } catch (e) {
+        console.error("Keychain SetToken Error:", e);
+        throw e;
+    }
+}
+
+export async function setRefreshToken(token: string): Promise<void> {
+    if (!IS_TAURI) {
+        localStorage.setItem("atmos_refresh_token", token)
+        return;
+    }
+    try {
+        await invoke("set_secure_token", { key: "atmos_refresh_token", value: token });
+    } catch (e) {
+        console.error("Keychain SetRefreshToken Error:", e);
+        throw e;
+    }
+}
+
+export async function clearTokens(): Promise<void> {
+    if (!IS_TAURI) {
+        localStorage.removeItem("atmos_access_token")
+        localStorage.removeItem("atmos_refresh_token")
+        return;
+    }
+    try { await invoke("delete_secure_token", { key: "atmos_access_token" }); } catch { }
+    try { await invoke("delete_secure_token", { key: "atmos_refresh_token" }); } catch { }
+}
+
+let isRefreshing = false;
+let refreshSubscribers: ((token: string) => void)[] = [];
+
+function onRefreshed(token: string) {
+    refreshSubscribers.forEach(cb => cb(token));
+    refreshSubscribers = [];
+}
+
+function addRefreshSubscriber(cb: (token: string) => void) {
+    refreshSubscribers.push(cb);
+}
+
+async function handleRefresh(): Promise<string | null> {
+    const refreshToken = await getRefreshToken();
+    if (!refreshToken) {
+        await clearTokens();
+        return null;
+    }
+
+    if (isRefreshing) {
+        return new Promise(resolve => {
+            addRefreshSubscriber(token => resolve(token));
+        });
+    }
+
+    isRefreshing = true;
+
+    try {
+        const res = await fetch(`${BASE_URL}/api/auth/refresh`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refresh_token: refreshToken })
+        });
+
+        if (!res.ok) {
+            await clearTokens();
+            onRefreshed("");
+            return null;
+        }
+
+        const data = await res.json();
+        await setToken(data.access_token);
+        if (data.refresh_token) {
+            await setRefreshToken(data.refresh_token);
+        }
+
+        onRefreshed(data.access_token);
+        return data.access_token;
+    } catch (e) {
+        await clearTokens();
+        onRefreshed("");
+        return null;
+    } finally {
+        isRefreshing = false;
+    }
 }
 
 export async function apiFetch(
@@ -27,11 +136,22 @@ export async function apiFetch(
     const headers: Record<string, string> = {
         ...(init.headers as Record<string, string>),
     }
-    const token = getToken()
+    const token = await getToken()
     if (token) {
         headers["Authorization"] = `Bearer ${token}`
     }
-    return fetch(`${BASE_URL}${path}`, { ...init, headers })
+    console.log(`[AuthDebug] apiFetch ${path} - Token: ${token ? 'Yes' : 'No'}`);
+    let res = await fetch(`${BASE_URL}${path}`, { ...init, headers })
+
+    if (res.status === 401 && (await getRefreshToken())) {
+        const newToken = await handleRefresh();
+        if (newToken) {
+            headers["Authorization"] = `Bearer ${newToken}`
+            res = await fetch(`${BASE_URL}${path}`, { ...init, headers })
+        }
+    }
+
+    return res;
 }
 
 export async function apiJson<T>(
@@ -42,11 +162,20 @@ export async function apiJson<T>(
         "Content-Type": "application/json",
         ...(init.headers as Record<string, string>),
     }
-    const token = getToken()
+    const token = await getToken()
     if (token) {
         headers["Authorization"] = `Bearer ${token}`
     }
-    const res = await fetch(`${BASE_URL}${path}`, { ...init, headers })
+    let res = await fetch(`${BASE_URL}${path}`, { ...init, headers })
+
+    if (res.status === 401 && (await getRefreshToken())) {
+        const newToken = await handleRefresh();
+        if (newToken) {
+            headers["Authorization"] = `Bearer ${newToken}`
+            res = await fetch(`${BASE_URL}${path}`, { ...init, headers })
+        }
+    }
+
     if (!res.ok) {
         const text = await res.text()
         throw new Error(`API ${res.status}: ${text}`)
@@ -62,14 +191,31 @@ export async function login(username: string, password: string) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
     })
-    if (!res.ok) throw new Error("Login failed")
+    if (!res.ok) {
+        console.error("Login API returned non-OK:", res.status);
+        throw new Error("Login failed");
+    }
     const data = await res.json()
-    setToken(data.access_token)
+    console.log("[AuthDebug] Login successful, saving tokens...");
+    try {
+        await setToken(data.access_token)
+        console.log("[AuthDebug] Access token saved OK");
+        if (data.refresh_token) {
+            await setRefreshToken(data.refresh_token)
+            console.log("[AuthDebug] Refresh token saved OK");
+        }
+    } catch (e) {
+        console.error("[AuthDebug] Failed to save tokens!", e);
+        throw new Error("Failed to save tokens securely");
+    }
     return data
 }
 
-export function isLoggedIn(): boolean {
-    return !!getToken()
+export async function isLoggedIn(): Promise<boolean> {
+    const token = await getToken();
+    console.log("[AuthDebug] IS_TAURI:", IS_TAURI);
+    console.log("[AuthDebug] Token retrieved:", token ? "Yes (" + token.substring(0, 10) + "...)" : "No");
+    return !!token;
 }
 
 // ─── Projects ──────────────────────────────────────────────────────────────────
