@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { Task } from '../app/tasks/types';
 import { apiFetch } from '../lib/api';
+import { getLocalDateString } from '../lib/dateUtils';
 
 export type TaskFilter = 'inbox' | 'today' | 'my-day' | 'planned' | 'completed' | 'project' | 'overdue';
 export type ViewMode = 'list' | 'calendar' | 'timeline';
@@ -44,7 +45,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     overdueTasks: [],
     loading: false,
     error: null,
-    targetDate: new Date().toISOString().split('T')[0],
+    targetDate: getLocalDateString(),
     viewMode: 'list',
     activeFilter: 'inbox',
     activeProject: null,
@@ -70,7 +71,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
     setActiveFilter: (filter, project = null) => {
         if (filter === 'today' || filter === 'my-day') {
-            const today = new Date().toISOString().split('T')[0];
+            const today = getLocalDateString();
             set({ targetDate: today, activeFilter: filter, activeProject: project });
             get().fetchTasks(today);
         } else {

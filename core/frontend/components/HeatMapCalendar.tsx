@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { apiFetch } from "@/lib/api";
+import { getLocalDateString } from "@/lib/dateUtils";
 import { useTaskStore } from "../store/useTaskStore";
 import { useIsMobile } from "../hooks/useIsMobile";
 
@@ -167,7 +168,7 @@ export default function HeatMapCalendar({
                         {week.map((cell, cellIdx) => {
                             if (!cell) return <div key={cellIdx} className="aspect-square"></div>;
                             const level = cell.data?.level || "UNKNOWN";
-                            const isActive = cell.dateStr === new Date().toISOString().split('T')[0];
+                            const isActive = cell.dateStr === getLocalDateString();
 
                             return (
                                 <div

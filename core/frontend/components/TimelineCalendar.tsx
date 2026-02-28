@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import { apiFetch } from "@/lib/api";
+import { getLocalDateString } from "@/lib/dateUtils";
 import { ChevronLeft, ChevronRight, Clock, MoreVertical, Lock, AlertCircle } from "lucide-react";
 import { getSpokeColor } from "@/lib/colors";
 import { useTaskStore } from "../store/useTaskStore";
@@ -49,7 +50,7 @@ export default function TimelineCalendar({ targetDate, refreshKey = 0, onTaskCli
         return Array.from({ length: 7 }, (_, i) => {
             const next = new Date(sun);
             next.setDate(sun.getDate() + i);
-            return next.toISOString().split('T')[0];
+            return getLocalDateString(next);
         });
     }, [targetDate]);
 
@@ -90,7 +91,7 @@ export default function TimelineCalendar({ targetDate, refreshKey = 0, onTaskCli
 
     const formatDayHeader = (dateStr: string) => {
         const d = new Date(dateStr);
-        const today = new Date().toISOString().split('T')[0];
+        const today = getLocalDateString();
         const isToday = dateStr === today;
 
         return (

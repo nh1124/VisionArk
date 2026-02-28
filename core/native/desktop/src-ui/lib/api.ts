@@ -402,3 +402,80 @@ export async function createLBSTask(task: LBSTaskCreate): Promise<LBSTask> {
 export async function getOverdueTasks(): Promise<LBSTask[]> {
     return apiJson<LBSTask[]>("/api/lbs/overdue")
 }
+
+export interface LBSTaskFull extends LBSTask {
+    mon?: boolean
+    tue?: boolean
+    wed?: boolean
+    thu?: boolean
+    fri?: boolean
+    sat?: boolean
+    sun?: boolean
+    interval_days?: number
+    anchor_date?: string | null
+    month_day?: number
+    nth_in_month?: number
+    weekday_mon1?: number
+    start_date?: string | null
+    end_date?: string | null
+    is_locked?: boolean
+    timezone?: string | null
+    meta_payload?: {
+        steps?: { id: string; text: string; done: boolean }[]
+        is_my_day?: boolean
+        [key: string]: any
+    }
+}
+
+export interface LBSScheduleDay {
+    date: string
+    total_load: number
+    tasks: Array<{
+        task_id: string
+        task_name: string
+        context: string
+        load: number
+        status: string
+        start_time: string | null
+        end_time: string | null
+        has_exception: boolean
+        is_locked: boolean
+    }>
+}
+
+export async function getLBSTask(taskId: string, targetDate?: string): Promise<LBSTaskFull> {
+    const qs = targetDate ? `?target_date=${targetDate}` : ''
+    return apiJson<LBSTaskFull>(`/api/lbs/tasks/${taskId}${qs}`)
+}
+
+export async function updateLBSTask(taskId: string, data: Partial<LBSTaskFull>, forceOverride = true): Promise<LBSTaskFull> {
+    return apiJson<LBSTaskFull>(`/api/lbs/tasks/${taskId}?force_override=${forceOverride}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+    })
+}
+
+export async function deleteLBSTask(taskId: string): Promise<void> {
+    await apiJson<any>(`/api/lbs/tasks/${taskId}?force_override=true`, { method: "DELETE" })
+}
+
+export async function getSchedule(startDate: string, endDate: string): Promise<LBSScheduleDay[]> {
+    const res = await apiFetch(`/api/lbs/schedule?start_date=${startDate}&end_date=${endDate}`)
+    if (!res.ok) throw new Error(`Schedule API ${res.status}`)
+    return res.json()
+}
+
+export async function createLBSException(data: {
+    task_id: string
+    target_date: string
+    exception_type: string
+    override_load_value?: number
+    start_time?: string | null
+    end_time?: string | null
+    notes?: string | null
+}): Promise<any> {
+    return apiJson<any>('/api/lbs/exceptions?force_override=true', {
+        method: "POST",
+        body: JSON.stringify(data),
+    })
+}

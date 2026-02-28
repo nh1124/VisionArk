@@ -7,6 +7,7 @@ import DesktopTasksView from "./views/DesktopTasksView";
 import TaskEditPanel from "../components/TaskEditPanel";
 import TaskCreateModal from "../components/TaskCreateModal";
 import TaskImportModal from "../components/TaskImportModal";
+import { getLocalDateString } from "@/lib/dateUtils";
 
 export default function UnifiedTasksPage() {
     const logic = useTasksLogic();
@@ -37,7 +38,7 @@ export default function UnifiedTasksPage() {
         const start = new Date();
         const end = new Date();
         end.setDate(start.getDate() + 30);
-        fetchMonthTasks(start.toISOString().split('T')[0], end.toISOString().split('T')[0]);
+        fetchMonthTasks(getLocalDateString(start), getLocalDateString(end));
     };
 
     return (

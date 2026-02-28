@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import { apiFetch } from "@/lib/api";
+import { getLocalDateString } from "@/lib/dateUtils";
 import { useTaskStore } from "@/store/useTaskStore";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { Task } from "../types";
@@ -36,7 +37,7 @@ export function useTasksLogic() {
     const [importModalOpen, setImportModalOpen] = useState(false);
     const [isCompletedCollapsed, setIsCompletedCollapsed] = useState(true);
     const [isDayDetailsOpen, setIsDayDetailsOpen] = useState(false);
-    const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+    const todayStr = useMemo(() => getLocalDateString(), []);
     const [dayDetailsDate, setDayDetailsDate] = useState(todayStr);
 
     // Refresh and context
@@ -81,8 +82,8 @@ export function useTasksLogic() {
         const end = new Date();
         end.setDate(start.getDate() + 30); // Fetch next 30 days for Planned
         fetchMonthTasks(
-            start.toISOString().split('T')[0],
-            end.toISOString().split('T')[0]
+            getLocalDateString(start),
+            getLocalDateString(end)
         );
     }, [targetDate, fetchTasks, fetchAllTasks, fetchOverdueTasks, fetchMonthTasks]);
 
@@ -94,8 +95,7 @@ export function useTasksLogic() {
 
     // Split tasks with respect to activeFilter
     const displayTasks = useMemo(() => {
-        const today = new Date();
-        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        const todayStr = getLocalDateString();
 
         if (activeFilter === 'today') {
             return tasks.filter(t => t.due_date === todayStr);
@@ -188,7 +188,7 @@ export function useTasksLogic() {
         const shift = viewMode === 'timeline' ? days * 7 : days;
         const d = new Date(targetDate);
         d.setDate(d.getDate() + shift);
-        const newDate = d.toISOString().split('T')[0];
+        const newDate = getLocalDateString(d);
         setTargetDate(newDate);
         setQaDueDate(newDate);
     };
@@ -214,7 +214,7 @@ export function useTasksLogic() {
         if (viewMode === 'calendar') {
             setCurrentMonth(new Date(today.getFullYear(), today.getMonth(), 1));
         } else {
-            const todayStr = today.toISOString().split('T')[0];
+            const todayStr = getLocalDateString(today);
             setTargetDate(todayStr);
             setQaDueDate(todayStr);
         }

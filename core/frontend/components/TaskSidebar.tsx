@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import { Inbox, Star, Calendar, CheckSquare, Sun, Folder, AlarmClock } from "lucide-react";
 import { useTaskStore, TaskFilter } from "../store/useTaskStore";
+import { getLocalDateString } from "../lib/dateUtils";
 import { useMemo, useEffect, ReactNode } from "react";
 
 interface TaskSidebarProps {
@@ -11,8 +12,7 @@ interface TaskSidebarProps {
 
 export default function TaskSidebar({ isCollapsed }: TaskSidebarProps) {
     const { tasks, allTasks, activeFilter, setActiveFilter, activeProject, fetchAllTasks, viewMode, integrations, toggleIntegration } = useTaskStore();
-    const today = new Date();
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const todayStr = getLocalDateString();
 
     // Fetch all tasks once on mount to populate counts
     useEffect(() => {
