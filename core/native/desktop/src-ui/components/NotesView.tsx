@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react"
-import { Search, Plus, Trash2, Edit2, Music, StickyNote, Filter, ExternalLink, Loader2, X, Pencil, Mic } from "lucide-react"
+import React, { useCallback, useEffect, useRef, useState } from "react"
+import { Search, Plus, Trash2, Edit2, Music, StickyNote, Filter, ExternalLink, Loader2, X, Pencil, Mic, Undo2 } from "lucide-react"
 import { listProjects, Project, apiFetch, apiJson, getFileToken, BASE_URL } from "../lib/api"
 import AudioRecorder from "./AudioRecorder"
 
@@ -14,12 +14,31 @@ interface Note {
     updated_at: string
 }
 
+// ── Undo stack types ───────────────────────────────────────────────────────────
+type UndoAction =
+    | { type: "delete"; notes: Note[] }
+    | { type: "create"; noteId: string }
+
+const MAX_UNDO = 20
+
 export default function NotesView({ onOpenProject }: { onOpenProject: (projectId: string) => void }) {
     const [notes, setNotes] = useState<Note[]>([])
     const [projects, setProjects] = useState<Project[]>([])
     const [loading, setLoading] = useState(true)
     const [searchQuery, setSearchQuery] = useState("")
     const [selectedProject, setSelectedProject] = useState<string>("all")
+
+    // Selection
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+    const lastClickedId = useRef<string | null>(null)
+
+    // Undo
+    const [undoStack, setUndoStack] = useState<UndoAction[]>([])
+    const [undoToast, setUndoToast] = useState<string | null>(null)
+    const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+    // Context menu
+    const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; noteId: string } | null>(null)
 
     // Modals
     const [isCreating, setIsCreating] = useState(false)
@@ -40,6 +59,81 @@ export default function NotesView({ onOpenProject }: { onOpenProject: (projectId
         loadData()
         getFileToken().then(setToken).catch(() => { })
     }, [])
+
+    // ── Keyboard shortcuts ─────────────────────────────────────────
+    useEffect(() => {
+        const handler = (e: KeyboardEvent) => {
+            // Ctrl+Z — undo
+            if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+                e.preventDefault()
+                performUndo()
+            }
+            // Ctrl+N — new text note
+            if ((e.ctrlKey || e.metaKey) && e.key === "n") {
+                e.preventDefault()
+                setEditingNote(null)
+                setNewNote({ title: "", content: "", project_id: "", tags: [] })
+                setIsCreating(true)
+            }
+        }
+        window.addEventListener("keydown", handler)
+        return () => window.removeEventListener("keydown", handler)
+    }, [undoStack, notes])
+
+    // ── Close context menu on click anywhere ───────────────────────
+    useEffect(() => {
+        if (!ctxMenu) return
+        const close = () => setCtxMenu(null)
+        window.addEventListener("click", close)
+        window.addEventListener("contextmenu", close)
+        return () => {
+            window.removeEventListener("click", close)
+            window.removeEventListener("contextmenu", close)
+        }
+    }, [ctxMenu])
+
+    const pushUndo = useCallback((action: UndoAction) => {
+        setUndoStack(prev => [...prev.slice(-(MAX_UNDO - 1)), action])
+    }, [])
+
+    const showToast = useCallback((msg: string) => {
+        setUndoToast(msg)
+        if (toastTimer.current) clearTimeout(toastTimer.current)
+        toastTimer.current = setTimeout(() => setUndoToast(null), 3000)
+    }, [])
+
+    const performUndo = useCallback(async () => {
+        if (undoStack.length === 0) return
+        const action = undoStack[undoStack.length - 1]
+        setUndoStack(prev => prev.slice(0, -1))
+
+        try {
+            if (action.type === "delete") {
+                const restored: Note[] = []
+                for (const note of action.notes) {
+                    const res = await apiJson<Note>("/api/notes", {
+                        method: "POST",
+                        body: JSON.stringify({
+                            title: note.title,
+                            content: note.content,
+                            project_id: note.project_id || undefined,
+                            tags: note.tags || [],
+                        })
+                    })
+                    restored.push(res)
+                }
+                setNotes(prev => [...restored, ...prev])
+                showToast(`Restored ${restored.length} note${restored.length > 1 ? "s" : ""}`)
+            } else if (action.type === "create") {
+                await apiFetch(`/api/notes/${action.noteId}`, { method: "DELETE" })
+                setNotes(prev => prev.filter(n => n.id !== action.noteId))
+                showToast("Creation undone")
+            }
+        } catch (err) {
+            console.error("Undo failed:", err)
+            showToast("Undo failed")
+        }
+    }, [undoStack, showToast])
 
     const loadData = async () => {
         setLoading(true)
@@ -78,6 +172,7 @@ export default function NotesView({ onOpenProject }: { onOpenProject: (projectId
                     body: JSON.stringify(payload)
                 })
                 setNotes([res, ...notes])
+                pushUndo({ type: "create", noteId: res.id })
             }
         } catch (err) {
             console.error("Failed to save note:", err)
@@ -88,14 +183,72 @@ export default function NotesView({ onOpenProject }: { onOpenProject: (projectId
         setEditingNote(null)
     }
 
+    // ── Delete (no confirm) ────────────────────────────────────────
     const deleteNote = async (id: string) => {
-        if (!confirm("Are you sure you want to delete this note?")) return
+        const note = notes.find(n => n.id === id)
+        if (!note) return
         try {
             await apiFetch(`/api/notes/${id}`, { method: "DELETE" })
-            setNotes(notes.filter(n => n.id !== id))
+            setNotes(prev => prev.filter(n => n.id !== id))
+            setSelectedIds(prev => { const s = new Set(prev); s.delete(id); return s })
+            pushUndo({ type: "delete", notes: [note] })
+            showToast("Note deleted — Ctrl+Z to undo")
         } catch (err) {
             console.error("Failed to delete note:", err)
         }
+    }
+
+    // ── Bulk delete ────────────────────────────────────────────────
+    const deleteSelected = async () => {
+        const ids = Array.from(selectedIds)
+        const deletedNotes = notes.filter(n => ids.includes(n.id))
+        try {
+            await Promise.all(ids.map(id => apiFetch(`/api/notes/${id}`, { method: "DELETE" })))
+            setNotes(prev => prev.filter(n => !ids.includes(n.id)))
+            setSelectedIds(new Set())
+            pushUndo({ type: "delete", notes: deletedNotes })
+            showToast(`${deletedNotes.length} notes deleted — Ctrl+Z to undo`)
+        } catch (err) {
+            console.error("Failed to bulk delete:", err)
+        }
+    }
+
+    // ── Click handler with shift-select ─────────────────────────────
+    const handleNoteClick = (noteId: string, e: React.MouseEvent) => {
+        if (e.shiftKey && lastClickedId.current) {
+            const ids = filteredNotes.map(n => n.id)
+            const a = ids.indexOf(lastClickedId.current)
+            const b = ids.indexOf(noteId)
+            if (a !== -1 && b !== -1) {
+                const [start, end] = a < b ? [a, b] : [b, a]
+                const rangeIds = ids.slice(start, end + 1)
+                setSelectedIds(prev => {
+                    const s = new Set(prev)
+                    rangeIds.forEach(id => s.add(id))
+                    return s
+                })
+            }
+        } else if (e.ctrlKey || e.metaKey) {
+            setSelectedIds(prev => {
+                const s = new Set(prev)
+                if (s.has(noteId)) s.delete(noteId)
+                else s.add(noteId)
+                return s
+            })
+        } else {
+            setSelectedIds(prev => {
+                if (prev.has(noteId) && prev.size === 1) return new Set()
+                return new Set([noteId])
+            })
+        }
+        lastClickedId.current = noteId
+    }
+
+    // ── Right-click context menu ───────────────────────────────────
+    const handleContextMenu = (noteId: string, e: React.MouseEvent) => {
+        e.preventDefault()
+        e.stopPropagation()
+        setCtxMenu({ x: e.clientX, y: e.clientY, noteId })
     }
 
     const handleAudioCapture = async (blob: Blob) => {
@@ -127,6 +280,7 @@ export default function NotesView({ onOpenProject }: { onOpenProject: (projectId
                 })
             })
             setNotes([res, ...notes])
+            pushUndo({ type: "create", noteId: res.id })
 
             setIsCreatingAudio(false)
             setAudioProjectId("")
@@ -174,21 +328,54 @@ export default function NotesView({ onOpenProject }: { onOpenProject: (projectId
                 <div className="max-w-6xl mx-auto min-h-full">
                     {/* Header */}
                     <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
-                        <div>
-                            <h1 className="text-4xl font-black text-white tracking-tighter mb-2 flex items-center gap-3">
-                                <StickyNote size={36} className="text-cyan-500" />
-                                Notes
-                            </h1>
-                            <p className="text-gray-500 text-sm">Capture thoughts, audio, and project insights.</p>
-                        </div>
+                        <h1 className="text-4xl font-black text-white tracking-tighter flex items-center gap-3">
+                            <StickyNote size={32} className="text-cyan-500" />
+                            Notes
+                        </h1>
 
-                        <div className="flex items-center gap-4">
-                            <button
-                                onClick={() => setIsCreating(true)}
-                                className="bg-cyan-500 hover:bg-cyan-400 text-black px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 shadow-lg shadow-cyan-500/20 active:scale-95"
-                            >
-                                <Plus size={18} /> New Note
-                            </button>
+                        <div className="flex items-center gap-3">
+                            {selectedIds.size > 0 ? (
+                                <>
+                                    <span className="text-sm text-cyan-400 font-bold">{selectedIds.size} selected</span>
+                                    <button
+                                        onClick={deleteSelected}
+                                        className="flex items-center gap-1.5 px-4 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-xl text-red-400 text-xs font-bold transition-all"
+                                    >
+                                        <Trash2 size={14} /> Delete
+                                    </button>
+                                    <button
+                                        onClick={() => setSelectedIds(new Set())}
+                                        className="text-xs text-gray-500 hover:text-white transition-colors px-3 py-2"
+                                    >
+                                        Clear
+                                    </button>
+                                </>
+                            ) : (
+                                <>
+                                    <button
+                                        onClick={() => {
+                                            setEditingNote(null)
+                                            setNewNote({ title: "", content: "", project_id: "", tags: [] })
+                                            setIsCreating(true)
+                                        }}
+                                        className="flex items-center gap-2.5 px-5 py-2.5 bg-cyan-500/10 hover:bg-cyan-500/15 border border-cyan-500/20 rounded-xl transition-all group"
+                                    >
+                                        <div className="p-1 bg-cyan-500/10 rounded-md group-hover:scale-110 transition-transform">
+                                            <Pencil size={14} className="text-cyan-400" />
+                                        </div>
+                                        <span className="text-xs font-bold text-cyan-400 uppercase tracking-wider">Text Note</span>
+                                    </button>
+                                    <button
+                                        onClick={() => setIsCreatingAudio(true)}
+                                        className="flex items-center gap-2.5 px-5 py-2.5 bg-cyan-500/10 hover:bg-cyan-500/15 border border-cyan-500/20 rounded-xl transition-all group"
+                                    >
+                                        <div className="p-1 bg-cyan-500/10 rounded-md group-hover:scale-110 transition-transform">
+                                            <Mic size={14} className="text-cyan-400" />
+                                        </div>
+                                        <span className="text-xs font-bold text-cyan-400 uppercase tracking-wider">Audio</span>
+                                    </button>
+                                </>
+                            )}
                         </div>
                     </div>
 
@@ -221,34 +408,7 @@ export default function NotesView({ onOpenProject }: { onOpenProject: (projectId
                         </div>
                     </div>
 
-                    {/* Quick Actions */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-                        <button
-                            onClick={() => setIsCreating(true)}
-                            className="flex items-center gap-4 p-4 bg-cyan-500/5 hover:bg-cyan-500/10 border border-cyan-500/10 rounded-2xl transition-all group"
-                        >
-                            <div className="p-2 bg-cyan-500/10 rounded-lg group-hover:scale-110 transition-transform">
-                                <Pencil size={18} className="text-cyan-400" />
-                            </div>
-                            <div className="text-left">
-                                <span className="block text-xs font-bold text-white uppercase tracking-wider">New Text Note</span>
-                                <span className="block text-[10px] text-gray-500">Quickly jot down your thoughts</span>
-                            </div>
-                        </button>
-                        <button
-                            onClick={() => setIsCreatingAudio(true)}
-                            className="flex items-center gap-4 p-4 bg-cyan-500/5 hover:bg-cyan-500/10 border border-cyan-500/10 rounded-2xl transition-all group"
-                            title="New Audio Note"
-                        >
-                            <div className="p-2 bg-cyan-500/10 rounded-lg group-hover:scale-110 transition-transform">
-                                <Mic size={18} className="text-cyan-400" />
-                            </div>
-                            <div className="text-left">
-                                <span className="block text-xs font-bold text-white uppercase tracking-wider">Audio capture</span>
-                                <span className="block text-[10px] text-gray-500">Record a quick voice note</span>
-                            </div>
-                        </button>
-                    </div>
+
 
                     {/* Notes Grid */}
                     {loading ? (
@@ -290,85 +450,141 @@ export default function NotesView({ onOpenProject }: { onOpenProject: (projectId
                         </div>
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {filteredNotes.map(note => (
-                                <div
-                                    key={note.id}
-                                    className="group bg-gray-900/60 border border-gray-800 hover:border-cyan-500/30 rounded-3xl p-6 transition-all shadow-xl flex flex-col"
-                                >
-                                    <div className="flex items-start justify-between mb-4">
-                                        <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-2 mb-1.5">
-                                                <span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest ${note.project_id ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' : 'bg-green-500/10 text-green-400 border border-green-500/20'}`}>
-                                                    {note.project_id ? "Project" : "Personal"}
-                                                </span>
-                                                {note.audio_file_id && (
-                                                    <span className="bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest flex items-center gap-1">
-                                                        <Music size={10} /> Audio
+                            {filteredNotes.map(note => {
+                                const isSelected = selectedIds.has(note.id)
+                                return (
+                                    <div
+                                        key={note.id}
+                                        onClick={(e) => handleNoteClick(note.id, e)}
+                                        onContextMenu={(e) => handleContextMenu(note.id, e)}
+                                        className={`group bg-gray-900/60 border rounded-3xl p-6 transition-all shadow-xl flex flex-col cursor-pointer select-none
+                                            ${isSelected
+                                                ? "border-cyan-500/60 ring-1 ring-cyan-500/30 bg-cyan-500/5"
+                                                : "border-gray-800 hover:border-cyan-500/30"
+                                            }`}
+                                    >
+                                        <div className="flex items-start justify-between mb-4">
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2 mb-1.5">
+                                                    <span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest ${note.project_id ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' : 'bg-green-500/10 text-green-400 border border-green-500/20'}`}>
+                                                        {note.project_id ? "Project" : "Personal"}
                                                     </span>
-                                                )}
+                                                    {note.audio_file_id && (
+                                                        <span className="bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest flex items-center gap-1">
+                                                            <Music size={10} /> Audio
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <h3 className="font-bold text-lg text-white truncate group-hover:text-cyan-400 transition-colors">
+                                                    {note.title || "Untitled Note"}
+                                                </h3>
                                             </div>
-                                            <h3 className="font-bold text-lg text-white truncate group-hover:text-cyan-400 transition-colors">
-                                                {note.title || "Untitled Note"}
-                                            </h3>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <button onClick={() => startEditing(note)} className="p-2 text-gray-700 hover:text-cyan-400 transition-colors">
-                                                <Edit2 size={16} />
-                                            </button>
-                                            <button onClick={() => deleteNote(note.id)} className="p-2 text-gray-700 hover:text-red-500 transition-colors">
-                                                <Trash2 size={16} />
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    <div className="flex-1 mb-6">
-                                        <p className="text-gray-400 text-sm line-clamp-4 leading-relaxed whitespace-pre-wrap">
-                                            {note.content || "Empty content..."}
-                                        </p>
-                                        <div className="flex flex-wrap gap-1.5 mt-3">
-                                            {note.tags?.map(tag => (
-                                                <span key={tag} className="px-2 py-0.5 bg-gray-950/40 text-gray-500 rounded-md text-[10px] border border-white/5">
-                                                    #{tag}
-                                                </span>
-                                            ))}
-                                        </div>
-                                    </div>
-
-                                    {note.audio_file_id && token && (
-                                        <div className="mb-6 p-3 bg-black/40 rounded-2xl border border-white/5">
-                                            <audio
-                                                controls
-                                                src={`${BASE_URL}/api/files/download/${note.audio_file_id}?token=${token}`}
-                                                className="w-full h-8"
-                                            />
-                                        </div>
-                                    )}
-
-                                    <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-between">
-                                        <div className="flex flex-col">
-                                            <span className="text-[10px] text-gray-600 font-bold uppercase mb-0.5">Project</span>
-                                            <div className="flex items-center gap-1">
-                                                {note.project_id ? (
-                                                    <button onClick={() => onOpenProject(note.project_id!)} className="text-xs text-gray-400 hover:text-cyan-400 flex items-center gap-1 transition-colors">
-                                                        {getProjectName(note.project_id)}
-                                                        <ExternalLink size={10} />
-                                                    </button>
-                                                ) : (
-                                                    <span className="text-xs text-gray-500">Global Space</span>
-                                                )}
+                                            <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                                                <button onClick={() => startEditing(note)} className="p-2 text-gray-700 hover:text-cyan-400 transition-colors">
+                                                    <Edit2 size={16} />
+                                                </button>
+                                                <button onClick={() => deleteNote(note.id)} className="p-2 text-gray-700 hover:text-red-500 transition-colors">
+                                                    <Trash2 size={16} />
+                                                </button>
                                             </div>
                                         </div>
-                                        <div className="text-right">
-                                            <span className="text-[10px] text-gray-600 font-bold uppercase block mb-0.5">Created</span>
-                                            <span className="text-[10px] font-mono text-gray-500">{formatDate(note.created_at)}</span>
+
+                                        <div className="flex-1 mb-6">
+                                            <p className="text-gray-400 text-sm line-clamp-4 leading-relaxed whitespace-pre-wrap">
+                                                {note.content || "Empty content..."}
+                                            </p>
+                                            <div className="flex flex-wrap gap-1.5 mt-3">
+                                                {note.tags?.map(tag => (
+                                                    <span key={tag} className="px-2 py-0.5 bg-gray-950/40 text-gray-500 rounded-md text-[10px] border border-white/5">
+                                                        #{tag}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {note.audio_file_id && token && (
+                                            <div className="mb-6 p-3 bg-black/40 rounded-2xl border border-white/5" onClick={e => e.stopPropagation()}>
+                                                <audio
+                                                    controls
+                                                    src={`${BASE_URL}/api/files/download/${note.audio_file_id}?token=${token}`}
+                                                    className="w-full h-8"
+                                                />
+                                            </div>
+                                        )}
+
+                                        <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-between">
+                                            <div className="flex flex-col">
+                                                <span className="text-[10px] text-gray-600 font-bold uppercase mb-0.5">Project</span>
+                                                <div className="flex items-center gap-1">
+                                                    {note.project_id ? (
+                                                        <button onClick={(e) => { e.stopPropagation(); onOpenProject(note.project_id!) }} className="text-xs text-gray-400 hover:text-cyan-400 flex items-center gap-1 transition-colors">
+                                                            {getProjectName(note.project_id)}
+                                                            <ExternalLink size={10} />
+                                                        </button>
+                                                    ) : (
+                                                        <span className="text-xs text-gray-500">Global Space</span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <div className="text-right">
+                                                <span className="text-[10px] text-gray-600 font-bold uppercase block mb-0.5">Created</span>
+                                                <span className="text-[10px] font-mono text-gray-500">{formatDate(note.created_at)}</span>
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
-                            ))}
+                                )
+                            })}
                         </div>
                     )}
                 </div>
             </div>
+
+            {/* Context Menu */}
+            {ctxMenu && (
+                <div
+                    className="fixed z-[100] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl py-1 min-w-[160px] animate-in fade-in zoom-in-95 duration-100"
+                    style={{ left: ctxMenu.x, top: ctxMenu.y }}
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    <button
+                        onClick={() => {
+                            const note = notes.find(n => n.id === ctxMenu.noteId)
+                            if (note) startEditing(note)
+                            setCtxMenu(null)
+                        }}
+                        className="w-full flex items-center gap-2.5 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors"
+                    >
+                        <Edit2 size={14} /> Edit
+                    </button>
+                    <button
+                        onClick={() => {
+                            if (selectedIds.size > 1 && selectedIds.has(ctxMenu.noteId)) {
+                                deleteSelected()
+                            } else {
+                                deleteNote(ctxMenu.noteId)
+                            }
+                            setCtxMenu(null)
+                        }}
+                        className="w-full flex items-center gap-2.5 px-4 py-2 text-sm text-red-400 hover:bg-red-500/10 transition-colors"
+                    >
+                        <Trash2 size={14} /> {selectedIds.size > 1 && selectedIds.has(ctxMenu.noteId) ? `Delete ${selectedIds.size} Notes` : "Delete"}
+                    </button>
+                </div>
+            )}
+
+            {/* Undo Toast */}
+            {undoToast && (
+                <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-gray-800 border border-gray-700 px-5 py-3 rounded-xl shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-200">
+                    <Undo2 size={16} className="text-cyan-400" />
+                    <span className="text-sm text-gray-200">{undoToast}</span>
+                    <button
+                        onClick={performUndo}
+                        className="text-cyan-400 hover:text-cyan-300 text-sm font-bold ml-2 transition-colors"
+                    >
+                        Undo
+                    </button>
+                </div>
+            )}
 
             {/* Modals */}
             {isCreating && (
@@ -385,6 +601,7 @@ export default function NotesView({ onOpenProject }: { onOpenProject: (projectId
                                 value={newNote.title}
                                 onChange={(e) => setNewNote({ ...newNote, title: e.target.value })}
                                 className="w-full bg-black/40 border border-gray-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500/50"
+                                autoFocus
                             />
                             <textarea
                                 placeholder="Write your note..."
