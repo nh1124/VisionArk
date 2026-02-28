@@ -294,13 +294,18 @@ export async function sendChat(
     projectId: string,
     message: string,
     sessionId?: string | null,
-    model?: string
+    model?: string,
+    files?: File[]
 ): Promise<{ task_id: string }> {
     const formData = new FormData()
     formData.append("message", message)
 
-    // session_id is computed backend side via default_session selection
-    // if needed in the future, we could append it to formData.
+    // Append uploaded files
+    if (files && files.length > 0) {
+        for (const file of files) {
+            formData.append("files", file, file.name)
+        }
+    }
 
     const headers: Record<string, string> = {}
     if (model) {

@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from "react"
 import { fetchHistory, sendChat, getTaskStatus, type ChatMessage as ChatMessageType } from "../lib/api"
 import ChatMessage from "./ChatMessage"
 import ChatInput from "./ChatInput"
+import FileViewer from "./FileViewer"
+import ImagePreviewModal from "./ImagePreviewModal"
 
 import { type ProjectSidebarMode } from "../App"
 import ProjectNotes from "./ProjectNotes"
@@ -22,6 +24,8 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
     const [loading, setLoading] = useState(false)
     const [statusText, setStatusText] = useState("")
     const [model, setModel] = useState("gemini-3.1-pro")
+    const [fileViewer, setFileViewer] = useState<{ content: string; path: string; format: "markdown" | "code" | "pdf"; fileUrl?: string } | null>(null)
+    const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null)
     const messagesEndRef = useRef<HTMLDivElement>(null)
     const pollRef = useRef<NodeJS.Timeout | null>(null)
     const timerRef = useRef<NodeJS.Timeout | null>(null)
@@ -47,8 +51,8 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
     }, [messages])
 
-    const handleSend = async (content: string) => {
-        if (!content.trim() || loading) return
+    const handleSend = async (content: string, files?: File[]) => {
+        if ((!content.trim() && (!files || files.length === 0)) || loading) return
 
         // Optimistic add
         setMessages((prev) => [...prev, { role: "user", content }])
@@ -56,7 +60,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
         setStatusText("Processing your request...")
 
         try {
-            const { task_id } = await sendChat(projectId, content, sessionId, model)
+            const { task_id } = await sendChat(projectId, content, sessionId, model, files)
 
             // Add placeholder for assistant
             setMessages((prev) => [...prev, { role: "assistant", content: "" }])
@@ -182,7 +186,16 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                     {/* Content area */}
                     <div className="flex-1 overflow-hidden min-h-0">
                         {sidebarMode === "files" && (
-                            <FilesSidebar nodeType="project" nodeName={projectId} />
+                            <FilesSidebar
+                                nodeType="project"
+                                nodeName={projectId}
+                                onOpenFile={(content, path, format, fileUrl) => {
+                                    setFileViewer({ content, path, format, fileUrl })
+                                }}
+                                onPreviewImage={(url, name) => {
+                                    setPreviewImage({ url, name })
+                                }}
+                            />
                         )}
                         {sidebarMode === "notes" && (
                             <ProjectNotes projectId={projectId} />
@@ -195,6 +208,27 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                         )}
                     </div>
                 </div>
+            )}
+
+            {/* File Viewer Panel */}
+            {fileViewer && (
+                <FileViewer
+                    content={fileViewer.content}
+                    filePath={fileViewer.path}
+                    format={fileViewer.format}
+                    projectId={projectId}
+                    onClose={() => setFileViewer(null)}
+                    fileUrl={fileViewer.fileUrl}
+                />
+            )}
+
+            {/* Image Preview Modal */}
+            {previewImage && (
+                <ImagePreviewModal
+                    url={previewImage.url}
+                    name={previewImage.name}
+                    onClose={() => setPreviewImage(null)}
+                />
             )}
         </div>
     )

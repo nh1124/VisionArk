@@ -28,7 +28,7 @@ interface FilesSidebarProps {
     nodeType: "hub" | "spoke" | "project";
     nodeName: string;
     onSyncComplete?: (files: FileInfo[]) => void;
-    onOpenFile?: (content: string, filePath: string, format: "markdown" | "code") => void;
+    onOpenFile?: (content: string, filePath: string, format: "markdown" | "code" | "pdf", fileUrl?: string) => void;
     onPreviewImage?: (url: string, name: string) => void;
 }
 
@@ -415,6 +415,7 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete, onOpe
         }
 
         const isImage = node.mime_type?.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(node.name);
+        const isPdf = node.mime_type === 'application/pdf' || /\.pdf$/i.test(node.name);
 
         const handleDownload = (e: React.MouseEvent) => {
             e.stopPropagation();
@@ -426,6 +427,11 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete, onOpe
                 const token = await getFileToken();
                 const url = `/api/files/download/${node.id}?token=${token}`;
                 onPreviewImage?.(url, node.name);
+            } else if (isPdf && node.id) {
+                const token = await getFileToken();
+                const pdfUrl = `/api/files/download/${node.id}?token=${token}`;
+                // Pass empty content + pdf format + the download URL
+                onOpenFile?.("", node.name, "pdf" as any, pdfUrl);
             } else if (node.id) {
                 openFileInCanvas(node.id, node.name);
             }
