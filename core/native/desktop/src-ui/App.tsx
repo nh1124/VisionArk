@@ -16,7 +16,7 @@ import ProjectsView from "./components/ProjectsView"
 import AgentsView from "./components/AgentsView"
 import TasksView from "./components/TasksView"
 import SettingsView from "./components/SettingsView"
-import { isLoggedIn, listProjects, type Project } from "./lib/api"
+import { isLoggedIn, logout, listProjects, type Project } from "./lib/api"
 
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(false)
@@ -62,6 +62,12 @@ export default function App() {
   const handleTaskFilterChange = useCallback((filter: TaskFilter, context?: string) => {
     setTaskFilter(filter)
     setTaskFilterContext(context)
+  }, [])
+
+  const handleLogout = useCallback(async () => {
+    await logout()
+    setLoggedIn(false)
+    setUsername("")
   }, [])
 
   // Window close → hide to tray; listen for approval events
@@ -131,6 +137,8 @@ export default function App() {
         taskFilter={taskFilter}
         taskFilterContext={taskFilterContext}
         onTaskFilterChange={handleTaskFilterChange}
+        username={username}
+        onLogout={handleLogout}
       />
 
       {/* Right: Main Content */}

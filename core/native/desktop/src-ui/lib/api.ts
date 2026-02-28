@@ -222,6 +222,10 @@ export async function isLoggedIn(): Promise<boolean> {
     return !!token;
 }
 
+export async function logout(): Promise<void> {
+    await clearTokens();
+}
+
 // ─── Projects ──────────────────────────────────────────────────────────────────
 
 export interface Project {

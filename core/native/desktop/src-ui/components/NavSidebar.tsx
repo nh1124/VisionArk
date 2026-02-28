@@ -4,7 +4,9 @@ import {
   AlarmClock, StickyNote, Library, Settings, Plus, MessageSquare,
   MoreVertical, Pencil, Copy, Trash2, Download, Archive,
   Sun, Star, Calendar, Inbox as InboxIcon,
+  LogOut, HelpCircle, ChevronUp, Keyboard,
 } from "lucide-react"
+import KeyboardShortcutsModal from "./KeyboardShortcutsModal"
 import {
   apiFetch, listProjects, listSessions, getFileToken, listLBSTasks,
   BASE_URL,
@@ -28,65 +30,73 @@ interface Props {
   taskFilter?: TaskFilter
   taskFilterContext?: string
   onTaskFilterChange?: (filter: TaskFilter, context?: string) => void
+  username?: string
+  onLogout?: () => void
 }
 
 const navItems: { id: NavView; icon: React.ElementType; label: string }[] = [
   { id: "dashboard", icon: LayoutGrid, label: "Dashboard" },
-  { id: "projects",  icon: Folder,      label: "Projects"   },
-  { id: "agents",    icon: Bot,          label: "Agents"     },
-  { id: "tasks",     icon: ClipboardList, label: "Tasks"     },
-  { id: "jobs",      icon: Play,         label: "Jobs"       },
-  { id: "approvals", icon: ShieldCheck,  label: "Approvals"  },
-  { id: "cron",      icon: AlarmClock,   label: "Cron Tasks" },
-  { id: "notes",     icon: StickyNote,   label: "Notes"      },
-  { id: "workspace", icon: Library,      label: "Workspace"  },
+  { id: "projects", icon: Folder, label: "Projects" },
+  { id: "agents", icon: Bot, label: "Agents" },
+  { id: "tasks", icon: ClipboardList, label: "Tasks" },
+  { id: "jobs", icon: Play, label: "Jobs" },
+  { id: "approvals", icon: ShieldCheck, label: "Approvals" },
+  { id: "cron", icon: AlarmClock, label: "Cron Tasks" },
+  { id: "notes", icon: StickyNote, label: "Notes" },
+  { id: "workspace", icon: Library, label: "Workspace" },
 ]
 
 const taskCategories: { id: TaskFilter; label: string; icon: React.ElementType }[] = [
-  { id: "today",    label: "Today",   icon: Sun      },
-  { id: "my-day",   label: "My Day",  icon: Star     },
-  { id: "planned",  label: "Planned", icon: Calendar },
-  { id: "overdue",  label: "Overdue", icon: AlarmClock },
-  { id: "inbox",    label: "Inbox",   icon: InboxIcon },
+  { id: "today", label: "Today", icon: Sun },
+  { id: "my-day", label: "My Day", icon: Star },
+  { id: "planned", label: "Planned", icon: Calendar },
+  { id: "overdue", label: "Overdue", icon: AlarmClock },
+  { id: "inbox", label: "Inbox", icon: InboxIcon },
 ]
 
 export default function NavSidebar({
   active, onChange, selectedProjectId, selectedSessionId,
   pendingApprovals, isCollapsed, onToggle,
   taskFilter = "today", taskFilterContext, onTaskFilterChange,
+  username, onLogout,
 }: Props) {
-  const [projects, setProjects]             = useState<Project[]>([])
-  const [sessions, setSessions]             = useState<Session[]>([])
+  const [projects, setProjects] = useState<Project[]>([])
+  const [sessions, setSessions] = useState<Session[]>([])
   const [projectsExpanded, setProjectsExpanded] = useState(true)
-  const [chatsExpanded, setChatsExpanded]   = useState(true)
-  const [taskContexts, setTaskContexts]     = useState<string[]>([])
+  const [chatsExpanded, setChatsExpanded] = useState(true)
+  const [taskContexts, setTaskContexts] = useState<string[]>([])
+
+  // User menu & shortcut modal states
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const userMenuRef = useRef<HTMLDivElement>(null)
 
   // Hover / dropdown states
-  const [hoveredProject, setHoveredProject]           = useState<string | null>(null)
-  const [projectMenuOpen, setProjectMenuOpen]         = useState<string | null>(null)
-  const [projectMenuPos, setProjectMenuPos]           = useState<{ top: number; right: number } | null>(null)
-  const projectMenuRef                                 = useRef<HTMLDivElement>(null)
+  const [hoveredProject, setHoveredProject] = useState<string | null>(null)
+  const [projectMenuOpen, setProjectMenuOpen] = useState<string | null>(null)
+  const [projectMenuPos, setProjectMenuPos] = useState<{ top: number; right: number } | null>(null)
+  const projectMenuRef = useRef<HTMLDivElement>(null)
 
-  const [hoveredSession, setHoveredSession]           = useState<string | null>(null)
-  const [sessionMenuOpen, setSessionMenuOpen]         = useState<string | null>(null)
-  const [sessionMenuPos, setSessionMenuPos]           = useState<{ top: number; right: number } | null>(null)
-  const sessionMenuRef                                 = useRef<HTMLDivElement>(null)
+  const [hoveredSession, setHoveredSession] = useState<string | null>(null)
+  const [sessionMenuOpen, setSessionMenuOpen] = useState<string | null>(null)
+  const [sessionMenuPos, setSessionMenuPos] = useState<{ top: number; right: number } | null>(null)
+  const sessionMenuRef = useRef<HTMLDivElement>(null)
 
   // Inline edit states
-  const [editingProjectId, setEditingProjectId]   = useState<string | null>(null)
-  const [editProjectTitle, setEditProjectTitle]   = useState("")
-  const projectEditRef                             = useRef<HTMLInputElement>(null)
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
+  const [editProjectTitle, setEditProjectTitle] = useState("")
+  const projectEditRef = useRef<HTMLInputElement>(null)
 
-  const [editingSessionId, setEditingSessionId]   = useState<string | null>(null)
-  const [editSessionTitle, setEditSessionTitle]   = useState("")
-  const sessionEditRef                             = useRef<HTMLInputElement>(null)
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
+  const [editSessionTitle, setEditSessionTitle] = useState("")
+  const sessionEditRef = useRef<HTMLInputElement>(null)
 
   // Data fetching
-  useEffect(() => { listProjects().then(setProjects).catch(() => {}) }, [])
+  useEffect(() => { listProjects().then(setProjects).catch(() => { }) }, [])
 
   useEffect(() => {
     if (!selectedProjectId) { setSessions([]); return }
-    listSessions(selectedProjectId).then(setSessions).catch(() => {})
+    listSessions(selectedProjectId).then(setSessions).catch(() => { })
   }, [selectedProjectId])
 
   useEffect(() => {
@@ -96,7 +106,7 @@ export default function NavSidebar({
         const ctxs = Array.from(new Set(tasks.map((t) => t.context).filter(Boolean))).sort() as string[]
         setTaskContexts(ctxs)
       })
-      .catch(() => {})
+      .catch(() => { })
   }, [active])
 
   // Close dropdowns on outside click
@@ -107,6 +117,9 @@ export default function NavSidebar({
       }
       if (sessionMenuRef.current && !sessionMenuRef.current.contains(e.target as Node)) {
         setSessionMenuOpen(null); setSessionMenuPos(null)
+      }
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false)
       }
     }
     document.addEventListener("mousedown", handler)
@@ -156,7 +169,7 @@ export default function NavSidebar({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ new_display_name: `${project.display_name || project.name} (Copy)` }),
       })
-      if (res.ok) listProjects().then(setProjects).catch(() => {})
+      if (res.ok) listProjects().then(setProjects).catch(() => { })
     } catch (e) { console.error("Clone project failed:", e) }
     setProjectMenuOpen(null); setProjectMenuPos(null)
   }
@@ -175,8 +188,8 @@ export default function NavSidebar({
   async function handleExportChat(project: Project) {
     try {
       const token = await getFileToken()
-      const url   = `${BASE_URL}/api/export/chat/project/${project.id}?token=${token}`
-      const a     = document.createElement("a")
+      const url = `${BASE_URL}/api/export/chat/project/${project.id}?token=${token}`
+      const a = document.createElement("a")
       a.href = url
       a.download = `${project.display_name || project.name}_chat.md`
       document.body.appendChild(a); a.click(); document.body.removeChild(a)
@@ -254,9 +267,8 @@ export default function NavSidebar({
 
   return (
     <div
-      className={`bg-gray-950 border-r border-gray-800/50 flex flex-col h-full transition-all duration-200 relative flex-shrink-0 ${
-        isCollapsed ? "w-16" : "w-64"
-      }`}
+      className={`bg-gray-950 border-r border-gray-800/50 flex flex-col h-full transition-all duration-200 relative flex-shrink-0 ${isCollapsed ? "w-16" : "w-64"
+        }`}
     >
       {/* Toggle Button */}
       <button
@@ -280,18 +292,16 @@ export default function NavSidebar({
       <div className="flex-shrink-0 px-3 py-2 space-y-1">
         {navItems.map(({ id, icon: Icon, label }) => {
           const isActive = active === id
-          const badge    = id === "approvals" && pendingApprovals > 0
+          const badge = id === "approvals" && pendingApprovals > 0
           return (
             <button
               key={id}
               onClick={() => onChange(id)}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${
-                isCollapsed ? "justify-center" : ""
-              } ${
-                isActive
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${isCollapsed ? "justify-center" : ""
+                } ${isActive
                   ? "bg-cyan-500 text-white shadow-lg shadow-cyan-500/20"
                   : "text-gray-500 hover:bg-gray-800/50 hover:text-gray-300"
-              }`}
+                }`}
               title={isCollapsed ? label : ""}
             >
               <span className={isActive ? "text-white" : "text-gray-500"}>
@@ -318,13 +328,11 @@ export default function NavSidebar({
                 <button
                   key={id}
                   onClick={() => onTaskFilterChange?.(id)}
-                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-bold transition-all ${
-                    isCollapsed ? "justify-center" : ""
-                  } ${
-                    taskFilter === id
+                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-bold transition-all ${isCollapsed ? "justify-center" : ""
+                    } ${taskFilter === id
                       ? "bg-blue-600/10 text-blue-400"
                       : "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200"
-                  }`}
+                    }`}
                   title={isCollapsed ? label : ""}
                 >
                   <span className={taskFilter === id ? "text-blue-400" : "text-gray-500"}>
@@ -343,11 +351,10 @@ export default function NavSidebar({
                 </h4>
                 <button
                   onClick={() => onTaskFilterChange?.("inbox")}
-                  className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                    taskFilter !== "project"
+                  className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${taskFilter !== "project"
                       ? "bg-gray-800 text-white"
                       : "text-gray-500 hover:text-gray-300 hover:bg-gray-900/40"
-                  }`}
+                    }`}
                 >
                   <InboxIcon
                     size={14}
@@ -359,11 +366,10 @@ export default function NavSidebar({
                   <button
                     key={ctx}
                     onClick={() => onTaskFilterChange?.("project", ctx)}
-                    className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                      taskFilter === "project" && taskFilterContext === ctx
+                    className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${taskFilter === "project" && taskFilterContext === ctx
                         ? "bg-gray-800 text-cyan-400"
                         : "text-gray-500 hover:text-gray-300 hover:bg-gray-900/40"
-                    }`}
+                      }`}
                   >
                     <Folder
                       size={14}
@@ -384,9 +390,8 @@ export default function NavSidebar({
             {/* Projects header */}
             <button
               onClick={() => setProjectsExpanded(!projectsExpanded)}
-              className={`flex items-center w-full px-4 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-300 transition-colors ${
-                isCollapsed ? "justify-center px-2" : ""
-              }`}
+              className={`flex items-center w-full px-4 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-300 transition-colors ${isCollapsed ? "justify-center px-2" : ""
+                }`}
             >
               {isCollapsed ? (
                 <span>P</span>
@@ -415,7 +420,7 @@ export default function NavSidebar({
                     <div className="px-3 py-2 text-xs text-gray-600 italic">No projects yet</div>
                   ) : (
                     projects.map((project) => {
-                      const isActive  = selectedProjectId === project.id && active === "chat"
+                      const isActive = selectedProjectId === project.id && active === "chat"
                       const isHovered = hoveredProject === project.id
                       return (
                         <div
@@ -439,11 +444,10 @@ export default function NavSidebar({
                           ) : (
                             <button
                               onClick={() => onChange("chat", project.id)}
-                              className={`w-full flex items-center px-3 py-2 rounded-lg text-sm transition-colors text-left ${
-                                isActive
+                              className={`w-full flex items-center px-3 py-2 rounded-lg text-sm transition-colors text-left ${isActive
                                   ? "bg-gray-800 text-white"
                                   : "text-gray-400 hover:bg-gray-800/50 hover:text-white"
-                              }`}
+                                }`}
                             >
                               <span className="truncate flex-1">
                                 {project.display_name || project.name}
@@ -497,7 +501,7 @@ export default function NavSidebar({
                       ) : (
                         sessions.map((session) => {
                           const isActiveSession = selectedSessionId === session.id
-                          const isHovered       = hoveredSession === session.id
+                          const isHovered = hoveredSession === session.id
                           return (
                             <div
                               key={session.id}
@@ -520,11 +524,10 @@ export default function NavSidebar({
                               ) : (
                                 <button
                                   onClick={() => onChange("chat", selectedProjectId, session.id)}
-                                  className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg text-xs transition-colors text-left ${
-                                    isActiveSession
+                                  className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg text-xs transition-colors text-left ${isActiveSession
                                       ? "bg-cyan-500/15 text-white"
                                       : "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200"
-                                  }`}
+                                    }`}
                                 >
                                   <MessageSquare size={11} className="flex-shrink-0 opacity-40" />
                                   <span className="truncate flex-1">
@@ -557,23 +560,60 @@ export default function NavSidebar({
         )}
       </div>
 
-      {/* ── Footer (fixed) ────────────────────────────────────────────────── */}
-      <div className="p-3 border-t border-gray-800/50 flex-shrink-0">
+      {/* ── Footer — User Menu ────────────────────────────────────────────── */}
+      <div className="p-3 border-t border-gray-800/50 flex-shrink-0 relative" ref={userMenuRef}>
         <button
-          onClick={() => onChange("settings")}
-          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${
-            isCollapsed ? "justify-center" : ""
-          } ${
-            active === "settings"
-              ? "bg-cyan-500 text-white shadow-lg shadow-cyan-500/20"
-              : "text-gray-500 hover:bg-gray-800/50 hover:text-gray-300"
-          }`}
-          title={isCollapsed ? "Settings" : ""}
+          onClick={() => setUserMenuOpen(!userMenuOpen)}
+          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${isCollapsed ? "justify-center" : ""
+            } ${userMenuOpen
+              ? "bg-gray-800 text-white"
+              : "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200"
+            }`}
+          title={isCollapsed ? (username || "Menu") : ""}
         >
-          <Settings size={20} className={active === "settings" ? "text-white" : "text-gray-500"} />
-          {!isCollapsed && <span>Settings</span>}
+          {/* Avatar initial */}
+          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0 shadow-md">
+            {(username || "U").charAt(0).toUpperCase()}
+          </div>
+          {!isCollapsed && (
+            <>
+              <span className="flex-1 text-left truncate">{username || "User"}</span>
+              <ChevronUp size={14} className={`text-gray-500 transition-transform duration-200 ${userMenuOpen ? "" : "rotate-180"}`} />
+            </>
+          )}
         </button>
+
+        {/* Popup menu */}
+        {userMenuOpen && (
+          <div
+            className={`absolute bottom-full mb-2 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl py-1.5 z-[9999] min-w-[200px] ${isCollapsed ? "left-0" : "left-3 right-3"
+              }`}
+          >
+            <button
+              onClick={() => { onChange("settings"); setUserMenuOpen(false) }}
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
+            >
+              <Settings size={16} /> Settings
+            </button>
+            <button
+              onClick={() => { setShortcutsOpen(true); setUserMenuOpen(false) }}
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
+            >
+              <Keyboard size={16} /> Keyboard Shortcuts
+            </button>
+            <div className="my-1 border-t border-gray-700" />
+            <button
+              onClick={() => { onLogout?.(); setUserMenuOpen(false) }}
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10 transition-colors"
+            >
+              <LogOut size={16} /> Log out
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* Keyboard Shortcuts Modal */}
+      <KeyboardShortcutsModal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 
       {/* ── Project dropdown (fixed-position) ─────────────────────────────── */}
       {projectMenuOpen && projectMenuPos && openMenuProject && (
