@@ -1,0 +1,119 @@
+import React, { useState, useEffect, useRef } from "react";
+import ReactDOM from "react-dom/client";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import "./index.css";
+import { apiFetch } from "./lib/api";
+
+const QuickNoteApp = () => {
+    const [noteContent, setNoteContent] = useState("");
+    const [isSaving, setIsSaving] = useState(false);
+    const textRef = useRef<HTMLTextAreaElement>(null);
+    const appWindow = getCurrentWindow();
+
+    // Auto-focus textarea on mount
+    useEffect(() => {
+        textRef.current?.focus();
+    }, []);
+
+    const handleClose = () => {
+        appWindow.destroy();
+    };
+
+    const handleSave = async () => {
+        if (!noteContent.trim()) {
+            handleClose();
+            return;
+        }
+
+        setIsSaving(true);
+        try {
+            const res = await apiFetch("/api/notes", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    title: "",
+                    content: noteContent,
+                    tags: ["quick-note"],
+                }),
+            });
+
+            if (res.ok) {
+                handleClose();
+            } else {
+                console.error("Failed to save quick note");
+            }
+        } catch (err) {
+            console.error("Error saving quick note:", err);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === "Escape") {
+            handleClose();
+        } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+            handleSave();
+        }
+    };
+
+    return (
+        <div
+            className="flex flex-col h-screen w-screen overflow-hidden"
+            style={{ background: "transparent" }}
+        >
+            <div className="flex flex-col h-full bg-gray-900/95 backdrop-blur-md rounded-xl border border-gray-700 shadow-2xl p-4 overflow-hidden">
+                {/* Draggable title bar */}
+                <div
+                    data-tauri-drag-region
+                    className="flex justify-between items-center mb-3 cursor-move select-none"
+                >
+                    <span
+                        data-tauri-drag-region
+                        className="text-gray-400 text-xs font-bold tracking-wider"
+                    >
+                        QUICK NOTE
+                    </span>
+                    <button
+                        onClick={handleClose}
+                        className="hover:text-white text-gray-500 transition-colors p-1 text-sm"
+                        title="Close (Esc)"
+                    >
+                        ✕
+                    </button>
+                </div>
+
+                {/* Text area */}
+                <textarea
+                    ref={textRef}
+                    value={noteContent}
+                    onChange={(e) => setNoteContent(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Type here... (Ctrl+Enter to save, Esc to close)"
+                    className="flex-1 bg-black/30 text-white p-3 rounded-lg border border-gray-800 focus:outline-none focus:border-cyan-500/50 resize-none font-sans text-sm"
+                    disabled={isSaving}
+                />
+
+                {/* Footer */}
+                <div className="flex justify-between items-center mt-3">
+                    <span className="text-[10px] text-gray-500">
+                        Saved to VisionArk Notes
+                    </span>
+                    <button
+                        onClick={handleSave}
+                        disabled={isSaving || !noteContent.trim()}
+                        className="bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-1.5 rounded-lg text-xs font-bold transition-all"
+                    >
+                        {isSaving ? "Saving..." : "Save"}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <React.StrictMode>
+        <QuickNoteApp />
+    </React.StrictMode>
+);

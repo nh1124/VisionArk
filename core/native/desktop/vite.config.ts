@@ -31,6 +31,12 @@ export default defineConfig({
   build: {
     outDir: "../dist",
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, "src-ui/index.html"),
+        quicknote: path.resolve(__dirname, "src-ui/quick-note.html"),
+      },
+    },
   },
 })
 
