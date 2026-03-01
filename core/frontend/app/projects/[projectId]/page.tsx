@@ -966,7 +966,7 @@ export default function ProjectChatPage({
             const response = await apiFetch(`/api/agents/project/${projectId}/branch`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ message_index: index })
+                body: JSON.stringify({ message_index: index, session_id: activeSessionIdRef.current ?? undefined })
             });
 
             if (response.ok) {
@@ -1043,7 +1043,7 @@ export default function ProjectChatPage({
             const response = await apiFetch(`/api/agents/project/${projectId}/messages/truncate`, {
                 method: "DELETE",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ message_index: index })
+                body: JSON.stringify({ message_index: index, session_id: activeSessionIdRef.current ?? undefined })
             });
 
             if (response.ok) {
@@ -1068,7 +1068,7 @@ export default function ProjectChatPage({
             const response = await apiFetch(`/api/agents/project/${projectId}/messages/truncate`, {
                 method: "DELETE",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ message_index: index })
+                body: JSON.stringify({ message_index: index, session_id: activeSessionIdRef.current ?? undefined })
             });
 
             if (response.ok) {

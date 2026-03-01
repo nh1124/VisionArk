@@ -1,9 +1,13 @@
 use anyhow::Result;
 use futures_util::StreamExt;
+use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{error, info, warn};
 
-pub async fn run(api_base: String, token: String) -> Result<()> {
+/// Job-related WebSocket event types that should trigger immediate polling.
+const TRIGGER_EVENT_TYPES: &[&str] = &["job.created", "job.queued", "job.updated"];
+
+pub async fn run(api_base: String, token: String, trigger_tx: mpsc::Sender<()>) -> Result<()> {
     // WebSocket is optional — skip if no token is configured
     if token.is_empty() {
         warn!("No VISIONARK_TOKEN set; skipping WebSocket bridge");
@@ -47,6 +51,15 @@ pub async fn run(api_base: String, token: String) -> Result<()> {
                             match msg {
                                 Ok(Message::Text(text)) => {
                                     info!("WS message: {}", text);
+                                    // Parse event and wake job_runner on job events
+                                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                                        let event_type = v["type"].as_str().unwrap_or("");
+                                        if TRIGGER_EVENT_TYPES.contains(&event_type) {
+                                            info!("Push trigger: {} — waking job runner", event_type);
+                                            // try_send: drop trigger if channel is full (runner already awake)
+                                            let _ = trigger_tx.try_send(());
+                                        }
+                                    }
                                 }
                                 Ok(Message::Close(_)) => {
                                     warn!("WebSocket closed by server");

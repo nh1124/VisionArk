@@ -183,6 +183,7 @@ async def update_job_status(
             status=body.status,
             error_log=body.error_log,
             result=body.result,
+            user_id=identity.user_id,
         )
         return _job_to_response(job)
     except ValueError as e:
@@ -316,6 +317,28 @@ async def dispatch_job(
     return plan
 
 
+@jobs_router.post("/{job_id}/retry", response_model=JobResponse)
+async def retry_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_async_db),
+    identity: Identity = Depends(resolve_identity),
+):
+    """Re-queue a failed or rejected job for re-execution."""
+    job = await JobService.get_job(db, job_id, identity.user_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status not in ("failed", "rejected"):
+        raise HTTPException(status_code=400, detail=f"Only failed/rejected jobs can be retried (status: {job.status})")
+    job.status = "queued"
+    job.error_log = None
+    job.result = None
+    job.started_at = None
+    job.finished_at = None
+    await db.commit()
+    await db.refresh(job)
+    return _job_to_response(job)
+
+
 @jobs_router.post("/{job_id}/approve", response_model=JobResponse)
 async def approve_job(
     job_id: str,
@@ -339,7 +362,7 @@ async def reject_job(
     identity: Identity = Depends(resolve_identity),
 ):
     try:
-        job = await JobService.reject_job(db, job_id)
+        job = await JobService.reject_job(db, job_id, identity.user_id)
         return _job_to_response(job)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -371,6 +394,24 @@ async def list_integrations(
         )
         for c in connections
     ]
+
+
+@native_router.delete("/integrations/{integration_id}", status_code=204)
+async def delete_integration(
+    integration_id: str,
+    db: AsyncSession = Depends(get_async_db),
+    identity: Identity = Depends(resolve_identity),
+):
+    stmt = select(IntegrationConnection).where(
+        IntegrationConnection.id == integration_id,
+        IntegrationConnection.user_id == identity.user_id,
+    )
+    result = await db.execute(stmt)
+    conn = result.scalars().first()
+    if not conn:
+        raise HTTPException(status_code=404, detail="Integration not found")
+    await db.delete(conn)
+    await db.commit()
 
 
 @native_router.post("/integrations", response_model=IntegrationResponse)
@@ -426,6 +467,24 @@ async def list_rules(
         )
         for r in rules
     ]
+
+
+@native_router.delete("/rules/{rule_id}", status_code=204)
+async def delete_rule(
+    rule_id: str,
+    db: AsyncSession = Depends(get_async_db),
+    identity: Identity = Depends(resolve_identity),
+):
+    stmt = select(AutomationRule).where(
+        AutomationRule.id == rule_id,
+        AutomationRule.user_id == identity.user_id,
+    )
+    result = await db.execute(stmt)
+    rule = result.scalars().first()
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    await db.delete(rule)
+    await db.commit()
 
 
 @native_router.post("/rules", response_model=RuleResponse)

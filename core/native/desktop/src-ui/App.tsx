@@ -16,7 +16,8 @@ import ProjectsView from "./components/ProjectsView"
 import AgentsView from "./components/AgentsView"
 import TasksView from "./components/TasksView"
 import SettingsView from "./components/SettingsView"
-import { isLoggedIn, logout, listProjects, type Project } from "./lib/api"
+import { isLoggedIn, logout, listProjects, initApiBase, getApiBase, getToken, type Project } from "./lib/api"
+import { listJobs, configure as configureBridge } from "../../bridge/api"
 
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(false)
@@ -34,10 +35,17 @@ export default function App() {
   const [projectSidebarMode, setProjectSidebarMode] = useState<ProjectSidebarMode>(null)
 
   useEffect(() => {
-    isLoggedIn().then(status => {
+    const bootstrap = async () => {
+      // 1. Restore stored server URL (also syncs bridge via _setBridgeBaseUrl)
+      await initApiBase()
+      // 2. Wire bridge to the shared URL and token getters (no more manual syncs)
+      configureBridge({ getBaseUrl: getApiBase, getToken })
+      // 3. Now check authentication
+      const status = await isLoggedIn()
       setLoggedIn(status)
       setAuthChecked(true)
-    })
+    }
+    bootstrap()
   }, [])
 
   useEffect(() => {
@@ -69,6 +77,22 @@ export default function App() {
     setLoggedIn(false)
     setUsername("")
   }, [])
+
+  // Poll for pending approvals count to show badge in NavSidebar
+  useEffect(() => {
+    if (!loggedIn) return
+    const poll = async () => {
+      try {
+        const jobs = await listJobs({ status: "needs_approval", limit: 50 })
+        setPendingApprovals(jobs.length)
+      } catch {
+        // ignore — not authenticated yet or backend unavailable
+      }
+    }
+    poll()
+    const timer = setInterval(poll, 10_000)
+    return () => clearInterval(timer)
+  }, [loggedIn])
 
   // Window close → hide to tray; listen for approval events
   useEffect(() => {

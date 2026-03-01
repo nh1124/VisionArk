@@ -34,6 +34,7 @@ class ChatMessageSchema(BaseModel):
 
 class TruncateRequest(BaseModel):
     message_index: int
+    session_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -42,7 +43,8 @@ class ChatResponse(BaseModel):
     executed_commands: list = []
     attached_files: list = []  # file metadata
     tool_calls: list = []  # structured tool call results
-    task_id: Optional[str] = None # For async polling
+    task_id: Optional[str] = None  # For async polling
+    session_id: Optional[str] = None  # Actual session used for the task
 
 
 class CreateProject(BaseModel):
@@ -64,6 +66,7 @@ class ProjectClone(BaseModel):
 
 class BranchChat(BaseModel):
     message_index: int  # Index in the history to branch from
+    session_id: Optional[str] = None
 
 
 class WorkspaceStats(BaseModel):
@@ -443,6 +446,7 @@ async def get_workspace_stats(
 async def chat_with_project(
     project_id: str,
     message: str = Form(""),
+    session_id: Optional[str] = Form(None),  # explicit session; falls back to default when absent
     files: List[UploadFile] = File(default=[]),
     stream: bool = Form(False),
     identity: Identity = Depends(resolve_identity),
@@ -493,27 +497,45 @@ async def chat_with_project(
         uploaded_files = await upload_files(file_service, files)
         print(f"[Project Chat] Uploaded {len(uploaded_files)} files")
    
-    # 3. Find default session to pass in context (backward compat)
-    default_session_id = None
-    sess_res = await db.execute(
-        select(ChatSession).filter(
-            ChatSession.project_id == project_id,
-            ChatSession.is_archived == False,
-            ChatSession.is_default == True,
-        ).limit(1)
-    )
-    default_sess = sess_res.scalars().first()
-    if not default_sess:
-        # Fallback: most recent non-archived session
-        sess_res2 = await db.execute(
+    # 3. Resolve session: explicit session_id takes priority over the project default
+    effective_session_id = None
+
+    if session_id:
+        # Verify the requested session exists and belongs to this project
+        sess_res = await db.execute(
+            select(ChatSession).filter(
+                ChatSession.id == session_id,
+                ChatSession.project_id == project_id,
+                ChatSession.is_archived == False,
+            ).limit(1)
+        )
+        sess = sess_res.scalars().first()
+        if sess:
+            effective_session_id = sess.id
+        else:
+            print(f"[Project Chat] session_id '{session_id}' not found for project {project_id}, falling back to default")
+
+    if not effective_session_id:
+        # Fall back to the project's default (is_default=True) session
+        sess_res = await db.execute(
             select(ChatSession).filter(
                 ChatSession.project_id == project_id,
                 ChatSession.is_archived == False,
-            ).order_by(ChatSession.created_at.desc()).limit(1)
+                ChatSession.is_default == True,
+            ).limit(1)
         )
-        default_sess = sess_res2.scalars().first()
-    if default_sess:
-        default_session_id = default_sess.id
+        default_sess = sess_res.scalars().first()
+        if not default_sess:
+            # Last resort: most recent non-archived session
+            sess_res2 = await db.execute(
+                select(ChatSession).filter(
+                    ChatSession.project_id == project_id,
+                    ChatSession.is_archived == False,
+                ).order_by(ChatSession.created_at.desc()).limit(1)
+            )
+            default_sess = sess_res2.scalars().first()
+        if default_sess:
+            effective_session_id = default_sess.id
 
     # 4. Enqueue Task
     manager = QueueManager()
@@ -525,11 +547,11 @@ async def chat_with_project(
         "env": "v4",
         "project_id": project_id,
         "files": [uploaded_file.id for uploaded_file in uploaded_files] if uploaded_files else [],
-        "session_id": default_session_id,
+        "session_id": effective_session_id,
     }
 
     task_id = await manager.enqueue(identity.user_id, message, context, task_type=TaskType.USER_MESSAGE)
-    print(f"[Project Chat] Enqueued task {task_id} for project {project_id}")
+    print(f"[Project Chat] Enqueued task {task_id} for project {project_id} (session={effective_session_id})")
 
     # Return placeholder response compliant with ChatResponse
     return ChatResponse(
@@ -538,7 +560,8 @@ async def chat_with_project(
         executed_commands=[],
         attached_files=[],
         tool_calls=[],
-        task_id=task_id
+        task_id=task_id,
+        session_id=effective_session_id,
     )
 
 
@@ -548,6 +571,7 @@ async def get_project_history(
     project_id: str,
     limit: Optional[int] = None,
     cursor: Optional[str] = None,
+    session_id: Optional[str] = None,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
@@ -556,6 +580,7 @@ async def get_project_history(
     Optional query params:
       - limit (int): number of messages per page
       - cursor (str): message id to paginate before (older-page cursor)
+      - session_id (str): specific session to fetch; defaults to the project's default session
 
     Without limit, returns legacy format: { history, message_count }.
     With limit, returns paginated format: { items, next_cursor, has_more }.
@@ -569,20 +594,30 @@ async def get_project_history(
         if not proj:
             raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
 
-        # Prefer the default session; fall back to most recent non-archived
-        result = await db.execute(select(ChatSession).filter(
-            ChatSession.project_id == proj.id,
-            ChatSession.is_archived == False,
-            ChatSession.is_default == True,
-        ).order_by(ChatSession.created_at.desc()))
-        active_session = result.scalars().first()
-
-        if not active_session:
+        # Resolve session: explicit > default > most recent non-archived
+        if session_id:
+            result = await db.execute(select(ChatSession).filter(
+                ChatSession.project_id == proj.id,
+                ChatSession.id == session_id,
+                ChatSession.is_archived == False,
+            ))
+            active_session = result.scalars().first()
+            if not active_session:
+                raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found")
+        else:
             result = await db.execute(select(ChatSession).filter(
                 ChatSession.project_id == proj.id,
                 ChatSession.is_archived == False,
+                ChatSession.is_default == True,
             ).order_by(ChatSession.created_at.desc()))
             active_session = result.scalars().first()
+
+            if not active_session:
+                result = await db.execute(select(ChatSession).filter(
+                    ChatSession.project_id == proj.id,
+                    ChatSession.is_archived == False,
+                ).order_by(ChatSession.created_at.desc()))
+                active_session = result.scalars().first()
 
         if not active_session:
             if limit is not None:
@@ -592,7 +627,7 @@ async def get_project_history(
         items, next_cursor, has_more = await _get_history_for_session(
             active_session.id, db, limit=limit, before_id=cursor
         )
-        print(f"📖 [History API] Found {len(items)} messages for project {project_id} (limit={limit}, cursor={cursor})")
+        print(f"📖 [History API] Found {len(items)} messages for project {project_id} (session={active_session.id}, limit={limit}, cursor={cursor})")
 
         if limit is not None:
             return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
@@ -611,10 +646,15 @@ async def get_project_history(
 async def get_project_history_delta(
     project_id: str,
     after_id: Optional[str] = None,
+    session_id: Optional[str] = None,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db)
 ):
     """Return messages created after `after_id` for the project's active session.
+
+    Optional query params:
+      - after_id (str): only return messages newer than this message id
+      - session_id (str): specific session to poll; defaults to the project's default session
 
     Returns: { items: [...] }
     If after_id is omitted, returns all messages (same as full history).
@@ -629,18 +669,29 @@ async def get_project_history_delta(
         if not proj:
             raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
 
-        result = await db.execute(select(ChatSession).filter(
-            ChatSession.project_id == proj.id,
-            ChatSession.is_archived == False,
-            ChatSession.is_default == True,
-        ).order_by(ChatSession.created_at.desc()))
-        active_session = result.scalars().first()
-        if not active_session:
+        # Resolve session: explicit > default > most recent non-archived
+        if session_id:
+            result = await db.execute(select(ChatSession).filter(
+                ChatSession.project_id == proj.id,
+                ChatSession.id == session_id,
+                ChatSession.is_archived == False,
+            ))
+            active_session = result.scalars().first()
+            if not active_session:
+                raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found")
+        else:
             result = await db.execute(select(ChatSession).filter(
                 ChatSession.project_id == proj.id,
                 ChatSession.is_archived == False,
+                ChatSession.is_default == True,
             ).order_by(ChatSession.created_at.desc()))
             active_session = result.scalars().first()
+            if not active_session:
+                result = await db.execute(select(ChatSession).filter(
+                    ChatSession.project_id == proj.id,
+                    ChatSession.is_archived == False,
+                ).order_by(ChatSession.created_at.desc()))
+                active_session = result.scalars().first()
 
         if not active_session:
             return {"items": []}
@@ -672,13 +723,30 @@ async def delete_project_messages_truncate(
         proj = result.scalars().first()
         if not proj:
             raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
-            
-        # Get active session
-        result = await db.execute(select(ChatSession).filter(
-            ChatSession.project_id == proj.id,
-            ChatSession.is_archived == False
-        ).order_by(ChatSession.created_at.desc()))
-        active_session = result.scalars().first()
+
+        # Resolve session: explicit > default > most recent non-archived
+        if request.session_id:
+            result = await db.execute(select(ChatSession).filter(
+                ChatSession.project_id == proj.id,
+                ChatSession.id == request.session_id,
+                ChatSession.is_archived == False,
+            ))
+            active_session = result.scalars().first()
+            if not active_session:
+                raise HTTPException(status_code=404, detail=f"Session '{request.session_id}' not found")
+        else:
+            result = await db.execute(select(ChatSession).filter(
+                ChatSession.project_id == proj.id,
+                ChatSession.is_archived == False,
+                ChatSession.is_default == True,
+            ).order_by(ChatSession.created_at.desc()))
+            active_session = result.scalars().first()
+            if not active_session:
+                result = await db.execute(select(ChatSession).filter(
+                    ChatSession.project_id == proj.id,
+                    ChatSession.is_archived == False,
+                ).order_by(ChatSession.created_at.desc()))
+                active_session = result.scalars().first()
         if not active_session:
             raise HTTPException(status_code=404, detail=f"Active project session not found")
             
@@ -725,12 +793,29 @@ async def branch_project_chat(
         if not source_proj:
             raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
         
-        # 2. Get active session
-        result = await db.execute(select(ChatSession).filter(
-            ChatSession.project_id == source_proj.id,
-            ChatSession.is_archived == False
-        ).order_by(ChatSession.created_at.desc()))
-        active_session = result.scalars().first()
+        # 2. Get active session: explicit > default > most recent non-archived
+        if branch_data.session_id:
+            result = await db.execute(select(ChatSession).filter(
+                ChatSession.project_id == source_proj.id,
+                ChatSession.id == branch_data.session_id,
+                ChatSession.is_archived == False,
+            ))
+            active_session = result.scalars().first()
+            if not active_session:
+                raise HTTPException(status_code=404, detail=f"Session '{branch_data.session_id}' not found")
+        else:
+            result = await db.execute(select(ChatSession).filter(
+                ChatSession.project_id == source_proj.id,
+                ChatSession.is_archived == False,
+                ChatSession.is_default == True,
+            ).order_by(ChatSession.created_at.desc()))
+            active_session = result.scalars().first()
+            if not active_session:
+                result = await db.execute(select(ChatSession).filter(
+                    ChatSession.project_id == source_proj.id,
+                    ChatSession.is_archived == False,
+                ).order_by(ChatSession.created_at.desc()))
+                active_session = result.scalars().first()
         if not active_session:
             raise HTTPException(status_code=404, detail="No active session to branch from")
         
@@ -1249,27 +1334,41 @@ async def list_project_agents(
 @router.get("/project/{project_id}/active-task")
 async def get_project_active_task(
     project_id: str,
+    session_id: Optional[str] = None,
     identity: Identity = Depends(resolve_identity),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Retrieve any active task ID for this project from Redis"""
+    """Retrieve any active task ID for this project from Redis.
+
+    Optional query param:
+      - session_id (str): check a specific session; defaults to the project's default session
+    """
     from infrastructure.queue.manager import QueueManager
 
     manager = QueueManager()
     task_id = await manager.get_active_task_for_project(project_id)
 
     if not task_id:
-        # Also check the default session's active task
-        sess_res = await db.execute(
-            select(ChatSession).filter(
-                ChatSession.project_id == project_id,
-                ChatSession.is_archived == False,
-                ChatSession.is_default == True,
-            ).limit(1)
-        )
-        default_sess = sess_res.scalars().first()
-        if default_sess:
-            task_id = await manager.get_active_task_for_session(default_sess.id)
+        # Resolve session: explicit > default
+        if session_id:
+            sess_res = await db.execute(
+                select(ChatSession).filter(
+                    ChatSession.project_id == project_id,
+                    ChatSession.id == session_id,
+                    ChatSession.is_archived == False,
+                ).limit(1)
+            )
+        else:
+            sess_res = await db.execute(
+                select(ChatSession).filter(
+                    ChatSession.project_id == project_id,
+                    ChatSession.is_archived == False,
+                    ChatSession.is_default == True,
+                ).limit(1)
+            )
+        sess = sess_res.scalars().first()
+        if sess:
+            task_id = await manager.get_active_task_for_session(sess.id)
 
     return {"task_id": task_id}
 

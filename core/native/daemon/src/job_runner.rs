@@ -2,11 +2,19 @@ use anyhow::Result;
 use reqwest::RequestBuilder;
 use serde_json::Value;
 use std::collections::HashSet;
+use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
+use crate::config::ExecutionPolicy;
 use crate::local_tools;
 
-pub async fn run(api_base: String, token: String) -> Result<()> {
+pub async fn run(
+    api_base: String,
+    token: String,
+    policy: ExecutionPolicy,
+    mut trigger_rx: mpsc::Receiver<()>,
+    poll_interval_secs: u64,
+) -> Result<()> {
     let client = reqwest::Client::new();
 
     loop {
@@ -16,7 +24,7 @@ pub async fn run(api_base: String, token: String) -> Result<()> {
                     let job_id = job["id"].as_str().unwrap_or("").to_string();
                     info!("Processing job {}", job_id);
                     if let Err(e) =
-                        run_job_with_plan(&client, &api_base, &token, &job_id).await
+                        run_job_with_plan(&client, &api_base, &token, &job_id, &policy).await
                     {
                         error!("Job {} failed: {}", job_id, e);
                         let _ = patch_job_status_with_error(
@@ -28,7 +36,14 @@ pub async fn run(api_base: String, token: String) -> Result<()> {
             }
             Err(e) => error!("Failed to poll jobs: {}", e),
         }
-        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+
+        // Wait for the poll interval OR a WebSocket push trigger (whichever comes first)
+        tokio::select! {
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval_secs)) => {}
+            _ = trigger_rx.recv() => {
+                info!("WS push trigger received — polling immediately");
+            }
+        }
     }
 }
 
@@ -38,6 +53,7 @@ async fn run_job_with_plan(
     api_base: &str,
     token: &str,
     job_id: &str,
+    policy: &ExecutionPolicy,
 ) -> Result<()> {
     // 1. Mark as running
     patch_job_status(client, api_base, token, job_id, "running").await?;
@@ -74,6 +90,9 @@ async fn run_job_with_plan(
             step_id, tool, risk
         );
 
+        // Mark the current step so the UI can show a spinner
+        let _ = set_current_step(client, api_base, token, job_id, Some(&step_id)).await;
+
         // High/critical risk steps require user approval
         if risk == "high" || risk == "critical" {
             info!("Step {} requires approval", step_id);
@@ -90,14 +109,15 @@ async fn run_job_with_plan(
             }
         }
 
-        // Execute the local tool
-        let tool_result = local_tools::dispatch_tool(&tool, &args).await;
+        // Execute the local tool (subject to execution policy)
+        let tool_result = local_tools::dispatch_tool(policy, &tool, &args).await;
 
         // Persist step result
         patch_step_result(client, api_base, token, job_id, &step_id, tool_result).await?;
     }
 
-    // 5. All steps complete
+    // 5. All steps complete — clear current_step
+    let _ = set_current_step(client, api_base, token, job_id, None).await;
     patch_job_status(client, api_base, token, job_id, "succeeded").await?;
     Ok(())
 }
@@ -227,6 +247,38 @@ async fn wait_for_approval(
             Err(e) => warn!("Failed to poll job status: {}", e),
         }
     }
+}
+
+/// Read-modify-write to update job.result.current_step for live UI tracking.
+async fn set_current_step(
+    client: &reqwest::Client,
+    api_base: &str,
+    token: &str,
+    job_id: &str,
+    step_id: Option<&str>,
+) -> Result<()> {
+    let req = client.get(format!("{}/api/jobs/{}", api_base, job_id));
+    let current_job = match with_auth(req, token).send().await {
+        Ok(resp) => resp.json::<Value>().await.unwrap_or(Value::Null),
+        Err(_) => Value::Null,
+    };
+    let mut current_result = match current_job["result"].clone() {
+        Value::Object(m) => m,
+        _ => serde_json::Map::new(),
+    };
+    current_result.insert(
+        "current_step".to_string(),
+        match step_id {
+            Some(id) => Value::String(id.to_string()),
+            None => Value::Null,
+        },
+    );
+    let req = client.patch(format!("{}/api/jobs/{}", api_base, job_id));
+    with_auth(req, token)
+        .json(&serde_json::json!({ "result": current_result }))
+        .send()
+        .await?;
+    Ok(())
 }
 
 /// Read-modify-write to append a step result to job.result.step_results.

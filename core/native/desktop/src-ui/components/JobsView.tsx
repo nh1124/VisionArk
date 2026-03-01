@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react"
-import { RefreshCw, ChevronRight, CheckCircle, XCircle, Clock, AlertTriangle, Loader } from "lucide-react"
+import { RefreshCw, ChevronRight, CheckCircle, XCircle, Clock, AlertTriangle, Loader, RotateCcw } from "lucide-react"
 import type { Job } from "../../../shared/types"
-import { listJobs } from "../../../bridge/api"
+import { listJobs, retryJob } from "../../../bridge/api"
 
 const STATUS_STYLES: Record<string, { label: string; className: string }> = {
   queued:          { label: "Queued",          className: "text-gray-400 bg-gray-800" },
@@ -236,6 +236,27 @@ export default function JobsView() {
                   })}
                 </div>
               </section>
+            )}
+
+            {/* Retry button for failed/rejected jobs */}
+            {(selected.status === "failed" || selected.status === "rejected") && (
+              <div className="flex">
+                <button
+                  onClick={async () => {
+                    try {
+                      const updated = await retryJob(selected.id)
+                      setSelected(updated)
+                      load()
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl text-xs font-medium transition-colors"
+                >
+                  <RotateCcw size={12} />
+                  再実行
+                </button>
+              </div>
             )}
 
             {/* Error log */}

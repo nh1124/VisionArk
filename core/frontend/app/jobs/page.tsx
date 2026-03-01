@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { Play, RefreshCw, RotateCcw } from "lucide-react"
+import { apiFetch } from "@/lib/api"
 import { useJobStore } from "@/store/useJobStore"
 import JobStatusChip from "@/components/native/JobStatusChip"
 import RiskBadge from "@/components/native/RiskBadge"
@@ -139,9 +140,12 @@ export default function JobCenterPage() {
                         Review
                       </button>
                     )}
-                    {job.status === "failed" && (
+                    {(job.status === "failed" || job.status === "rejected") && (
                       <button
-                        onClick={() => fetchJobs()}
+                        onClick={async () => {
+                          await apiFetch(`/api/jobs/${job.id}/retry`, { method: "POST" })
+                          fetchJobs()
+                        }}
                         className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded-lg text-xs font-medium transition-colors"
                       >
                         <RotateCcw size={11} />

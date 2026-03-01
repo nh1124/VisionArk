@@ -1,4 +1,56 @@
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
+
+// ─── App Config (shared with daemon via config file) ─────────────────────────
+
+/// Subset of daemon config that the UI can read and write.
+/// Stored at: {config_dir}/visionark/config.toml
+/// The daemon reads this same file at startup (priority: env vars > file > defaults).
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+pub struct AppConfig {
+    #[serde(default)]
+    pub api_url: String,
+}
+
+const CONFIG_DIR_NAME: &str = "visionark";
+const CONFIG_FILE_NAME: &str = "config.toml";
+
+fn config_file_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    // Use config_dir() (no bundle-ID suffix) so the daemon can find the same file.
+    app.path()
+        .config_dir()
+        .map(|d| d.join(CONFIG_DIR_NAME).join(CONFIG_FILE_NAME))
+        .map_err(|e| e.to_string())
+}
+
+/// Returns the absolute path of the config file so the UI can display it.
+/// The file may not yet exist if the user has never changed settings.
+#[tauri::command]
+pub fn get_config_file_path(app: AppHandle) -> Result<String, String> {
+    config_file_path(&app).map(|p| p.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+pub fn read_app_config(app: AppHandle) -> Result<AppConfig, String> {
+    let path = config_file_path(&app)?;
+    if !path.exists() {
+        return Ok(AppConfig::default());
+    }
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    toml::from_str::<AppConfig>(&content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn write_app_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
+    let path = config_file_path(&app)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let content = toml::to_string_pretty(&config).map_err(|e| e.to_string())?;
+    std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+// ─── App Info ────────────────────────────────────────────────────────────────
 
 #[tauri::command]
 pub fn get_app_version(app: AppHandle) -> String {

@@ -71,8 +71,11 @@ class JobService:
         status: Optional[str] = None,
         error_log: Optional[str] = None,
         result: Optional[dict] = None,
+        user_id: Optional[str] = None,
     ) -> Job:
         stmt = select(Job).where(Job.id == job_id)
+        if user_id:
+            stmt = stmt.where(Job.user_id == user_id)
         res = await db.execute(stmt)
         job = res.scalars().first()
         if not job:
@@ -93,7 +96,7 @@ class JobService:
 
     @staticmethod
     async def approve_job(db: AsyncSession, job_id: str, approver_id: str) -> Job:
-        stmt = select(Job).where(Job.id == job_id)
+        stmt = select(Job).where(Job.id == job_id, Job.user_id == approver_id)
         res = await db.execute(stmt)
         job = res.scalars().first()
         if not job:
@@ -107,8 +110,8 @@ class JobService:
         return job
 
     @staticmethod
-    async def reject_job(db: AsyncSession, job_id: str) -> Job:
-        stmt = select(Job).where(Job.id == job_id)
+    async def reject_job(db: AsyncSession, job_id: str, user_id: str) -> Job:
+        stmt = select(Job).where(Job.id == job_id, Job.user_id == user_id)
         res = await db.execute(stmt)
         job = res.scalars().first()
         if not job:

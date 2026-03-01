@@ -6,9 +6,86 @@
 
 // Detect Tauri environment
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { setBaseUrl as _setBridgeBaseUrl } from "../../../bridge/api"
 
 const IS_TAURI = isTauri()
-export const BASE_URL = IS_TAURI ? "http://localhost:8000" : "http://localhost:8000" // For local native dev, force 8000
+
+// ─── API Base URL (configurable) ───────────────────────────────────────────────
+//
+// Storage backends (mutually exclusive):
+//
+//   Tauri app  → {config_dir}/visionark/config.toml
+//                  Windows : %AppData%\visionark\config.toml
+//                  macOS   : ~/Library/Application Support/visionark/config.toml
+//                  Linux   : ~/.config/visionark/config.toml
+//                The daemon reads this same file at startup.
+//
+//   Browser dev → localStorage["va_api_url"]
+//                  (inside the browser's own storage, not shared with daemon)
+//
+// Tokens are stored separately — see getToken() / setToken() below.
+
+const API_URL_STORAGE_KEY = "va_api_url"
+const DEFAULT_API_URL = "http://localhost:8000"
+
+/** Live-binding export: consumers see the latest value automatically. */
+export let BASE_URL = DEFAULT_API_URL
+
+/** Normalize: strip trailing slashes. */
+function normalizeUrl(url: string): string {
+    return url.trim().replace(/\/+$/, "") || DEFAULT_API_URL
+}
+
+/**
+ * Read the persisted URL at startup and update BASE_URL.
+ * - Tauri : reads {config_dir}/visionark/config.toml via invoke("read_app_config")
+ * - Browser: reads localStorage["va_api_url"]
+ */
+export async function initApiBase(): Promise<string> {
+    if (IS_TAURI) {
+        try {
+            const cfg = await invoke<{ api_url?: string }>("read_app_config")
+            if (cfg.api_url) {
+                BASE_URL = normalizeUrl(cfg.api_url)
+            }
+        } catch {
+            // Config file not yet created — use compiled-in default
+        }
+    } else {
+        const stored = localStorage.getItem(API_URL_STORAGE_KEY)
+        if (stored) {
+            BASE_URL = normalizeUrl(stored)
+        }
+    }
+    // Keep bridge in sync (legacy path — configure() supersedes this)
+    _setBridgeBaseUrl(BASE_URL)
+    return BASE_URL
+}
+
+/** Return the current in-memory API base URL. */
+export function getApiBase(): string {
+    return BASE_URL
+}
+
+/**
+ * Persist a new API base URL and update BASE_URL immediately.
+ * - Tauri : writes to config.toml (human-readable, shared with daemon)
+ * - Browser: writes to localStorage
+ */
+export async function setApiBase(url: string): Promise<void> {
+    BASE_URL = normalizeUrl(url)
+    // Keep bridge in sync automatically (no manual setBridgeBaseUrl needed)
+    _setBridgeBaseUrl(BASE_URL)
+    if (IS_TAURI) {
+        try {
+            await invoke("write_app_config", { config: { api_url: BASE_URL } })
+        } catch (e) {
+            console.warn("[Config] write_app_config failed:", e)
+        }
+    } else {
+        localStorage.setItem(API_URL_STORAGE_KEY, BASE_URL)
+    }
+}
 
 export async function getToken(): Promise<string | null> {
     if (!IS_TAURI) {
@@ -296,9 +373,14 @@ export async function sendChat(
     sessionId?: string | null,
     model?: string,
     files?: File[]
-): Promise<{ task_id: string }> {
+): Promise<{ task_id: string; session_id?: string }> {
     const formData = new FormData()
     formData.append("message", message)
+
+    // Pass the active session so the backend uses it (not just the project default)
+    if (sessionId) {
+        formData.append("session_id", sessionId)
+    }
 
     // Append uploaded files
     if (files && files.length > 0) {
@@ -323,7 +405,7 @@ export async function sendChat(
         throw new Error(`Chat API ${res.status}: ${text}`)
     }
 
-    return res.json() as Promise<{ task_id: string }>
+    return res.json() as Promise<{ task_id: string; session_id?: string }>
 }
 
 // ─── Task Polling ──────────────────────────────────────────────────────────────

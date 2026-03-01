@@ -30,14 +30,23 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
     const pollRef = useRef<NodeJS.Timeout | null>(null)
     const timerRef = useRef<NodeJS.Timeout | null>(null)
 
+    // effectiveSessionId: session confirmed by backend (may differ from prop when
+    // the provided session was not found and backend fell back to default)
+    const effectiveSessionRef = useRef<string | null | undefined>(sessionId)
+
     const loadHistory = useCallback(async () => {
         try {
-            const msgs = await fetchHistory(projectId, sessionId)
+            const msgs = await fetchHistory(projectId, effectiveSessionRef.current)
             setMessages(msgs)
         } catch (e) {
             console.error("Failed to load history:", e)
         }
-    }, [projectId, sessionId])
+    }, [projectId])
+
+    // Keep effectiveSessionRef in sync when sessionId prop changes (e.g. user switches session)
+    useEffect(() => {
+        effectiveSessionRef.current = sessionId
+    }, [sessionId])
 
     useEffect(() => {
         loadHistory()
@@ -60,7 +69,12 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
         setStatusText("Processing your request...")
 
         try {
-            const { task_id } = await sendChat(projectId, content, sessionId, model, files)
+            const { task_id, session_id: usedSessionId } = await sendChat(projectId, content, sessionId, model, files)
+
+            // Update the effective session if the backend resolved to a different one
+            if (usedSessionId) {
+                effectiveSessionRef.current = usedSessionId
+            }
 
             // Add placeholder for assistant
             setMessages((prev) => [...prev, { role: "assistant", content: "" }])

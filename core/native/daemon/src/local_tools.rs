@@ -1,23 +1,113 @@
+use crate::config::ExecutionPolicy;
 use serde_json::{json, Value};
 use std::time::Duration;
-use tracing::info;
+use tracing::{info, warn};
 
 pub enum ToolResult {
     Ok(Value),
     Err(String),
 }
 
-pub async fn dispatch_tool(tool: &str, args: &Value) -> ToolResult {
+pub async fn dispatch_tool(policy: &ExecutionPolicy, tool: &str, args: &Value) -> ToolResult {
+    // Dry-run: log without executing
+    if policy.dry_run {
+        info!("[dry-run] tool={} args={}", tool, args);
+        return ToolResult::Ok(json!({ "dry_run": true, "tool": tool, "args": args }));
+    }
+
     match tool {
-        "run_shell" => run_shell(args).await,
-        "read_file" => read_file(args).await,
-        "write_file" => write_file(args).await,
-        "list_dir" => list_dir(args).await,
-        "move_file" => move_file(args).await,
-        "delete_file" => delete_file(args).await,
+        "run_shell" => {
+            if !policy.shell_enabled {
+                return ToolResult::Err(
+                    "run_shell is disabled by execution policy (shell_enabled = false)".into(),
+                );
+            }
+            run_shell(args).await
+        }
+        "read_file" => {
+            let path = args["path"].as_str().unwrap_or("");
+            if !is_allowed_path(path, &policy.allowed_paths) {
+                return ToolResult::Err(format!(
+                    "read_file: path '{}' is outside allowed directories",
+                    path
+                ));
+            }
+            read_file(args, policy.max_read_kb).await
+        }
+        "write_file" => {
+            if !policy.write_enabled {
+                return ToolResult::Err(
+                    "write_file is disabled by execution policy (write_enabled = false)".into(),
+                );
+            }
+            let path = args["path"].as_str().unwrap_or("");
+            if !is_allowed_path(path, &policy.allowed_paths) {
+                return ToolResult::Err(format!(
+                    "write_file: path '{}' is outside allowed directories",
+                    path
+                ));
+            }
+            write_file(args).await
+        }
+        "list_dir" => {
+            let path = args["path"].as_str().unwrap_or("");
+            if !is_allowed_path(path, &policy.allowed_paths) {
+                return ToolResult::Err(format!(
+                    "list_dir: path '{}' is outside allowed directories",
+                    path
+                ));
+            }
+            list_dir(args).await
+        }
+        "move_file" => {
+            if !policy.write_enabled {
+                return ToolResult::Err(
+                    "move_file is disabled by execution policy (write_enabled = false)".into(),
+                );
+            }
+            let src = args["src"].as_str().unwrap_or("");
+            let dst = args["dst"].as_str().unwrap_or("");
+            if !is_allowed_path(src, &policy.allowed_paths)
+                || !is_allowed_path(dst, &policy.allowed_paths)
+            {
+                return ToolResult::Err(format!(
+                    "move_file: path(s) outside allowed directories (src='{}', dst='{}')",
+                    src, dst
+                ));
+            }
+            move_file(args).await
+        }
+        "delete_file" => {
+            if !policy.write_enabled {
+                return ToolResult::Err(
+                    "delete_file is disabled by execution policy (write_enabled = false)".into(),
+                );
+            }
+            let path = args["path"].as_str().unwrap_or("");
+            if !is_allowed_path(path, &policy.allowed_paths) {
+                return ToolResult::Err(format!(
+                    "delete_file: path '{}' is outside allowed directories",
+                    path
+                ));
+            }
+            delete_file(args).await
+        }
         "open_app" => open_app(args).await,
         _ => ToolResult::Err(format!("Unknown tool: {}", tool)),
     }
+}
+
+/// Returns true if `path` is allowed by `allowed_paths`.
+/// When `allowed_paths` is empty, all paths are allowed (no restriction).
+/// Path matching uses proper OS path prefix logic (separator-aware).
+fn is_allowed_path(path: &str, allowed: &[String]) -> bool {
+    if allowed.is_empty() {
+        return true;
+    }
+    let target = std::path::Path::new(path);
+    allowed
+        .iter()
+        .any(|a| target.starts_with(std::path::Path::new(a)))
 }
 
 async fn run_shell(args: &Value) -> ToolResult {
@@ -58,11 +148,28 @@ async fn run_shell(args: &Value) -> ToolResult {
     }
 }
 
-async fn read_file(args: &Value) -> ToolResult {
+async fn read_file(args: &Value, max_read_kb: u64) -> ToolResult {
     let path = match args["path"].as_str() {
         Some(p) => p,
         None => return ToolResult::Err("read_file: missing 'path'".into()),
     };
+
+    // Check file size before reading if max_read_kb is set
+    if max_read_kb > 0 {
+        match tokio::fs::metadata(path).await {
+            Ok(meta) => {
+                let size_kb = meta.len() / 1024;
+                if size_kb > max_read_kb {
+                    return ToolResult::Err(format!(
+                        "read_file: file size {}KB exceeds max_read_kb limit {}KB",
+                        size_kb, max_read_kb
+                    ));
+                }
+            }
+            Err(e) => return ToolResult::Err(format!("read_file metadata error: {}", e)),
+        }
+    }
+
     match tokio::fs::read_to_string(path).await {
         Ok(content) => ToolResult::Ok(json!({ "content": content })),
         Err(e) => ToolResult::Err(format!("read_file error: {}", e)),
@@ -162,5 +269,10 @@ async fn open_app(args: &Value) -> ToolResult {
             Ok(_) => ToolResult::Ok(json!({ "launched": name })),
             Err(e) => ToolResult::Err(format!("open_app error: {}", e)),
         }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        warn!("open_app: unsupported platform");
+        ToolResult::Err("open_app: unsupported platform".into())
     }
 }

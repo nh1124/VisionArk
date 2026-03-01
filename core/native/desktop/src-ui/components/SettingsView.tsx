@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from "react"
-import { apiFetch, apiJson } from "../lib/api"
-import { User, Cpu, Server, Globe } from "lucide-react"
+import { invoke, isTauri } from "@tauri-apps/api/core"
+import { apiFetch, apiJson, getApiBase, setApiBase, initApiBase } from "../lib/api"
+import { User, Cpu, Server, Globe, Link, Database, Key, FileText, FolderOpen } from "lucide-react"
+
+const IS_TAURI = isTauri()
 
 type Tab = "general" | "ai" | "services" | "account"
 
@@ -60,11 +63,26 @@ export default function SettingsView() {
   const [services, setServices] = useState<Service[]>([])
   const [lbsForm, setLbsForm] = useState({ base_url: "", api_key: "" })
 
+  // Connection (server URL)
+  const [serverUrl, setServerUrl] = useState("")
+  const [configFilePath, setConfigFilePath] = useState<string | null>(null)
+
   // Account
   const [profile, setProfile] = useState({ username: "", email: "" })
   const [passForm, setPassForm] = useState({ current: "", next: "", confirm: "" })
 
   // ── Load ──────────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    // Ensure the latest persisted URL is reflected (Tauri reads config file)
+    initApiBase().then((url) => setServerUrl(url))
+    // Fetch the actual config file path for display
+    if (IS_TAURI) {
+      invoke<string>("get_config_file_path")
+        .then(setConfigFilePath)
+        .catch(() => setConfigFilePath(null))
+    }
+  }, [])
 
   useEffect(() => {
     apiJson<any>("/api/settings")
@@ -93,6 +111,15 @@ export default function SettingsView() {
   function showMsg(type: "success" | "error", text: string) {
     setMsg({ type, text })
     setTimeout(() => setMsg(null), 3500)
+  }
+
+  // ── Save Server URL ──────────────────────────────────────────────────────
+
+  async function saveServerUrl() {
+    if (!serverUrl.trim()) return
+    await setApiBase(serverUrl) // also auto-syncs bridge URL
+    setServerUrl(getApiBase()) // reflect normalization
+    showMsg("success", `Server URL updated to ${getApiBase()}`)
   }
 
   // ── Save General ─────────────────────────────────────────────────────────
@@ -268,6 +295,105 @@ export default function SettingsView() {
             >
               {saving ? "Saving…" : "Save"}
             </button>
+
+            {/* ── Connection ── */}
+            <div className="border-t border-gray-800 pt-6">
+              <div className="flex items-center gap-2 mb-1">
+                <Link size={15} className="text-gray-400" />
+                <h3 className="text-sm font-bold text-gray-200">Server Connection</h3>
+              </div>
+              <p className="text-xs text-gray-500 mb-4">
+                VisionArk backend URL. Change this when connecting to a remote or staging server.
+              </p>
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
+                  API Base URL
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="url"
+                    value={serverUrl}
+                    onChange={(e) => setServerUrl(e.target.value)}
+                    placeholder="http://localhost:8000"
+                    className="flex-1 bg-gray-900 border border-gray-800 rounded-xl px-4 py-2.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-cyan-500 font-mono"
+                  />
+                  <button
+                    onClick={saveServerUrl}
+                    className="px-4 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-semibold rounded-xl transition-colors"
+                  >
+                    Apply
+                  </button>
+                </div>
+                <p className="text-[11px] text-gray-600 mt-1.5">
+                  Active: <span className="font-mono text-gray-500">{getApiBase()}</span>
+                </p>
+              </div>
+            </div>
+
+            {/* ── Storage Info ── */}
+            <div className="border-t border-gray-800 pt-6">
+              <div className="flex items-center gap-2 mb-1">
+                <Database size={15} className="text-gray-400" />
+                <h3 className="text-sm font-bold text-gray-200">Storage Locations</h3>
+              </div>
+              <p className="text-xs text-gray-500 mb-4">Where each type of data is persisted on this device.</p>
+
+              <div className="space-y-2.5">
+                {/* Server URL */}
+                <div className="bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 flex gap-3">
+                  <FileText size={15} className="text-cyan-500 mt-0.5 flex-shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-gray-300">Server URL</p>
+                    <p className="text-[11px] text-gray-500 mt-0.5">
+                      {IS_TAURI ? "Config file (shared with daemon)" : "Browser localStorage"}
+                    </p>
+                    {IS_TAURI && configFilePath && (
+                      <p className="text-[10px] font-mono text-gray-600 mt-1 break-all">{configFilePath}</p>
+                    )}
+                    {!IS_TAURI && (
+                      <p className="text-[10px] font-mono text-gray-600 mt-1">key: va_api_url</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Auth tokens */}
+                {IS_TAURI && (
+                  <div className="bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 flex gap-3">
+                    <Key size={15} className="text-yellow-500 mt-0.5 flex-shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-gray-300">Auth Tokens</p>
+                      <p className="text-[11px] text-gray-500 mt-0.5">Windows Credential Manager</p>
+                      <p className="text-[10px] font-mono text-gray-600 mt-1">
+                        visionark_app / atmos_access_token<br />
+                        visionark_app / atmos_refresh_token
+                      </p>
+                    </div>
+                  </div>
+                )}
+                {!IS_TAURI && (
+                  <div className="bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 flex gap-3">
+                    <Key size={15} className="text-yellow-500 mt-0.5 flex-shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-gray-300">Auth Tokens</p>
+                      <p className="text-[11px] text-gray-500 mt-0.5">Browser localStorage</p>
+                      <p className="text-[10px] font-mono text-gray-600 mt-1">key: va_token</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* User settings + AI keys */}
+                <div className="bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 flex gap-3">
+                  <Database size={15} className="text-purple-400 mt-0.5 flex-shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-gray-300">User Settings &amp; AI Keys</p>
+                    <p className="text-[11px] text-gray-500 mt-0.5">Backend database (PostgreSQL)</p>
+                    <p className="text-[10px] font-mono text-gray-600 mt-1">
+                      language, timezone, location, AI API keys
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 

@@ -1,5 +1,6 @@
-import React, { useState } from "react"
-import { login } from "../lib/api"
+import React, { useEffect, useState } from "react"
+import { ChevronDown, ChevronUp } from "lucide-react"
+import { login, getApiBase, setApiBase } from "../lib/api"
 
 interface Props {
     onLogin: (username: string) => void
@@ -10,6 +11,19 @@ export default function LoginScreen({ onLogin }: Props) {
     const [password, setPassword] = useState("")
     const [error, setError] = useState("")
     const [loading, setLoading] = useState(false)
+    const [showAdvanced, setShowAdvanced] = useState(false)
+    const [serverUrl, setServerUrl] = useState("")
+
+    // Populate field with the currently active URL on mount
+    useEffect(() => {
+        setServerUrl(getApiBase())
+    }, [])
+
+    const applyServerUrl = async (url: string) => {
+        if (!url.trim()) return
+        await setApiBase(url) // also auto-syncs bridge URL
+        setServerUrl(getApiBase()) // reflect normalization
+    }
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
@@ -58,6 +72,45 @@ export default function LoginScreen({ onLogin }: Props) {
                             className="w-full px-3 py-2.5 bg-gray-800 border border-gray-700 rounded-xl text-sm text-white outline-none focus:border-cyan-500 transition-colors"
                             placeholder="Enter password"
                         />
+                    </div>
+
+                    {/* Advanced: server URL */}
+                    <div>
+                        <button
+                            type="button"
+                            onClick={() => setShowAdvanced((v) => !v)}
+                            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                        >
+                            {showAdvanced ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                            Advanced
+                        </button>
+                        {showAdvanced && (
+                            <div className="mt-2 space-y-1.5">
+                                <label className="block text-xs font-medium text-gray-500">
+                                    Server URL
+                                </label>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="url"
+                                        value={serverUrl}
+                                        onChange={(e) => setServerUrl(e.target.value)}
+                                        onBlur={(e) => { applyServerUrl(e.target.value) }}
+                                        className="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-sm text-white outline-none focus:border-cyan-500 transition-colors font-mono"
+                                        placeholder="http://localhost:8000"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => applyServerUrl(serverUrl)}
+                                        className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-xl text-xs transition-colors"
+                                    >
+                                        Set
+                                    </button>
+                                </div>
+                                <p className="text-[11px] text-gray-600">
+                                    Current: {getApiBase()}
+                                </p>
+                            </div>
+                        )}
                     </div>
 
                     {error && (
