@@ -180,10 +180,10 @@ async def update_job_status(
         job = await JobService.update_job_status(
             db=db,
             job_id=job_id,
+            user_id=identity.user_id,
             status=body.status,
             error_log=body.error_log,
             result=body.result,
-            user_id=identity.user_id,
         )
         return _job_to_response(job)
     except ValueError as e:
@@ -313,7 +313,7 @@ async def dispatch_job(
         "dispatched_at": datetime.utcnow().isoformat(),
         "current_step": None,
     }
-    await JobService.update_job_status(db, job_id, "running", result=result)
+    await JobService.update_job_status(db, job_id, identity.user_id, status="running", result=result)
     return plan
 
 

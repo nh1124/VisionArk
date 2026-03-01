@@ -36,6 +36,7 @@ class JobService:
         db.add(job)
         await db.commit()
         await db.refresh(job)
+        logger.info("job.created user=%s job=%s type=%s source=%s", user_id, job.id, job_type, source)
         return job
 
     @staticmethod
@@ -68,18 +69,17 @@ class JobService:
     async def update_job_status(
         db: AsyncSession,
         job_id: str,
+        user_id: str,
         status: Optional[str] = None,
         error_log: Optional[str] = None,
         result: Optional[dict] = None,
-        user_id: Optional[str] = None,
     ) -> Job:
-        stmt = select(Job).where(Job.id == job_id)
-        if user_id:
-            stmt = stmt.where(Job.user_id == user_id)
+        stmt = select(Job).where(Job.id == job_id, Job.user_id == user_id)
         res = await db.execute(stmt)
         job = res.scalars().first()
         if not job:
             raise ValueError(f"Job {job_id} not found")
+        prev_status = job.status
         if status is not None:
             job.status = status
             if status == JobStatus.RUNNING and not job.started_at:
@@ -92,6 +92,10 @@ class JobService:
             job.result = result
         await db.commit()
         await db.refresh(job)
+        logger.info(
+            "job.updated user=%s job=%s status=%s->%s",
+            user_id, job_id, prev_status, job.status,
+        )
         return job
 
     @staticmethod
@@ -103,10 +107,23 @@ class JobService:
             raise ValueError(f"Job {job_id} not found")
         if job.status != JobStatus.NEEDS_APPROVAL:
             raise ValueError(f"Job is not awaiting approval (status: {job.status})")
+        now = datetime.utcnow()
         job.status = JobStatus.QUEUED
         job.approved_by = approver_id
+        # Persist approval decision record for audit trail
+        approval = JobApproval(
+            id=str(uuid.uuid4()),
+            job_id=job_id,
+            user_id=approver_id,
+            action_type="step_approval",
+            policy_mode="manual",
+            decision="approved",
+            decided_at=now,
+        )
+        db.add(approval)
         await db.commit()
         await db.refresh(job)
+        logger.info("job.approved user=%s job=%s approval=%s", approver_id, job_id, approval.id)
         return job
 
     @staticmethod
@@ -116,8 +133,21 @@ class JobService:
         job = res.scalars().first()
         if not job:
             raise ValueError(f"Job {job_id} not found")
+        now = datetime.utcnow()
         job.status = JobStatus.REJECTED
-        job.finished_at = datetime.utcnow()
+        job.finished_at = now
+        # Persist rejection record for audit trail
+        approval = JobApproval(
+            id=str(uuid.uuid4()),
+            job_id=job_id,
+            user_id=user_id,
+            action_type="step_approval",
+            policy_mode="manual",
+            decision="rejected",
+            decided_at=now,
+        )
+        db.add(approval)
         await db.commit()
         await db.refresh(job)
+        logger.info("job.rejected user=%s job=%s approval=%s", user_id, job_id, approval.id)
         return job

@@ -1,3 +1,29 @@
+// ─── WebSocket event types ─────────────────────────────────────────────────────
+// Must stay in sync with the backend notification schema.
+export const WsEventType = {
+  JOB_CREATED      : "job.created",
+  JOB_QUEUED       : "job.queued",
+  JOB_UPDATED      : "job.updated",
+  JOB_RUNNING      : "job.running",
+  JOB_NEEDS_APPROVAL: "job.needs_approval",
+  JOB_SUCCEEDED    : "job.succeeded",
+  JOB_FAILED       : "job.failed",
+  JOB_REJECTED     : "job.rejected",
+} as const
+
+export type WsEventType = typeof WsEventType[keyof typeof WsEventType]
+
+export interface WsEvent<T = unknown> {
+  type: string
+  data: T
+}
+
+export interface JobWsEvent extends WsEvent<Job> {
+  type: WsEventType
+}
+
+// ─── Domain types ──────────────────────────────────────────────────────────────
+
 export type RiskLevel = "low" | "medium" | "high" | "critical"
 export type JobStatus = "queued" | "running" | "needs_approval" | "succeeded" | "failed" | "rejected"
 export type JobSource = "native" | "web" | "cloud" | "mobile" | string
