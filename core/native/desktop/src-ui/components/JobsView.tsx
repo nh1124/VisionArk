@@ -1,7 +1,10 @@
 import React, { useEffect, useState } from "react"
-import { RefreshCw, ChevronRight, CheckCircle, XCircle, Clock, AlertTriangle, Loader, RotateCcw } from "lucide-react"
-import type { Job } from "../../../shared/types"
-import { listJobs, retryJob } from "../../../bridge/api"
+import {
+  RefreshCw, ChevronRight, CheckCircle, XCircle, Clock,
+  AlertTriangle, Loader, RotateCcw, Plus, Monitor, X,
+} from "lucide-react"
+import type { Job, NativeDevice } from "../../../shared/types"
+import { listJobs, createJob, retryJob, listDevices } from "../../../bridge/api"
 
 const STATUS_STYLES: Record<string, { label: string; className: string }> = {
   queued:          { label: "Queued",          className: "text-gray-400 bg-gray-800" },
@@ -28,20 +31,175 @@ function StepIcon({ ok, isActive }: { ok?: boolean; isActive?: boolean }) {
   return <Clock size={13} className="text-gray-600" />
 }
 
+// ── New Job Modal ──────────────────────────────────────────────────────────────
+
+interface NewJobModalProps {
+  devices: NativeDevice[]
+  onClose: () => void
+  onCreated: (job: Job) => void
+}
+
+function NewJobModal({ devices, onClose, onCreated }: NewJobModalProps) {
+  const [jobType, setJobType] = useState("")
+  const [payload, setPayload] = useState("{}")
+  const [riskLevel, setRiskLevel] = useState("low")
+  const [targetDeviceId, setTargetDeviceId] = useState<string>("auto")
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const enabledDevices = devices.filter(d => d.is_enabled)
+
+  const handleSubmit = async () => {
+    if (!jobType.trim()) { setError("Job type is required"); return }
+    let parsedPayload: Record<string, unknown> = {}
+    try { parsedPayload = JSON.parse(payload) } catch {
+      setError("Payload must be valid JSON"); return
+    }
+    setSubmitting(true)
+    setError(null)
+    try {
+      const created = await createJob({
+        type: jobType.trim(),
+        payload: parsedPayload,
+        risk_level: riskLevel,
+        routing_mode: targetDeviceId === "auto" ? "auto" : "manual",
+        target_device_id: targetDeviceId !== "auto" ? targetDeviceId : undefined,
+      })
+      onCreated(created)
+      onClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unknown error")
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-sm mx-4 shadow-2xl">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+          <div className="flex items-center gap-2">
+            <Plus size={13} className="text-blue-400" />
+            <span className="text-xs font-semibold text-white">New Job</span>
+          </div>
+          <button onClick={onClose} className="p-1 rounded-lg text-gray-600 hover:text-white hover:bg-gray-800 transition-colors">
+            <X size={14} />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          {/* Job type */}
+          <div>
+            <label className="block text-[10px] text-gray-500 mb-1">Job Type *</label>
+            <input
+              value={jobType}
+              onChange={e => setJobType(e.target.value)}
+              placeholder="e.g. local.dev, file.sync"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+
+          {/* Payload */}
+          <div>
+            <label className="block text-[10px] text-gray-500 mb-1">Payload (JSON)</label>
+            <textarea
+              value={payload}
+              onChange={e => setPayload(e.target.value)}
+              rows={3}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono placeholder-gray-600 focus:outline-none focus:border-blue-500 resize-none"
+            />
+          </div>
+
+          {/* Risk level */}
+          <div>
+            <label className="block text-[10px] text-gray-500 mb-1">Risk Level</label>
+            <div className="flex gap-1.5">
+              {(["low", "medium", "high", "critical"] as const).map(level => (
+                <button
+                  key={level}
+                  onClick={() => setRiskLevel(level)}
+                  className={`flex-1 py-1 rounded-lg text-[10px] font-medium transition-colors ${
+                    riskLevel === level
+                      ? level === "low" ? "bg-green-600/30 text-green-300"
+                        : level === "medium" ? "bg-yellow-600/30 text-yellow-300"
+                        : level === "high" ? "bg-orange-600/30 text-orange-300"
+                        : "bg-red-600/30 text-red-300"
+                      : "bg-gray-800 text-gray-600 hover:bg-gray-700"
+                  }`}
+                >
+                  {level}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Target device */}
+          <div>
+            <label className="block text-[10px] text-gray-500 mb-1">Target Device</label>
+            <select
+              value={targetDeviceId}
+              onChange={e => setTargetDeviceId(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+            >
+              <option value="auto">Auto-route</option>
+              {enabledDevices.map(d => (
+                <option key={d.id} value={d.id}>
+                  {d.display_name} [{d.platform}] — {d.status}
+                </option>
+              ))}
+            </select>
+            {enabledDevices.length === 0 && (
+              <p className="text-[10px] text-yellow-600 mt-1">
+                No enabled devices — go to Devices to enable one.
+              </p>
+            )}
+          </div>
+
+          {error && (
+            <p className="text-[10px] text-red-400 bg-red-950/30 px-2.5 py-1.5 rounded-lg border border-red-900/40">
+              {error}
+            </p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 px-4 pb-4">
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:text-white hover:bg-gray-800 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={submitting}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-blue-600 hover:bg-blue-500 text-white font-medium transition-colors disabled:opacity-50"
+          >
+            {submitting ? <RefreshCw size={11} className="animate-spin" /> : <Plus size={11} />}
+            Create
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Main component ─────────────────────────────────────────────────────────────
+
 export default function JobsView() {
   const [jobs, setJobs] = useState<Job[]>([])
+  const [devices, setDevices] = useState<NativeDevice[]>([])
   const [selected, setSelected] = useState<Job | null>(null)
   const [filter, setFilter] = useState<Filter>("all")
   const [loading, setLoading] = useState(false)
+  const [showNewJob, setShowNewJob] = useState(false)
 
   const load = async () => {
     setLoading(true)
     try {
       const data = await listJobs({ source: "native", limit: 50 })
       setJobs(data)
-      // Keep selected job in sync
       if (selected) {
-        const updated = data.find((j) => j.id === selected.id)
+        const updated = data.find(j => j.id === selected.id)
         if (updated) setSelected(updated)
       }
     } catch {
@@ -53,11 +211,12 @@ export default function JobsView() {
 
   useEffect(() => {
     load()
+    listDevices().then(setDevices).catch(() => {})
     const timer = setInterval(load, 5_000)
     return () => clearInterval(timer)
   }, [])
 
-  const filtered = jobs.filter((j) => {
+  const filtered = jobs.filter(j => {
     if (filter === "active") return ["queued", "running", "needs_approval"].includes(j.status)
     if (filter === "done")   return ["succeeded", "failed", "rejected"].includes(j.status)
     return true
@@ -73,15 +232,21 @@ export default function JobsView() {
   const planSteps = (selected?.result?.plan as { steps?: Array<{ id: string; tool: string; description: string; risk_level: string }> } | undefined)?.steps ?? []
   const currentStep = selected?.result?.current_step as string | null | undefined
 
+  const deviceName = (id?: string) => {
+    if (!id) return null
+    const d = devices.find(x => x.id === id)
+    return d ? d.display_name : `${id.slice(0, 8)}…`
+  }
+
   return (
     <div className="flex h-full">
       {/* Left: jobs list */}
       <div className="flex flex-col w-72 min-w-72 border-r border-gray-800">
         {/* Toolbar */}
-        <div className="flex items-center gap-2 px-3 py-2.5 border-b border-gray-800">
+        <div className="flex items-center gap-1.5 px-3 py-2.5 border-b border-gray-800">
           <span className="text-sm font-semibold text-white flex-1">Jobs</span>
           <div className="flex gap-1">
-            {(["all", "active", "done"] as Filter[]).map((f) => (
+            {(["all", "active", "done"] as Filter[]).map(f => (
               <button
                 key={f}
                 onClick={() => setFilter(f)}
@@ -96,6 +261,13 @@ export default function JobsView() {
             ))}
           </div>
           <button
+            onClick={() => setShowNewJob(true)}
+            className="p-1.5 rounded-lg hover:bg-blue-600/20 text-blue-500 hover:text-blue-400 transition-colors"
+            title="New Job"
+          >
+            <Plus size={13} />
+          </button>
+          <button
             onClick={load}
             disabled={loading}
             className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-500 hover:text-gray-300 transition-colors"
@@ -109,7 +281,7 @@ export default function JobsView() {
           {filtered.length === 0 ? (
             <p className="text-xs text-gray-600 text-center py-8">No jobs</p>
           ) : (
-            filtered.map((job) => {
+            filtered.map(job => {
               const s = STATUS_STYLES[job.status] ?? STATUS_STYLES.queued
               const isSelected = selected?.id === job.id
               return (
@@ -121,7 +293,15 @@ export default function JobsView() {
                   }`}
                 >
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-gray-200 truncate">{job.type}</p>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <p className="text-xs font-medium text-gray-200 truncate">{job.type}</p>
+                      {job.target_device_id && (
+                        <span className="flex items-center gap-0.5 text-[9px] text-purple-400">
+                          <Monitor size={9} />
+                          {deviceName(job.target_device_id)}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-[11px] text-gray-600 mt-0.5">
                       {new Date(job.created_at).toLocaleString("ja-JP", {
                         month: "numeric", day: "numeric",
@@ -165,13 +345,36 @@ export default function JobsView() {
                 </div>
               </div>
 
+              {/* Device routing info */}
+              {(selected.target_device_id || selected.claimed_by_device_id || selected.routing_mode === "auto") && (
+                <div className="flex items-center gap-3 mt-2 text-[10px] text-gray-500">
+                  {selected.target_device_id ? (
+                    <span className="flex items-center gap-1">
+                      <Monitor size={10} className="text-purple-400" />
+                      <span className="text-gray-600">Target:</span>
+                      <span className="text-purple-300">{deviceName(selected.target_device_id)}</span>
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1">
+                      <Monitor size={10} className="text-gray-600" />
+                      <span className="text-gray-600">auto-route</span>
+                    </span>
+                  )}
+                  {selected.claimed_by_device_id && (
+                    <span className="flex items-center gap-1">
+                      <Monitor size={10} className="text-green-400" />
+                      <span className="text-gray-600">Claimed:</span>
+                      <span className="text-green-300">{deviceName(selected.claimed_by_device_id)}</span>
+                    </span>
+                  )}
+                </div>
+              )}
+
               {/* Tags */}
               {selected.tags.length > 0 && (
                 <div className="flex gap-1 mt-2 flex-wrap">
-                  {selected.tags.map((t) => (
-                    <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-md bg-gray-800 text-gray-400">
-                      {t}
-                    </span>
+                  {selected.tags.map(t => (
+                    <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-md bg-gray-800 text-gray-400">{t}</span>
                   ))}
                 </div>
               )}
@@ -228,9 +431,9 @@ export default function JobsView() {
                             </p>
                           )}
                         </div>
-                        {step.risk_level === "high" || step.risk_level === "critical" ? (
+                        {(step.risk_level === "high" || step.risk_level === "critical") && (
                           <AlertTriangle size={12} className="text-orange-400 flex-shrink-0 mt-0.5" />
-                        ) : null}
+                        )}
                       </div>
                     )
                   })}
@@ -238,7 +441,7 @@ export default function JobsView() {
               </section>
             )}
 
-            {/* Retry button for failed/rejected jobs */}
+            {/* Retry */}
             {(selected.status === "failed" || selected.status === "rejected") && (
               <div className="flex">
                 <button
@@ -271,6 +474,18 @@ export default function JobsView() {
           </div>
         )}
       </div>
+
+      {/* New Job modal */}
+      {showNewJob && (
+        <NewJobModal
+          devices={devices}
+          onClose={() => setShowNewJob(false)}
+          onCreated={job => {
+            setJobs(prev => [job, ...prev])
+            setSelected(job)
+          }}
+        />
+      )}
     </div>
   )
 }

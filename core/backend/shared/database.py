@@ -791,12 +791,17 @@ class Job(Base):
     risk_level   = Column(String(20), default="low")
     payload      = Column(JSON, default=dict)
     result       = Column(JSON, nullable=True)
-    approved_by  = Column(String(36), nullable=True)
-    error_log    = Column(Text, nullable=True)
-    started_at   = Column(DateTime, nullable=True)
-    finished_at  = Column(DateTime, nullable=True)
-    created_at   = Column(DateTime, default=datetime.utcnow)
-    updated_at   = Column(DateTime, onupdate=datetime.utcnow)
+    approved_by           = Column(String(36), nullable=True)
+    error_log             = Column(Text, nullable=True)
+    started_at            = Column(DateTime, nullable=True)
+    finished_at           = Column(DateTime, nullable=True)
+    # Device routing (Phase: device-selection)
+    target_device_id      = Column(String(36), ForeignKey("native_devices.id"), nullable=True, index=True)
+    claimed_by_device_id  = Column(String(36), nullable=True)
+    routing_mode          = Column(String(20), default="manual")  # manual | auto
+    device_snapshot       = Column(JSON, nullable=True)
+    created_at            = Column(DateTime, default=datetime.utcnow)
+    updated_at            = Column(DateTime, onupdate=datetime.utcnow)
 
 
 class JobApproval(Base):
@@ -836,6 +841,27 @@ class AutomationRule(Base):
     limit           = Column(JSON, nullable=True)
     is_active       = Column(Boolean, default=True)
     created_at      = Column(DateTime, default=datetime.utcnow)
+
+
+class NativeDevice(Base):
+    """Registered native client devices (desktop/mobile/server)."""
+    __tablename__ = "native_devices"
+    id             = Column(String(36), primary_key=True)
+    user_id        = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    display_name   = Column(String(100), nullable=False)
+    # desktop | mobile | server | other
+    device_kind    = Column(String(20), default="desktop")
+    # windows | macos | linux | ios | android | other
+    platform       = Column(String(20), default="other")
+    client_version = Column(String(50), nullable=True)
+    # e.g. ["run_shell", "file_rw", "open_app"]
+    capabilities   = Column(JSON, default=list)
+    is_enabled     = Column(Boolean, default=True)
+    # online | offline | stale
+    status         = Column(String(20), default="offline", index=True)
+    last_seen_at   = Column(DateTime, nullable=True)
+    created_at     = Column(DateTime, default=datetime.utcnow)
+    updated_at     = Column(DateTime, onupdate=datetime.utcnow)
 
 
 # Global engine instances (Singletons for connection pooling)
@@ -963,6 +989,22 @@ def _run_migrations(engine):
     # Migration: Create approval_requests table is handled by create_all, but check if we need to manually add it?
     # No, Base.metadata.create_all handles new tables.
     pass
+
+    # Migration: Add device-routing columns to jobs if missing
+    if 'jobs' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('jobs')]
+        new_cols = {
+            'target_device_id':     'VARCHAR(36)',
+            'claimed_by_device_id': 'VARCHAR(36)',
+            'routing_mode':         "VARCHAR(20) DEFAULT 'manual'",
+            'device_snapshot':      'JSON',
+        }
+        for col_name, col_def in new_cols.items():
+            if col_name not in columns:
+                with engine.connect() as conn:
+                    conn.execute(text(f"ALTER TABLE jobs ADD COLUMN {col_name} {col_def}"))
+                    conn.commit()
+                    print(f"[INFO] Migration: Added {col_name} column to jobs")
 
     # Migration: Add role_name, display_name, tools to agent_profiles if missing
     if 'agent_profiles' in inspector.get_table_names():

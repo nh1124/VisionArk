@@ -4,7 +4,7 @@ import {
   AlarmClock, StickyNote, Library, Settings, Plus, MessageSquare,
   MoreVertical, Pencil, Copy, Trash2, Download, Archive,
   Sun, Star, Calendar, Inbox as InboxIcon,
-  LogOut, HelpCircle, ChevronUp, Keyboard,
+  LogOut, HelpCircle, ChevronUp, Keyboard, Monitor,
 } from "lucide-react"
 import KeyboardShortcutsModal from "./KeyboardShortcutsModal"
 import {
@@ -15,7 +15,7 @@ import {
 
 export type NavView =
   | "dashboard" | "projects" | "agents" | "tasks" | "jobs"
-  | "approvals" | "cron" | "notes" | "workspace" | "chat" | "settings"
+  | "approvals" | "cron" | "notes" | "workspace" | "chat" | "settings" | "devices"
 
 export type TaskFilter = "today" | "my-day" | "planned" | "overdue" | "inbox" | "project"
 
@@ -41,6 +41,7 @@ const navItems: { id: NavView; icon: React.ElementType; label: string }[] = [
   { id: "tasks", icon: ClipboardList, label: "Tasks" },
   { id: "jobs", icon: Play, label: "Jobs" },
   { id: "approvals", icon: ShieldCheck, label: "Approvals" },
+  { id: "devices", icon: Monitor, label: "Devices" },
   { id: "cron", icon: AlarmClock, label: "Cron Tasks" },
   { id: "notes", icon: StickyNote, label: "Notes" },
   { id: "workspace", icon: Library, label: "Workspace" },

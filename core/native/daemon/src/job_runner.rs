@@ -14,14 +14,39 @@ pub async fn run(
     policy: ExecutionPolicy,
     mut trigger_rx: mpsc::Receiver<()>,
     poll_interval_secs: u64,
+    device_id: Option<String>,
 ) -> Result<()> {
     let client = BridgeClient::new(api_base, token);
 
+    if let Some(ref did) = device_id {
+        info!("Job runner using device_id={} for pull/claim routing", did);
+    } else {
+        info!("Job runner using legacy source=native polling (no device_id configured)");
+    }
+
     loop {
-        match poll_queued_jobs(&client).await {
+        let poll_result = match &device_id {
+            Some(did) => pull_jobs_for_device(&client, did).await,
+            None => poll_queued_jobs(&client).await,
+        };
+
+        match poll_result {
             Ok(jobs) => {
                 for job in jobs {
                     let job_id = job["id"].as_str().unwrap_or("").to_string();
+
+                    // Claim the job before execution to prevent double-execution
+                    if let Some(ref did) = device_id {
+                        match claim_job(&client, &job_id, did).await {
+                            Ok(_) => info!("Claimed job {} on device {}", job_id, did),
+                            Err(e) => {
+                                // 409 = already claimed by another device — skip silently
+                                warn!("Could not claim job {}: {} — skipping", job_id, e);
+                                continue;
+                            }
+                        }
+                    }
+
                     info!("Processing job {}", job_id);
                     if let Err(e) = run_job_with_plan(&client, &job_id, &policy).await {
                         error!("Job {} failed: {}", job_id, e);
@@ -126,6 +151,35 @@ async fn poll_queued_jobs(client: &BridgeClient) -> Result<Vec<Value>> {
     client
         .get_vec("/api/jobs?source=native&status=queued&limit=10")
         .await
+}
+
+/// Device-targeted pull: only jobs assigned to this device (or auto-routed unclaimed).
+async fn pull_jobs_for_device(client: &BridgeClient, device_id: &str) -> Result<Vec<Value>> {
+    let path = format!(
+        "/api/jobs/pull?device_id={}&status=queued&limit=10",
+        urlencoding_simple(device_id)
+    );
+    client.get_vec(&path).await
+}
+
+/// Claim a job before execution to prevent double-execution across daemons.
+async fn claim_job(client: &BridgeClient, job_id: &str, device_id: &str) -> Result<Value> {
+    let path = format!(
+        "/api/jobs/{}/claim?device_id={}",
+        job_id,
+        urlencoding_simple(device_id)
+    );
+    client.post_value(&path).await
+}
+
+/// Minimal percent-encoding for device_id (UUIDs only need hyphens — safe as-is).
+fn urlencoding_simple(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
+            other => format!("%{:02X}", other as u32),
+        })
+        .collect()
 }
 
 async fn dispatch_job_plan(client: &BridgeClient, job_id: &str) -> Result<Value> {

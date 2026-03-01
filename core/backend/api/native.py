@@ -4,14 +4,14 @@ import logging
 import re
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, and_, update
 from typing import List, Optional
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from shared.database import (
     get_async_db, Job, JobApproval, IntegrationConnection, AutomationRule,
-    UserSettings,
+    NativeDevice, UserSettings,
 )
 from domains.native.job_service import JobService
 from domains.identity.auth import resolve_identity, Identity
@@ -24,6 +24,32 @@ native_router = APIRouter(prefix="/api/native", tags=["Native"])
 
 # ─── Pydantic schemas ────────────────────────────────────────────────────────
 
+class DeviceRegister(BaseModel):
+    display_name: str
+    device_kind: str = "desktop"
+    platform: str = "other"
+    client_version: Optional[str] = None
+    capabilities: List[str] = []
+
+
+class DevicePatch(BaseModel):
+    display_name: Optional[str] = None
+    is_enabled: Optional[bool] = None
+
+
+class DeviceResponse(BaseModel):
+    id: str
+    display_name: str
+    device_kind: str
+    platform: str
+    client_version: Optional[str]
+    capabilities: List[str]
+    is_enabled: bool
+    status: str
+    last_seen_at: Optional[str]
+    created_at: str
+
+
 class JobCreate(BaseModel):
     type: str
     payload: dict = {}
@@ -31,6 +57,8 @@ class JobCreate(BaseModel):
     project_id: Optional[str] = None
     risk_level: str = "low"
     tags: List[str] = []
+    target_device_id: Optional[str] = None
+    routing_mode: str = "manual"
 
 
 class JobStatusUpdate(BaseModel):
@@ -54,6 +82,9 @@ class JobResponse(BaseModel):
     error_log: Optional[str]
     started_at: Optional[str]
     finished_at: Optional[str]
+    target_device_id: Optional[str]
+    claimed_by_device_id: Optional[str]
+    routing_mode: str
     created_at: str
     updated_at: Optional[str]
 
@@ -111,8 +142,26 @@ def _job_to_response(job: Job) -> JobResponse:
         error_log=job.error_log,
         started_at=job.started_at.isoformat() if job.started_at else None,
         finished_at=job.finished_at.isoformat() if job.finished_at else None,
+        target_device_id=job.target_device_id,
+        claimed_by_device_id=job.claimed_by_device_id,
+        routing_mode=job.routing_mode or "manual",
         created_at=job.created_at.isoformat(),
         updated_at=job.updated_at.isoformat() if job.updated_at else None,
+    )
+
+
+def _device_to_response(d: NativeDevice) -> DeviceResponse:
+    return DeviceResponse(
+        id=d.id,
+        display_name=d.display_name,
+        device_kind=d.device_kind,
+        platform=d.platform,
+        client_version=d.client_version,
+        capabilities=d.capabilities or [],
+        is_enabled=d.is_enabled,
+        status=d.status,
+        last_seen_at=d.last_seen_at.isoformat() if d.last_seen_at else None,
+        created_at=d.created_at.isoformat(),
     )
 
 
@@ -124,6 +173,26 @@ async def create_job(
     db: AsyncSession = Depends(get_async_db),
     identity: Identity = Depends(resolve_identity),
 ):
+    device_snapshot = None
+    if body.target_device_id:
+        res = await db.execute(
+            select(NativeDevice).where(
+                NativeDevice.id == body.target_device_id,
+                NativeDevice.user_id == identity.user_id,
+            )
+        )
+        device = res.scalars().first()
+        if not device:
+            raise HTTPException(status_code=403, detail="Device not found or not owned by user")
+        if not device.is_enabled:
+            raise HTTPException(status_code=400, detail="Target device is not enabled")
+        device_snapshot = {
+            "id": device.id,
+            "display_name": device.display_name,
+            "device_kind": device.device_kind,
+            "platform": device.platform,
+            "status": device.status,
+        }
     job = await JobService.create_job(
         db=db,
         user_id=identity.user_id,
@@ -133,6 +202,9 @@ async def create_job(
         project_id=body.project_id,
         risk_level=body.risk_level,
         tags=body.tags,
+        target_device_id=body.target_device_id,
+        routing_mode=body.routing_mode,
+        device_snapshot=device_snapshot,
     )
     return _job_to_response(job)
 
@@ -317,6 +389,88 @@ async def dispatch_job(
     return plan
 
 
+@jobs_router.get("/pull", response_model=List[JobResponse])
+async def pull_jobs_for_device(
+    device_id: str = Query(...),
+    status: str = Query("queued"),
+    limit: int = Query(10, ge=1, le=50),
+    db: AsyncSession = Depends(get_async_db),
+    identity: Identity = Depends(resolve_identity),
+):
+    """Daemon/mobile endpoint: fetch queued jobs assigned to this device."""
+    # Verify device ownership
+    res = await db.execute(
+        select(NativeDevice).where(
+            NativeDevice.id == device_id,
+            NativeDevice.user_id == identity.user_id,
+        )
+    )
+    device = res.scalars().first()
+    if not device:
+        raise HTTPException(status_code=403, detail="Device not found or not owned by user")
+
+    stmt = select(Job).where(
+        Job.user_id == identity.user_id,
+        Job.status == status,
+    )
+    if device.is_enabled:
+        # Return jobs explicitly targeted at this device OR auto-routed unclaimed jobs
+        stmt = stmt.where(
+            (Job.target_device_id == device_id) |
+            ((Job.routing_mode == "auto") & (Job.claimed_by_device_id == None))  # noqa: E711
+        )
+    else:
+        stmt = stmt.where(Job.target_device_id == device_id)
+    stmt = stmt.order_by(Job.created_at.asc()).limit(limit)
+    result = await db.execute(stmt)
+    jobs = result.scalars().all()
+    return [_job_to_response(j) for j in jobs]
+
+
+@jobs_router.post("/{job_id}/claim", response_model=JobResponse)
+async def claim_job(
+    job_id: str,
+    device_id: str = Query(...),
+    db: AsyncSession = Depends(get_async_db),
+    identity: Identity = Depends(resolve_identity),
+):
+    """Atomic claim: a device marks itself as executor to prevent double-execution."""
+    # Verify device ownership
+    res = await db.execute(
+        select(NativeDevice).where(
+            NativeDevice.id == device_id,
+            NativeDevice.user_id == identity.user_id,
+        )
+    )
+    device = res.scalars().first()
+    if not device:
+        raise HTTPException(status_code=403, detail="Device not found or not owned by user")
+
+    # Fetch job; must be queued and either targeted at this device or auto-routed + unclaimed
+    res = await db.execute(
+        select(Job).where(
+            Job.id == job_id,
+            Job.user_id == identity.user_id,
+            Job.status == "queued",
+        )
+    )
+    job = res.scalars().first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found or not in queued state")
+
+    # Routing check
+    if job.target_device_id and job.target_device_id != device_id:
+        raise HTTPException(status_code=403, detail="Job is targeted at a different device")
+    if job.claimed_by_device_id and job.claimed_by_device_id != device_id:
+        raise HTTPException(status_code=409, detail="Job already claimed by another device")
+
+    job.claimed_by_device_id = device_id
+    await db.commit()
+    await db.refresh(job)
+    logger.info("job.claimed device=%s job=%s", device_id, job_id)
+    return _job_to_response(job)
+
+
 @jobs_router.post("/{job_id}/retry", response_model=JobResponse)
 async def retry_job(
     job_id: str,
@@ -369,6 +523,148 @@ async def reject_job(
     except Exception as e:
         logger.error(f"Failed to reject job: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Device management endpoints ─────────────────────────────────────────────
+
+_STALE_THRESHOLD_SECONDS = 60
+
+
+@native_router.post("/devices/register", response_model=DeviceResponse)
+async def register_device(
+    body: DeviceRegister,
+    db: AsyncSession = Depends(get_async_db),
+    identity: Identity = Depends(resolve_identity),
+):
+    """Native client self-registration (upsert by user + display_name + platform)."""
+    # Upsert: find existing device with same name+platform for this user
+    res = await db.execute(
+        select(NativeDevice).where(
+            NativeDevice.user_id == identity.user_id,
+            NativeDevice.display_name == body.display_name,
+            NativeDevice.platform == body.platform,
+        )
+    )
+    device = res.scalars().first()
+    now = datetime.utcnow()
+    if device:
+        device.device_kind = body.device_kind
+        device.client_version = body.client_version
+        device.capabilities = body.capabilities
+        device.status = "online"
+        device.last_seen_at = now
+    else:
+        device = NativeDevice(
+            id=str(uuid.uuid4()),
+            user_id=identity.user_id,
+            display_name=body.display_name,
+            device_kind=body.device_kind,
+            platform=body.platform,
+            client_version=body.client_version,
+            capabilities=body.capabilities,
+            is_enabled=True,
+            status="online",
+            last_seen_at=now,
+        )
+        db.add(device)
+    await db.commit()
+    await db.refresh(device)
+    logger.info("device.register user=%s device=%s", identity.user_id, device.id)
+    return _device_to_response(device)
+
+
+@native_router.post("/devices/{device_id}/heartbeat", response_model=DeviceResponse)
+async def device_heartbeat(
+    device_id: str,
+    db: AsyncSession = Depends(get_async_db),
+    identity: Identity = Depends(resolve_identity),
+):
+    """Update device status to online and refresh last_seen_at."""
+    res = await db.execute(
+        select(NativeDevice).where(
+            NativeDevice.id == device_id,
+            NativeDevice.user_id == identity.user_id,
+        )
+    )
+    device = res.scalars().first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+    device.status = "online"
+    device.last_seen_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(device)
+    return _device_to_response(device)
+
+
+@native_router.get("/devices", response_model=List[DeviceResponse])
+async def list_devices(
+    db: AsyncSession = Depends(get_async_db),
+    identity: Identity = Depends(resolve_identity),
+):
+    """List all devices belonging to the current user (marks stale automatically)."""
+    res = await db.execute(
+        select(NativeDevice).where(
+            NativeDevice.user_id == identity.user_id
+        ).order_by(NativeDevice.created_at.desc())
+    )
+    devices = res.scalars().all()
+    now = datetime.utcnow()
+    changed = False
+    for d in devices:
+        if d.status == "online" and d.last_seen_at:
+            age = (now - d.last_seen_at).total_seconds()
+            if age > _STALE_THRESHOLD_SECONDS:
+                d.status = "stale"
+                changed = True
+    if changed:
+        await db.commit()
+    return [_device_to_response(d) for d in devices]
+
+
+@native_router.patch("/devices/{device_id}", response_model=DeviceResponse)
+async def patch_device(
+    device_id: str,
+    body: DevicePatch,
+    db: AsyncSession = Depends(get_async_db),
+    identity: Identity = Depends(resolve_identity),
+):
+    """Update device display_name or is_enabled (UI toggle)."""
+    res = await db.execute(
+        select(NativeDevice).where(
+            NativeDevice.id == device_id,
+            NativeDevice.user_id == identity.user_id,
+        )
+    )
+    device = res.scalars().first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+    if body.display_name is not None:
+        device.display_name = body.display_name
+    if body.is_enabled is not None:
+        device.is_enabled = body.is_enabled
+    await db.commit()
+    await db.refresh(device)
+    return _device_to_response(device)
+
+
+@native_router.delete("/devices/{device_id}", status_code=204)
+async def delete_device(
+    device_id: str,
+    db: AsyncSession = Depends(get_async_db),
+    identity: Identity = Depends(resolve_identity),
+):
+    """Remove a device registration."""
+    res = await db.execute(
+        select(NativeDevice).where(
+            NativeDevice.id == device_id,
+            NativeDevice.user_id == identity.user_id,
+        )
+    )
+    device = res.scalars().first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+    await db.delete(device)
+    await db.commit()
 
 
 # ─── Native integrations endpoints ──────────────────────────────────────────

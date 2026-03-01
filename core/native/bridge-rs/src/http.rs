@@ -70,6 +70,18 @@ impl BridgeClient {
         Ok(resp.json().await?)
     }
 
+    /// POST `{api_base}{path}` with JSON body → deserialise body as `serde_json::Value`.
+    pub async fn post_json(&self, path: &str, body: &Value) -> Result<Value> {
+        let req = self.client.post(format!("{}{}", self.api_base, path));
+        let resp = self.with_auth(req).json(body).send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("POST {} failed {}: {}", path, status, text));
+        }
+        Ok(resp.json().await?)
+    }
+
     /// PATCH `{api_base}{path}` with JSON body; response body is discarded.
     pub async fn patch_ignore(&self, path: &str, body: &Value) -> Result<()> {
         let req = self.client.patch(format!("{}{}", self.api_base, path));

@@ -1,4 +1,4 @@
-import type { Job, IntegrationConnection, AutomationRule } from "../shared/types"
+import type { Job, NativeDevice, IntegrationConnection, AutomationRule } from "../shared/types"
 import { isTauri, invoke } from "@tauri-apps/api/core"
 
 // ─── Configuration ─────────────────────────────────────────────────────────────
@@ -208,6 +208,8 @@ export async function createJob(payload: {
   project_id?: string
   risk_level?: string
   tags?: string[]
+  target_device_id?: string
+  routing_mode?: string
 }): Promise<Job> {
   return _json<Job>("/api/jobs", { method: "POST", body: JSON.stringify(payload) })
 }
@@ -251,6 +253,60 @@ export async function rejectJob(id: string): Promise<Job> {
 
 export async function retryJob(id: string): Promise<Job> {
   return _json<Job>(`/api/jobs/${id}/retry`, { method: "POST" })
+}
+
+export async function pullJobs(params: {
+  device_id: string
+  status?: string
+  limit?: number
+}): Promise<Job[]> {
+  const qs = new URLSearchParams({ device_id: params.device_id })
+  if (params.status) qs.set("status", params.status)
+  if (params.limit) qs.set("limit", String(params.limit))
+  return _json<Job[]>(`/api/jobs/pull?${qs.toString()}`)
+}
+
+export async function claimJob(job_id: string, device_id: string): Promise<Job> {
+  return _json<Job>(`/api/jobs/${job_id}/claim?device_id=${encodeURIComponent(device_id)}`, {
+    method: "POST",
+  })
+}
+
+// ─── Devices ──────────────────────────────────────────────────────────────────
+
+export async function listDevices(): Promise<NativeDevice[]> {
+  return _json<NativeDevice[]>("/api/native/devices")
+}
+
+export async function registerDevice(payload: {
+  display_name: string
+  device_kind?: string
+  platform?: string
+  client_version?: string
+  capabilities?: string[]
+}): Promise<NativeDevice> {
+  return _json<NativeDevice>("/api/native/devices/register", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function heartbeatDevice(device_id: string): Promise<NativeDevice> {
+  return _json<NativeDevice>(`/api/native/devices/${device_id}/heartbeat`, { method: "POST" })
+}
+
+export async function patchDevice(
+  device_id: string,
+  patch: { display_name?: string; is_enabled?: boolean }
+): Promise<NativeDevice> {
+  return _json<NativeDevice>(`/api/native/devices/${device_id}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  })
+}
+
+export async function deleteDevice(device_id: string): Promise<void> {
+  await _void(`/api/native/devices/${device_id}`, { method: "DELETE" })
 }
 
 // ─── Integrations ─────────────────────────────────────────────────────────────

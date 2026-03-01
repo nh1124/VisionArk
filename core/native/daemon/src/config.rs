@@ -70,6 +70,11 @@ pub struct DaemonConfig {
     /// Local tool execution safety policy.
     #[serde(default)]
     pub policy: ExecutionPolicy,
+    /// Registered device ID for pull/claim routing.
+    /// Populated by the daemon after calling /api/native/devices/register.
+    /// Can also be set via env var VISIONARK_DEVICE_ID or config file.
+    #[serde(default)]
+    pub device_id: Option<String>,
 }
 
 fn default_poll_interval() -> u64 {
@@ -83,6 +88,7 @@ impl Default for DaemonConfig {
             token: String::new(),
             poll_interval_secs: default_poll_interval(),
             policy: ExecutionPolicy::default(),
+            device_id: None,
         }
     }
 }
@@ -130,6 +136,12 @@ pub fn load() -> DaemonConfig {
         let token = token.trim().to_string();
         if !token.is_empty() {
             cfg.token = token;
+        }
+    }
+    if let Ok(device_id) = std::env::var("VISIONARK_DEVICE_ID") {
+        let device_id = device_id.trim().to_string();
+        if !device_id.is_empty() {
+            cfg.device_id = Some(device_id);
         }
     }
 

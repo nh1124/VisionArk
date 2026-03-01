@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react"
 import { listen } from "@tauri-apps/api/event"
 import { getCurrentWindow } from "@tauri-apps/api/window"
+import { invoke, isTauri } from "@tauri-apps/api/core"
 export type ProjectSidebarMode = "files" | "automation" | "notes" | "activity" | null;
 import NavSidebar, { type NavView, type TaskFilter } from "./components/NavSidebar"
 import TopBar from "./components/TopBar"
@@ -16,8 +17,40 @@ import ProjectsView from "./components/ProjectsView"
 import AgentsView from "./components/AgentsView"
 import TasksView from "./components/TasksView"
 import SettingsView from "./components/SettingsView"
+import DevicesView from "./components/DevicesView"
 import { isLoggedIn, logout, listProjects, initApiBase, getApiBase, getToken, handleRefresh, type Project } from "./lib/api"
-import { listJobs, configure as configureBridge } from "../../bridge/api"
+import { listJobs, registerDevice, heartbeatDevice, configure as configureBridge } from "../../bridge/api"
+
+const DEVICE_ID_KEY = "va_device_id"
+const HEARTBEAT_INTERVAL_MS = 30_000
+
+function detectPlatform(): string {
+  const ua = navigator.userAgent.toLowerCase()
+  if (ua.includes("win")) return "windows"
+  if (ua.includes("mac")) return "macos"
+  if (ua.includes("linux")) return "linux"
+  return "other"
+}
+
+async function loadStoredDeviceId(): Promise<string | null> {
+  try {
+    if (isTauri()) {
+      const id = await invoke<string>("get_secure_token", { key: DEVICE_ID_KEY })
+      return id || null
+    }
+  } catch { /* ignore */ }
+  return localStorage.getItem(DEVICE_ID_KEY)
+}
+
+async function saveDeviceId(id: string): Promise<void> {
+  try {
+    if (isTauri()) {
+      await invoke("set_secure_token", { key: DEVICE_ID_KEY, value: id })
+      return
+    }
+  } catch { /* ignore */ }
+  localStorage.setItem(DEVICE_ID_KEY, id)
+}
 
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(false)
@@ -51,6 +84,43 @@ export default function App() {
   useEffect(() => {
     if (!loggedIn) return
     listProjects().then(setProjects).catch(() => { })
+
+    // Device registration + heartbeat loop
+    let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+
+    const setupDevice = async () => {
+      // 1. Try to load an already-registered device_id
+      let deviceId = await loadStoredDeviceId()
+
+      // 2. If not stored, register now and persist the result
+      if (!deviceId) {
+        const platform = detectPlatform()
+        try {
+          const device = await registerDevice({
+            display_name: `Desktop (${platform})`,
+            device_kind: "desktop",
+            platform,
+            capabilities: ["run_shell", "file_rw", "open_app"],
+          })
+          deviceId = device.id
+          await saveDeviceId(deviceId)
+        } catch { /* ignore — best-effort */ }
+      }
+
+      // 3. Start heartbeat loop
+      if (deviceId) {
+        const id = deviceId
+        heartbeatDevice(id).catch(() => { })
+        heartbeatTimer = setInterval(() => {
+          heartbeatDevice(id).catch(() => { })
+        }, HEARTBEAT_INTERVAL_MS)
+      }
+    }
+
+    setupDevice()
+    return () => {
+      if (heartbeatTimer) clearInterval(heartbeatTimer)
+    }
   }, [loggedIn])
 
   const handleNavChange = useCallback(
@@ -197,6 +267,7 @@ export default function App() {
             {view === "projects" && <ProjectsView onOpenProject={(id) => handleNavChange("chat", id)} />}
             {view === "agents" && <AgentsView />}
             {view === "settings" && <SettingsView />}
+            {view === "devices" && <DevicesView />}
           </div>
         </main>
       </div>

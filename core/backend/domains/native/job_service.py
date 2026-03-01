@@ -21,6 +21,9 @@ class JobService:
         project_id: Optional[str] = None,
         risk_level: str = "low",
         tags: Optional[List[str]] = None,
+        target_device_id: Optional[str] = None,
+        routing_mode: str = "manual",
+        device_snapshot: Optional[dict] = None,
     ) -> Job:
         job = Job(
             id=str(uuid.uuid4()),
@@ -32,11 +35,17 @@ class JobService:
             status=JobStatus.QUEUED,
             risk_level=risk_level,
             payload=payload,
+            target_device_id=target_device_id,
+            routing_mode=routing_mode,
+            device_snapshot=device_snapshot,
         )
         db.add(job)
         await db.commit()
         await db.refresh(job)
-        logger.info("job.created user=%s job=%s type=%s source=%s", user_id, job.id, job_type, source)
+        logger.info(
+            "job.created user=%s job=%s type=%s source=%s device=%s",
+            user_id, job.id, job_type, source, target_device_id,
+        )
         return job
 
     @staticmethod
