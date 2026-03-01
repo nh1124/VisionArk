@@ -16,7 +16,7 @@ import ProjectsView from "./components/ProjectsView"
 import AgentsView from "./components/AgentsView"
 import TasksView from "./components/TasksView"
 import SettingsView from "./components/SettingsView"
-import { isLoggedIn, logout, listProjects, initApiBase, getApiBase, getToken, type Project } from "./lib/api"
+import { isLoggedIn, logout, listProjects, initApiBase, getApiBase, getToken, handleRefresh, type Project } from "./lib/api"
 import { listJobs, configure as configureBridge } from "../../bridge/api"
 
 export default function App() {
@@ -36,10 +36,10 @@ export default function App() {
 
   useEffect(() => {
     const bootstrap = async () => {
-      // 1. Restore stored server URL (also syncs bridge via _setBridgeBaseUrl)
+      // 1. Restore stored server URL
       await initApiBase()
-      // 2. Wire bridge to the shared URL and token getters (no more manual syncs)
-      configureBridge({ getBaseUrl: getApiBase, getToken })
+      // 2. Wire bridge (the HTTP client) to desktop's URL/token/refresh management
+      configureBridge({ getBaseUrl: getApiBase, getToken, handleRefresh })
       // 3. Now check authentication
       const status = await isLoggedIn()
       setLoggedIn(status)

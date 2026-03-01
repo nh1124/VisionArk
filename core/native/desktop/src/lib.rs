@@ -96,6 +96,7 @@ pub fn run() {
             commands::get_config_file_path,
             commands::read_app_config,
             commands::write_app_config,
+            commands::bridge_request,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VisionArk");

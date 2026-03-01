@@ -1,5 +1,5 @@
 use anyhow::Result;
-use reqwest::RequestBuilder;
+use bridge_rs::http::BridgeClient;
 use serde_json::Value;
 use std::collections::HashSet;
 use tokio::sync::mpsc;
@@ -15,22 +15,17 @@ pub async fn run(
     mut trigger_rx: mpsc::Receiver<()>,
     poll_interval_secs: u64,
 ) -> Result<()> {
-    let client = reqwest::Client::new();
+    let client = BridgeClient::new(api_base, token);
 
     loop {
-        match poll_queued_jobs(&client, &api_base, &token).await {
+        match poll_queued_jobs(&client).await {
             Ok(jobs) => {
                 for job in jobs {
                     let job_id = job["id"].as_str().unwrap_or("").to_string();
                     info!("Processing job {}", job_id);
-                    if let Err(e) =
-                        run_job_with_plan(&client, &api_base, &token, &job_id, &policy).await
-                    {
+                    if let Err(e) = run_job_with_plan(&client, &job_id, &policy).await {
                         error!("Job {} failed: {}", job_id, e);
-                        let _ = patch_job_status_with_error(
-                            &client, &api_base, &token, &job_id, &e.to_string(),
-                        )
-                        .await;
+                        let _ = patch_job_status_with_error(&client, &job_id, &e.to_string()).await;
                     }
                 }
             }
@@ -49,29 +44,27 @@ pub async fn run(
 
 /// Plan & Execute loop for a single job.
 async fn run_job_with_plan(
-    client: &reqwest::Client,
-    api_base: &str,
-    token: &str,
+    client: &BridgeClient,
     job_id: &str,
     policy: &ExecutionPolicy,
 ) -> Result<()> {
     // 1. Mark as running
-    patch_job_status(client, api_base, token, job_id, "running").await?;
+    patch_job_status(client, job_id, "running").await?;
 
     // 2. Dispatch → get plan (returns existing plan if already dispatched)
-    let plan = dispatch_job_plan(client, api_base, token, job_id).await?;
+    let plan = dispatch_job_plan(client, job_id).await?;
 
     let steps = match plan["steps"].as_array() {
         Some(s) => s.clone(),
         None => {
             warn!("Job {} plan has no steps, marking succeeded", job_id);
-            patch_job_status(client, api_base, token, job_id, "succeeded").await?;
+            patch_job_status(client, job_id, "succeeded").await?;
             return Ok(());
         }
     };
 
     // 3. Skip steps already completed (supports resume after daemon restart)
-    let completed = get_completed_step_ids(client, api_base, token, job_id).await;
+    let completed = get_completed_step_ids(client, job_id).await;
 
     // 4. Execute each step
     for step in &steps {
@@ -91,16 +84,16 @@ async fn run_job_with_plan(
         );
 
         // Mark the current step so the UI can show a spinner
-        let _ = set_current_step(client, api_base, token, job_id, Some(&step_id)).await;
+        let _ = set_current_step(client, job_id, Some(&step_id)).await;
 
         // High/critical risk steps require user approval
         if risk == "high" || risk == "critical" {
             info!("Step {} requires approval", step_id);
-            patch_job_status(client, api_base, token, job_id, "needs_approval").await?;
-            match wait_for_approval(client, api_base, token, job_id).await? {
+            patch_job_status(client, job_id, "needs_approval").await?;
+            match wait_for_approval(client, job_id).await? {
                 ApprovalResult::Approved => {
                     info!("Step {} approved, resuming", step_id);
-                    patch_job_status(client, api_base, token, job_id, "running").await?;
+                    patch_job_status(client, job_id, "running").await?;
                 }
                 ApprovalResult::Rejected => {
                     info!("Job {} rejected at step {}", job_id, step_id);
@@ -113,12 +106,12 @@ async fn run_job_with_plan(
         let tool_result = local_tools::dispatch_tool(policy, &tool, &args).await;
 
         // Persist step result
-        patch_step_result(client, api_base, token, job_id, &step_id, tool_result).await?;
+        patch_step_result(client, job_id, &step_id, tool_result).await?;
     }
 
     // 5. All steps complete — clear current_step
-    let _ = set_current_step(client, api_base, token, job_id, None).await;
-    patch_job_status(client, api_base, token, job_id, "succeeded").await?;
+    let _ = set_current_step(client, job_id, None).await;
+    patch_job_status(client, job_id, "succeeded").await?;
     Ok(())
 }
 
@@ -127,123 +120,68 @@ enum ApprovalResult {
     Rejected,
 }
 
-// ─── API helpers ──────────────────────────────────────────────────────────────
+// ─── API helpers (delegate to BridgeClient) ───────────────────────────────────
 
-fn with_auth(builder: RequestBuilder, token: &str) -> RequestBuilder {
-    if token.is_empty() {
-        builder
-    } else {
-        builder.bearer_auth(token)
-    }
+async fn poll_queued_jobs(client: &BridgeClient) -> Result<Vec<Value>> {
+    client
+        .get_vec("/api/jobs?source=native&status=queued&limit=10")
+        .await
 }
 
-async fn poll_queued_jobs(
-    client: &reqwest::Client,
-    api_base: &str,
-    token: &str,
-) -> Result<Vec<Value>> {
-    let req = client.get(format!(
-        "{}/api/jobs?source=native&status=queued&limit=10",
-        api_base
-    ));
-    let resp = with_auth(req, token)
-        .send()
-        .await?
-        .json::<Vec<Value>>()
-        .await?;
-    Ok(resp)
+async fn dispatch_job_plan(client: &BridgeClient, job_id: &str) -> Result<Value> {
+    client
+        .post_value(&format!("/api/jobs/{}/dispatch", job_id))
+        .await
 }
 
-async fn dispatch_job_plan(
-    client: &reqwest::Client,
-    api_base: &str,
-    token: &str,
-    job_id: &str,
-) -> Result<Value> {
-    let req = client.post(format!("{}/api/jobs/{}/dispatch", api_base, job_id));
-    let resp = with_auth(req, token).send().await?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        return Err(anyhow::anyhow!("dispatch failed {}: {}", status, text));
-    }
-    Ok(resp.json::<Value>().await?)
-}
-
-async fn get_completed_step_ids(
-    client: &reqwest::Client,
-    api_base: &str,
-    token: &str,
-    job_id: &str,
-) -> HashSet<String> {
-    let req = client.get(format!("{}/api/jobs/{}", api_base, job_id));
-    if let Ok(resp) = with_auth(req, token).send().await {
-        if let Ok(job) = resp.json::<Value>().await {
-            if let Some(results) = job["result"]["step_results"].as_array() {
-                return results
-                    .iter()
-                    .filter_map(|r| r["step_id"].as_str().map(|s| s.to_string()))
-                    .collect();
-            }
+async fn get_completed_step_ids(client: &BridgeClient, job_id: &str) -> HashSet<String> {
+    if let Ok(job) = client.get_value(&format!("/api/jobs/{}", job_id)).await {
+        if let Some(results) = job["result"]["step_results"].as_array() {
+            return results
+                .iter()
+                .filter_map(|r| r["step_id"].as_str().map(|s| s.to_string()))
+                .collect();
         }
     }
     HashSet::new()
 }
 
-async fn patch_job_status(
-    client: &reqwest::Client,
-    api_base: &str,
-    token: &str,
-    job_id: &str,
-    status: &str,
-) -> Result<()> {
-    let req = client.patch(format!("{}/api/jobs/{}", api_base, job_id));
-    with_auth(req, token)
-        .json(&serde_json::json!({ "status": status }))
-        .send()
-        .await?;
-    Ok(())
+async fn patch_job_status(client: &BridgeClient, job_id: &str, status: &str) -> Result<()> {
+    client
+        .patch_ignore(
+            &format!("/api/jobs/{}", job_id),
+            &serde_json::json!({ "status": status }),
+        )
+        .await
 }
 
 async fn patch_job_status_with_error(
-    client: &reqwest::Client,
-    api_base: &str,
-    token: &str,
+    client: &BridgeClient,
     job_id: &str,
     error_log: &str,
 ) -> Result<()> {
-    let req = client.patch(format!("{}/api/jobs/{}", api_base, job_id));
-    with_auth(req, token)
-        .json(&serde_json::json!({ "status": "failed", "error_log": error_log }))
-        .send()
-        .await?;
-    Ok(())
+    client
+        .patch_ignore(
+            &format!("/api/jobs/{}", job_id),
+            &serde_json::json!({ "status": "failed", "error_log": error_log }),
+        )
+        .await
 }
 
-async fn wait_for_approval(
-    client: &reqwest::Client,
-    api_base: &str,
-    token: &str,
-    job_id: &str,
-) -> Result<ApprovalResult> {
+async fn wait_for_approval(client: &BridgeClient, job_id: &str) -> Result<ApprovalResult> {
     loop {
         tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-        let req = client.get(format!("{}/api/jobs/{}", api_base, job_id));
-        match with_auth(req, token).send().await {
-            Ok(resp) => {
-                if let Ok(job) = resp.json::<Value>().await {
-                    match job["status"].as_str().unwrap_or("") {
-                        "queued" | "running" => return Ok(ApprovalResult::Approved),
-                        "rejected" | "failed" => return Ok(ApprovalResult::Rejected),
-                        "needs_approval" => {
-                            info!("Still waiting for approval on job {}", job_id);
-                        }
-                        other => {
-                            warn!("Unexpected job status while waiting: {}", other);
-                        }
-                    }
+        match client.get_value(&format!("/api/jobs/{}", job_id)).await {
+            Ok(job) => match job["status"].as_str().unwrap_or("") {
+                "queued" | "running" => return Ok(ApprovalResult::Approved),
+                "rejected" | "failed" => return Ok(ApprovalResult::Rejected),
+                "needs_approval" => {
+                    info!("Still waiting for approval on job {}", job_id);
                 }
-            }
+                other => {
+                    warn!("Unexpected job status while waiting: {}", other);
+                }
+            },
             Err(e) => warn!("Failed to poll job status: {}", e),
         }
     }
@@ -251,17 +189,14 @@ async fn wait_for_approval(
 
 /// Read-modify-write to update job.result.current_step for live UI tracking.
 async fn set_current_step(
-    client: &reqwest::Client,
-    api_base: &str,
-    token: &str,
+    client: &BridgeClient,
     job_id: &str,
     step_id: Option<&str>,
 ) -> Result<()> {
-    let req = client.get(format!("{}/api/jobs/{}", api_base, job_id));
-    let current_job = match with_auth(req, token).send().await {
-        Ok(resp) => resp.json::<Value>().await.unwrap_or(Value::Null),
-        Err(_) => Value::Null,
-    };
+    let current_job = client
+        .get_value(&format!("/api/jobs/{}", job_id))
+        .await
+        .unwrap_or(Value::Null);
     let mut current_result = match current_job["result"].clone() {
         Value::Object(m) => m,
         _ => serde_json::Map::new(),
@@ -273,29 +208,26 @@ async fn set_current_step(
             None => Value::Null,
         },
     );
-    let req = client.patch(format!("{}/api/jobs/{}", api_base, job_id));
-    with_auth(req, token)
-        .json(&serde_json::json!({ "result": current_result }))
-        .send()
-        .await?;
-    Ok(())
+    client
+        .patch_ignore(
+            &format!("/api/jobs/{}", job_id),
+            &serde_json::json!({ "result": current_result }),
+        )
+        .await
 }
 
 /// Read-modify-write to append a step result to job.result.step_results.
 async fn patch_step_result(
-    client: &reqwest::Client,
-    api_base: &str,
-    token: &str,
+    client: &BridgeClient,
     job_id: &str,
     step_id: &str,
     tool_result: local_tools::ToolResult,
 ) -> Result<()> {
     // Fetch current job to get existing result (preserves plan + prior step_results)
-    let req = client.get(format!("{}/api/jobs/{}", api_base, job_id));
-    let current_job = match with_auth(req, token).send().await {
-        Ok(resp) => resp.json::<Value>().await.unwrap_or(Value::Null),
-        Err(_) => Value::Null,
-    };
+    let current_job = client
+        .get_value(&format!("/api/jobs/{}", job_id))
+        .await
+        .unwrap_or(Value::Null);
 
     let mut current_result = match current_job["result"].clone() {
         Value::Object(m) => m,
@@ -324,10 +256,10 @@ async fn patch_step_result(
         Value::Array(step_results),
     );
 
-    let req = client.patch(format!("{}/api/jobs/{}", api_base, job_id));
-    with_auth(req, token)
-        .json(&serde_json::json!({ "result": current_result }))
-        .send()
-        .await?;
-    Ok(())
+    client
+        .patch_ignore(
+            &format!("/api/jobs/{}", job_id),
+            &serde_json::json!({ "result": current_result }),
+        )
+        .await
 }

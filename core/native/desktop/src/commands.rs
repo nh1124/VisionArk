@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use tauri::{AppHandle, Manager};
 
 // ─── App Config (shared with daemon via config file) ─────────────────────────
@@ -145,4 +146,42 @@ pub fn delete_secure_token(key: String) -> Result<(), String> {
             Err(e.to_string())
         }
     }
+}
+
+// ─── Bridge HTTP transport (Phase 2: bridge-rs via Tauri invoke) ─────────────
+//
+// Allows TypeScript to route HTTP requests through Rust (bridge-rs).
+// The TypeScript layer retains full control of auth injection, URL resolution,
+// and retry logic — this command is a raw transport only.
+
+#[derive(Serialize)]
+pub struct BridgeResponse {
+    pub status: u16,
+    pub body: String,
+}
+
+/// Make an HTTP request via bridge-rs and return `{ status, body }`.
+///
+/// Called from TypeScript `bridge/api.ts` in Tauri mode:
+///   invoke("bridge_request", { url, method, body, headers })
+#[tauri::command]
+pub async fn bridge_request(
+    url: String,
+    method: String,
+    body: Option<String>,
+    headers: Option<HashMap<String, String>>,
+) -> Result<BridgeResponse, String> {
+    let (status, body_str) = bridge_rs::http::raw_request_str(
+        &url,
+        &method,
+        headers.unwrap_or_default(),
+        body.as_deref(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(BridgeResponse {
+        status,
+        body: body_str,
+    })
 }

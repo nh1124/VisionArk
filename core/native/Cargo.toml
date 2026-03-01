@@ -1,0 +1,3 @@
+[workspace]
+members = ["bridge-rs", "daemon", "desktop"]
+resolver = "2"

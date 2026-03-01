@@ -1,81 +1,60 @@
 /**
  * Native App API client — talks to the VisionArk backend.
- * In Tauri: direct to http://localhost:8000
- * In browser dev: via Vite proxy (relative /api/... URLs)
+ *
+ * Responsibilities:
+ *   • URL management  : read/write config.toml (Tauri) or localStorage (browser)
+ *   • Token management: Tauri secure keychain or localStorage
+ *   • Token refresh   : handleRefresh() exported for bridge configuration
+ *   • Domain functions: projects, sessions, chat, LBS, files, etc.
+ *
+ * HTTP mechanics (retry, timeout, auth injection) live in bridge/api.ts.
+ * This module imports and re-exports bridge's apiFetch/apiJson so existing
+ * component imports from "./lib/api" continue to work without changes.
  */
 
-// Detect Tauri environment
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import { setBaseUrl as _setBridgeBaseUrl } from "../../../bridge/api"
+import {
+  apiFetch as _apiFetch,
+  apiJson as _apiJson,
+} from "../../../bridge/api"
 
 const IS_TAURI = isTauri()
 
 // ─── API Base URL (configurable) ───────────────────────────────────────────────
 //
-// Storage backends (mutually exclusive):
-//
-//   Tauri app  → {config_dir}/visionark/config.toml
-//                  Windows : %AppData%\visionark\config.toml
-//                  macOS   : ~/Library/Application Support/visionark/config.toml
-//                  Linux   : ~/.config/visionark/config.toml
-//                The daemon reads this same file at startup.
-//
-//   Browser dev → localStorage["va_api_url"]
-//                  (inside the browser's own storage, not shared with daemon)
-//
-// Tokens are stored separately — see getToken() / setToken() below.
+//   Tauri  → {config_dir}/visionark/config.toml  (shared with daemon)
+//   Browser→ localStorage["va_api_url"]
 
 const API_URL_STORAGE_KEY = "va_api_url"
 const DEFAULT_API_URL = "http://localhost:8000"
 
-/** Live-binding export: consumers see the latest value automatically. */
 export let BASE_URL = DEFAULT_API_URL
 
-/** Normalize: strip trailing slashes. */
 function normalizeUrl(url: string): string {
     return url.trim().replace(/\/+$/, "") || DEFAULT_API_URL
 }
 
-/**
- * Read the persisted URL at startup and update BASE_URL.
- * - Tauri : reads {config_dir}/visionark/config.toml via invoke("read_app_config")
- * - Browser: reads localStorage["va_api_url"]
- */
 export async function initApiBase(): Promise<string> {
     if (IS_TAURI) {
         try {
             const cfg = await invoke<{ api_url?: string }>("read_app_config")
-            if (cfg.api_url) {
-                BASE_URL = normalizeUrl(cfg.api_url)
-            }
+            if (cfg.api_url) BASE_URL = normalizeUrl(cfg.api_url)
         } catch {
             // Config file not yet created — use compiled-in default
         }
     } else {
         const stored = localStorage.getItem(API_URL_STORAGE_KEY)
-        if (stored) {
-            BASE_URL = normalizeUrl(stored)
-        }
+        if (stored) BASE_URL = normalizeUrl(stored)
     }
-    // Keep bridge in sync (legacy path — configure() supersedes this)
-    _setBridgeBaseUrl(BASE_URL)
     return BASE_URL
 }
 
-/** Return the current in-memory API base URL. */
 export function getApiBase(): string {
     return BASE_URL
 }
 
-/**
- * Persist a new API base URL and update BASE_URL immediately.
- * - Tauri : writes to config.toml (human-readable, shared with daemon)
- * - Browser: writes to localStorage
- */
 export async function setApiBase(url: string): Promise<void> {
     BASE_URL = normalizeUrl(url)
-    // Keep bridge in sync automatically (no manual setBridgeBaseUrl needed)
-    _setBridgeBaseUrl(BASE_URL)
     if (IS_TAURI) {
         try {
             await invoke("write_app_config", { config: { api_url: BASE_URL } })
@@ -87,55 +66,47 @@ export async function setApiBase(url: string): Promise<void> {
     }
 }
 
+// ─── Token management (Tauri keychain / localStorage) ─────────────────────────
+
 export async function getToken(): Promise<string | null> {
-    if (!IS_TAURI) {
-        return localStorage.getItem("atmos_access_token")
-    }
+    if (!IS_TAURI) return localStorage.getItem("atmos_access_token")
     try {
-        const token = await invoke<string>("get_secure_token", { key: "atmos_access_token" });
-        return token || null; // Return null if empty string
+        const token = await invoke<string>("get_secure_token", { key: "atmos_access_token" })
+        return token || null
     } catch (e) {
-        console.error("Keychain GetToken Error:", e);
-        return null;
+        console.error("[Token] get error:", e)
+        return null
     }
 }
 
 export async function getRefreshToken(): Promise<string | null> {
-    if (!IS_TAURI) {
-        return localStorage.getItem("atmos_refresh_token")
-    }
+    if (!IS_TAURI) return localStorage.getItem("atmos_refresh_token")
     try {
-        const token = await invoke<string>("get_secure_token", { key: "atmos_refresh_token" });
-        return token || null; // Return null if empty string
+        const token = await invoke<string>("get_secure_token", { key: "atmos_refresh_token" })
+        return token || null
     } catch (e) {
-        console.error("Keychain GetRefreshToken Error:", e);
-        return null;
+        console.error("[Token] get refresh error:", e)
+        return null
     }
 }
 
 export async function setToken(token: string): Promise<void> {
-    if (!IS_TAURI) {
-        localStorage.setItem("atmos_access_token", token)
-        return;
-    }
+    if (!IS_TAURI) { localStorage.setItem("atmos_access_token", token); return }
     try {
-        await invoke("set_secure_token", { key: "atmos_access_token", value: token });
+        await invoke("set_secure_token", { key: "atmos_access_token", value: token })
     } catch (e) {
-        console.error("Keychain SetToken Error:", e);
-        throw e;
+        console.error("[Token] set error:", e)
+        throw e
     }
 }
 
 export async function setRefreshToken(token: string): Promise<void> {
-    if (!IS_TAURI) {
-        localStorage.setItem("atmos_refresh_token", token)
-        return;
-    }
+    if (!IS_TAURI) { localStorage.setItem("atmos_refresh_token", token); return }
     try {
-        await invoke("set_secure_token", { key: "atmos_refresh_token", value: token });
+        await invoke("set_secure_token", { key: "atmos_refresh_token", value: token })
     } catch (e) {
-        console.error("Keychain SetRefreshToken Error:", e);
-        throw e;
+        console.error("[Token] set refresh error:", e)
+        throw e
     }
 }
 
@@ -143,164 +114,94 @@ export async function clearTokens(): Promise<void> {
     if (!IS_TAURI) {
         localStorage.removeItem("atmos_access_token")
         localStorage.removeItem("atmos_refresh_token")
-        return;
+        return
     }
-    try { await invoke("delete_secure_token", { key: "atmos_access_token" }); } catch { }
-    try { await invoke("delete_secure_token", { key: "atmos_refresh_token" }); } catch { }
+    try { await invoke("delete_secure_token", { key: "atmos_access_token" }) } catch { }
+    try { await invoke("delete_secure_token", { key: "atmos_refresh_token" }) } catch { }
 }
 
-let isRefreshing = false;
-let refreshSubscribers: ((token: string) => void)[] = [];
+// ─── Token refresh (exported for bridge configuration) ───────────────────────
+//
+// Bridge calls handleRefresh() when it receives a 401. The function:
+//   1. Retrieves the stored refresh token
+//   2. Calls POST /api/auth/refresh (without auth — raw fetch)
+//   3. Persists the new tokens and returns the new access token
+//   4. Deduplicates concurrent refresh attempts via isRefreshing flag
+
+let isRefreshing = false
+let refreshSubscribers: ((token: string) => void)[] = []
 
 function onRefreshed(token: string) {
-    refreshSubscribers.forEach(cb => cb(token));
-    refreshSubscribers = [];
+    refreshSubscribers.forEach(cb => cb(token))
+    refreshSubscribers = []
 }
 
-function addRefreshSubscriber(cb: (token: string) => void) {
-    refreshSubscribers.push(cb);
-}
-
-async function handleRefresh(): Promise<string | null> {
-    const refreshToken = await getRefreshToken();
-    if (!refreshToken) {
-        await clearTokens();
-        return null;
-    }
+export async function handleRefresh(): Promise<string | null> {
+    const refreshToken = await getRefreshToken()
+    if (!refreshToken) { await clearTokens(); return null }
 
     if (isRefreshing) {
         return new Promise(resolve => {
-            addRefreshSubscriber(token => resolve(token));
-        });
+            refreshSubscribers.push(token => resolve(token || null))
+        })
     }
 
-    isRefreshing = true;
-
+    isRefreshing = true
     try {
         const res = await fetch(`${BASE_URL}/api/auth/refresh`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refresh_token: refreshToken })
-        });
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ refresh_token: refreshToken }),
+        })
+        if (!res.ok) { await clearTokens(); onRefreshed(""); return null }
 
-        if (!res.ok) {
-            await clearTokens();
-            onRefreshed("");
-            return null;
-        }
-
-        const data = await res.json();
-        await setToken(data.access_token);
-        if (data.refresh_token) {
-            await setRefreshToken(data.refresh_token);
-        }
-
-        onRefreshed(data.access_token);
-        return data.access_token;
-    } catch (e) {
-        await clearTokens();
-        onRefreshed("");
-        return null;
+        const data = await res.json()
+        await setToken(data.access_token)
+        if (data.refresh_token) await setRefreshToken(data.refresh_token)
+        onRefreshed(data.access_token)
+        return data.access_token
+    } catch {
+        await clearTokens(); onRefreshed(""); return null
     } finally {
-        isRefreshing = false;
+        isRefreshing = false
     }
 }
 
-export async function apiFetch(
-    path: string,
-    init: RequestInit = {}
-): Promise<Response> {
-    const headers: Record<string, string> = {
-        ...(init.headers as Record<string, string>),
-    }
-    const token = await getToken()
-    if (token) {
-        headers["Authorization"] = `Bearer ${token}`
-    }
-    // Inject browser/system timezone for LBS date-boundary accuracy
-    headers["X-Timezone"] = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
-    console.log(`[AuthDebug] apiFetch ${path} - Token: ${token ? 'Yes' : 'No'}`);
-    let res = await fetch(`${BASE_URL}${path}`, { ...init, headers })
+// ─── HTTP primitives (re-exported from bridge) ────────────────────────────────
+//
+// Components that import apiFetch/apiJson from "./lib/api" transparently use
+// bridge's single HTTP client (retry + timeout + auth injection).
 
-    if (res.status === 401 && (await getRefreshToken())) {
-        const newToken = await handleRefresh();
-        if (newToken) {
-            headers["Authorization"] = `Bearer ${newToken}`
-            res = await fetch(`${BASE_URL}${path}`, { ...init, headers })
-        }
-    }
-
-    return res;
-}
-
-export async function apiJson<T>(
-    path: string,
-    init: RequestInit = {}
-): Promise<T> {
-    const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-        ...(init.headers as Record<string, string>),
-    }
-    const token = await getToken()
-    if (token) {
-        headers["Authorization"] = `Bearer ${token}`
-    }
-    // Inject browser/system timezone for LBS date-boundary accuracy
-    headers["X-Timezone"] = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
-    let res = await fetch(`${BASE_URL}${path}`, { ...init, headers })
-
-    if (res.status === 401 && (await getRefreshToken())) {
-        const newToken = await handleRefresh();
-        if (newToken) {
-            headers["Authorization"] = `Bearer ${newToken}`
-            res = await fetch(`${BASE_URL}${path}`, { ...init, headers })
-        }
-    }
-
-    if (!res.ok) {
-        const text = await res.text()
-        throw new Error(`API ${res.status}: ${text}`)
-    }
-    return res.json() as Promise<T>
-}
+export const apiFetch = _apiFetch
+export const apiJson = _apiJson
 
 // ─── Auth ──────────────────────────────────────────────────────────────────────
 
 export async function login(username: string, password: string) {
+    // Raw fetch — no auth header needed for login
     const res = await fetch(`${BASE_URL}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
     })
-    if (!res.ok) {
-        console.error("Login API returned non-OK:", res.status);
-        throw new Error("Login failed");
-    }
+    if (!res.ok) throw new Error("Login failed")
     const data = await res.json()
-    console.log("[AuthDebug] Login successful, saving tokens...");
     try {
         await setToken(data.access_token)
-        console.log("[AuthDebug] Access token saved OK");
-        if (data.refresh_token) {
-            await setRefreshToken(data.refresh_token)
-            console.log("[AuthDebug] Refresh token saved OK");
-        }
+        if (data.refresh_token) await setRefreshToken(data.refresh_token)
     } catch (e) {
-        console.error("[AuthDebug] Failed to save tokens!", e);
-        throw new Error("Failed to save tokens securely");
+        console.error("[Auth] Failed to save tokens:", e)
+        throw new Error("Failed to save tokens securely")
     }
     return data
 }
 
 export async function isLoggedIn(): Promise<boolean> {
-    const token = await getToken();
-    console.log("[AuthDebug] IS_TAURI:", IS_TAURI);
-    console.log("[AuthDebug] Token retrieved:", token ? "Yes (" + token.substring(0, 10) + "...)" : "No");
-    return !!token;
+    return !!(await getToken())
 }
 
 export async function logout(): Promise<void> {
-    await clearTokens();
+    await clearTokens()
 }
 
 // ─── Projects ──────────────────────────────────────────────────────────────────
@@ -313,7 +214,7 @@ export interface Project {
 }
 
 export async function listProjects(): Promise<Project[]> {
-    const res = await apiJson<{ projects: Project[] }>("/api/agents/project/list")
+    const res = await _apiJson<{ projects: Project[] }>("/api/agents/project/list")
     return res.projects
 }
 
@@ -327,7 +228,7 @@ export interface Session {
 }
 
 export async function listSessions(projectId: string): Promise<Session[]> {
-    const data = await apiJson<{ sessions: Session[] }>(
+    const data = await _apiJson<{ sessions: Session[] }>(
         `/api/agents/project/${projectId}/sessions`
     )
     return data.sessions || []
@@ -351,7 +252,7 @@ export async function fetchHistory(
     const baseUrl = sessionId
         ? `/api/agents/sessions/${sessionId}/history`
         : `/api/agents/project/${projectId}/history`
-    const res = await apiFetch(`${baseUrl}?limit=50&t=${Date.now()}`)
+    const res = await _apiFetch(`${baseUrl}?limit=50&t=${Date.now()}`)
     if (!res.ok) return []
     const data = await res.json()
     const rawItems: any[] = data.items ?? data.history ?? []
@@ -376,35 +277,23 @@ export async function sendChat(
 ): Promise<{ task_id: string; session_id?: string }> {
     const formData = new FormData()
     formData.append("message", message)
-
-    // Pass the active session so the backend uses it (not just the project default)
-    if (sessionId) {
-        formData.append("session_id", sessionId)
-    }
-
-    // Append uploaded files
-    if (files && files.length > 0) {
-        for (const file of files) {
-            formData.append("files", file, file.name)
-        }
+    if (sessionId) formData.append("session_id", sessionId)
+    if (files?.length) {
+        for (const file of files) formData.append("files", file, file.name)
     }
 
     const headers: Record<string, string> = {}
-    if (model) {
-        headers["X-Preferred-Model"] = model
-    }
+    if (model) headers["X-Preferred-Model"] = model
 
-    const res = await apiFetch(`/api/agents/project/${projectId}/chat`, {
+    const res = await _apiFetch(`/api/agents/project/${projectId}/chat`, {
         method: "POST",
         body: formData,
         headers,
     })
-
     if (!res.ok) {
         const text = await res.text()
         throw new Error(`Chat API ${res.status}: ${text}`)
     }
-
     return res.json() as Promise<{ task_id: string; session_id?: string }>
 }
 
@@ -413,23 +302,20 @@ export async function sendChat(
 export async function getTaskStatus(
     taskId: string
 ): Promise<{ status: string; result?: string }> {
-    return apiJson<{ status: string; result?: string }>(
-        `/api/agents/tasks/${taskId}`
-    )
+    return _apiJson<{ status: string; result?: string }>(`/api/agents/tasks/${taskId}`)
 }
 
-// ─── Files & Notes ─────────────────────────────────────────────────────────────
+// ─── Files ─────────────────────────────────────────────────────────────────────
 
 export async function getFileToken(): Promise<string> {
-    const res = await apiJson<{ file_token: string; expires_in: number }>("/api/auth/file-token")
+    const res = await _apiJson<{ file_token: string; expires_in: number }>("/api/auth/file-token")
     return res.file_token
 }
-
 
 // ─── Dashboard ─────────────────────────────────────────────────────────────────
 
 export async function getDashboard(): Promise<any> {
-    return apiJson<any>("/api/lbs/dashboard")
+    return _apiJson<any>("/api/lbs/dashboard")
 }
 
 // ─── LBS Tasks ─────────────────────────────────────────────────────────────────
@@ -443,14 +329,14 @@ export interface LBSTask {
     rule_type: string
     due_date?: string | null
     notes?: string | null
-    status?: string | null  // "todo" | "done" | "skipped" — present when merged with schedule
+    status?: string | null
     start_time?: string | null
     end_time?: string | null
     meta_payload?: Record<string, any>
 }
 
 export async function listLBSTasks(opts?: {
-    targetDate?: string  // YYYY-MM-DD — merges schedule status
+    targetDate?: string
     active?: boolean
     context?: string
 }): Promise<LBSTask[]> {
@@ -459,7 +345,7 @@ export async function listLBSTasks(opts?: {
     if (opts?.active !== undefined) params.set("active", String(opts.active))
     if (opts?.context) params.set("context", opts.context)
     const qs = params.toString()
-    return apiJson<LBSTask[]>(`/api/lbs/tasks${qs ? `?${qs}` : ""}`)
+    return _apiJson<LBSTask[]>(`/api/lbs/tasks${qs ? `?${qs}` : ""}`)
 }
 
 export async function completeLBSTask(
@@ -467,7 +353,7 @@ export async function completeLBSTask(
     targetDate: string,
     status: "done" | "todo" | "skipped" = "done"
 ): Promise<any> {
-    return apiJson<any>(`/api/lbs/tasks/${taskId}/complete`, {
+    return _apiJson<any>(`/api/lbs/tasks/${taskId}/complete`, {
         method: "POST",
         body: JSON.stringify({ target_date: targetDate, status }),
     })
@@ -484,14 +370,14 @@ export interface LBSTaskCreate {
 }
 
 export async function createLBSTask(task: LBSTaskCreate): Promise<LBSTask> {
-    return apiJson<LBSTask>("/api/lbs/tasks", {
+    return _apiJson<LBSTask>("/api/lbs/tasks", {
         method: "POST",
         body: JSON.stringify(task),
     })
 }
 
 export async function getOverdueTasks(): Promise<LBSTask[]> {
-    return apiJson<LBSTask[]>("/api/lbs/overdue")
+    return _apiJson<LBSTask[]>("/api/lbs/overdue")
 }
 
 export interface LBSTaskFull extends LBSTask {
@@ -535,23 +421,27 @@ export interface LBSScheduleDay {
 }
 
 export async function getLBSTask(taskId: string, targetDate?: string): Promise<LBSTaskFull> {
-    const qs = targetDate ? `?target_date=${targetDate}` : ''
-    return apiJson<LBSTaskFull>(`/api/lbs/tasks/${taskId}${qs}`)
+    const qs = targetDate ? `?target_date=${targetDate}` : ""
+    return _apiJson<LBSTaskFull>(`/api/lbs/tasks/${taskId}${qs}`)
 }
 
-export async function updateLBSTask(taskId: string, data: Partial<LBSTaskFull>, forceOverride = true): Promise<LBSTaskFull> {
-    return apiJson<LBSTaskFull>(`/api/lbs/tasks/${taskId}?force_override=${forceOverride}`, {
+export async function updateLBSTask(
+    taskId: string,
+    data: Partial<LBSTaskFull>,
+    forceOverride = true
+): Promise<LBSTaskFull> {
+    return _apiJson<LBSTaskFull>(`/api/lbs/tasks/${taskId}?force_override=${forceOverride}`, {
         method: "PUT",
         body: JSON.stringify(data),
     })
 }
 
 export async function deleteLBSTask(taskId: string): Promise<void> {
-    await apiJson<any>(`/api/lbs/tasks/${taskId}?force_override=true`, { method: "DELETE" })
+    await _apiJson<any>(`/api/lbs/tasks/${taskId}?force_override=true`, { method: "DELETE" })
 }
 
 export async function getSchedule(startDate: string, endDate: string): Promise<LBSScheduleDay[]> {
-    const res = await apiFetch(`/api/lbs/schedule?start_date=${startDate}&end_date=${endDate}`)
+    const res = await _apiFetch(`/api/lbs/schedule?start_date=${startDate}&end_date=${endDate}`)
     if (!res.ok) throw new Error(`Schedule API ${res.status}`)
     return res.json()
 }
@@ -565,7 +455,7 @@ export async function createLBSException(data: {
     end_time?: string | null
     notes?: string | null
 }): Promise<any> {
-    return apiJson<any>('/api/lbs/exceptions?force_override=true', {
+    return _apiJson<any>("/api/lbs/exceptions?force_override=true", {
         method: "POST",
         body: JSON.stringify(data),
     })

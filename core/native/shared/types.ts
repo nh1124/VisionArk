@@ -1,3 +1,18 @@
+// ─── Auto-generated Rust ↔ TypeScript bindings (Phase 3: ts-rs) ───────────────
+//
+// Rust-canonical type definitions live in bridge-rs/src/types.rs.
+// Run the following to regenerate core/native/shared/bindings/:
+//
+//   cd core/native && cargo test -p bridge-rs
+//
+// The interfaces below are the TypeScript-idiomatic versions (more specific
+// than the ts-rs output, e.g. Record<string,unknown> instead of unknown).
+// They must stay structurally compatible with their counterparts in ./bindings/.
+//
+// Re-export the generated enum types directly (they match exactly):
+export type { JobStatus } from "./bindings/JobStatus"
+export type { RiskLevel } from "./bindings/RiskLevel"
+
 // ─── WebSocket event types ─────────────────────────────────────────────────────
 // Must stay in sync with the backend notification schema.
 export const WsEventType = {
@@ -23,9 +38,8 @@ export interface JobWsEvent extends WsEvent<Job> {
 }
 
 // ─── Domain types ──────────────────────────────────────────────────────────────
+// (JobStatus and RiskLevel re-exported from ./bindings/ above)
 
-export type RiskLevel = "low" | "medium" | "high" | "critical"
-export type JobStatus = "queued" | "running" | "needs_approval" | "succeeded" | "failed" | "rejected"
 export type JobSource = "native" | "web" | "cloud" | "mobile" | string
 
 // JobType is an open string. Known prefix examples:
