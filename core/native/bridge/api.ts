@@ -1,5 +1,7 @@
-import type { Job, NativeDevice, IntegrationConnection, AutomationRule } from "../shared/types"
-import { isTauri, invoke } from "@tauri-apps/api/core"
+import type {
+  NativeDevice, IntegrationConnection, AutomationRule,
+  AgentRun, RunExecution, RunApproval,
+} from "../shared/types"
 
 // ─── Configuration ─────────────────────────────────────────────────────────────
 //
@@ -33,6 +35,10 @@ interface BridgeConfig {
    * Bridge retries the original request exactly once with the new token.
    */
   handleRefresh?: () => Promise<string | null>
+  /** Returns true if running in a Tauri environment */
+  isTauri?: () => boolean
+  /** The Tauri invoke function */
+  invoke?: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>
 }
 
 let _config: BridgeConfig | null = null
@@ -86,18 +92,21 @@ async function _once(
   // FormData (file uploads) must use fetch — multipart isn't handled by bridge_request
   const isFormData = init.body instanceof FormData
 
-  if (!isFormData && isTauri()) {
+  if (!isFormData && cfg().isTauri?.()) {
     // ── Rust transport (bridge-rs) ───────────────────────────────────────────
     const bodyStr =
       init.body != null && typeof init.body === "string" ? init.body : undefined
 
-    const result = await invoke<{ status: number; body: string }>("bridge_request", {
-      url: `${cfg().getBaseUrl()}${path}`,
-      method: (init.method ?? "GET").toUpperCase(),
-      body: bodyStr,
-      headers,
-    })
-    return new Response(result.body, { status: result.status })
+    const invokeFn = cfg().invoke
+    if (invokeFn) {
+      const result = await invokeFn<{ status: number; body: string }>("bridge_request", {
+        url: `${cfg().getBaseUrl()}${path}`,
+        method: (init.method ?? "GET").toUpperCase(),
+        body: bodyStr,
+        headers,
+      })
+      return new Response(result.body, { status: result.status })
+    }
   }
 
   // ── fetch transport (browser dev mode or FormData) ────────────────────────
@@ -199,79 +208,6 @@ async function _void(path: string, init?: RequestInit): Promise<void> {
   }
 }
 
-// ─── Jobs ────────────────────────────────────────────────────────────────────
-
-export async function createJob(payload: {
-  type: string
-  payload?: Record<string, unknown>
-  source?: string
-  project_id?: string
-  risk_level?: string
-  tags?: string[]
-  target_device_id?: string
-  routing_mode?: string
-}): Promise<Job> {
-  return _json<Job>("/api/jobs", { method: "POST", body: JSON.stringify(payload) })
-}
-
-export async function listJobs(params?: {
-  source?: string
-  status?: string
-  type?: string
-  limit?: number
-}): Promise<Job[]> {
-  const qs = new URLSearchParams()
-  if (params?.source) qs.set("source", params.source)
-  if (params?.status) qs.set("status", params.status)
-  if (params?.type) qs.set("type", params.type)
-  if (params?.limit) qs.set("limit", String(params.limit))
-  return _json<Job[]>(`/api/jobs?${qs.toString()}`)
-}
-
-export async function getJob(id: string): Promise<Job> {
-  return _json<Job>(`/api/jobs/${id}`)
-}
-
-export async function updateJobStatus(
-  id: string,
-  status: string,
-  extras?: { error_log?: string; result?: Record<string, unknown> }
-): Promise<Job> {
-  return _json<Job>(`/api/jobs/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify({ status, ...extras }),
-  })
-}
-
-export async function approveJob(id: string): Promise<Job> {
-  return _json<Job>(`/api/jobs/${id}/approve`, { method: "POST" })
-}
-
-export async function rejectJob(id: string): Promise<Job> {
-  return _json<Job>(`/api/jobs/${id}/reject`, { method: "POST" })
-}
-
-export async function retryJob(id: string): Promise<Job> {
-  return _json<Job>(`/api/jobs/${id}/retry`, { method: "POST" })
-}
-
-export async function pullJobs(params: {
-  device_id: string
-  status?: string
-  limit?: number
-}): Promise<Job[]> {
-  const qs = new URLSearchParams({ device_id: params.device_id })
-  if (params.status) qs.set("status", params.status)
-  if (params.limit) qs.set("limit", String(params.limit))
-  return _json<Job[]>(`/api/jobs/pull?${qs.toString()}`)
-}
-
-export async function claimJob(job_id: string, device_id: string): Promise<Job> {
-  return _json<Job>(`/api/jobs/${job_id}/claim?device_id=${encodeURIComponent(device_id)}`, {
-    method: "POST",
-  })
-}
-
 // ─── Devices ──────────────────────────────────────────────────────────────────
 
 export async function listDevices(): Promise<NativeDevice[]> {
@@ -352,4 +288,84 @@ export async function createRule(payload: {
     method: "POST",
     body: JSON.stringify(payload),
   })
+}
+
+// ─── Runs ─────────────────────────────────────────────────────────────────────
+
+export async function createRun(payload: {
+  project_id?: string
+  agent_id?: string
+  session_id?: string
+  summary?: string
+}): Promise<AgentRun> {
+  return _json<AgentRun>("/api/runs", { method: "POST", body: JSON.stringify(payload) })
+}
+
+export async function listRuns(params?: {
+  status?: string
+  limit?: number
+}): Promise<AgentRun[]> {
+  const qs = new URLSearchParams()
+  if (params?.status) qs.set("status", params.status)
+  if (params?.limit) qs.set("limit", String(params.limit))
+  return _json<AgentRun[]>(`/api/runs?${qs.toString()}`)
+}
+
+export async function getRun(run_id: string): Promise<AgentRun> {
+  return _json<AgentRun>(`/api/runs/${run_id}`)
+}
+
+export async function updateRun(run_id: string, status: string, summary?: string): Promise<AgentRun> {
+  return _json<AgentRun>(`/api/runs/${run_id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status, summary }),
+  })
+}
+
+export async function addExecution(run_id: string, payload: {
+  kind: string
+  payload?: Record<string, unknown>
+  risk_level?: string
+  target_device_id?: string
+}): Promise<RunExecution> {
+  return _json<RunExecution>(`/api/runs/${run_id}/executions`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function updateExecution(
+  run_id: string,
+  exec_id: string,
+  status: string,
+  extras?: { result?: Record<string, unknown>; error_log?: string }
+): Promise<RunExecution> {
+  return _json<RunExecution>(`/api/runs/${run_id}/executions/${exec_id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status, ...extras }),
+  })
+}
+
+export async function approveExecution(run_id: string, approval_id: string): Promise<RunApproval> {
+  return _json<RunApproval>(`/api/runs/${run_id}/approve/${approval_id}`, { method: "POST" })
+}
+
+export async function rejectExecution(run_id: string, approval_id: string): Promise<RunApproval> {
+  return _json<RunApproval>(`/api/runs/${run_id}/reject/${approval_id}`, { method: "POST" })
+}
+
+export async function pullExecutions(params: {
+  device_id: string
+  limit?: number
+}): Promise<RunExecution[]> {
+  const qs = new URLSearchParams({ device_id: params.device_id })
+  if (params.limit) qs.set("limit", String(params.limit))
+  return _json<RunExecution[]>(`/api/runs/pull?${qs.toString()}`)
+}
+
+export async function claimExecution(exec_id: string, device_id: string): Promise<RunExecution> {
+  return _json<RunExecution>(
+    `/api/runs/executions/${exec_id}/claim?device_id=${encodeURIComponent(device_id)}`,
+    { method: "POST" }
+  )
 }

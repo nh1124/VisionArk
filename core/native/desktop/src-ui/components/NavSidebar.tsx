@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react"
 import {
-  LayoutGrid, Folder, Bot, ClipboardList, Play, ShieldCheck,
+  LayoutGrid, Folder, Bot, ClipboardList, Activity,
   AlarmClock, StickyNote, Library, Settings, Plus, MessageSquare,
   MoreVertical, Pencil, Copy, Trash2, Download, Archive,
   Sun, Star, Calendar, Inbox as InboxIcon,
@@ -14,8 +14,8 @@ import {
 } from "../lib/api"
 
 export type NavView =
-  | "dashboard" | "projects" | "agents" | "tasks" | "jobs"
-  | "approvals" | "cron" | "notes" | "workspace" | "chat" | "settings" | "devices"
+  | "dashboard" | "projects" | "agents" | "tasks" | "run_center"
+  | "cron" | "notes" | "workspace" | "chat" | "settings" | "devices"
 
 export type TaskFilter = "today" | "my-day" | "planned" | "overdue" | "inbox" | "project"
 
@@ -35,16 +35,15 @@ interface Props {
 }
 
 const navItems: { id: NavView; icon: React.ElementType; label: string }[] = [
-  { id: "dashboard", icon: LayoutGrid, label: "Dashboard" },
-  { id: "projects", icon: Folder, label: "Projects" },
-  { id: "agents", icon: Bot, label: "Agents" },
-  { id: "tasks", icon: ClipboardList, label: "Tasks" },
-  { id: "jobs", icon: Play, label: "Jobs" },
-  { id: "approvals", icon: ShieldCheck, label: "Approvals" },
-  { id: "devices", icon: Monitor, label: "Devices" },
-  { id: "cron", icon: AlarmClock, label: "Cron Tasks" },
-  { id: "notes", icon: StickyNote, label: "Notes" },
-  { id: "workspace", icon: Library, label: "Workspace" },
+  { id: "dashboard",   icon: LayoutGrid,   label: "Dashboard" },
+  { id: "projects",    icon: Folder,       label: "Projects" },
+  { id: "agents",      icon: Bot,          label: "Agents" },
+  { id: "tasks",       icon: ClipboardList, label: "Tasks" },
+  { id: "run_center",  icon: Activity,     label: "Run Center" },
+  { id: "devices",     icon: Monitor,      label: "Devices" },
+  { id: "cron",        icon: AlarmClock,   label: "Cron Tasks" },
+  { id: "notes",       icon: StickyNote,   label: "Notes" },
+  { id: "workspace",   icon: Library,      label: "Workspace" },
 ]
 
 const taskCategories: { id: TaskFilter; label: string; icon: React.ElementType }[] = [
@@ -293,7 +292,7 @@ export default function NavSidebar({
       <div className="flex-shrink-0 px-3 py-2 space-y-1">
         {navItems.map(({ id, icon: Icon, label }) => {
           const isActive = active === id
-          const badge = id === "approvals" && pendingApprovals > 0
+          const badge = id === "run_center" && pendingApprovals > 0
           return (
             <button
               key={id}

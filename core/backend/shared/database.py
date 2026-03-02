@@ -761,62 +761,6 @@ class ProjectAgentAssignment(Base):
     agent = relationship("Agent")
 
 
-# ─── Jobs (統合テーブル: native/web/cloud 共用) ──────────────────────────────
-
-class JobStatus(str, Enum):
-    QUEUED         = "queued"
-    RUNNING        = "running"
-    NEEDS_APPROVAL = "needs_approval"
-    SUCCEEDED      = "succeeded"
-    FAILED         = "failed"
-    REJECTED       = "rejected"
-
-
-class RiskLevel(str, Enum):
-    LOW      = "low"
-    MEDIUM   = "medium"
-    HIGH     = "high"
-    CRITICAL = "critical"
-
-
-class Job(Base):
-    __tablename__ = "jobs"
-    id           = Column(String(36), primary_key=True)
-    user_id      = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
-    project_id   = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
-    source       = Column(String(20), default="native", index=True)
-    type         = Column(String(100), nullable=False, index=True)
-    tags         = Column(JSON, default=list)
-    status       = Column(String(30), default="queued", index=True)
-    risk_level   = Column(String(20), default="low")
-    payload      = Column(JSON, default=dict)
-    result       = Column(JSON, nullable=True)
-    approved_by           = Column(String(36), nullable=True)
-    error_log             = Column(Text, nullable=True)
-    started_at            = Column(DateTime, nullable=True)
-    finished_at           = Column(DateTime, nullable=True)
-    # Device routing (Phase: device-selection)
-    target_device_id      = Column(String(36), ForeignKey("native_devices.id"), nullable=True, index=True)
-    claimed_by_device_id  = Column(String(36), nullable=True)
-    routing_mode          = Column(String(20), default="manual")  # manual | auto
-    device_snapshot       = Column(JSON, nullable=True)
-    created_at            = Column(DateTime, default=datetime.utcnow)
-    updated_at            = Column(DateTime, onupdate=datetime.utcnow)
-
-
-class JobApproval(Base):
-    __tablename__ = "job_approvals"
-    id           = Column(String(36), primary_key=True)
-    job_id       = Column(String(36), ForeignKey("jobs.id"), nullable=False, index=True)
-    user_id      = Column(String(36), ForeignKey("users.id"), nullable=False)
-    action_type  = Column(String(50), nullable=False)
-    policy_mode  = Column(String(20), default="manual")
-    expires_at   = Column(DateTime, nullable=True)
-    decision     = Column(String(20), nullable=True)
-    decided_at   = Column(DateTime, nullable=True)
-    created_at   = Column(DateTime, default=datetime.utcnow)
-
-
 class IntegrationConnection(Base):
     __tablename__ = "integration_connections"
     id            = Column(String(36), primary_key=True)
@@ -854,7 +798,7 @@ class NativeDevice(Base):
     # windows | macos | linux | ios | android | other
     platform       = Column(String(20), default="other")
     client_version = Column(String(50), nullable=True)
-    # e.g. ["run_shell", "file_rw", "open_app"]
+    # e.g. ["run_shell", "file_rw", "open_app", "get_native_environment", "capture_screen"]
     capabilities   = Column(JSON, default=list)
     is_enabled     = Column(Boolean, default=True)
     # online | offline | stale
@@ -862,6 +806,65 @@ class NativeDevice(Base):
     last_seen_at   = Column(DateTime, nullable=True)
     created_at     = Column(DateTime, default=datetime.utcnow)
     updated_at     = Column(DateTime, onupdate=datetime.utcnow)
+
+
+# ─── Run Center: Agent Runs / Executions / Approvals ─────────────────────────
+# Run-centric model (レポート §3.2 仕様案):
+#   AgentRun  … 1回のエージェント実行セッション（主）
+#   RunExecution … Run中で発生した実行イベント（旧Job相当, 従）
+#   RunApproval  … Execution に紐づく承認要求（従）
+
+class AgentRun(Base):
+    """Agent Run — 1 エージェント実行セッション."""
+    __tablename__ = "agent_runs"
+    id          = Column(String(36), primary_key=True)
+    user_id     = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    project_id  = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
+    agent_id    = Column(String(36), nullable=True)
+    session_id  = Column(String(36), nullable=True)
+    # queued | running | waiting_approval | completed | failed | canceled
+    status      = Column(String(30), default="queued", index=True)
+    summary     = Column(Text, nullable=True)
+    started_at  = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    created_at  = Column(DateTime, default=datetime.utcnow)
+    updated_at  = Column(DateTime, onupdate=datetime.utcnow)
+
+
+class RunExecution(Base):
+    """Run Execution — Run 内で発生した実行イベント（旧 Job 相当）."""
+    __tablename__ = "run_executions"
+    id               = Column(String(36), primary_key=True)
+    run_id           = Column(String(36), ForeignKey("agent_runs.id"), nullable=False, index=True)
+    # local.file | local.dev | local.shell | integration.* | web.*
+    kind             = Column(String(100), nullable=False)
+    # pending | running | waiting_approval | succeeded | failed | rejected
+    status           = Column(String(30), default="pending", index=True)
+    risk_level       = Column(String(20), default="low")
+    payload          = Column(JSON, default=dict)
+    result           = Column(JSON, nullable=True)
+    error_log        = Column(Text, nullable=True)
+    target_device_id = Column(String(36), ForeignKey("native_devices.id"), nullable=True, index=True)
+    claimed_by_device_id = Column(String(36), nullable=True)
+    started_at       = Column(DateTime, nullable=True)
+    finished_at      = Column(DateTime, nullable=True)
+    created_at       = Column(DateTime, default=datetime.utcnow)
+    updated_at       = Column(DateTime, onupdate=datetime.utcnow)
+
+
+class RunApproval(Base):
+    """Run Approval — Execution に紐づく承認要求."""
+    __tablename__ = "run_approvals"
+    id           = Column(String(36), primary_key=True)
+    execution_id = Column(String(36), ForeignKey("run_executions.id"), nullable=False, index=True)
+    run_id       = Column(String(36), ForeignKey("agent_runs.id"), nullable=False, index=True)
+    # pending | approved | rejected
+    status       = Column(String(20), default="pending", index=True)
+    reason       = Column(Text, nullable=True)          # 承認要求の理由（ステップ説明等）
+    requested_at = Column(DateTime, default=datetime.utcnow)
+    decided_at   = Column(DateTime, nullable=True)
+    decided_by   = Column(String(36), nullable=True)    # user_id
+    created_at   = Column(DateTime, default=datetime.utcnow)
 
 
 # Global engine instances (Singletons for connection pooling)
@@ -990,21 +993,6 @@ def _run_migrations(engine):
     # No, Base.metadata.create_all handles new tables.
     pass
 
-    # Migration: Add device-routing columns to jobs if missing
-    if 'jobs' in inspector.get_table_names():
-        columns = [col['name'] for col in inspector.get_columns('jobs')]
-        new_cols = {
-            'target_device_id':     'VARCHAR(36)',
-            'claimed_by_device_id': 'VARCHAR(36)',
-            'routing_mode':         "VARCHAR(20) DEFAULT 'manual'",
-            'device_snapshot':      'JSON',
-        }
-        for col_name, col_def in new_cols.items():
-            if col_name not in columns:
-                with engine.connect() as conn:
-                    conn.execute(text(f"ALTER TABLE jobs ADD COLUMN {col_name} {col_def}"))
-                    conn.commit()
-                    print(f"[INFO] Migration: Added {col_name} column to jobs")
 
     # Migration: Add role_name, display_name, tools to agent_profiles if missing
     if 'agent_profiles' in inspector.get_table_names():

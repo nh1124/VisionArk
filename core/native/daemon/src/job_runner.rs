@@ -1,13 +1,15 @@
 use anyhow::Result;
 use bridge_rs::http::BridgeClient;
 use serde_json::Value;
-use std::collections::HashSet;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use crate::config::ExecutionPolicy;
 use crate::local_tools;
 
+/// Entry point: poll/run loop.
+/// Phase 3: pull対象を run_executions ベースへ切替。
+/// 旧 /api/jobs polling は削除し、/api/runs/pull + claim を使用。
 pub async fn run(
     api_base: String,
     token: String,
@@ -19,45 +21,39 @@ pub async fn run(
     let client = BridgeClient::new(api_base, token);
 
     if let Some(ref did) = device_id {
-        info!("Job runner using device_id={} for pull/claim routing", did);
+        info!("Run runner using device_id={} (run_executions mode)", did);
     } else {
-        info!("Job runner using legacy source=native polling (no device_id configured)");
+        info!("Run runner: no device_id — skipping execution pull (configure VISIONARK_DEVICE_ID)");
     }
 
     loop {
-        let poll_result = match &device_id {
-            Some(did) => pull_jobs_for_device(&client, did).await,
-            None => poll_queued_jobs(&client).await,
-        };
+        if let Some(ref did) = device_id {
+            match pull_executions(&client, did).await {
+                Ok(execs) => {
+                    for exec in execs {
+                        let exec_id = exec["id"].as_str().unwrap_or("").to_string();
+                        let run_id = exec["run_id"].as_str().unwrap_or("").to_string();
 
-        match poll_result {
-            Ok(jobs) => {
-                for job in jobs {
-                    let job_id = job["id"].as_str().unwrap_or("").to_string();
-
-                    // Claim the job before execution to prevent double-execution
-                    if let Some(ref did) = device_id {
-                        match claim_job(&client, &job_id, did).await {
-                            Ok(_) => info!("Claimed job {} on device {}", job_id, did),
+                        // Atomic claim to prevent double-execution
+                        match claim_execution(&client, &exec_id, did).await {
+                            Ok(_) => info!("Claimed execution {} on device {}", exec_id, did),
                             Err(e) => {
-                                // 409 = already claimed by another device — skip silently
-                                warn!("Could not claim job {}: {} — skipping", job_id, e);
+                                warn!("Could not claim execution {}: {} — skipping", exec_id, e);
                                 continue;
                             }
                         }
-                    }
 
-                    info!("Processing job {}", job_id);
-                    if let Err(e) = run_job_with_plan(&client, &job_id, &policy).await {
-                        error!("Job {} failed: {}", job_id, e);
-                        let _ = patch_job_status_with_error(&client, &job_id, &e.to_string()).await;
+                        info!("Processing execution {} (run={})", exec_id, run_id);
+                        if let Err(e) = run_execution(&client, &run_id, &exec_id, &exec, &policy).await {
+                            error!("Execution {} failed: {}", exec_id, e);
+                            let _ = fail_execution(&client, &run_id, &exec_id, &e.to_string()).await;
+                        }
                     }
                 }
+                Err(e) => error!("Failed to pull executions: {}", e),
             }
-            Err(e) => error!("Failed to poll jobs: {}", e),
         }
 
-        // Wait for the poll interval OR a WebSocket push trigger (whichever comes first)
         tokio::select! {
             _ = tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval_secs)) => {}
             _ = trigger_rx.recv() => {
@@ -67,109 +63,178 @@ pub async fn run(
     }
 }
 
-/// Plan & Execute loop for a single job.
-async fn run_job_with_plan(
+// ── Execution runner ──────────────────────────────────────────────────────────
+
+async fn run_execution(
     client: &BridgeClient,
-    job_id: &str,
+    run_id: &str,
+    exec_id: &str,
+    exec: &Value,
     policy: &ExecutionPolicy,
 ) -> Result<()> {
-    // 1. Mark as running
-    patch_job_status(client, job_id, "running").await?;
+    let kind = exec["kind"].as_str().unwrap_or("").to_string();
+    let risk = exec["risk_level"].as_str().unwrap_or("low");
+    let payload = exec["payload"].clone();
 
-    // 2. Dispatch → get plan (returns existing plan if already dispatched)
-    let plan = dispatch_job_plan(client, job_id).await?;
+    // Mark as running
+    set_execution_status(client, run_id, exec_id, "running").await?;
 
-    let steps = match plan["steps"].as_array() {
-        Some(s) => s.clone(),
-        None => {
-            warn!("Job {} plan has no steps, marking succeeded", job_id);
-            patch_job_status(client, job_id, "succeeded").await?;
-            return Ok(());
-        }
-    };
+    // High/critical risk: signal waiting_approval (backend auto-creates RunApproval)
+    if risk == "high" || risk == "critical" {
+        info!("Execution {} requires approval (risk={})", exec_id, risk);
+        let reason = format!("実行前承認が必要です: {} (risk={})", kind, risk);
+        // Single PATCH: sets status to waiting_approval + embeds reason in result
+        client
+            .patch_ignore(
+                &format!("/api/runs/{}/executions/{}", run_id, exec_id),
+                &serde_json::json!({
+                    "status": "waiting_approval",
+                    "result": { "approval_reason": reason }
+                }),
+            )
+            .await?;
 
-    // 3. Skip steps already completed (supports resume after daemon restart)
-    let completed = get_completed_step_ids(client, job_id).await;
-
-    // 4. Execute each step
-    for step in &steps {
-        let step_id = step["id"].as_str().unwrap_or("").to_string();
-        let tool = step["tool"].as_str().unwrap_or("").to_string();
-        let args = step["args"].clone();
-        let risk = step["risk_level"].as_str().unwrap_or("low");
-
-        if completed.contains(&step_id) {
-            info!("Skipping already-completed step {}", step_id);
-            continue;
-        }
-
-        info!(
-            "Executing step {} (tool={}, risk={})",
-            step_id, tool, risk
-        );
-
-        // Mark the current step so the UI can show a spinner
-        let _ = set_current_step(client, job_id, Some(&step_id)).await;
-
-        // High/critical risk steps require user approval
-        if risk == "high" || risk == "critical" {
-            info!("Step {} requires approval", step_id);
-            patch_job_status(client, job_id, "needs_approval").await?;
-            match wait_for_approval(client, job_id).await? {
-                ApprovalResult::Approved => {
-                    info!("Step {} approved, resuming", step_id);
-                    patch_job_status(client, job_id, "running").await?;
-                }
-                ApprovalResult::Rejected => {
-                    info!("Job {} rejected at step {}", job_id, step_id);
-                    return Ok(());
-                }
+        match wait_for_approval(client, run_id, exec_id).await? {
+            ApprovalResult::Approved => {
+                info!("Execution {} approved, resuming", exec_id);
+                set_execution_status(client, run_id, exec_id, "running").await?;
+            }
+            ApprovalResult::Rejected => {
+                info!("Execution {} rejected", exec_id);
+                return Ok(());
             }
         }
-
-        // Execute the local tool (subject to execution policy)
-        let tool_result = local_tools::dispatch_tool(policy, &tool, &args).await;
-
-        // Persist step result
-        patch_step_result(client, job_id, &step_id, tool_result).await?;
     }
 
-    // 5. All steps complete — clear current_step
-    let _ = set_current_step(client, job_id, None).await;
-    patch_job_status(client, job_id, "succeeded").await?;
+    // Map kind → local tool + args
+    let (tool, args) = kind_to_tool(&kind, &payload);
+    let tool_result = local_tools::dispatch_tool(policy, &tool, &args).await;
+
+    match tool_result {
+        local_tools::ToolResult::Ok(data) => {
+            patch_execution_result(client, run_id, exec_id, "succeeded", Some(data), None).await?;
+        }
+        local_tools::ToolResult::Err(e) => {
+            patch_execution_result(
+                client, run_id, exec_id, "failed", None,
+                Some(e.clone()),
+            ).await?;
+        }
+    }
+
     Ok(())
 }
+
+/// Map run execution kind → (tool_name, args).
+/// kind format: "local.<tool>" or direct tool name.
+fn kind_to_tool(kind: &str, payload: &Value) -> (String, Value) {
+    // Strip "local." prefix if present
+    let tool = kind.strip_prefix("local.").unwrap_or(kind).to_string();
+    (tool, payload.clone())
+}
+
+// ── Approval helpers ──────────────────────────────────────────────────────────
 
 enum ApprovalResult {
     Approved,
     Rejected,
 }
 
-// ─── API helpers (delegate to BridgeClient) ───────────────────────────────────
-
-async fn poll_queued_jobs(client: &BridgeClient) -> Result<Vec<Value>> {
-    client
-        .get_vec("/api/jobs?source=native&status=queued&limit=10")
-        .await
+/// Poll the execution until it transitions out of waiting_approval.
+async fn wait_for_approval(
+    client: &BridgeClient,
+    run_id: &str,
+    exec_id: &str,
+) -> Result<ApprovalResult> {
+    loop {
+        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+        match client
+            .get_value(&format!("/api/runs/{}/executions/{}", run_id, exec_id))
+            .await
+        {
+            Ok(exec) => match exec["status"].as_str().unwrap_or("") {
+                "running" => return Ok(ApprovalResult::Approved),
+                "rejected" | "failed" => return Ok(ApprovalResult::Rejected),
+                "waiting_approval" => {
+                    info!("Still waiting for approval on execution {}", exec_id);
+                }
+                other => {
+                    warn!("Unexpected execution status while waiting: {}", other);
+                }
+            },
+            Err(e) => warn!("Failed to poll execution status: {}", e),
+        }
+    }
 }
 
-/// Device-targeted pull: only jobs assigned to this device (or auto-routed unclaimed).
-async fn pull_jobs_for_device(client: &BridgeClient, device_id: &str) -> Result<Vec<Value>> {
+// ── API helpers ───────────────────────────────────────────────────────────────
+
+async fn pull_executions(client: &BridgeClient, device_id: &str) -> Result<Vec<Value>> {
     let path = format!(
-        "/api/jobs/pull?device_id={}&status=queued&limit=10",
+        "/api/runs/pull?device_id={}&limit=10",
         urlencoding_simple(device_id)
     );
     client.get_vec(&path).await
 }
 
-/// Claim a job before execution to prevent double-execution across daemons.
-async fn claim_job(client: &BridgeClient, job_id: &str, device_id: &str) -> Result<Value> {
+async fn claim_execution(client: &BridgeClient, exec_id: &str, device_id: &str) -> Result<Value> {
     let path = format!(
-        "/api/jobs/{}/claim?device_id={}",
-        job_id,
+        "/api/runs/executions/{}/claim?device_id={}",
+        exec_id,
         urlencoding_simple(device_id)
     );
     client.post_value(&path).await
+}
+
+async fn set_execution_status(
+    client: &BridgeClient,
+    run_id: &str,
+    exec_id: &str,
+    status: &str,
+) -> Result<()> {
+    client
+        .patch_ignore(
+            &format!("/api/runs/{}/executions/{}", run_id, exec_id),
+            &serde_json::json!({ "status": status }),
+        )
+        .await
+}
+
+async fn fail_execution(
+    client: &BridgeClient,
+    run_id: &str,
+    exec_id: &str,
+    error_log: &str,
+) -> Result<()> {
+    client
+        .patch_ignore(
+            &format!("/api/runs/{}/executions/{}", run_id, exec_id),
+            &serde_json::json!({ "status": "failed", "error_log": error_log }),
+        )
+        .await
+}
+
+async fn patch_execution_result(
+    client: &BridgeClient,
+    run_id: &str,
+    exec_id: &str,
+    status: &str,
+    result: Option<Value>,
+    error_log: Option<String>,
+) -> Result<()> {
+    let mut body = serde_json::json!({ "status": status });
+    if let Some(r) = result {
+        body["result"] = r;
+    }
+    if let Some(e) = error_log {
+        body["error_log"] = Value::String(e);
+    }
+    client
+        .patch_ignore(
+            &format!("/api/runs/{}/executions/{}", run_id, exec_id),
+            &body,
+        )
+        .await
 }
 
 /// Minimal percent-encoding for device_id (UUIDs only need hyphens — safe as-is).
@@ -180,140 +245,4 @@ fn urlencoding_simple(s: &str) -> String {
             other => format!("%{:02X}", other as u32),
         })
         .collect()
-}
-
-async fn dispatch_job_plan(client: &BridgeClient, job_id: &str) -> Result<Value> {
-    client
-        .post_value(&format!("/api/jobs/{}/dispatch", job_id))
-        .await
-}
-
-async fn get_completed_step_ids(client: &BridgeClient, job_id: &str) -> HashSet<String> {
-    if let Ok(job) = client.get_value(&format!("/api/jobs/{}", job_id)).await {
-        if let Some(results) = job["result"]["step_results"].as_array() {
-            return results
-                .iter()
-                .filter_map(|r| r["step_id"].as_str().map(|s| s.to_string()))
-                .collect();
-        }
-    }
-    HashSet::new()
-}
-
-async fn patch_job_status(client: &BridgeClient, job_id: &str, status: &str) -> Result<()> {
-    client
-        .patch_ignore(
-            &format!("/api/jobs/{}", job_id),
-            &serde_json::json!({ "status": status }),
-        )
-        .await
-}
-
-async fn patch_job_status_with_error(
-    client: &BridgeClient,
-    job_id: &str,
-    error_log: &str,
-) -> Result<()> {
-    client
-        .patch_ignore(
-            &format!("/api/jobs/{}", job_id),
-            &serde_json::json!({ "status": "failed", "error_log": error_log }),
-        )
-        .await
-}
-
-async fn wait_for_approval(client: &BridgeClient, job_id: &str) -> Result<ApprovalResult> {
-    loop {
-        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-        match client.get_value(&format!("/api/jobs/{}", job_id)).await {
-            Ok(job) => match job["status"].as_str().unwrap_or("") {
-                "queued" | "running" => return Ok(ApprovalResult::Approved),
-                "rejected" | "failed" => return Ok(ApprovalResult::Rejected),
-                "needs_approval" => {
-                    info!("Still waiting for approval on job {}", job_id);
-                }
-                other => {
-                    warn!("Unexpected job status while waiting: {}", other);
-                }
-            },
-            Err(e) => warn!("Failed to poll job status: {}", e),
-        }
-    }
-}
-
-/// Read-modify-write to update job.result.current_step for live UI tracking.
-async fn set_current_step(
-    client: &BridgeClient,
-    job_id: &str,
-    step_id: Option<&str>,
-) -> Result<()> {
-    let current_job = client
-        .get_value(&format!("/api/jobs/{}", job_id))
-        .await
-        .unwrap_or(Value::Null);
-    let mut current_result = match current_job["result"].clone() {
-        Value::Object(m) => m,
-        _ => serde_json::Map::new(),
-    };
-    current_result.insert(
-        "current_step".to_string(),
-        match step_id {
-            Some(id) => Value::String(id.to_string()),
-            None => Value::Null,
-        },
-    );
-    client
-        .patch_ignore(
-            &format!("/api/jobs/{}", job_id),
-            &serde_json::json!({ "result": current_result }),
-        )
-        .await
-}
-
-/// Read-modify-write to append a step result to job.result.step_results.
-async fn patch_step_result(
-    client: &BridgeClient,
-    job_id: &str,
-    step_id: &str,
-    tool_result: local_tools::ToolResult,
-) -> Result<()> {
-    // Fetch current job to get existing result (preserves plan + prior step_results)
-    let current_job = client
-        .get_value(&format!("/api/jobs/{}", job_id))
-        .await
-        .unwrap_or(Value::Null);
-
-    let mut current_result = match current_job["result"].clone() {
-        Value::Object(m) => m,
-        _ => serde_json::Map::new(),
-    };
-
-    let mut step_results = current_result
-        .get("step_results")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    let (ok, data) = match tool_result {
-        local_tools::ToolResult::Ok(v) => (true, v),
-        local_tools::ToolResult::Err(e) => (false, serde_json::json!({ "error": e })),
-    };
-
-    step_results.push(serde_json::json!({
-        "step_id": step_id,
-        "ok": ok,
-        "data": data,
-    }));
-
-    current_result.insert(
-        "step_results".to_string(),
-        Value::Array(step_results),
-    );
-
-    client
-        .patch_ignore(
-            &format!("/api/jobs/{}", job_id),
-            &serde_json::json!({ "result": current_result }),
-        )
-        .await
 }

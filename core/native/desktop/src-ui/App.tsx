@@ -6,8 +6,7 @@ export type ProjectSidebarMode = "files" | "automation" | "notes" | "activity" |
 import NavSidebar, { type NavView, type TaskFilter } from "./components/NavSidebar"
 import TopBar from "./components/TopBar"
 import DashboardView from "./components/DashboardView"
-import JobsView from "./components/JobsView"
-import ApprovalsView from "./components/ApprovalsView"
+import RunCenterView from "./components/RunCenterView"
 import ChatView from "./components/ChatView"
 import LoginScreen from "./components/LoginScreen"
 import NotesView from "./components/NotesView"
@@ -18,8 +17,9 @@ import AgentsView from "./components/AgentsView"
 import TasksView from "./components/TasksView"
 import SettingsView from "./components/SettingsView"
 import DevicesView from "./components/DevicesView"
+import DaemonConsole from "./components/DaemonConsole"
 import { isLoggedIn, logout, listProjects, initApiBase, getApiBase, getToken, handleRefresh, type Project } from "./lib/api"
-import { listJobs, registerDevice, heartbeatDevice, configure as configureBridge } from "../../bridge/api"
+import { listRuns, registerDevice, heartbeatDevice, configure as configureBridge } from "../../bridge/api"
 
 const DEVICE_ID_KEY = "va_device_id"
 const HEARTBEAT_INTERVAL_MS = 30_000
@@ -53,6 +53,12 @@ async function saveDeviceId(id: string): Promise<void> {
 }
 
 export default function App() {
+  const [isConsole] = useState(() => isTauri() && getCurrentWindow().label === "console")
+  if (isConsole) return <DaemonConsole />
+  return <MainApp />
+}
+
+function MainApp() {
   const [loggedIn, setLoggedIn] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
   const [username, setUsername] = useState("")
@@ -92,7 +98,22 @@ export default function App() {
       // 1. Try to load an already-registered device_id
       let deviceId = await loadStoredDeviceId()
 
-      // 2. If not stored, register now and persist the result
+      // 1.5 Validate if the device still exists on the backend
+      if (deviceId) {
+        try {
+          await heartbeatDevice(deviceId)
+        } catch (e: any) {
+          const msg = e instanceof Error ? e.message : String(e)
+          // If the backend returns 404 (Not Found) or 403 (Forbidden), the device was deleted.
+          if (msg.includes("404") || msg.includes("403")) {
+            console.warn("Stored device ID is invalid/deleted. Forcing re-registration.", msg)
+            await saveDeviceId("")
+            deviceId = null
+          }
+        }
+      }
+
+      // 2. If not stored or was deleted, register now and persist the result
       if (!deviceId) {
         const platform = detectPlatform()
         try {
@@ -107,7 +128,19 @@ export default function App() {
         } catch { /* ignore — best-effort */ }
       }
 
-      // 3. Start heartbeat loop
+      // 3. Start daemon if Tauri
+      if (isTauri() && deviceId) {
+        const token = getToken()
+        if (token) {
+          try {
+            await invoke("start_daemon_command", { apiUrl: getApiBase(), token, deviceId })
+          } catch (e) {
+            console.error("Failed to start daemon sidecar", e)
+          }
+        }
+      }
+
+      // 4. Heartbeat loop
       if (deviceId) {
         const id = deviceId
         heartbeatDevice(id).catch(() => { })
@@ -148,13 +181,20 @@ export default function App() {
     setUsername("")
   }, [])
 
-  // Poll for pending approvals count to show badge in NavSidebar
+  // Poll for pending approvals count (from run_approvals) to show badge in NavSidebar
   useEffect(() => {
     if (!loggedIn) return
     const poll = async () => {
       try {
-        const jobs = await listJobs({ status: "needs_approval", limit: 50 })
-        setPendingApprovals(jobs.length)
+        const runs = await listRuns({ status: "waiting_approval", limit: 50 })
+        // Count pending approvals across all waiting runs
+        let count = 0
+        for (const run of runs) {
+          for (const exec of run.executions) {
+            count += exec.approvals.filter(a => a.status === "pending").length
+          }
+        }
+        setPendingApprovals(count)
       } catch {
         // ignore — not authenticated yet or backend unavailable
       }
@@ -185,7 +225,7 @@ export default function App() {
     try {
       cleanups.push(
         listen<{ job_id: string }>("show-approval", () => {
-          setView("approvals")
+          setView("run_center")
         }).catch((e) => {
           console.warn("Could not listen to show-approval:", e);
           return () => { };
@@ -247,8 +287,7 @@ export default function App() {
         <main className="flex-1 min-w-0 flex overflow-hidden">
           <div className="flex-1 overflow-hidden">
             {view === "dashboard" && <DashboardView />}
-            {view === "jobs" && <JobsView />}
-            {view === "approvals" && <ApprovalsView highlightJobId={null} />}
+            {view === "run_center" && <RunCenterView />}
             {view === "notes" && <NotesView onOpenProject={(id) => handleNavChange("chat", id)} />}
             {view === "cron" && <CronTasksView />}
             {view === "tasks" && (

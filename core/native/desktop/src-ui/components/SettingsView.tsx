@@ -29,10 +29,10 @@ interface Service {
 }
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
-  { id: "general",  label: "General",  icon: Globe  },
-  { id: "ai",       label: "AI",       icon: Cpu    },
+  { id: "general", label: "General", icon: Globe },
+  { id: "ai", label: "AI", icon: Cpu },
   { id: "services", label: "Services", icon: Server },
-  { id: "account",  label: "Account",  icon: User   },
+  { id: "account", label: "Account", icon: User },
 ]
 
 const IANA_TIMEZONES = typeof Intl !== "undefined"
@@ -66,6 +66,7 @@ export default function SettingsView() {
   // Connection (server URL)
   const [serverUrl, setServerUrl] = useState("")
   const [configFilePath, setConfigFilePath] = useState<string | null>(null)
+  const [runInBackground, setRunInBackground] = useState(false)
 
   // Account
   const [profile, setProfile] = useState({ username: "", email: "" })
@@ -81,6 +82,14 @@ export default function SettingsView() {
       invoke<string>("get_config_file_path")
         .then(setConfigFilePath)
         .catch(() => setConfigFilePath(null))
+
+      invoke<any>("read_app_config")
+        .then((cfg) => {
+          if (cfg && typeof cfg.run_daemon_in_background === "boolean") {
+            setRunInBackground(cfg.run_daemon_in_background)
+          }
+        })
+        .catch((e) => console.error(e))
     }
   }, [])
 
@@ -105,7 +114,7 @@ export default function SettingsView() {
         if (lbs) setLbsForm((f) => ({ ...f, base_url: lbs.base_url }))
         if (data.profile) setProfile({ username: data.profile.username, email: data.profile.email || "" })
       })
-      .catch(() => {})
+      .catch(() => { })
   }, [])
 
   function showMsg(type: "success" | "error", text: string) {
@@ -119,7 +128,25 @@ export default function SettingsView() {
     if (!serverUrl.trim()) return
     await setApiBase(serverUrl) // also auto-syncs bridge URL
     setServerUrl(getApiBase()) // reflect normalization
+
+    if (IS_TAURI) {
+      // Sync runInBackground correctly
+      await invoke("write_app_config", { config: { api_url: getApiBase(), run_daemon_in_background: runInBackground } })
+    }
     showMsg("success", `Server URL updated to ${getApiBase()}`)
+  }
+
+  async function toggleRunInBackground() {
+    if (!IS_TAURI) return
+    const nextVal = !runInBackground
+    setRunInBackground(nextVal)
+    try {
+      await invoke("write_app_config", { config: { api_url: getApiBase(), run_daemon_in_background: nextVal } })
+      showMsg("success", nextVal ? "Background execution enabled" : "Background execution disabled")
+    } catch (e: any) {
+      showMsg("error", "Failed to update background setting")
+      setRunInBackground(!nextVal) // revert on error
+    }
   }
 
   // ── Save General ─────────────────────────────────────────────────────────
@@ -209,11 +236,10 @@ export default function SettingsView() {
           <button
             key={id}
             onClick={() => setTab(id)}
-            className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${
-              tab === id
+            className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === id
                 ? "bg-cyan-500/15 text-cyan-400"
                 : "text-gray-500 hover:bg-gray-800/50 hover:text-gray-300"
-            }`}
+              }`}
           >
             <Icon size={16} />
             {label}
@@ -225,11 +251,10 @@ export default function SettingsView() {
       <div className="flex-1 overflow-y-auto custom-scrollbar px-8 py-8">
         {/* Toast */}
         {msg && (
-          <div className={`mb-6 px-4 py-3 rounded-xl text-sm font-medium border ${
-            msg.type === "success"
+          <div className={`mb-6 px-4 py-3 rounded-xl text-sm font-medium border ${msg.type === "success"
               ? "bg-green-500/10 border-green-500/20 text-green-400"
               : "bg-red-500/10 border-red-500/20 text-red-400"
-          }`}>
+            }`}>
             {msg.text}
           </div>
         )}
@@ -295,6 +320,37 @@ export default function SettingsView() {
             >
               {saving ? "Saving…" : "Save"}
             </button>
+
+            {/* ── System Behavior ── */}
+            {IS_TAURI && (
+              <div className="border-t border-gray-800 pt-6">
+                <div className="flex items-center gap-2 mb-1">
+                  <Cpu size={15} className="text-gray-400" />
+                  <h3 className="text-sm font-bold text-gray-200">System Behavior</h3>
+                </div>
+                <p className="text-xs text-gray-500 mb-4">
+                  Configure how VisionArk runs on this device.
+                </p>
+                <div className="flex items-center justify-between bg-gray-900 border border-gray-800 rounded-xl px-4 py-3">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-200">Run Daemon in Background</p>
+                    <p className="text-[11px] text-gray-500 mt-0.5 max-w-[280px]">
+                      Keep the agent's background services running in the system tray when the main window is closed.
+                    </p>
+                  </div>
+                  <button
+                    onClick={toggleRunInBackground}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${runInBackground ? "bg-cyan-500" : "bg-gray-700"
+                      }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${runInBackground ? "translate-x-6" : "translate-x-1"
+                        }`}
+                    />
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* ── Connection ── */}
             <div className="border-t border-gray-800 pt-6">
@@ -468,13 +524,12 @@ export default function SettingsView() {
                       <p className="text-sm font-semibold text-gray-200 uppercase">{s.service_name}</p>
                       <p className="text-[11px] text-gray-500 font-mono mt-0.5 truncate max-w-[220px]">{s.base_url}</p>
                     </div>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                      s.health_status === "healthy"
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${s.health_status === "healthy"
                         ? "bg-green-500/10 text-green-400"
                         : s.health_status
-                        ? "bg-red-500/10 text-red-400"
-                        : "bg-gray-800 text-gray-500"
-                    }`}>
+                          ? "bg-red-500/10 text-red-400"
+                          : "bg-gray-800 text-gray-500"
+                      }`}>
                       {s.health_status || "unknown"}
                     </span>
                   </div>
@@ -552,9 +607,9 @@ export default function SettingsView() {
             <form onSubmit={changePassword} className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
               <p className="text-sm font-semibold text-gray-300">Change Password</p>
               {[
-                { label: "Current Password",  val: passForm.current,  key: "current"  as const },
-                { label: "New Password",       val: passForm.next,     key: "next"     as const },
-                { label: "Confirm Password",   val: passForm.confirm,  key: "confirm"  as const },
+                { label: "Current Password", val: passForm.current, key: "current" as const },
+                { label: "New Password", val: passForm.next, key: "next" as const },
+                { label: "Confirm Password", val: passForm.confirm, key: "confirm" as const },
               ].map(({ label, val, key }) => (
                 <div key={key}>
                   <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">{label}</label>

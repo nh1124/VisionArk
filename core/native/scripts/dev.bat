@@ -7,18 +7,20 @@ set ROOT=%SCRIPT_DIR%..
 
 echo === VisionArk Native Dev ===
 
-:: Set defaults if not already set
-if not defined VISIONARK_API_URL set VISIONARK_API_URL=http://localhost:8000
-if not defined VISIONARK_TOKEN set VISIONARK_TOKEN=
+:: Build daemon sidecar
+echo [1/2] Building daemon sidecar...
+cd /d %ROOT%\daemon
+cargo build
+if errorlevel 1 (
+    echo [ERROR] Failed to build daemon.
+    exit /b 1
+)
 
-:: Start daemon in a separate window (background)
-echo [1/2] Starting daemon...
-start "VisionArk Daemon" cmd /k "cd /d %ROOT%\daemon && set VISIONARK_API_URL=%VISIONARK_API_URL% && set VISIONARK_TOKEN=%VISIONARK_TOKEN% && cargo run"
+:: Ensure binaries dir exists and copy
+if not exist "%ROOT%\desktop\binaries" mkdir "%ROOT%\desktop\binaries"
+copy /Y "%ROOT%\target\debug\visionark-daemon.exe" "%ROOT%\desktop\binaries\visionark-daemon-x86_64-pc-windows-msvc.exe" >nul
 
-:: Brief wait for daemon to start binding
-timeout /t 2 /nobreak >nul
-
-:: Install npm dependencies if node_modules is missing
+:: Start Tauri desktop
 echo [2/2] Starting Tauri desktop...
 cd /d %ROOT%\desktop
 if not exist node_modules (
@@ -32,5 +34,4 @@ if not exist node_modules (
 cargo tauri dev
 
 echo.
-echo Daemon window is still running. Close it manually if needed.
 endlocal

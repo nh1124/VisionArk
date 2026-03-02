@@ -1,25 +1,25 @@
 import React, { useEffect, useRef, useState } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { Activity, Bell, Pause, Play } from "lucide-react"
-import type { Job } from "../../../shared/types"
-import { listJobs } from "../../../bridge/api"
+import type { AgentRun, RunExecution } from "../../../shared/types"
+import { listRuns } from "../../../bridge/api"
 
-const STATUS_COLORS: Record<string, string> = {
-  queued:          "bg-gray-500",
-  running:         "bg-blue-500 animate-pulse",
-  needs_approval:  "bg-yellow-500",
-  succeeded:       "bg-emerald-500",
-  failed:          "bg-red-500",
-  rejected:        "bg-red-400",
+const EXEC_STATUS_COLORS: Record<string, string> = {
+  pending:          "bg-gray-500",
+  running:          "bg-blue-500 animate-pulse",
+  waiting_approval: "bg-yellow-500",
+  succeeded:        "bg-emerald-500",
+  failed:           "bg-red-500",
+  rejected:         "bg-red-400",
 }
 
 interface Props {
-  onApprovalNeeded: (jobId: string) => void
-  onJobsUpdated: (jobs: Job[]) => void
+  onApprovalNeeded: (runId: string) => void
+  onRunsUpdated: (runs: AgentRun[]) => void
 }
 
-export default function StatusPanel({ onApprovalNeeded, onJobsUpdated }: Props) {
-  const [jobs, setJobs] = useState<Job[]>([])
+export default function StatusPanel({ onApprovalNeeded, onRunsUpdated }: Props) {
+  const [runs, setRuns] = useState<AgentRun[]>([])
   const [paused, setPaused] = useState(false)
   const notifiedRef = useRef(new Set<string>())
 
@@ -27,35 +27,41 @@ export default function StatusPanel({ onApprovalNeeded, onJobsUpdated }: Props) 
     const load = async () => {
       if (paused) return
       try {
-        const data = await listJobs({ source: "native", limit: 15 })
-        setJobs(data)
-        onJobsUpdated(data)
+        const data = await listRuns({ limit: 15 })
+        setRuns(data)
+        onRunsUpdated(data)
 
-        const approval = data.find((j) => j.status === "needs_approval")
-        if (approval) {
-          onApprovalNeeded(approval.id)
-          if (!notifiedRef.current.has(approval.id)) {
-            notifiedRef.current.add(approval.id)
-            invoke("send_notification", {
-              title: "VisionArk — 承認が必要です",
-              body: `ジョブ「${approval.type}」のステップを確認してください`,
-            }).catch(() => {})
+        for (const run of data) {
+          for (const exec of run.executions) {
+            if (exec.status === "waiting_approval") {
+              onApprovalNeeded(run.id)
+              if (!notifiedRef.current.has(exec.id)) {
+                notifiedRef.current.add(exec.id)
+                invoke("send_notification", {
+                  title: "VisionArk — 承認が必要です",
+                  body: `「${exec.kind}」の実行を確認してください`,
+                }).catch(() => {})
+              }
+            }
           }
         }
       } catch {
-        // daemon not yet authenticated
+        // not yet authenticated
       }
     }
 
     load()
     const timer = setInterval(load, 5_000)
     return () => clearInterval(timer)
-  }, [paused, onApprovalNeeded, onJobsUpdated])
+  }, [paused, onApprovalNeeded, onRunsUpdated])
 
-  const active = jobs.filter((j) =>
-    ["queued", "running", "needs_approval"].includes(j.status)
-  )
-  const needsApproval = jobs.filter((j) => j.status === "needs_approval")
+  // Flatten executions for display
+  const allExecs: RunExecution[] = runs.flatMap(r => r.executions)
+  const activeExecs = allExecs.filter(e => ["pending", "running", "waiting_approval"].includes(e.status))
+  const needsApproval = allExecs.filter(e => e.status === "waiting_approval")
+  const firstApprovalRun = needsApproval.length > 0
+    ? runs.find(r => r.executions.some(e => e.status === "waiting_approval"))
+    : null
 
   return (
     <aside className="flex flex-col w-52 min-w-52 border-l border-gray-800 bg-gray-950/60">
@@ -75,9 +81,9 @@ export default function StatusPanel({ onApprovalNeeded, onJobsUpdated }: Props) 
       </div>
 
       {/* Approval alert */}
-      {needsApproval.length > 0 && (
+      {needsApproval.length > 0 && firstApprovalRun && (
         <button
-          onClick={() => onApprovalNeeded(needsApproval[0].id)}
+          onClick={() => onApprovalNeeded(firstApprovalRun.id)}
           className="mx-2 mt-2 flex items-center gap-2 px-2.5 py-2 bg-yellow-500/10 hover:bg-yellow-500/20 rounded-xl border border-yellow-500/30 transition-colors text-left"
         >
           <Bell size={12} className="text-yellow-400 flex-shrink-0" />
@@ -90,9 +96,9 @@ export default function StatusPanel({ onApprovalNeeded, onJobsUpdated }: Props) 
       {/* Stats row */}
       <div className="flex gap-2 px-2 py-2">
         {[
-          { label: "Running", count: jobs.filter((j) => j.status === "running").length, color: "text-blue-400" },
-          { label: "Queued",  count: jobs.filter((j) => j.status === "queued").length,  color: "text-gray-400" },
-          { label: "Done",    count: jobs.filter((j) => j.status === "succeeded").length, color: "text-emerald-400" },
+          { label: "Running", count: allExecs.filter(e => e.status === "running").length,   color: "text-blue-400" },
+          { label: "Pending", count: allExecs.filter(e => e.status === "pending").length,   color: "text-gray-400" },
+          { label: "Done",    count: allExecs.filter(e => e.status === "succeeded").length, color: "text-emerald-400" },
         ].map(({ label, count, color }) => (
           <div key={label} className="flex-1 flex flex-col items-center py-1.5 bg-gray-900 rounded-lg">
             <span className={`text-sm font-semibold ${color}`}>{count}</span>
@@ -101,20 +107,20 @@ export default function StatusPanel({ onApprovalNeeded, onJobsUpdated }: Props) 
         ))}
       </div>
 
-      {/* Active jobs list */}
+      {/* Active executions list */}
       <div className="flex-1 overflow-y-auto px-2 space-y-1 pb-2">
-        {active.length === 0 ? (
-          <p className="text-[11px] text-gray-700 text-center py-4">No active jobs</p>
+        {activeExecs.length === 0 ? (
+          <p className="text-[11px] text-gray-700 text-center py-4">No active executions</p>
         ) : (
-          active.map((job) => (
+          activeExecs.map((exec) => (
             <div
-              key={job.id}
+              key={exec.id}
               className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-gray-900/60 border border-gray-800"
             >
               <span
-                className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${STATUS_COLORS[job.status] ?? "bg-gray-500"}`}
+                className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${EXEC_STATUS_COLORS[exec.status] ?? "bg-gray-500"}`}
               />
-              <span className="text-[11px] text-gray-300 truncate flex-1">{job.type}</span>
+              <span className="text-[11px] text-gray-300 truncate flex-1">{exec.kind}</span>
             </div>
           ))
         )}

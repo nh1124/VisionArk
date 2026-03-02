@@ -24,6 +24,14 @@
         "alwaysOnTop": false,
         "visible": false,
         "skipTaskbar": false
+      },
+      {
+        "label": "console",
+        "title": "Daemon Console",
+        "width": 800,
+        "height": 500,
+        "resizable": true,
+        "visible": false
       }
     ],
     "security": {
@@ -33,6 +41,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": []
+    "icon": [],
+    "externalBin": [
+      "binaries/visionark-daemon"
+    ]
   }
 }

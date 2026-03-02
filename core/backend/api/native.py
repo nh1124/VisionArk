@@ -1,28 +1,26 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-import json
 import logging
-import re
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, update
+from sqlalchemy import select, update
 from typing import List, Optional
 from pydantic import BaseModel
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from shared.database import (
-    get_async_db, Job, JobApproval, IntegrationConnection, AutomationRule,
-    NativeDevice, UserSettings,
+    get_async_db, AgentRun, RunExecution, RunApproval,
+    IntegrationConnection, AutomationRule, NativeDevice,
 )
-from domains.native.job_service import JobService
+from domains.native.run_service import RunService
 from domains.identity.auth import resolve_identity, Identity
 
 logger = logging.getLogger(__name__)
 
-jobs_router = APIRouter(prefix="/api/jobs", tags=["Jobs"])
+runs_router = APIRouter(prefix="/api/runs", tags=["Runs"])
 native_router = APIRouter(prefix="/api/native", tags=["Native"])
 
 
-# ─── Pydantic schemas ────────────────────────────────────────────────────────
+# ─── Pydantic schemas ─────────────────────────────────────────────────────────
 
 class DeviceRegister(BaseModel):
     display_name: str
@@ -48,45 +46,6 @@ class DeviceResponse(BaseModel):
     status: str
     last_seen_at: Optional[str]
     created_at: str
-
-
-class JobCreate(BaseModel):
-    type: str
-    payload: dict = {}
-    source: str = "native"
-    project_id: Optional[str] = None
-    risk_level: str = "low"
-    tags: List[str] = []
-    target_device_id: Optional[str] = None
-    routing_mode: str = "manual"
-
-
-class JobStatusUpdate(BaseModel):
-    status: Optional[str] = None
-    error_log: Optional[str] = None
-    result: Optional[dict] = None
-
-
-class JobResponse(BaseModel):
-    id: str
-    user_id: str
-    project_id: Optional[str]
-    source: str
-    type: str
-    tags: List[str]
-    status: str
-    risk_level: str
-    payload: dict
-    result: Optional[dict]
-    approved_by: Optional[str]
-    error_log: Optional[str]
-    started_at: Optional[str]
-    finished_at: Optional[str]
-    target_device_id: Optional[str]
-    claimed_by_device_id: Optional[str]
-    routing_mode: str
-    created_at: str
-    updated_at: Optional[str]
 
 
 class IntegrationCreate(BaseModel):
@@ -126,27 +85,126 @@ class RuleResponse(BaseModel):
     created_at: str
 
 
-def _job_to_response(job: Job) -> JobResponse:
-    return JobResponse(
-        id=job.id,
-        user_id=job.user_id,
-        project_id=job.project_id,
-        source=job.source,
-        type=job.type,
-        tags=job.tags or [],
-        status=job.status,
-        risk_level=job.risk_level,
-        payload=job.payload or {},
-        result=job.result,
-        approved_by=job.approved_by,
-        error_log=job.error_log,
-        started_at=job.started_at.isoformat() if job.started_at else None,
-        finished_at=job.finished_at.isoformat() if job.finished_at else None,
-        target_device_id=job.target_device_id,
-        claimed_by_device_id=job.claimed_by_device_id,
-        routing_mode=job.routing_mode or "manual",
-        created_at=job.created_at.isoformat(),
-        updated_at=job.updated_at.isoformat() if job.updated_at else None,
+# ─── Run Center schemas ───────────────────────────────────────────────────────
+
+class RunCreate(BaseModel):
+    project_id: Optional[str] = None
+    agent_id: Optional[str] = None
+    session_id: Optional[str] = None
+    summary: Optional[str] = None
+
+
+class RunStatusUpdate(BaseModel):
+    status: str
+    summary: Optional[str] = None
+
+
+class ExecutionCreate(BaseModel):
+    kind: str
+    payload: dict = {}
+    risk_level: str = "low"
+    target_device_id: Optional[str] = None
+
+
+class ExecutionUpdate(BaseModel):
+    status: str
+    result: Optional[dict] = None
+    error_log: Optional[str] = None
+
+
+class ApprovalResponse(BaseModel):
+    id: str
+    execution_id: str
+    run_id: str
+    status: str
+    reason: Optional[str]
+    requested_at: str
+    decided_at: Optional[str]
+    decided_by: Optional[str]
+
+
+class ExecutionResponse(BaseModel):
+    id: str
+    run_id: str
+    kind: str
+    status: str
+    risk_level: str
+    payload: dict
+    result: Optional[dict]
+    error_log: Optional[str]
+    target_device_id: Optional[str]
+    claimed_by_device_id: Optional[str]
+    started_at: Optional[str]
+    finished_at: Optional[str]
+    created_at: str
+    updated_at: Optional[str]
+    approvals: List[ApprovalResponse]
+
+
+class RunResponse(BaseModel):
+    id: str
+    user_id: str
+    project_id: Optional[str]
+    agent_id: Optional[str]
+    session_id: Optional[str]
+    status: str
+    summary: Optional[str]
+    started_at: Optional[str]
+    finished_at: Optional[str]
+    created_at: str
+    updated_at: Optional[str]
+    executions: List[ExecutionResponse]
+
+
+# ─── Helper serializers ───────────────────────────────────────────────────────
+
+def _approval_to_response(a: RunApproval) -> ApprovalResponse:
+    return ApprovalResponse(
+        id=a.id,
+        execution_id=a.execution_id,
+        run_id=a.run_id,
+        status=a.status,
+        reason=a.reason,
+        requested_at=a.requested_at.isoformat(),
+        decided_at=a.decided_at.isoformat() if a.decided_at else None,
+        decided_by=a.decided_by,
+    )
+
+
+def _exec_to_response(e: RunExecution) -> ExecutionResponse:
+    return ExecutionResponse(
+        id=e.id,
+        run_id=e.run_id,
+        kind=e.kind,
+        status=e.status,
+        risk_level=e.risk_level,
+        payload=e.payload or {},
+        result=e.result,
+        error_log=e.error_log,
+        target_device_id=e.target_device_id,
+        claimed_by_device_id=e.claimed_by_device_id,
+        started_at=e.started_at.isoformat() if e.started_at else None,
+        finished_at=e.finished_at.isoformat() if e.finished_at else None,
+        created_at=e.created_at.isoformat(),
+        updated_at=e.updated_at.isoformat() if e.updated_at else None,
+        approvals=[_approval_to_response(a) for a in getattr(e, "approvals", []) or []],
+    )
+
+
+def _run_to_response(r: AgentRun) -> RunResponse:
+    return RunResponse(
+        id=r.id,
+        user_id=r.user_id,
+        project_id=r.project_id,
+        agent_id=r.agent_id,
+        session_id=r.session_id,
+        status=r.status,
+        summary=r.summary,
+        started_at=r.started_at.isoformat() if r.started_at else None,
+        finished_at=r.finished_at.isoformat() if r.finished_at else None,
+        created_at=r.created_at.isoformat(),
+        updated_at=r.updated_at.isoformat() if r.updated_at else None,
+        executions=[_exec_to_response(e) for e in getattr(r, "executions", []) or []],
     )
 
 
@@ -165,240 +223,52 @@ def _device_to_response(d: NativeDevice) -> DeviceResponse:
     )
 
 
-# ─── Jobs endpoints ──────────────────────────────────────────────────────────
+# ─── Runs endpoints ───────────────────────────────────────────────────────────
 
-@jobs_router.post("", response_model=JobResponse)
-async def create_job(
-    body: JobCreate,
+@runs_router.post("", response_model=RunResponse)
+async def create_run(
+    body: RunCreate,
     db: AsyncSession = Depends(get_async_db),
     identity: Identity = Depends(resolve_identity),
 ):
-    device_snapshot = None
-    if body.target_device_id:
-        res = await db.execute(
-            select(NativeDevice).where(
-                NativeDevice.id == body.target_device_id,
-                NativeDevice.user_id == identity.user_id,
-            )
-        )
-        device = res.scalars().first()
-        if not device:
-            raise HTTPException(status_code=403, detail="Device not found or not owned by user")
-        if not device.is_enabled:
-            raise HTTPException(status_code=400, detail="Target device is not enabled")
-        device_snapshot = {
-            "id": device.id,
-            "display_name": device.display_name,
-            "device_kind": device.device_kind,
-            "platform": device.platform,
-            "status": device.status,
-        }
-    job = await JobService.create_job(
+    run = await RunService.create_run(
         db=db,
         user_id=identity.user_id,
-        job_type=body.type,
-        payload=body.payload,
-        source=body.source,
         project_id=body.project_id,
-        risk_level=body.risk_level,
-        tags=body.tags,
-        target_device_id=body.target_device_id,
-        routing_mode=body.routing_mode,
-        device_snapshot=device_snapshot,
+        agent_id=body.agent_id,
+        session_id=body.session_id,
+        summary=body.summary,
     )
-    return _job_to_response(job)
+    return _run_to_response(run)
 
 
-@jobs_router.get("", response_model=List[JobResponse])
-async def list_jobs(
-    source: Optional[str] = Query(None),
+@runs_router.get("", response_model=List[RunResponse])
+async def list_runs(
     status: Optional[str] = Query(None),
-    type: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_async_db),
     identity: Identity = Depends(resolve_identity),
 ):
-    jobs = await JobService.list_jobs(
+    runs = await RunService.list_runs(
         db=db,
         user_id=identity.user_id,
-        source=source,
         status=status,
-        job_type=type,
         limit=limit,
     )
-    return [_job_to_response(j) for j in jobs]
+    return [_run_to_response(r) for r in runs]
 
 
-@jobs_router.get("/{job_id}", response_model=JobResponse)
-async def get_job(
-    job_id: str,
-    db: AsyncSession = Depends(get_async_db),
-    identity: Identity = Depends(resolve_identity),
-):
-    job = await JobService.get_job(db, job_id, identity.user_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return _job_to_response(job)
+# NOTE: /pull and /executions/{exec_id}/claim must appear before /{run_id}
+# to avoid FastAPI routing conflicts with the path parameter.
 
-
-@jobs_router.patch("/{job_id}", response_model=JobResponse)
-async def update_job_status(
-    job_id: str,
-    body: JobStatusUpdate,
-    db: AsyncSession = Depends(get_async_db),
-    identity: Identity = Depends(resolve_identity),
-):
-    try:
-        job = await JobService.update_job_status(
-            db=db,
-            job_id=job_id,
-            user_id=identity.user_id,
-            status=body.status,
-            error_log=body.error_log,
-            result=body.result,
-        )
-        return _job_to_response(job)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Failed to update job: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-_DISPATCH_SYSTEM_PROMPT = """\
-You are a local task planner for VisionArk. Given a job description, \
-generate a JSON execution plan using ONLY the following tools:
-[run_shell, read_file, write_file, list_dir, move_file, delete_file, open_app]
-
-Tool argument schemas:
-- run_shell:   {"cmd": "string", "cwd": "string (optional)", "timeout": number (optional, seconds)}
-- read_file:   {"path": "string"}
-- write_file:  {"path": "string", "content": "string"}
-- list_dir:    {"path": "string"}
-- move_file:   {"src": "string", "dst": "string"}
-- delete_file: {"path": "string"}
-- open_app:    {"name": "string"}
-
-Output FORMAT (strict JSON only, no markdown fences):
-{"steps": [{"id":"step_1","tool":"<name>","args":{...},"description":"<ja>","risk_level":"low|medium|high|critical"}]}
-
-Risk level rules:
-- delete_file  → always risk_level="high"
-- run_shell    → "medium" minimum
-- write_file   → "medium"
-- move_file    → "medium"
-- read_file / list_dir → "low"
-- open_app     → "low"
-
-Keep steps minimal and focused. Use Japanese for descriptions.\
-"""
-
-
-@jobs_router.post("/{job_id}/dispatch")
-async def dispatch_job(
-    job_id: str,
-    db: AsyncSession = Depends(get_async_db),
-    identity: Identity = Depends(resolve_identity),
-):
-    """Generate a Plan & Execute plan for a job using the user's configured LLM.
-    Returns the existing plan if the job was already dispatched.
-    """
-    job = await JobService.get_job(db, job_id, identity.user_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    # Return existing plan if already dispatched
-    if job.result and job.result.get("plan"):
-        return job.result["plan"]
-
-    # ── Resolve LLM provider ──────────────────────────────────────────
-    res = await db.execute(
-        select(UserSettings).where(UserSettings.user_id == identity.user_id)
-    )
-    settings = res.scalars().first()
-
-    from infrastructure.llm.model_router import (
-        parse_model_spec,
-        get_api_key_for_provider,
-        get_configured_providers,
-    )
-    from infrastructure.llm.provider_registry import resolve_provider
-    from domains.orchestration2.engine.models.message import Message as V2Message
-    from domains.orchestration2.engine.models.common import MessageRole
-
-    provider_id, model_id, api_key = "gemini", None, None
-    if settings:
-        default_model = (settings.ai_config or {}).get("default_model")
-        provider_id, model_id = parse_model_spec(default_model)
-        api_key = get_api_key_for_provider(settings, provider_id)
-        if not api_key:
-            configured = get_configured_providers(settings)
-            if configured:
-                provider_id = configured[0]
-                api_key = get_api_key_for_provider(settings, provider_id)
-
-    if not api_key:
-        raise HTTPException(
-            status_code=400,
-            detail="No LLM provider configured. Add an API key in Settings.",
-        )
-
-    # ── Call LLM ──────────────────────────────────────────────────────
-    user_content = (
-        f"ジョブタイプ: {job.type}\n"
-        f"ペイロード: {json.dumps(job.payload, ensure_ascii=False)}\n"
-        f"タグ: {', '.join(job.tags or [])}"
-    )
-    provider = resolve_provider(provider_id, api_key, model_id)
-    messages = [V2Message(role=MessageRole.USER, content=user_content)]
-    try:
-        llm_response = await provider.complete(messages, system=_DISPATCH_SYSTEM_PROMPT)
-        raw = llm_response.content.strip()
-        # Strip markdown fences if LLM adds them
-        if raw.startswith("```"):
-            raw = re.sub(r"^```[a-z]*\n?", "", raw)
-            raw = re.sub(r"\n?```$", "", raw.strip())
-        plan = json.loads(raw)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if match:
-            try:
-                plan = json.loads(match.group())
-            except json.JSONDecodeError:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"LLM returned invalid JSON: {raw[:300]}",
-                )
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail=f"LLM returned no JSON: {raw[:300]}",
-            )
-    except Exception as e:
-        logger.error(f"LLM dispatch error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"LLM error: {e}")
-
-    # ── Persist plan + mark job as running ───────────────────────────
-    result = {
-        "plan": plan,
-        "step_results": [],
-        "dispatched_at": datetime.utcnow().isoformat(),
-        "current_step": None,
-    }
-    await JobService.update_job_status(db, job_id, identity.user_id, status="running", result=result)
-    return plan
-
-
-@jobs_router.get("/pull", response_model=List[JobResponse])
-async def pull_jobs_for_device(
+@runs_router.get("/pull", response_model=List[ExecutionResponse])
+async def pull_executions_for_device(
     device_id: str = Query(...),
-    status: str = Query("queued"),
     limit: int = Query(10, ge=1, le=50),
     db: AsyncSession = Depends(get_async_db),
     identity: Identity = Depends(resolve_identity),
 ):
-    """Daemon/mobile endpoint: fetch queued jobs assigned to this device."""
-    # Verify device ownership
+    """Daemon endpoint: fetch pending executions assigned to this device."""
     res = await db.execute(
         select(NativeDevice).where(
             NativeDevice.id == device_id,
@@ -409,33 +279,29 @@ async def pull_jobs_for_device(
     if not device:
         raise HTTPException(status_code=403, detail="Device not found or not owned by user")
 
-    stmt = select(Job).where(
-        Job.user_id == identity.user_id,
-        Job.status == status,
-    )
-    if device.is_enabled:
-        # Return jobs explicitly targeted at this device OR auto-routed unclaimed jobs
-        stmt = stmt.where(
-            (Job.target_device_id == device_id) |
-            ((Job.routing_mode == "auto") & (Job.claimed_by_device_id == None))  # noqa: E711
+    stmt = (
+        select(RunExecution)
+        .where(RunExecution.status == "pending")
+        .where(
+            (RunExecution.target_device_id == device_id) |
+            (RunExecution.target_device_id == None)  # noqa: E711
         )
-    else:
-        stmt = stmt.where(Job.target_device_id == device_id)
-    stmt = stmt.order_by(Job.created_at.asc()).limit(limit)
+        .order_by(RunExecution.created_at.asc())
+        .limit(limit)
+    )
     result = await db.execute(stmt)
-    jobs = result.scalars().all()
-    return [_job_to_response(j) for j in jobs]
+    execs = result.scalars().all()
+    return [_exec_to_response(e) for e in execs]
 
 
-@jobs_router.post("/{job_id}/claim", response_model=JobResponse)
-async def claim_job(
-    job_id: str,
+@runs_router.post("/executions/{exec_id}/claim", response_model=ExecutionResponse)
+async def claim_execution(
+    exec_id: str,
     device_id: str = Query(...),
     db: AsyncSession = Depends(get_async_db),
     identity: Identity = Depends(resolve_identity),
 ):
-    """Atomic claim: a device marks itself as executor to prevent double-execution."""
-    # Verify device ownership
+    """Daemon endpoint: atomically claim a pending execution for this device."""
     res = await db.execute(
         select(NativeDevice).where(
             NativeDevice.id == device_id,
@@ -446,83 +312,192 @@ async def claim_job(
     if not device:
         raise HTTPException(status_code=403, detail="Device not found or not owned by user")
 
-    # Fetch job; must be queued and either targeted at this device or auto-routed + unclaimed
     res = await db.execute(
-        select(Job).where(
-            Job.id == job_id,
-            Job.user_id == identity.user_id,
-            Job.status == "queued",
+        select(RunExecution).where(
+            RunExecution.id == exec_id,
+            RunExecution.status == "pending",
         )
     )
-    job = res.scalars().first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found or not in queued state")
+    exc = res.scalars().first()
+    if not exc:
+        raise HTTPException(status_code=404, detail="Execution not found or not in pending state")
 
-    # Routing check
-    if job.target_device_id and job.target_device_id != device_id:
-        raise HTTPException(status_code=403, detail="Job is targeted at a different device")
-    if job.claimed_by_device_id and job.claimed_by_device_id != device_id:
-        raise HTTPException(status_code=409, detail="Job already claimed by another device")
+    if exc.target_device_id and exc.target_device_id != device_id:
+        raise HTTPException(status_code=403, detail="Execution is targeted at a different device")
+    if exc.claimed_by_device_id and exc.claimed_by_device_id != device_id:
+        raise HTTPException(status_code=409, detail="Execution already claimed by another device")
 
-    job.claimed_by_device_id = device_id
+    exc.claimed_by_device_id = device_id
     await db.commit()
-    await db.refresh(job)
-    logger.info("job.claimed device=%s job=%s", device_id, job_id)
-    return _job_to_response(job)
+    await db.refresh(exc)
+    logger.info("execution.claimed device=%s exec=%s", device_id, exec_id)
+    return _exec_to_response(exc)
 
 
-@jobs_router.post("/{job_id}/retry", response_model=JobResponse)
-async def retry_job(
-    job_id: str,
+@runs_router.get("/{run_id}", response_model=RunResponse)
+async def get_run(
+    run_id: str,
     db: AsyncSession = Depends(get_async_db),
     identity: Identity = Depends(resolve_identity),
 ):
-    """Re-queue a failed or rejected job for re-execution."""
-    job = await JobService.get_job(db, job_id, identity.user_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    if job.status not in ("failed", "rejected"):
-        raise HTTPException(status_code=400, detail=f"Only failed/rejected jobs can be retried (status: {job.status})")
-    job.status = "queued"
-    job.error_log = None
-    job.result = None
-    job.started_at = None
-    job.finished_at = None
-    await db.commit()
-    await db.refresh(job)
-    return _job_to_response(job)
+    run = await RunService.get_run(db, run_id, identity.user_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return _run_to_response(run)
 
 
-@jobs_router.post("/{job_id}/approve", response_model=JobResponse)
-async def approve_job(
-    job_id: str,
+@runs_router.patch("/{run_id}", response_model=RunResponse)
+async def update_run(
+    run_id: str,
+    body: RunStatusUpdate,
     db: AsyncSession = Depends(get_async_db),
     identity: Identity = Depends(resolve_identity),
 ):
     try:
-        job = await JobService.approve_job(db, job_id, identity.user_id)
-        return _job_to_response(job)
+        run = await RunService.update_run_status(
+            db=db,
+            run_id=run_id,
+            user_id=identity.user_id,
+            status=body.status,
+            summary=body.summary,
+        )
+        return _run_to_response(run)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Failed to approve job: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
 
 
-@jobs_router.post("/{job_id}/reject", response_model=JobResponse)
-async def reject_job(
-    job_id: str,
+@runs_router.post("/{run_id}/executions", response_model=ExecutionResponse)
+async def add_execution(
+    run_id: str,
+    body: ExecutionCreate,
     db: AsyncSession = Depends(get_async_db),
     identity: Identity = Depends(resolve_identity),
 ):
+    run = await RunService.get_run(db, run_id, identity.user_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    exc = await RunService.add_execution(
+        db=db,
+        run_id=run_id,
+        kind=body.kind,
+        payload=body.payload,
+        risk_level=body.risk_level,
+        target_device_id=body.target_device_id,
+    )
+    return _exec_to_response(exc)
+
+
+@runs_router.get("/{run_id}/executions/{exec_id}", response_model=ExecutionResponse)
+async def get_execution(
+    run_id: str,
+    exec_id: str,
+    db: AsyncSession = Depends(get_async_db),
+    identity: Identity = Depends(resolve_identity),
+):
+    """Get a single execution — used by daemon to poll approval status."""
+    run = await RunService.get_run(db, run_id, identity.user_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    exc = await RunService.get_execution(db, exec_id)
+    if not exc or exc.run_id != run_id:
+        raise HTTPException(status_code=404, detail="Execution not found")
+    return _exec_to_response(exc)
+
+
+@runs_router.patch("/{run_id}/executions/{exec_id}", response_model=ExecutionResponse)
+async def update_execution(
+    run_id: str,
+    exec_id: str,
+    body: ExecutionUpdate,
+    db: AsyncSession = Depends(get_async_db),
+    identity: Identity = Depends(resolve_identity),
+):
+    """Update execution status. Setting waiting_approval auto-creates a RunApproval."""
+    run = await RunService.get_run(db, run_id, identity.user_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
     try:
-        job = await JobService.reject_job(db, job_id, identity.user_id)
-        return _job_to_response(job)
+        exc = await RunService.update_execution_status(
+            db=db,
+            exec_id=exec_id,
+            status=body.status,
+            result=body.result,
+            error_log=body.error_log,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    if exc.run_id != run_id:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    # Auto-create RunApproval when daemon signals waiting_approval
+    if body.status == "waiting_approval":
+        reason = (body.result or {}).get("approval_reason")
+        await RunService.request_approval(db, exec_id, run_id, reason=reason)
+        if run.status not in ("waiting_approval", "completed", "failed", "canceled"):
+            await RunService.update_run_status(db, run_id, identity.user_id, "waiting_approval")
+
+    elif body.status in ("succeeded", "failed", "rejected"):
+        # Auto-complete run when all executions reach terminal state
+        execs = await RunService.list_executions(db, run_id)
+        terminal = {"succeeded", "failed", "rejected"}
+        if all(e.status in terminal for e in execs):
+            any_failed = any(e.status in ("failed", "rejected") for e in execs)
+            await RunService.update_run_status(
+                db, run_id, identity.user_id,
+                "failed" if any_failed else "completed",
+            )
+
+    # Refresh to pick up updated approvals
+    exc = await RunService.get_execution(db, exec_id)
+    return _exec_to_response(exc)
+
+
+@runs_router.post("/{run_id}/approve/{approval_id}", response_model=ApprovalResponse)
+async def approve_execution(
+    run_id: str,
+    approval_id: str,
+    db: AsyncSession = Depends(get_async_db),
+    identity: Identity = Depends(resolve_identity),
+):
+    run = await RunService.get_run(db, run_id, identity.user_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    try:
+        approval = await RunService.decide_approval(
+            db=db,
+            approval_id=approval_id,
+            run_id=run_id,
+            user_id=identity.user_id,
+            decision="approved",
+        )
+        return _approval_to_response(approval)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Failed to reject job: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+
+
+@runs_router.post("/{run_id}/reject/{approval_id}", response_model=ApprovalResponse)
+async def reject_execution(
+    run_id: str,
+    approval_id: str,
+    db: AsyncSession = Depends(get_async_db),
+    identity: Identity = Depends(resolve_identity),
+):
+    run = await RunService.get_run(db, run_id, identity.user_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    try:
+        approval = await RunService.decide_approval(
+            db=db,
+            approval_id=approval_id,
+            run_id=run_id,
+            user_id=identity.user_id,
+            decision="rejected",
+        )
+        return _approval_to_response(approval)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ─── Device management endpoints ─────────────────────────────────────────────
@@ -537,7 +512,6 @@ async def register_device(
     identity: Identity = Depends(resolve_identity),
 ):
     """Native client self-registration (upsert by user + display_name + platform)."""
-    # Upsert: find existing device with same name+platform for this user
     res = await db.execute(
         select(NativeDevice).where(
             NativeDevice.user_id == identity.user_id,
@@ -663,11 +637,19 @@ async def delete_device(
     device = res.scalars().first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
+        
+    # Clear the target_device_id on any associated run executions to avoid FK constraint errors
+    await db.execute(
+        update(RunExecution)
+        .where(RunExecution.target_device_id == device_id)
+        .values(target_device_id=None)
+    )
+        
     await db.delete(device)
     await db.commit()
 
 
-# ─── Native integrations endpoints ──────────────────────────────────────────
+# ─── Native integrations endpoints ───────────────────────────────────────────
 
 @native_router.get("/integrations", response_model=List[IntegrationResponse])
 async def list_integrations(
@@ -737,7 +719,7 @@ async def create_integration(
     )
 
 
-# ─── Automation rules endpoints ──────────────────────────────────────────────
+# ─── Automation rules endpoints ───────────────────────────────────────────────
 
 @native_router.get("/rules", response_model=List[RuleResponse])
 async def list_rules(

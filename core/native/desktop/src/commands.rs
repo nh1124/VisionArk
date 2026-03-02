@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::{AppHandle, Manager};
+use crate::daemon_manager;
 
 // ─── App Config (shared with daemon via config file) ─────────────────────────
 
@@ -11,6 +12,8 @@ use tauri::{AppHandle, Manager};
 pub struct AppConfig {
     #[serde(default)]
     pub api_url: String,
+    #[serde(default)]
+    pub run_daemon_in_background: bool,
 }
 
 const CONFIG_DIR_NAME: &str = "visionark";
@@ -184,4 +187,16 @@ pub async fn bridge_request(
         status,
         body: body_str,
     })
+}
+
+// ─── Daemon Control ─────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn start_daemon_command(app: tauri::AppHandle, api_url: String, token: String, device_id: String) {
+    crate::daemon_manager::start_daemon(&app, api_url, token, device_id);
+}
+
+#[tauri::command]
+pub fn stop_daemon_command(app: tauri::AppHandle) {
+    crate::daemon_manager::stop_daemon(&app);
 }

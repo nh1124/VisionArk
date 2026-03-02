@@ -1,7 +1,10 @@
 use anyhow::Result;
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::{client::IntoClientRequest, Message},
+};
 use tracing::{error, info, warn};
 
 /// Job-related WebSocket event types that should trigger immediate job polling.
@@ -47,15 +50,17 @@ impl WsClient {
                     let url = format!("{}/api/notifications/ws/{}", ws_base, user_id);
                     info!("Connecting to backend WebSocket: {}", url);
 
-                    let request = match tokio_tungstenite::tungstenite::http::Request::builder()
-                        .uri(&url)
-                        .header(
-                            tokio_tungstenite::tungstenite::http::header::AUTHORIZATION,
-                            format!("Bearer {}", self.token),
-                        )
-                        .body(())
-                    {
-                        Ok(r) => r,
+                    let request = match url.into_client_request() {
+                        Ok(mut req) => {
+                            if let Ok(val) = tokio_tungstenite::tungstenite::http::header::HeaderValue::from_str(&format!("Bearer {}", self.token)) {
+                                req.headers_mut().insert(tokio_tungstenite::tungstenite::http::header::AUTHORIZATION, val);
+                                req
+                            } else {
+                                error!("Invalid token format for header");
+                                tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+                                continue;
+                            }
+                        }
                         Err(e) => {
                             error!("Failed to build WebSocket request: {}", e);
                             tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;

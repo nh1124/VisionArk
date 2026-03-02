@@ -1,4 +1,5 @@
 mod commands;
+mod daemon_manager;
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -6,13 +7,14 @@ use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::WebviewWindowBuilder,
-    Manager, WindowEvent,
+    Manager, WindowEvent, Emitter,
 };
 
 static QUICK_NOTE_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -30,6 +32,31 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            // ── Register state ───────────────────────────────────────────
+            app.manage(daemon_manager::DaemonState::new());
+
+            // ── Start daemon if we have a token ─────────────────────────
+            // Best effort startup (don't block). If the user hasn't logged in yet,
+            // they can start it later via commands.
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                // Sleep briefly to let UI load/keyring settle if needed
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                if let Ok(config) = commands::read_app_config(app_handle.clone()) {
+                    if let Ok(token) = commands::get_secure_token("atmos_access_token".into()) {
+                        if !token.is_empty() {
+                            // The daemon handles its own auto-registration if device_id isn't provided,
+                            // AS LONG AS VISIONARK_TOKEN is there. However, to keep it in sync with the frontend,
+                            // we only start it if we have a locally stored device_id.
+                            let device_id = commands::get_secure_token("va_device_id".into()).unwrap_or_default();
+                            if !device_id.is_empty() {
+                                daemon_manager::start_daemon(&app_handle, config.api_url, token, device_id);
+                            }
+                        }
+                    }
+                }
+            });
+
             // ── Register global shortcut ─────────────────────────────
             use tauri_plugin_global_shortcut::GlobalShortcutExt;
             if let Err(e) = app.global_shortcut().on_shortcut("Super+Alt+N", |_, _, _| {}) {
@@ -39,9 +66,10 @@ pub fn run() {
             // ── Tray menu ──────────────────────────────────────────────
             let show = MenuItem::with_id(app, "show", "VisionArk を表示", true, None::<&str>)?;
             let jobs = MenuItem::with_id(app, "jobs", "Jobs を開く", true, None::<&str>)?;
+            let console = MenuItem::with_id(app, "console", "Daemon Console", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
             let quit = MenuItem::with_id(app, "quit", "終了", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &jobs, &sep, &quit])?;
+            let menu = Menu::with_items(app, &[&show, &jobs, &console, &sep, &quit])?;
 
             let mut builder = TrayIconBuilder::new()
                 .menu(&menu)
@@ -57,6 +85,12 @@ pub fn run() {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => toggle_main_window(app),
                     "jobs" => open_main_window(app),
+                    "console" => {
+                        if let Some(console_window) = app.get_webview_window("console") {
+                            console_window.show().ok();
+                            console_window.set_focus().ok();
+                        }
+                    },
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -74,12 +108,28 @@ pub fn run() {
 
             Ok(())
         })
-        // Window close button: hide main window (stay in tray); destroy quick-note windows
+        // Window close button: hide main window (stay in tray) OR exit, depending on config.
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" {
-                    api.prevent_close();
-                    window.hide().ok();
+                    // Check background setting
+                    let app_handle = window.app_handle().clone();
+                    let run_in_bg = match commands::read_app_config(app_handle.clone()) {
+                        Ok(cfg) => cfg.run_daemon_in_background,
+                        Err(_) => false,
+                    };
+
+                    if run_in_bg {
+                        api.prevent_close();
+                        window.hide().ok();
+                    } else {
+                        // User wants to close completely.
+                        // Wait, stopping the app will automatically kill sidecars spawned by tauri-plugin-shell if not detached.
+                        // But let's be safe and kill it explicitly.
+                        daemon_manager::stop_daemon(&app_handle);
+                        // Do not prevent_close(); let it close gracefully, which exits the app if it's the main window.
+                        std::process::exit(0);
+                    }
                 }
                 // quick-note windows: allow default close (destroy)
             }
@@ -97,6 +147,8 @@ pub fn run() {
             commands::read_app_config,
             commands::write_app_config,
             commands::bridge_request,
+            commands::start_daemon_command,
+            commands::stop_daemon_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VisionArk");

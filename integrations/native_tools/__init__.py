@@ -8,7 +8,12 @@ Usage
 Call get_tools(user_id, db) to obtain tool instances ready for use
 in the orchestration engine.
 """
-from .agent_tools import ListNativeDevicesTool, RunNativeJobTool
+from .agent_tools import (
+    ListNativeDevicesTool,
+    RunNativeJobTool,
+    CheckExecutionResultTool,
+    WaitForExecutionTool,
+)
 
 
 async def get_tools(user_id: str, db):
@@ -16,11 +21,15 @@ async def get_tools(user_id: str, db):
     return [
         ListNativeDevicesTool(),
         RunNativeJobTool(),
+        CheckExecutionResultTool(),
+        WaitForExecutionTool(),
     ]
 
 
 __all__ = [
     "ListNativeDevicesTool",
     "RunNativeJobTool",
+    "CheckExecutionResultTool",
+    "WaitForExecutionTool",
     "get_tools",
 ]

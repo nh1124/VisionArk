@@ -18,9 +18,18 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 anyhow = "1"
 bridge-rs = { path = "../bridge-rs" }
+sysinfo = "0.33"
+screenshots = "0.8"
+image = "0.25"
+base64 = "0.22"
+hostname = "0.4"
+iana-time-zone = "0.1"
+enigo = { version = "0.2", features = ["serde"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.58", features = [
   "Win32_Foundation",
   "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_Graphics_Gdi",
 ] }
