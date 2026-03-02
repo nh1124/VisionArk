@@ -8,3 +8,4 @@ class SkillDef(BaseModel):
     description: str | None = None
     tools: list[str] = Field(default_factory=list)
     request_approval: bool = False
+    instructions: str | None = None

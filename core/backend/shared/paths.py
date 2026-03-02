@@ -301,6 +301,24 @@ def get_user_custom_tools_dir(user_id: str, tool_name: str | None = None) -> Pat
     return tool_dir
 
 
+def get_user_skill_packs_dir(user_id: str, pack_name: str | None = None) -> Path:
+    """Get user's skill packs directory: /data/users/{user_id}/skill_packs/
+
+    If pack_name is given, returns the path for a specific pack file (without extension).
+    Pack files live at: <returned_dir>/{pack_name}.yaml (or .md etc.)
+    """
+    user_root = get_user_root_dir(user_id)
+    skill_packs_dir = user_root / "skill_packs"
+    skill_packs_dir.mkdir(parents=True, exist_ok=True)
+
+    if pack_name is None:
+        return skill_packs_dir
+
+    # pack_name must not allow path traversal
+    safe = secure_path_join(skill_packs_dir, pack_name)
+    return safe
+
+
 def get_workspace_dir(user_id: str) -> Path:
     """data/users/{user_id}/workspace/ – user's shared workspace root"""
     user_root = get_user_root_dir(user_id)

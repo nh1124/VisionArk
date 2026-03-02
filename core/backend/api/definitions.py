@@ -7,6 +7,21 @@ Module CRUD (primary interface for user-defined tools/skills):
   PUT    /api/definitions/modules/{name}     Replace module files (re-register)
   DELETE /api/definitions/modules/{name}     Delete module and its tools/skills
 
+Skill Pack CRUD:
+  GET    /api/definitions/skill-packs              List all packs
+  POST   /api/definitions/skill-packs              Upload new pack (201)
+  GET    /api/definitions/skill-packs/{name}       Get pack details + raw content
+  PUT    /api/definitions/skill-packs/{name}       Replace pack content
+  DELETE /api/definitions/skill-packs/{name}       Delete pack + its skills
+
+MCP Server CRUD:
+  GET    /api/definitions/mcp/servers                  List all servers
+  POST   /api/definitions/mcp/servers                  Register server (201)
+  GET    /api/definitions/mcp/servers/{name}           Get server details
+  PUT    /api/definitions/mcp/servers/{name}           Update server config
+  DELETE /api/definitions/mcp/servers/{name}           Delete server + its tools
+  POST   /api/definitions/mcp/servers/{name}/sync      Re-sync tools from server
+
 Individual is_active toggles:
   PATCH  /api/definitions/tools/{name}       Toggle a tool on/off
   PATCH  /api/definitions/skills/{name}      Toggle a skill on/off
@@ -29,7 +44,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.database import get_async_db, ToolRegistry, SkillRegistry
+from shared.database import get_async_db, ToolRegistry, SkillRegistry, MCPServerConfig
 from domains.identity.auth import resolve_identity, Identity
 
 logger = logging.getLogger(__name__)
@@ -56,6 +71,31 @@ class ToolPatchRequest(BaseModel):
 
 
 class SkillPatchRequest(BaseModel):
+    is_active: bool | None = None
+
+
+class SkillPackUploadRequest(BaseModel):
+    pack_name: str
+    filename: str
+    content: str
+
+
+class SkillPackUpdateRequest(BaseModel):
+    filename: str
+    content: str
+
+
+class MCPServerCreateRequest(BaseModel):
+    name: str
+    display_name: str | None = None
+    url: str
+    headers: dict = {}
+
+
+class MCPServerUpdateRequest(BaseModel):
+    display_name: str | None = None
+    url: str | None = None
+    headers: dict | None = None
     is_active: bool | None = None
 
 
@@ -339,3 +379,252 @@ async def refresh_integration_definitions(
     from domains.orchestration2.bootstrap.definition_refresh_service import refresh_integrations
     result = await refresh_integrations(identity.user_id, db)
     return {"ok": True, **result}
+
+
+# ---------------------------------------------------------------------------
+# Skill Pack CRUD
+# ---------------------------------------------------------------------------
+
+
+@router.get("/skill-packs")
+async def list_skill_packs(
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List all skill packs for the current user."""
+    from domains.orchestration2.integrations.skill_pack_import_service import list_skill_packs as _list
+    return await _list(identity.user_id, db)
+
+
+@router.post("/skill-packs", status_code=201)
+async def create_skill_pack(
+    body: SkillPackUploadRequest,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Upload a new skill pack (YAML or Markdown). Fails if pack_name already exists."""
+    from domains.orchestration2.integrations.skill_pack_import_service import import_skill_pack
+
+    result = await import_skill_pack(
+        user_id=identity.user_id,
+        pack_name=body.pack_name,
+        content=body.content,
+        filename=body.filename,
+        db=db,
+        replace=False,
+    )
+    if not result.ok:
+        raise HTTPException(
+            status_code=409 if "already exists" in (result.error or "") else 422,
+            detail=result.error,
+        )
+    return {"ok": True, "pack_name": body.pack_name, "skills": result.skill_names}
+
+
+@router.get("/skill-packs/{name}")
+async def get_skill_pack(
+    name: str,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Get skill pack details (skills list) and raw file content."""
+    from domains.orchestration2.integrations.skill_pack_import_service import (
+        list_skill_packs as _list,
+        get_skill_pack_content,
+    )
+
+    all_packs = await _list(identity.user_id, db)
+    pack = next((p for p in all_packs if p["pack_name"] == name), None)
+    if pack is None:
+        raise HTTPException(status_code=404, detail=f"Skill pack '{name}' not found")
+
+    content = await get_skill_pack_content(identity.user_id, name)
+    return {**pack, "content": content}
+
+
+@router.put("/skill-packs/{name}")
+async def update_skill_pack(
+    name: str,
+    body: SkillPackUpdateRequest,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Replace a skill pack's content and re-register its skills."""
+    from domains.orchestration2.integrations.skill_pack_import_service import import_skill_pack
+
+    result = await import_skill_pack(
+        user_id=identity.user_id,
+        pack_name=name,
+        content=body.content,
+        filename=body.filename,
+        db=db,
+        replace=True,
+    )
+    if not result.ok:
+        raise HTTPException(status_code=422, detail=result.error)
+    return {"ok": True, "pack_name": name, "skills": result.skill_names}
+
+
+@router.delete("/skill-packs/{name}")
+async def delete_skill_pack(
+    name: str,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Delete a skill pack and all its associated skills."""
+    from domains.orchestration2.integrations.skill_pack_import_service import delete_skill_pack as _delete
+
+    try:
+        await _delete(identity.user_id, name, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"ok": True, "deleted_pack": name}
+
+
+# ---------------------------------------------------------------------------
+# MCP Server CRUD
+# ---------------------------------------------------------------------------
+
+
+@router.get("/mcp/servers")
+async def list_mcp_servers(
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List all registered MCP servers with tool counts."""
+    from domains.orchestration2.integrations.mcp_import_service import list_mcp_servers as _list
+    return await _list(identity.user_id, db)
+
+
+@router.post("/mcp/servers", status_code=201)
+async def create_mcp_server(
+    body: MCPServerCreateRequest,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Register a new MCP server. Does not auto-sync; call /sync after creation."""
+    import uuid as _uuid
+    from datetime import datetime
+
+    # Check for name conflict
+    result = await db.execute(
+        select(MCPServerConfig).where(
+            MCPServerConfig.user_id == identity.user_id,
+            MCPServerConfig.name == body.name,
+        )
+    )
+    if result.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail=f"MCP server '{body.name}' already exists")
+
+    now = datetime.utcnow()
+    server = MCPServerConfig(
+        id=str(_uuid.uuid4()),
+        user_id=identity.user_id,
+        name=body.name,
+        display_name=body.display_name,
+        url=body.url,
+        headers=body.headers,
+        is_active=True,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(server)
+    await db.commit()
+    return {"ok": True, "name": body.name}
+
+
+@router.get("/mcp/servers/{name}")
+async def get_mcp_server(
+    name: str,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Get MCP server config details and tool list."""
+    from domains.orchestration2.integrations.mcp_import_service import list_mcp_servers as _list
+    from sqlalchemy import text
+
+    all_servers = await _list(identity.user_id, db)
+    server = next((s for s in all_servers if s["name"] == name), None)
+    if server is None:
+        raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
+
+    # Fetch tools for this server
+    tool_rows = await db.execute(
+        text("""
+            SELECT name, description, is_active, updated_at
+            FROM tool_registry
+            WHERE user_id = :user_id AND origin_type = 'mcp' AND origin_id = :name
+            ORDER BY name
+        """),
+        {"user_id": identity.user_id, "name": name},
+    )
+    tools = [
+        {"name": r.name, "description": r.description, "is_active": r.is_active}
+        for r in tool_rows.fetchall()
+    ]
+    return {**server, "tools": tools}
+
+
+@router.put("/mcp/servers/{name}")
+async def update_mcp_server(
+    name: str,
+    body: MCPServerUpdateRequest,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Update MCP server config (URL, headers, display_name, is_active)."""
+    from datetime import datetime
+
+    result = await db.execute(
+        select(MCPServerConfig).where(
+            MCPServerConfig.user_id == identity.user_id,
+            MCPServerConfig.name == name,
+        )
+    )
+    server = result.scalar_one_or_none()
+    if server is None:
+        raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
+
+    if body.display_name is not None:
+        server.display_name = body.display_name
+    if body.url is not None:
+        server.url = body.url
+    if body.headers is not None:
+        server.headers = body.headers
+    if body.is_active is not None:
+        server.is_active = body.is_active
+    server.updated_at = datetime.utcnow()
+
+    await db.commit()
+    return {"ok": True, "name": name}
+
+
+@router.delete("/mcp/servers/{name}")
+async def delete_mcp_server(
+    name: str,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Delete an MCP server and all its synced tools."""
+    from domains.orchestration2.integrations.mcp_import_service import delete_mcp_server as _delete
+
+    try:
+        await _delete(identity.user_id, name, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"ok": True, "deleted_server": name}
+
+
+@router.post("/mcp/servers/{name}/sync")
+async def sync_mcp_server(
+    name: str,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Connect to an MCP server and sync its tool list into tool_registry."""
+    from domains.orchestration2.integrations.mcp_import_service import sync_mcp_server as _sync
+
+    result = await _sync(identity.user_id, name, db)
+    if not result.ok:
+        raise HTTPException(status_code=502, detail=result.error)
+    return {"ok": True, "server_name": name, "tools": result.tool_names}

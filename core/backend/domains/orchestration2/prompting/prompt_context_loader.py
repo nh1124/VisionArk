@@ -12,45 +12,46 @@ logger = logging.getLogger(__name__)
 def _build_planner_capabilities(skills: list[Any], tool_registry: Any) -> str:
     """Generate a snapshot of available capabilities for the planner."""
     lines = ["## Available Capabilities"]
-    
-    # 1. List Skills
+
+    # 1. List Skills (name + description)
     if skills:
         lines.append("\n### Skills (High-level groupings)")
         for s in skills:
             name = getattr(s, "name", "")
             desc = getattr(s, "description", "")
             lines.append(f"- **{name}**: {desc}")
-            
-    # 2. List Tools by Skill
+
+    # 2. List Tools by Skill (with optional per-skill instructions)
     lines.append("\n### Tools (Actionable commands)")
-    
+
     # Map skill -> tools
     skill_tools_map: dict[str, list[str]] = {}
-    
-    # Initialize with skills
     for s in skills:
         name = getattr(s, "name", "")
-        skill_tools_map[name] = []
-        
-        tools = getattr(s, "tools", [])
-             
-        for t_name in tools:
-            skill_tools_map[name].append(t_name)
+        skill_tools_map[name] = list(getattr(s, "tools", []))
 
-    # Collect all registered tools to get descriptions
     for skill_name, tool_names in skill_tools_map.items():
         if not tool_names:
             continue
-            
+
         lines.append(f"\n#### Skill: {skill_name}")
+
+        # Inject instructions if the skill has them
+        instructions = None
+        skill_obj = next((s for s in skills if getattr(s, "name", "") == skill_name), None)
+        if skill_obj:
+            instructions = getattr(skill_obj, "instructions", None)
+        if instructions:
+            # Indent each line of instructions for readability
+            indented = "\n".join(f"  {l}" for l in instructions.strip().splitlines())
+            lines.append(f"  *Instructions:*\n{indented}")
+
         for t_name in tool_names:
             try:
-                # We need tool registry to get description
                 tool_def = tool_registry.get_def(t_name)
                 desc = tool_def.description.split("\n")[0] if tool_def.description else "No description"
                 lines.append(f"- `{t_name}`: {desc}")
             except Exception:
-                # Tool might be in skill def but not registered in engine
                 lines.append(f"- `{t_name}`: (Tool definition not found)")
 
     return "\n".join(lines)

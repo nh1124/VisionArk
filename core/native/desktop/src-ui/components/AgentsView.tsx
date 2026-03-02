@@ -4,6 +4,7 @@ import {
     Bot, Plus, Pencil, Trash2, X, GitBranch, Check, Loader2,
     Package, Upload, RefreshCw, ChevronDown, ChevronRight,
     ToggleLeft, ToggleRight, AlertCircle, FolderOpen,
+    FileCode, Server, Link, RotateCcw,
 } from "lucide-react"
 
 // ---------------------------------------------------------------------------
@@ -47,6 +48,38 @@ interface ModuleRecord {
     skills: ModuleSkill[]
     updated_at: string | null
     files?: Record<string, string>
+}
+
+interface SkillPackSkill {
+    name: string
+    description: string
+    tools: string[]
+    is_active: boolean
+}
+
+interface SkillPackRecord {
+    pack_name: string
+    skills: SkillPackSkill[]
+    updated_at: string | null
+    content?: string
+}
+
+interface MCPTool {
+    name: string
+    description: string
+    is_active: boolean
+}
+
+interface MCPServer {
+    name: string
+    display_name: string | null
+    url: string
+    headers: Record<string, string>
+    is_active: boolean
+    last_synced_at: string | null
+    sync_error: string | null
+    tool_count: number
+    tools?: MCPTool[]
 }
 
 // ---------------------------------------------------------------------------
@@ -498,10 +531,303 @@ function ModuleCard({
 }
 
 // ---------------------------------------------------------------------------
+// Skill Pack Modal
+// ---------------------------------------------------------------------------
+
+const DEFAULT_SKILL_PACK_YAML = `name: my_skill\ndescription: "What this skill does"\ntools:\n  - tool_a\n  - tool_b\ninstructions: |\n  Step 1: ...\n  Step 2: ...\n`
+
+function SkillPackModal({ existing, onClose, onSave }: {
+    existing: SkillPackRecord | null
+    onClose: () => void
+    onSave: (packName: string, filename: string, content: string) => Promise<void>
+}) {
+    const isCreate = existing === null
+    const [packName, setPackName] = useState(existing?.pack_name ?? "")
+    const [filename, setFilename] = useState(isCreate ? "skills.yaml" : `${existing?.pack_name}.yaml`)
+    const [content, setContent] = useState(existing?.content ?? DEFAULT_SKILL_PACK_YAML)
+    const [saving, setSaving] = useState(false)
+    const [error, setError] = useState("")
+    const fileInputRef = useRef<HTMLInputElement>(null)
+
+    const handleFileLoad = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0]
+        if (!file) return
+        const text = await file.text()
+        setContent(text)
+        setFilename(file.name)
+        if (isCreate) {
+            const base = file.name.replace(/\.(yaml|yml|md)$/i, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "")
+            setPackName(base)
+        }
+        e.target.value = ""
+    }
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault()
+        if (!packName.trim()) { setError("Pack name is required."); return }
+        setSaving(true); setError("")
+        try { await onSave(packName.trim(), filename, content) }
+        catch (err: unknown) { setError(err instanceof Error ? err.message : "Save failed") }
+        finally { setSaving(false) }
+    }
+
+    return (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+            <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-xl mx-4 shadow-2xl max-h-[90vh] flex flex-col">
+                <div className="flex items-center justify-between p-5 border-b border-gray-800 flex-shrink-0">
+                    <div className="flex items-center gap-2">
+                        <FileCode size={18} className="text-cyan-400" />
+                        <h2 className="text-lg font-bold text-white">{isCreate ? "Upload Skill Pack" : `Edit: ${existing.pack_name}`}</h2>
+                    </div>
+                    <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors"><X size={20} /></button>
+                </div>
+                <form onSubmit={handleSubmit} className="p-5 flex flex-col gap-4 overflow-y-auto flex-1">
+                    {isCreate && (
+                        <div>
+                            <label className="block text-xs font-medium text-gray-400 mb-1">Pack Name <span className="text-red-400">*</span></label>
+                            <input type="text" value={packName} onChange={e => setPackName(e.target.value)}
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-cyan-500 transition-colors"
+                                placeholder="e.g. research_skills" />
+                        </div>
+                    )}
+                    <div>
+                        <div className="flex items-center justify-between mb-1">
+                            <label className="text-xs font-medium text-gray-400">Content <span className="text-gray-600">(YAML or Markdown)</span></label>
+                            <button type="button" onClick={() => fileInputRef.current?.click()}
+                                className="flex items-center gap-1 text-xs text-gray-500 hover:text-cyan-400 transition-colors">
+                                <Upload size={11} /> Load file
+                            </button>
+                        </div>
+                        <textarea value={content} onChange={e => setContent(e.target.value)} rows={14}
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-cyan-500/50 transition-colors resize-none"
+                            spellCheck={false} placeholder="YAML or Markdown with frontmatter..." />
+                    </div>
+                    {error && <div className="flex items-center gap-2 text-red-400 text-sm bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2"><AlertCircle size={14} />{error}</div>}
+                    <div className="flex justify-end gap-2 pt-1">
+                        <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-sm transition-colors">Cancel</button>
+                        <button type="submit" disabled={saving}
+                            className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-700 disabled:bg-gray-700 text-white rounded-lg text-sm font-semibold transition-colors">
+                            <Upload size={14} />{saving ? "Uploading..." : isCreate ? "Upload" : "Update"}
+                        </button>
+                    </div>
+                </form>
+                <input ref={fileInputRef} type="file" accept=".yaml,.yml,.md" className="hidden" onChange={handleFileLoad} />
+            </div>
+        </div>
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Skill Pack Card
+// ---------------------------------------------------------------------------
+
+function SkillPackCard({ pack, onEdit, onDelete, onToggleSkill }: {
+    pack: SkillPackRecord
+    onEdit: (p: SkillPackRecord) => void
+    onDelete: (name: string) => void
+    onToggleSkill: (packName: string, skillName: string, active: boolean) => void
+}) {
+    const [expanded, setExpanded] = useState(false)
+    return (
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden hover:border-gray-700 transition-colors">
+            <div className="flex items-center justify-between p-4">
+                <button className="flex items-center gap-2 min-w-0 flex-1 text-left" onClick={() => setExpanded(e => !e)}>
+                    {expanded ? <ChevronDown size={14} className="text-gray-500 flex-shrink-0" /> : <ChevronRight size={14} className="text-gray-500 flex-shrink-0" />}
+                    <FileCode size={16} className="text-cyan-400 flex-shrink-0" />
+                    <span className="font-mono font-semibold text-white truncate">{pack.pack_name}</span>
+                </button>
+                <div className="flex items-center gap-1 flex-shrink-0 ml-2">
+                    <span className="text-[10px] text-gray-600 mr-2">{pack.skills.length}S</span>
+                    <button onClick={() => onEdit(pack)} className="p-1.5 text-gray-500 hover:text-cyan-400 hover:bg-gray-800 rounded-lg transition-colors"><Pencil size={13} /></button>
+                    <button onClick={() => onDelete(pack.pack_name)} className="p-1.5 text-gray-500 hover:text-red-400 hover:bg-gray-800 rounded-lg transition-colors"><Trash2 size={13} /></button>
+                </div>
+            </div>
+            {expanded && pack.skills.length > 0 && (
+                <div className="border-t border-gray-800 px-4 pb-4 pt-3 space-y-1">
+                    <p className="text-[10px] uppercase tracking-widest text-gray-600 font-semibold mb-1.5">Skills</p>
+                    {pack.skills.map(skill => (
+                        <div key={skill.name} className="flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                                <span className="text-xs font-mono text-gray-300">{skill.name}</span>
+                                {skill.tools.length > 0 && <span className="text-[10px] text-gray-600 ml-2">[{skill.tools.join(", ")}]</span>}
+                            </div>
+                            <button onClick={() => onToggleSkill(pack.pack_name, skill.name, !skill.is_active)} className="flex-shrink-0">
+                                {skill.is_active ? <ToggleRight size={18} className="text-cyan-400" /> : <ToggleLeft size={18} className="text-gray-600" />}
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    )
+}
+
+// ---------------------------------------------------------------------------
+// MCP Server Modal
+// ---------------------------------------------------------------------------
+
+function MCPServerModal({ existing, onClose, onSave }: {
+    existing: MCPServer | null
+    onClose: () => void
+    onSave: (data: { name: string; display_name: string; url: string; headers: Record<string, string> }) => Promise<void>
+}) {
+    const isCreate = existing === null
+    const [name, setName] = useState(existing?.name ?? "")
+    const [displayName, setDisplayName] = useState(existing?.display_name ?? "")
+    const [url, setUrl] = useState(existing?.url ?? "")
+    const [headersText, setHeadersText] = useState(
+        existing?.headers && Object.keys(existing.headers).length > 0 ? JSON.stringify(existing.headers, null, 2) : ""
+    )
+    const [saving, setSaving] = useState(false)
+    const [error, setError] = useState("")
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault()
+        if (!url.trim()) { setError("URL is required."); return }
+        if (isCreate && !name.trim()) { setError("Server name is required."); return }
+        let headers: Record<string, string> = {}
+        if (headersText.trim()) {
+            try { headers = JSON.parse(headersText) } catch { setError("Headers must be valid JSON"); return }
+        }
+        setSaving(true); setError("")
+        try { await onSave({ name: name.trim(), display_name: displayName.trim(), url: url.trim(), headers }) }
+        catch (err: unknown) { setError(err instanceof Error ? err.message : "Save failed") }
+        finally { setSaving(false) }
+    }
+
+    return (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+            <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-lg mx-4 shadow-2xl max-h-[90vh] flex flex-col">
+                <div className="flex items-center justify-between p-5 border-b border-gray-800 flex-shrink-0">
+                    <div className="flex items-center gap-2">
+                        <Server size={18} className="text-cyan-400" />
+                        <h2 className="text-lg font-bold text-white">{isCreate ? "Add MCP Server" : `Edit: ${existing.name}`}</h2>
+                    </div>
+                    <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors"><X size={20} /></button>
+                </div>
+                <form onSubmit={handleSubmit} className="p-5 flex flex-col gap-4 overflow-y-auto flex-1">
+                    {isCreate && (
+                        <div>
+                            <label className="block text-xs font-medium text-gray-400 mb-1">Server Name <span className="text-red-400">*</span></label>
+                            <input type="text" value={name} onChange={e => setName(e.target.value)}
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-cyan-500 transition-colors"
+                                placeholder="e.g. my_mcp_server" />
+                        </div>
+                    )}
+                    <div>
+                        <label className="block text-xs font-medium text-gray-400 mb-1">Display Name</label>
+                        <input type="text" value={displayName} onChange={e => setDisplayName(e.target.value)}
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-cyan-500 transition-colors"
+                            placeholder="Human-readable name (optional)" />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-medium text-gray-400 mb-1">URL <span className="text-red-400">*</span></label>
+                        <input type="text" value={url} onChange={e => setUrl(e.target.value)}
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-cyan-500 transition-colors"
+                            placeholder="https://your-mcp-server.example.com/sse" />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-medium text-gray-400 mb-1">Headers <span className="text-gray-600">(JSON)</span></label>
+                        <textarea value={headersText} onChange={e => setHeadersText(e.target.value)} rows={4}
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-cyan-500/50 transition-colors resize-none"
+                            placeholder={'{"Authorization": "Bearer <token>"}'} spellCheck={false} />
+                    </div>
+                    {error && <div className="flex items-center gap-2 text-red-400 text-sm bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2"><AlertCircle size={14} />{error}</div>}
+                    <div className="flex justify-end gap-2 pt-1">
+                        <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-sm transition-colors">Cancel</button>
+                        <button type="submit" disabled={saving}
+                            className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 disabled:bg-gray-700 text-white rounded-lg text-sm font-semibold transition-colors">
+                            {saving ? "Saving..." : isCreate ? "Add Server" : "Update"}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    )
+}
+
+// ---------------------------------------------------------------------------
+// MCP Server Card
+// ---------------------------------------------------------------------------
+
+function MCPServerCard({ server, onEdit, onDelete, onSync, onToggleTool }: {
+    server: MCPServer
+    onEdit: (s: MCPServer) => void
+    onDelete: (name: string) => void
+    onSync: (name: string) => Promise<void>
+    onToggleTool: (serverName: string, toolName: string, active: boolean) => void
+}) {
+    const [expanded, setExpanded] = useState(false)
+    const [syncing, setSyncing] = useState(false)
+
+    const handleSync = async (e: React.MouseEvent) => {
+        e.stopPropagation()
+        setSyncing(true)
+        try { await onSync(server.name) } finally { setSyncing(false) }
+    }
+
+    return (
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden hover:border-gray-700 transition-colors">
+            <div className="flex items-center justify-between p-4">
+                <button className="flex items-center gap-2 min-w-0 flex-1 text-left" onClick={() => setExpanded(e => !e)}>
+                    {expanded ? <ChevronDown size={14} className="text-gray-500 flex-shrink-0" /> : <ChevronRight size={14} className="text-gray-500 flex-shrink-0" />}
+                    <Server size={16} className="text-cyan-400 flex-shrink-0" />
+                    <div className="min-w-0">
+                        <span className="font-mono font-semibold text-white">{server.display_name || server.name}</span>
+                        {server.display_name && <span className="text-[10px] text-gray-600 ml-2 font-mono">{server.name}</span>}
+                    </div>
+                </button>
+                <div className="flex items-center gap-1 flex-shrink-0 ml-2">
+                    <span className="text-[10px] text-gray-600 mr-1">{server.tool_count}T</span>
+                    <button onClick={handleSync} disabled={syncing} className="p-1.5 text-gray-500 hover:text-cyan-400 hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50">
+                        <RotateCcw size={13} className={syncing ? "animate-spin" : ""} />
+                    </button>
+                    <button onClick={() => onEdit(server)} className="p-1.5 text-gray-500 hover:text-cyan-400 hover:bg-gray-800 rounded-lg transition-colors"><Pencil size={13} /></button>
+                    <button onClick={() => onDelete(server.name)} className="p-1.5 text-gray-500 hover:text-red-400 hover:bg-gray-800 rounded-lg transition-colors"><Trash2 size={13} /></button>
+                </div>
+            </div>
+            {expanded && (
+                <div className="border-t border-gray-800 px-4 pb-4 pt-3 space-y-3">
+                    <div className="flex items-center gap-1.5">
+                        <Link size={11} className="text-gray-600 flex-shrink-0" />
+                        <span className="text-[11px] text-gray-500 font-mono truncate">{server.url}</span>
+                    </div>
+                    {server.last_synced_at && <p className="text-[10px] text-gray-600">Synced: {new Date(server.last_synced_at).toLocaleString()}</p>}
+                    {server.sync_error && (
+                        <div className="flex items-center gap-2 text-amber-400 text-xs bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                            <AlertCircle size={12} />{server.sync_error}
+                        </div>
+                    )}
+                    {server.tools && server.tools.length > 0 && (
+                        <div>
+                            <p className="text-[10px] uppercase tracking-widest text-gray-600 font-semibold mb-1.5">Tools</p>
+                            <div className="space-y-1">
+                                {server.tools.map(tool => (
+                                    <div key={tool.name} className="flex items-center justify-between gap-2">
+                                        <div className="min-w-0">
+                                            <span className="text-xs font-mono text-gray-300">{tool.name}</span>
+                                            {tool.description && <span className="text-xs text-gray-600 ml-2 truncate">{tool.description}</span>}
+                                        </div>
+                                        <button onClick={() => onToggleTool(server.name, tool.name, !tool.is_active)} className="flex-shrink-0">
+                                            {tool.is_active ? <ToggleRight size={18} className="text-cyan-400" /> : <ToggleLeft size={18} className="text-gray-600" />}
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    {!server.last_synced_at && <p className="text-xs text-gray-600 italic">Not yet synced — click the sync button to load tools.</p>}
+                </div>
+            )}
+        </div>
+    )
+}
+
+// ---------------------------------------------------------------------------
 // Main view
 // ---------------------------------------------------------------------------
 
-type Tab = "agents" | "modules"
+type Tab = "agents" | "modules" | "skill_packs" | "mcp"
 
 export default function AgentsView() {
     const [tab, setTab] = useState<Tab>("agents")
@@ -522,8 +848,24 @@ export default function AgentsView() {
     const [editingModule, setEditingModule] = useState<ModuleRecord | null>(null)
     const [deleteConfirmModule, setDeleteConfirmModule] = useState<string | null>(null)
 
+    // Skill Pack state
+    const [skillPacks, setSkillPacks] = useState<SkillPackRecord[]>([])
+    const [packsLoading, setPacksLoading] = useState(false)
+    const [packModalOpen, setPackModalOpen] = useState(false)
+    const [editingPack, setEditingPack] = useState<SkillPackRecord | null>(null)
+    const [deleteConfirmPack, setDeleteConfirmPack] = useState<string | null>(null)
+
+    // MCP state
+    const [mcpServers, setMcpServers] = useState<MCPServer[]>([])
+    const [mcpLoading, setMcpLoading] = useState(false)
+    const [mcpModalOpen, setMcpModalOpen] = useState(false)
+    const [editingMcp, setEditingMcp] = useState<MCPServer | null>(null)
+    const [deleteConfirmMcp, setDeleteConfirmMcp] = useState<string | null>(null)
+
     useEffect(() => { loadAgents() }, [])
     useEffect(() => { if (tab === "modules") loadModules() }, [tab])
+    useEffect(() => { if (tab === "skill_packs") loadSkillPacks() }, [tab])
+    useEffect(() => { if (tab === "mcp") loadMcpServers() }, [tab])
 
     // ---- Agent ----
 
@@ -627,6 +969,116 @@ export default function AgentsView() {
         ))
     }
 
+    // ---- Skill Pack ----
+
+    const loadSkillPacks = async () => {
+        setPacksLoading(true)
+        try {
+            const res = await apiFetch("/api/definitions/skill-packs")
+            setSkillPacks(await res.json())
+        } catch (err) { console.error("Failed to load skill packs:", err) }
+        finally { setPacksLoading(false) }
+    }
+
+    const openEditPack = async (p: SkillPackRecord) => {
+        try {
+            const res = await apiFetch(`/api/definitions/skill-packs/${p.pack_name}`)
+            const detail = await res.json()
+            setEditingPack(detail)
+        } catch { setEditingPack(p) }
+        setPackModalOpen(true)
+    }
+
+    const handleSavePack = async (packName: string, filename: string, content: string) => {
+        if (editingPack) {
+            const res = await apiFetch(`/api/definitions/skill-packs/${editingPack.pack_name}`, {
+                method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ filename, content }),
+            })
+            if (!res.ok) { const e = await res.json(); throw new Error(e.detail ?? "Update failed") }
+        } else {
+            const res = await apiFetch("/api/definitions/skill-packs", {
+                method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pack_name: packName, filename, content }),
+            })
+            if (!res.ok) { const e = await res.json(); throw new Error(e.detail ?? "Upload failed") }
+        }
+        setPackModalOpen(false); setEditingPack(null)
+        await loadSkillPacks(); await loadAgents()
+    }
+
+    const handleDeletePack = async (name: string) => {
+        try {
+            await apiFetch(`/api/definitions/skill-packs/${name}`, { method: "DELETE" })
+            await loadSkillPacks(); await loadAgents()
+        } catch (err) { console.error("Failed to delete skill pack:", err) }
+        finally { setDeleteConfirmPack(null) }
+    }
+
+    const handleTogglePackSkill = async (packName: string, skillName: string, active: boolean) => {
+        await apiFetch(`/api/definitions/skills/${skillName}`, {
+            method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_active: active }),
+        })
+        setSkillPacks(prev => prev.map(p =>
+            p.pack_name === packName ? { ...p, skills: p.skills.map(s => s.name === skillName ? { ...s, is_active: active } : s) } : p
+        ))
+    }
+
+    // ---- MCP ----
+
+    const loadMcpServers = async () => {
+        setMcpLoading(true)
+        try {
+            const res = await apiFetch("/api/definitions/mcp/servers")
+            setMcpServers(await res.json())
+        } catch (err) { console.error("Failed to load MCP servers:", err) }
+        finally { setMcpLoading(false) }
+    }
+
+    const handleSaveMcp = async (data: { name: string; display_name: string; url: string; headers: Record<string, string> }) => {
+        if (editingMcp) {
+            const res = await apiFetch(`/api/definitions/mcp/servers/${editingMcp.name}`, {
+                method: "PUT", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ display_name: data.display_name, url: data.url, headers: data.headers }),
+            })
+            if (!res.ok) { const e = await res.json(); throw new Error(e.detail ?? "Update failed") }
+        } else {
+            const res = await apiFetch("/api/definitions/mcp/servers", {
+                method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
+            })
+            if (!res.ok) { const e = await res.json(); throw new Error(e.detail ?? "Failed to add server") }
+        }
+        setMcpModalOpen(false); setEditingMcp(null)
+        await loadMcpServers()
+    }
+
+    const handleSyncMcp = async (name: string) => {
+        await apiFetch(`/api/definitions/mcp/servers/${name}/sync`, { method: "POST" })
+        await loadMcpServers()
+        try {
+            const res = await apiFetch(`/api/definitions/mcp/servers/${name}`)
+            const detail = await res.json()
+            setMcpServers(prev => prev.map(s => s.name === name ? { ...s, ...detail } : s))
+        } catch { /* ignore detail fetch error */ }
+    }
+
+    const handleDeleteMcp = async (name: string) => {
+        try {
+            await apiFetch(`/api/definitions/mcp/servers/${name}`, { method: "DELETE" })
+            await loadMcpServers()
+        } catch (err) { console.error("Failed to delete MCP server:", err) }
+        finally { setDeleteConfirmMcp(null) }
+    }
+
+    const handleToggleMcpTool = async (serverName: string, toolName: string, active: boolean) => {
+        await apiFetch(`/api/definitions/tools/${toolName}`, {
+            method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_active: active }),
+        })
+        setMcpServers(prev => prev.map(s =>
+            s.name === serverName && s.tools
+                ? { ...s, tools: s.tools.map(t => t.name === toolName ? { ...t, is_active: active } : t) }
+                : s
+        ))
+    }
+
     const graphName = (id: string | null) => id ?? "direct_assistant"
 
     return (
@@ -646,20 +1098,35 @@ export default function AgentsView() {
                             className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-sm font-semibold transition-colors">
                             <Plus size={16} /> New Agent
                         </button>
-                    ) : (
+                    ) : tab === "modules" ? (
                         <button onClick={() => { setEditingModule(null); setModuleModalOpen(true) }}
                             className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-sm font-semibold transition-colors">
                             <Upload size={16} /> Upload Module
+                        </button>
+                    ) : tab === "skill_packs" ? (
+                        <button onClick={() => { setEditingPack(null); setPackModalOpen(true) }}
+                            className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-sm font-semibold transition-colors">
+                            <Upload size={16} /> Upload Pack
+                        </button>
+                    ) : (
+                        <button onClick={() => { setEditingMcp(null); setMcpModalOpen(true) }}
+                            className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-sm font-semibold transition-colors">
+                            <Plus size={16} /> Add Server
                         </button>
                     )}
                 </div>
 
                 {/* Tab switcher */}
                 <div className="flex gap-1 mt-4 border-b border-gray-800 -mb-5 max-w-7xl mx-auto">
-                    {(["agents", "modules"] as Tab[]).map(t => (
-                        <button key={t} onClick={() => setTab(t)}
-                            className={`px-4 py-2 text-sm font-semibold capitalize transition-colors border-b-2 ${tab === t ? "border-cyan-500 text-cyan-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}>
-                            {t === "agents" ? "Agents" : "Modules"}
+                    {([
+                        { key: "agents", label: "Agents" },
+                        { key: "modules", label: "Modules" },
+                        { key: "skill_packs", label: "Skill Packs" },
+                        { key: "mcp", label: "MCP" },
+                    ] as { key: Tab; label: string }[]).map(({ key, label }) => (
+                        <button key={key} onClick={() => setTab(key)}
+                            className={`px-4 py-2 text-sm font-semibold transition-colors border-b-2 ${tab === key ? "border-cyan-500 text-cyan-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}>
+                            {label}
                         </button>
                     ))}
                 </div>
@@ -756,6 +1223,79 @@ export default function AgentsView() {
                             </div>
                         )
                     )}
+                    {/* ---- Skill Packs ---- */}
+                    {tab === "skill_packs" && (
+                        packsLoading ? (
+                            <div className="flex items-center justify-center h-48 gap-3">
+                                <Loader2 size={32} className="text-cyan-500 animate-spin" />
+                                <p className="text-gray-400">Loading skill packs...</p>
+                            </div>
+                        ) : skillPacks.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center h-64 gap-4 text-center">
+                                <FileCode size={48} className="text-gray-700" />
+                                <p className="text-gray-500 text-lg">No skill packs yet</p>
+                                <p className="text-gray-600 text-sm max-w-sm">Upload a YAML or Markdown file to define skills and assign them to agents.</p>
+                                <button onClick={() => { setEditingPack(null); setPackModalOpen(true) }}
+                                    className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-sm font-semibold transition-colors mt-2">
+                                    <Upload size={16} /> Upload Pack
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="space-y-3 max-w-3xl">
+                                <div className="flex items-center justify-between mb-4">
+                                    <p className="text-sm text-gray-500">{skillPacks.length} pack{skillPacks.length !== 1 ? "s" : ""}</p>
+                                    <button onClick={loadSkillPacks} className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 transition-colors">
+                                        <RefreshCw size={12} /> Refresh
+                                    </button>
+                                </div>
+                                {skillPacks.map(p => (
+                                    <SkillPackCard key={p.pack_name} pack={p}
+                                        onEdit={openEditPack}
+                                        onDelete={name => setDeleteConfirmPack(name)}
+                                        onToggleSkill={(packName, skillName, active) => handleTogglePackSkill(packName, skillName, active)}
+                                    />
+                                ))}
+                            </div>
+                        )
+                    )}
+
+                    {/* ---- MCP ---- */}
+                    {tab === "mcp" && (
+                        mcpLoading ? (
+                            <div className="flex items-center justify-center h-48 gap-3">
+                                <Loader2 size={32} className="text-cyan-500 animate-spin" />
+                                <p className="text-gray-400">Loading MCP servers...</p>
+                            </div>
+                        ) : mcpServers.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center h-64 gap-4 text-center">
+                                <Server size={48} className="text-gray-700" />
+                                <p className="text-gray-500 text-lg">No MCP servers yet</p>
+                                <p className="text-gray-600 text-sm max-w-sm">Connect to an MCP server to expose its tools to your agents.</p>
+                                <button onClick={() => { setEditingMcp(null); setMcpModalOpen(true) }}
+                                    className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-sm font-semibold transition-colors mt-2">
+                                    <Plus size={16} /> Add Server
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="space-y-3 max-w-3xl">
+                                <div className="flex items-center justify-between mb-4">
+                                    <p className="text-sm text-gray-500">{mcpServers.length} server{mcpServers.length !== 1 ? "s" : ""}</p>
+                                    <button onClick={loadMcpServers} className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 transition-colors">
+                                        <RefreshCw size={12} /> Refresh
+                                    </button>
+                                </div>
+                                {mcpServers.map(s => (
+                                    <MCPServerCard key={s.name} server={s}
+                                        onEdit={server => { setEditingMcp(server); setMcpModalOpen(true) }}
+                                        onDelete={name => setDeleteConfirmMcp(name)}
+                                        onSync={handleSyncMcp}
+                                        onToggleTool={(serverName, toolName, active) => handleToggleMcpTool(serverName, toolName, active)}
+                                    />
+                                ))}
+                            </div>
+                        )
+                    )}
+
                 </div>
             </div>
 
@@ -797,6 +1337,50 @@ export default function AgentsView() {
                         <div className="flex gap-3 justify-end">
                             <button onClick={() => setDeleteConfirmModule(null)} className="px-4 py-1.5 rounded-lg text-sm text-gray-400 hover:text-white">Cancel</button>
                             <button onClick={() => handleDeleteModule(deleteConfirmModule)} className="px-5 py-1.5 rounded-lg text-sm bg-red-500 hover:bg-red-400 text-white font-bold">Delete</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Skill Pack Modal */}
+            {packModalOpen && (
+                <SkillPackModal existing={editingPack}
+                    onClose={() => { setPackModalOpen(false); setEditingPack(null) }}
+                    onSave={handleSavePack} />
+            )}
+
+            {/* Delete Skill Pack Confirm */}
+            {deleteConfirmPack && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-gray-900 border border-red-900/40 w-full max-w-sm rounded-2xl shadow-2xl p-6">
+                        <h3 className="text-base font-bold text-white mb-1.5">Delete skill pack?</h3>
+                        <p className="text-gray-400 text-sm mb-1">All skills from this pack will be removed.</p>
+                        <p className="text-gray-300 text-sm font-mono mb-5">{deleteConfirmPack}</p>
+                        <div className="flex gap-3 justify-end">
+                            <button onClick={() => setDeleteConfirmPack(null)} className="px-4 py-1.5 rounded-lg text-sm text-gray-400 hover:text-white">Cancel</button>
+                            <button onClick={() => handleDeletePack(deleteConfirmPack)} className="px-5 py-1.5 rounded-lg text-sm bg-red-500 hover:bg-red-400 text-white font-bold">Delete</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* MCP Server Modal */}
+            {mcpModalOpen && (
+                <MCPServerModal existing={editingMcp}
+                    onClose={() => { setMcpModalOpen(false); setEditingMcp(null) }}
+                    onSave={handleSaveMcp} />
+            )}
+
+            {/* Delete MCP Server Confirm */}
+            {deleteConfirmMcp && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-gray-900 border border-red-900/40 w-full max-w-sm rounded-2xl shadow-2xl p-6">
+                        <h3 className="text-base font-bold text-white mb-1.5">Delete MCP server?</h3>
+                        <p className="text-gray-400 text-sm mb-1">The server config and all its synced tools will be removed.</p>
+                        <p className="text-gray-300 text-sm font-mono mb-5">{deleteConfirmMcp}</p>
+                        <div className="flex gap-3 justify-end">
+                            <button onClick={() => setDeleteConfirmMcp(null)} className="px-4 py-1.5 rounded-lg text-sm text-gray-400 hover:text-white">Cancel</button>
+                            <button onClick={() => handleDeleteMcp(deleteConfirmMcp)} className="px-5 py-1.5 rounded-lg text-sm bg-red-500 hover:bg-red-400 text-white font-bold">Delete</button>
                         </div>
                     </div>
                 </div>

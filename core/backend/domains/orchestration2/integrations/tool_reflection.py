@@ -23,10 +23,11 @@ async def register_and_reflect_integrations(
     integration_tools_text = ""
 
     try:
-        from integrations.loader import load_integration_tools, load_user_custom_tools
+        from integrations.loader import load_integration_tools, load_user_custom_tools, load_mcp_tools
         integration_tools = await load_integration_tools(user_id, db_session)
         custom_tools = await load_user_custom_tools(user_id, db_session)
-        all_tools = integration_tools + custom_tools
+        mcp_tools = await load_mcp_tools(user_id, db_session)
+        all_tools = integration_tools + custom_tools + mcp_tools
 
         valid_integrations = []
         for tool_def, tool_impl in all_tools:

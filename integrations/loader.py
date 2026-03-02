@@ -206,6 +206,69 @@ async def load_user_custom_tools(
     return results
 
 
+async def load_mcp_tools(
+    user_id: str, db: AsyncSession
+) -> List[Tuple[ToolDef, Any]]:
+    """Load active MCP tools from tool_registry for this user.
+
+    Queries tool_registry for rows with origin_type='mcp', is_active=True, then
+    fetches server config (URL/headers) from mcp_server_configs by origin_id.
+    Returns (ToolDef, MCPToolAdapter) pairs — no network calls here.
+    """
+    from sqlalchemy import text
+
+    results: List[Tuple[ToolDef, Any]] = []
+
+    try:
+        # Fetch active MCP tools
+        tool_rows = await db.execute(
+            text("""
+                SELECT t.name, t.description, t.params_schema, t.origin_id,
+                       s.url, s.headers
+                FROM tool_registry t
+                JOIN mcp_server_configs s
+                    ON s.user_id = t.user_id AND s.name = t.origin_id
+                WHERE t.user_id = :user_id
+                  AND t.origin_type = 'mcp'
+                  AND t.is_active = TRUE
+                  AND s.is_active = TRUE
+                ORDER BY t.name
+            """),
+            {"user_id": user_id},
+        )
+        rows = tool_rows.fetchall()
+    except Exception as exc:
+        logger.warning("Failed to query MCP tools for user %s: %s", user_id, exc)
+        return results
+
+    if not rows:
+        return results
+
+    from .mcp_adapter import MCPToolAdapter
+
+    for row in rows:
+        params_schema = row.params_schema or {}
+        if isinstance(params_schema, str):
+            try:
+                import json as _json
+                params_schema = _json.loads(params_schema)
+            except Exception:
+                params_schema = {}
+
+        adapter = MCPToolAdapter(
+            server_name=row.origin_id,
+            tool_name=row.name,
+            description=row.description or "",
+            url=row.url,
+            headers=row.headers or {},
+            input_schema=params_schema,
+        )
+        results.append((adapter.definition, adapter))
+
+    logger.info("Loaded %d MCP tools for user %s", len(results), user_id)
+    return results
+
+
 def _scan_module_for_tools(module: Any) -> List[BaseTool]:
     """Scan a module for BaseTool subclasses and instantiate them."""
     tools = []

@@ -702,11 +702,35 @@ class SkillRegistry(Base):
     artifact_path = Column(String(500), nullable=True)
     artifact_hash = Column(String(64), nullable=True)
     activated_at = Column(DateTime, nullable=True)
+    instructions = Column(Text, nullable=True)              # Natural-language instructions for the skill
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     __table_args__ = (
         UniqueConstraint("user_id", "name", name="uix_skill_registry_user_name"),
+    )
+
+    user = relationship("User")
+
+
+class MCPServerConfig(Base):
+    """Per-user MCP (Model Context Protocol) server configurations."""
+    __tablename__ = "mcp_server_configs"
+
+    id = Column(String(36), primary_key=True)               # UUID
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)              # snake_case identifier
+    display_name = Column(String(200), nullable=True)
+    url = Column(String(500), nullable=False)               # SSE/HTTP endpoint
+    headers = Column(JSON, default=dict)                    # {"Authorization": "Bearer ..."}
+    is_active = Column(Boolean, default=True)
+    last_synced_at = Column(DateTime, nullable=True)
+    sync_error = Column(Text, nullable=True)                # last sync error message
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uix_mcp_server_user_name"),
     )
 
     user = relationship("User")
@@ -1336,6 +1360,24 @@ def _run_migrations(engine):
                         f"ALTER TABLE skill_registry ADD COLUMN {col_name} {col_def}"
                     ))
                     print(f"✅ Migration: Added {col_name} to skill_registry")
+            conn.commit()
+
+    # Migration: Add instructions column to skill_registry
+    if 'skill_registry' in inspector.get_table_names():
+        cols = {c['name'] for c in inspector.get_columns('skill_registry')}
+        if 'instructions' not in cols:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE skill_registry ADD COLUMN IF NOT EXISTS instructions TEXT"))
+                conn.commit()
+                print("✅ Migration: Added instructions to skill_registry")
+
+    # Migration: Create mcp_server_configs table if it doesn't exist
+    # (Base.metadata.create_all handles new tables, but add index explicitly)
+    if 'mcp_server_configs' in inspector.get_table_names():
+        with engine.connect() as conn:
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_mcp_server_configs_user_id ON mcp_server_configs(user_id)"
+            ))
             conn.commit()
 
 

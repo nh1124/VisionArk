@@ -28,3 +28,6 @@ python-docx
 openpyxl
 python-pptx
 msal
+# Skill Pack + MCP integration
+pyyaml
+mcp

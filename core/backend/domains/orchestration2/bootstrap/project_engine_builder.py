@@ -76,6 +76,7 @@ async def _load_skills_from_db(user_id: str, db_session: AsyncSession) -> list[S
                     name=row.name,
                     description=row.description or "",
                     tools=row.tools or [],
+                    instructions=row.instructions or None,
                 )
                 for row in rows
             ]
