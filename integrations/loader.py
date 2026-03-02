@@ -123,6 +123,89 @@ async def load_integration_skills(
     return results
 
 
+async def load_user_custom_tools(
+    user_id: str, db: AsyncSession
+) -> List[Tuple[ToolDef, Any]]:
+    """Load tools uploaded by the user from their custom_tools directory.
+
+    Each sub-directory under data/users/{user_id}/custom_tools/{tool_name}/
+    that contains an __init__.py is loaded as a tool package.  The package
+    must expose get_tools(user_id, db) returning a list of BaseTool instances.
+
+    Tools are loaded via importlib.util (not from sys.path) so they never
+    collide with integration or core packages.
+    """
+    import importlib.util
+    import sys
+
+    results: List[Tuple[ToolDef, Any]] = []
+
+    try:
+        from shared.paths import get_user_custom_tools_dir
+        custom_tools_dir = get_user_custom_tools_dir(user_id)
+    except Exception as exc:
+        logger.warning("Could not resolve custom tools dir for user %s: %s", user_id, exc)
+        return results
+
+    if not custom_tools_dir.exists():
+        return results
+
+    for item in sorted(custom_tools_dir.iterdir()):
+        if not item.is_dir():
+            continue
+        init_file = item / "__init__.py"
+        if not init_file.exists():
+            continue
+
+        tool_name = item.name
+        module_key = f"__user_custom_{user_id}_{tool_name}__"
+
+        try:
+            # Re-use cached module if already loaded in this process
+            if module_key in sys.modules:
+                module = sys.modules[module_key]
+            else:
+                spec = importlib.util.spec_from_file_location(module_key, init_file)
+                if spec is None or spec.loader is None:
+                    logger.warning("Could not build spec for user tool '%s'", tool_name)
+                    continue
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_key] = module
+                spec.loader.exec_module(module)  # type: ignore[union-attr]
+
+            get_tools_fn = getattr(module, "get_tools", None)
+            if get_tools_fn is None:
+                logger.warning("User tool '%s' has no get_tools() — skipping", tool_name)
+                continue
+
+            if asyncio.iscoroutinefunction(get_tools_fn):
+                tool_instances = await get_tools_fn(user_id, db)
+            else:
+                tool_instances = get_tools_fn(user_id, db)
+
+            if not tool_instances:
+                continue
+
+            for tool_instance in tool_instances:
+                if isinstance(tool_instance, BaseTool):
+                    adapter = IntegrationToolAdapter(tool_instance)
+                    results.append((adapter.definition, adapter))
+
+            logger.info(
+                "Loaded %d tools from user custom package '%s'",
+                len(tool_instances), tool_name,
+            )
+
+        except Exception as exc:
+            logger.warning(
+                "Failed to load user custom tool '%s' for user %s: %s",
+                tool_name, user_id, exc,
+            )
+            sys.modules.pop(module_key, None)
+
+    return results
+
+
 def _scan_module_for_tools(module: Any) -> List[BaseTool]:
     """Scan a module for BaseTool subclasses and instantiate them."""
     tools = []

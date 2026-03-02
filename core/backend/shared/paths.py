@@ -282,6 +282,25 @@ def get_user_global_assets_dir(user_id: str) -> Path:
     return user_assets
 
 
+def get_user_custom_tools_dir(user_id: str, tool_name: str | None = None) -> Path:
+    """Get user's custom tools directory: /data/users/{user_id}/custom_tools/
+
+    If tool_name is given, returns the specific tool sub-directory and creates it.
+    The tool's code lives at: <returned_path>/__init__.py
+    """
+    user_root = get_user_root_dir(user_id)
+    custom_tools_dir = user_root / "custom_tools"
+    custom_tools_dir.mkdir(parents=True, exist_ok=True)
+
+    if tool_name is None:
+        return custom_tools_dir
+
+    # tool_name must be a safe identifier (no path traversal)
+    tool_dir = secure_path_join(custom_tools_dir, tool_name)
+    tool_dir.mkdir(parents=True, exist_ok=True)
+    return tool_dir
+
+
 def get_workspace_dir(user_id: str) -> Path:
     """data/users/{user_id}/workspace/ – user's shared workspace root"""
     user_root = get_user_root_dir(user_id)

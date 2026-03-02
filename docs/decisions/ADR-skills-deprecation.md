@@ -73,3 +73,23 @@ orchestration2 正本化方針（[Skill_refactoring.md](../proposals/Skill_refac
 - **operation skill**: integration tools の追加は DB refresh 時に確定。per-request の runtime append は廃止。
 - **フォールバック**: DB が空（未 seed）の場合は `SKILL_DEFS` / 全 core tools にフォールバックし、backward compatibility を維持。
 - **upload (Phase E)**: artifact 保存・validation・activation フローは未実装。`status`, `artifact_*` 列は Phase E で使用予定。
+
+---
+
+## 追記: Phase E 完了 — ユーザー定義 tool/skill アップロード (2026-03-02)
+
+| 変更 | 詳細 |
+|------|------|
+| `shared/paths.py` — `get_user_custom_tools_dir` 追加 | `data/users/{user_id}/custom_tools/{tool_name}/__init__.py` のパス解決 |
+| `definition_validation_service.py` 新規 | Python AST による構文チェック・契約チェック（`get_tools()` 必須）・セキュリティスキャン（`subprocess`/`exec`/`eval` 等をブロック）|
+| `definition_import_service.py` 新規 | アップロードフロー: tool_name バリデーション → コード検証 → ファイル保存 → 動的 import → `get_tools()` 実行 → `tool_registry` に `origin_type='upload'` で upsert。失敗時は即エラー（ファイル保存なし）|
+| `integrations/loader.py` — `load_user_custom_tools` 追加 | `custom_tools/` ディレクトリを走査し `importlib.util` で各パッケージをロード。`IntegrationToolAdapter` でラップして返す |
+| `tool_reflection.py` 拡張 | `load_user_custom_tools` も呼び出し、カスタムツールを engine に登録 |
+| `api/definitions.py` 拡張 | `POST /import`, `PATCH /tools/{name}`, `DELETE /tools/{name}`, `POST /skills`, `PATCH /skills/{name}`, `DELETE /skills/{name}` を追加 |
+
+### 現状 (Phase E)
+
+- **upload ツール**: Python コードを `POST /api/definitions/import` で送信 → バリデーション → `data/users/{uid}/custom_tools/{tool_name}/` に保存 → `tool_registry` (`origin_type=upload`) に登録 → 次回エンジン生成時から有効。
+- **upload ツール削除**: `DELETE /api/definitions/tools/{name}` → DB 行削除 + ファイル削除（`origin_type=upload` のみ）。core/integration は `PATCH is_active=false` で無効化。
+- **system_generated skill**: `POST /api/definitions/skills` で tool グループを手動定義。ユーザーが tool-skill バインドを明示的に管理。
+- **Hot reload なし**: 変更は次回エンジン生成（次リクエスト）から反映。
