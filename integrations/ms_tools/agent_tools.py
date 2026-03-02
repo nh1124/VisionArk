@@ -304,7 +304,17 @@ class RenderPdfTool(BaseTool):
 # ═══════════════════════════════════════════════════════════════════════
 
 class WordArgs(BaseModel):
-    operation: str = Field(..., description="create_from_template | patch_document | apply_styles | add_comments | export")
+    operation: str = Field(
+        ...,
+        description=(
+            "Operation to perform. Valid values: "
+            "'create_from_template' (alias: 'create') — create a new .docx; "
+            "'patch_document' (alias: 'patch') — apply ops to existing doc; "
+            "'apply_styles' — map text to Word style names; "
+            "'add_comments' — append review comments; "
+            "'export' — save as docx or pdf."
+        ),
+    )
     doc_id: Optional[str] = Field(None, description="Relative path to existing .docx under artifacts/")
     template_id: Optional[str] = Field("blank", description="'blank','report','memo' or path to .docx template")
     output_filename: Optional[str] = Field("document", description="Output filename without extension")
@@ -325,8 +335,16 @@ class WordTool(BaseTool):
     )
     args_schema = WordArgs
 
+    _OP_ALIASES: dict[str, str] = {
+        "create": "create_from_template",
+        "patch": "patch_document",
+        "update": "patch_document",
+        "style": "apply_styles",
+        "comment": "add_comments",
+    }
+
     async def run(self, ctx: IntegrationContext, **kwargs) -> ToolResult:
-        op = kwargs.get("operation", "")
+        op = self._OP_ALIASES.get(kwargs.get("operation", ""), kwargs.get("operation", ""))
         try:
             import docx  # noqa
         except ImportError:
@@ -343,7 +361,11 @@ class WordTool(BaseTool):
                 return await self._add_comments(ctx, kwargs)
             if op == "export":
                 return await self._export(ctx, kwargs)
-            return _err(f"Unknown operation: {op!r}")
+            return _err(
+                f"Unknown operation: {op!r}. "
+                f"Valid values: create_from_template (or 'create'), patch_document (or 'patch'), "
+                f"apply_styles, add_comments, export."
+            )
         except Exception as exc:
             logger.exception("word_tool.%s failed", op)
             return _err(f"word_tool.{op} failed: {exc}")
@@ -478,7 +500,17 @@ class WordTool(BaseTool):
 # ═══════════════════════════════════════════════════════════════════════
 
 class ExcelArgs(BaseModel):
-    operation: str = Field(..., description="read_range | update_range | apply_formula | create_chart | validate")
+    operation: str = Field(
+        ...,
+        description=(
+            "Operation to perform. Valid values: "
+            "'read_range' (alias: 'read') — read cells; "
+            "'update_range' (alias: 'write' or 'create') — write cell values; "
+            "'apply_formula' (alias: 'formula') — set a formula in a range; "
+            "'create_chart' (alias: 'chart') — add a chart to a sheet; "
+            "'validate' — check data against rules."
+        ),
+    )
     workbook_id: Optional[str] = Field("workbook.xlsx", description="Path to .xlsx under artifacts/ or new filename")
     sheet: Optional[str] = Field(None, description="Worksheet name (default: active sheet)")
     range: Optional[str] = Field(None, description="A1-notation range, e.g. 'A1:D10'")
@@ -497,8 +529,18 @@ class ExcelTool(BaseTool):
     )
     args_schema = ExcelArgs
 
+    _OP_ALIASES: dict[str, str] = {
+        "read": "read_range",
+        "write": "update_range",
+        "create": "update_range",
+        "update": "update_range",
+        "formula": "apply_formula",
+        "chart": "create_chart",
+        "add_chart": "create_chart",
+    }
+
     async def run(self, ctx: IntegrationContext, **kwargs) -> ToolResult:
-        op = kwargs.get("operation", "")
+        op = self._OP_ALIASES.get(kwargs.get("operation", ""), kwargs.get("operation", ""))
         try:
             import openpyxl  # noqa
         except ImportError:
@@ -514,7 +556,11 @@ class ExcelTool(BaseTool):
                 return await self._chart(ctx, kwargs)
             if op == "validate":
                 return await self._validate(ctx, kwargs)
-            return _err(f"Unknown operation: {op!r}")
+            return _err(
+                f"Unknown operation: {op!r}. "
+                f"Valid values: read_range (or 'read'), update_range (or 'write'/'create'), "
+                f"apply_formula (or 'formula'), create_chart (or 'chart'), validate."
+            )
         except Exception as exc:
             logger.exception("excel_tool.%s failed", op)
             return _err(f"excel_tool.{op} failed: {exc}")
@@ -653,11 +699,29 @@ class ExcelTool(BaseTool):
 # ═══════════════════════════════════════════════════════════════════════
 
 class PptArgs(BaseModel):
-    operation: str = Field(..., description="create_from_template | upsert_slide | bind_chart | export")
+    operation: str = Field(
+        ...,
+        description=(
+            "Operation to perform. Valid values: "
+            "'create_from_template' (alias: 'create') — create a new .pptx from an outline; "
+            "'upsert_slide' (alias: 'add_slide') — add or update a single slide; "
+            "'bind_chart' — embed an Excel chart into a slide; "
+            "'export' — export to pptx or pdf."
+        ),
+    )
     deck_id: Optional[str] = Field(None, description="Relative path to existing .pptx under artifacts/")
     template_id: Optional[str] = Field("blank", description="'blank','title_content','two_column' or path to template")
-    output_filename: Optional[str] = Field("presentation", description="Output filename without extension")
-    outline: Optional[list] = Field(None, description="Slide specs: [{title,bullets[],notes,layout}]")
+    output_filename: Optional[str] = Field(
+        "presentation",
+        description="Output filename without extension (alias: file_path — strip .pptx suffix if provided)",
+    )
+    outline: Optional[list] = Field(
+        None,
+        description=(
+            "Slide specs for create_from_template (alias: 'slides'). "
+            "Each item: {title, bullets: [], notes: '', layout: ''}"
+        ),
+    )
     slide_spec: Optional[dict] = Field(None, description="Slide spec for upsert: {index,title,bullets[],layout,notes}")
     excel_source: Optional[dict] = Field(None, description="Excel data for bind_chart: {workbook_id,sheet,data_range,chart_type,title,slide_index}")
     export_format: Optional[str] = Field("pptx", description="'pptx' or 'pdf'")
@@ -667,13 +731,27 @@ class PptTool(BaseTool):
     name = "ppt_tool"
     description = (
         "Create and update Microsoft PowerPoint (.pptx) presentations. "
-        "Supports template-based generation, slide upserts, Excel chart binding, "
-        "and export to .pptx or PDF. Files saved under artifacts/presentations/."
+        "Use operation='create_from_template' (or 'create') with outline=[{title,bullets}] to build a new deck. "
+        "Use operation='upsert_slide' (or 'add_slide') with slide_spec to add/edit one slide. "
+        "Use operation='bind_chart' to embed an Excel chart. "
+        "Use operation='export' to save as pptx or pdf. "
+        "Files saved under artifacts/presentations/."
     )
     args_schema = PptArgs
 
+    # Aliases accepted from LLMs that use shorter operation names
+    _OP_ALIASES: dict[str, str] = {
+        "create": "create_from_template",
+        "add_slide": "upsert_slide",
+        "update_slide": "upsert_slide",
+        "chart": "bind_chart",
+    }
+
     async def run(self, ctx: IntegrationContext, **kwargs) -> ToolResult:
         op = kwargs.get("operation", "")
+        # Resolve aliases so LLMs can use natural names like "create"
+        op = self._OP_ALIASES.get(op, op)
+
         try:
             import pptx  # noqa
         except ImportError:
@@ -687,7 +765,10 @@ class PptTool(BaseTool):
                 return await self._bind_chart(ctx, kwargs)
             if op == "export":
                 return await self._export(ctx, kwargs)
-            return _err(f"Unknown operation: {op!r}")
+            return _err(
+                f"Unknown operation: {op!r}. "
+                f"Valid values: create_from_template (or 'create'), upsert_slide (or 'add_slide'), bind_chart, export."
+            )
         except Exception as exc:
             logger.exception("ppt_tool.%s failed", op)
             return _err(f"ppt_tool.{op} failed: {exc}")
@@ -697,11 +778,20 @@ class PptTool(BaseTool):
         art = _artifacts_dir(ctx)
         pres_dir = art / "presentations"
         pres_dir.mkdir(parents=True, exist_ok=True)
-        filename = _safe_name(kw.get("output_filename") or "presentation", "presentation")
+
+        # Accept both 'output_filename' and 'file_path' (strip extension if provided)
+        raw_name = kw.get("output_filename") or kw.get("file_path") or "presentation"
+        raw_name = Path(raw_name).stem  # strip .pptx / .ppt suffix if given
+        filename = _safe_name(raw_name, "presentation")
+
         tmpl = _resolve_pptx_template(kw.get("template_id") or "blank", art)
         prs = Presentation(str(tmpl)) if tmpl else Presentation()
-        for spec in _as_list(kw.get("outline") or []):
+
+        # Accept both 'outline' and 'slides' as the slide list key
+        slides_raw = kw.get("outline") or kw.get("slides") or []
+        for spec in _as_list(slides_raw):
             _add_slide(prs, spec)
+
         out = pres_dir / f"{filename}.pptx"
         prs.save(str(out))
         return _ok({"success": True, "deck_id": f"artifacts/presentations/{filename}.pptx",

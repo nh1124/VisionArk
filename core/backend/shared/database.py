@@ -692,11 +692,49 @@ class SkillRegistry(Base):
     description = Column(String(500), nullable=True)
     tools = Column(JSON, default=list)                      # List of tool names
     is_builtin = Column(Boolean, default=True)              # True = seeded from static config
+    # Definition registry extension (Phase A)
+    origin_type = Column(String(20), nullable=False, default="core")  # core|integration|upload
+    origin_id = Column(String(100), nullable=True)          # integration pkg name or upload id
+    status = Column(String(20), nullable=False, default="active")  # draft|validating|active|invalid
+    is_active = Column(Boolean, default=True)               # False = soft-deleted / deactivated
+    version_hash = Column(String(64), nullable=True)        # SHA256[:16] of definition content
+    validation_error = Column(Text, nullable=True)
+    artifact_path = Column(String(500), nullable=True)
+    artifact_hash = Column(String(64), nullable=True)
+    activated_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     __table_args__ = (
         UniqueConstraint("user_id", "name", name="uix_skill_registry_user_name"),
+    )
+
+    user = relationship("User")
+
+
+class ToolRegistry(Base):
+    """Per-user tool registry — stores all known tools (core, integration, upload)."""
+    __tablename__ = "tool_registry"
+
+    id = Column(String(36), primary_key=True)               # UUID
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)               # e.g. "google_search"
+    description = Column(String(500), nullable=True)
+    params_schema = Column(JSON, default=dict)              # JSON Schema for tool arguments
+    origin_type = Column(String(20), nullable=False, default="core")  # core|integration|upload
+    origin_id = Column(String(100), nullable=True)          # integration pkg name or upload id
+    status = Column(String(20), nullable=False, default="active")  # draft|validating|active|invalid
+    is_active = Column(Boolean, default=True)               # False = soft-deleted / deactivated
+    version_hash = Column(String(64), nullable=True)        # SHA256[:16] of definition content
+    validation_error = Column(Text, nullable=True)
+    artifact_path = Column(String(500), nullable=True)
+    artifact_hash = Column(String(64), nullable=True)
+    activated_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uix_tool_registry_user_name"),
     )
 
     user = relationship("User")
@@ -1276,6 +1314,29 @@ def _run_migrations(engine):
                     except Exception as e:
                         print(f"[WARN] Migration: Could not make uploaded_files.project_id nullable: {e}")
                 break
+
+    # Migration: Add definition registry columns to skill_registry
+    if 'skill_registry' in inspector.get_table_names():
+        cols = {c['name'] for c in inspector.get_columns('skill_registry')}
+        new_cols = {
+            'origin_type': "VARCHAR(20) DEFAULT 'core'",
+            'origin_id': "VARCHAR(100)",
+            'status': "VARCHAR(20) DEFAULT 'active'",
+            'is_active': "BOOLEAN DEFAULT TRUE",
+            'version_hash': "VARCHAR(64)",
+            'validation_error': "TEXT",
+            'artifact_path': "VARCHAR(500)",
+            'artifact_hash': "VARCHAR(64)",
+            'activated_at': "TIMESTAMP",
+        }
+        with engine.connect() as conn:
+            for col_name, col_def in new_cols.items():
+                if col_name not in cols:
+                    conn.execute(text(
+                        f"ALTER TABLE skill_registry ADD COLUMN {col_name} {col_def}"
+                    ))
+                    print(f"✅ Migration: Added {col_name} to skill_registry")
+            conn.commit()
 
 
 # Global sync session maker

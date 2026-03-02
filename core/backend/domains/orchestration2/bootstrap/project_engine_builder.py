@@ -20,13 +20,72 @@ from ..roles.responder_role import ResponderRole
 from ..roles.direct_role import DirectRole
 
 # New components
-from ..config.skills.default_skills import SKILL_DEFS, ALL_SKILL_NAMES
+from ..config.skills.default_skills import SKILL_DEFS
 from ..config.tools.default_catalog import get_core_tools, get_delegation_tool
 from ..prompting.prompt_context_loader import load_prompt_components
 from ..integrations.tool_reflection import register_and_reflect_integrations
 from ..skills.noop import NoOpSkill
 
 logger = logging.getLogger(__name__)
+
+
+async def _load_active_tool_names_from_db(
+    user_id: str, db_session: AsyncSession
+) -> set[str] | None:
+    """Return the set of is_active=True tool names for a user from tool_registry.
+
+    Returns None when the registry has no rows for this user (not yet seeded),
+    which triggers the caller to register all tools as a fallback.
+    """
+    try:
+        from shared.database import ToolRegistry
+        result = await db_session.execute(
+            select(ToolRegistry.name).where(
+                ToolRegistry.user_id == user_id,
+                ToolRegistry.is_active == True,  # noqa: E712
+            )
+        )
+        names = set(result.scalars().all())
+        if names:
+            return names
+    except Exception as exc:
+        logger.warning(
+            "Failed to load active tool names from DB for user %s: %s", user_id, exc
+        )
+    return None
+
+
+async def _load_skills_from_db(user_id: str, db_session: AsyncSession) -> list[SkillDef]:
+    """Load active skill definitions from DB for a user.
+
+    Falls back to static SKILL_DEFS if the DB has no active rows (e.g. first
+    request before seed completes, or after a failed migration).
+    """
+    try:
+        from shared.database import SkillRegistry
+        result = await db_session.execute(
+            select(SkillRegistry).where(
+                SkillRegistry.user_id == user_id,
+                SkillRegistry.is_active == True,  # noqa: E712
+            )
+        )
+        rows = result.scalars().all()
+        if rows:
+            return [
+                SkillDef(
+                    name=row.name,
+                    description=row.description or "",
+                    tools=row.tools or [],
+                )
+                for row in rows
+            ]
+    except Exception as exc:
+        logger.warning("Failed to load skills from DB for user %s: %s — falling back to SKILL_DEFS", user_id, exc)
+
+    # Fallback: DB not ready or empty
+    logger.info("No DB skills found for user %s — using static SKILL_DEFS", user_id)
+    return [s.model_copy() for s in SKILL_DEFS]
+
 
 def _load_graph_yamls() -> list[str]:
     """Load all graph definitions from config/graphs/."""
@@ -65,16 +124,36 @@ async def create_engine_for_project(
     # 1. Create engine
     engine = AgentEngine(store=store)
 
-    # 2. Register all core tools
+    # 2. Load active tool names from DB for filtering.
+    #    Returns None when tool_registry has no rows yet → lazy-seed, then register all tools.
+    active_tool_names = await _load_active_tool_names_from_db(user_id, db_session)
+
+    if active_tool_names is None:
+        # Lazy-seed: handles users created before tool_registry was introduced.
+        logger.info("tool_registry empty for user %s — seeding now", user_id)
+        try:
+            from shared.database import get_engine as _get_engine
+            from domains.orchestration2.bootstrap.definition_refresh_service import refresh_core_sync
+            await asyncio.to_thread(refresh_core_sync, _get_engine(), user_id)
+            active_tool_names = await _load_active_tool_names_from_db(user_id, db_session)
+        except Exception as exc:
+            logger.warning("Failed to seed tool_registry for user %s: %s", user_id, exc)
+
+    # Register core tools — only those with is_active=True in tool_registry.
+    # If active_tool_names is still None (seed failed), register all tools as fallback.
     for tool_def, tool_impl in get_core_tools():
-        engine.register_tool(tool_def, tool_impl)
-        
-    # 2b. Register integration tools and reflect them into Skills/Prompts
-    # We copy SKILL_DEFS to modify it dynamically for this request
-    dynamic_skills = [s.model_copy() for s in SKILL_DEFS]
-    
+        if active_tool_names is None or tool_def.name in active_tool_names:
+            engine.register_tool(tool_def, tool_impl)
+
+    # 2b. Load skills from DB (source of truth) — falls back to SKILL_DEFS if needed.
+    # We work with copies so integration tool injection doesn't mutate the DB rows.
+    dynamic_skills = await _load_skills_from_db(user_id, db_session)
+    dynamic_skills = [s.model_copy() for s in dynamic_skills]
+
+    # Register integration tools and build the prompt text about available integrations.
+    # Skills are NOT modified here — operation skill injection now happens via DB refresh.
     integration_tools_text = await register_and_reflect_integrations(
-        user_id, db_session, engine, dynamic_skills
+        user_id, db_session, engine
     )
 
     # 3. Create LLM Engine based on provider
@@ -148,7 +227,8 @@ async def create_engine_for_project(
     # future dynamic graph routing only requires removing the override line.
     #   TODO: replace `graph_name = "direct_assistant"` with `graph_name = resolved_graph_id`
     #         once multi-graph support is fully tested.
-    agent_skills = ALL_SKILL_NAMES
+    # Default: use all active skills loaded for this user (from DB or SKILL_DEFS fallback)
+    agent_skills = [s.name for s in dynamic_skills]
     resolved_graph_id: str = "direct_assistant"  # default
     try:
         assignment_res = await db_session.execute(

@@ -8,6 +8,7 @@ from typing import Generator, List, Tuple, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from domains.orchestration2.engine.models.tool import ToolDef
+from domains.orchestration2.engine.models.skill import SkillDef
 from va_sdk import BaseTool
 from .adapter import IntegrationToolAdapter
 
@@ -74,6 +75,50 @@ async def load_integration_tools(user_id: str, db: AsyncSession) -> List[Tuple[T
                 
             except Exception as e:
                 logger.warning("Failed to load tools from integration '%s': %s", pkg_name, e)
+
+    return results
+
+
+async def load_integration_skills(
+    user_id: str, db: AsyncSession
+) -> List[Tuple[SkillDef, str]]:
+    """Discover skill definitions from all integrations that expose get_skill_defs().
+
+    Returns:
+        List of (SkillDef, origin_id) pairs where origin_id is the integration package name.
+    """
+    results: List[Tuple[SkillDef, str]] = []
+
+    integrations_dir = Path(__file__).parent
+
+    for item in integrations_dir.iterdir():
+        if not item.is_dir():
+            continue
+        pkg_name = item.name
+        if pkg_name.startswith("_") or pkg_name in ["loader", "adapter"]:
+            continue
+
+        try:
+            module_path = f"integrations.{pkg_name}"
+            module = importlib.import_module(module_path)
+
+            if not hasattr(module, "get_skill_defs"):
+                continue
+
+            skill_defs = module.get_skill_defs()
+            if not skill_defs:
+                continue
+
+            for sd in skill_defs:
+                if isinstance(sd, SkillDef):
+                    results.append((sd, pkg_name))
+
+            logger.info("Loaded %d skill defs from integration '%s'", len(skill_defs), pkg_name)
+
+        except Exception as exc:
+            logger.warning(
+                "Failed to load skill defs from integration '%s': %s", pkg_name, exc
+            )
 
     return results
 

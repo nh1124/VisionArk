@@ -54,11 +54,17 @@ _SUB_AGENT_DEFS: list[dict] = [
 
 
 def seed_user_definitions(engine: Engine, user_id: str) -> None:
-    """Seed skill_registry, graph_registry, and delegation agents for a user.
+    """Seed tool_registry, skill_registry, graph_registry, and delegation agents for a user.
 
-    Creates one row per skill/graph per user.  Safe to re-run (upsert).
+    Creates one row per tool/skill/graph per user.  Safe to re-run (upsert).
     """
-    _seed_skills(engine, user_id)
+    # Use the refresh service so DB columns (origin_type, status, is_active, etc.) are set correctly.
+    try:
+        from domains.orchestration2.bootstrap.definition_refresh_service import refresh_core_sync
+        refresh_core_sync(engine, user_id)
+    except Exception as exc:
+        logger.warning("definition_refresh_service unavailable, falling back to legacy skill seed: %s", exc)
+        _seed_skills(engine, user_id)
     _seed_graphs(engine, user_id)
     _seed_agents(engine, user_id)
 

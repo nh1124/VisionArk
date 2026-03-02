@@ -14,6 +14,7 @@ from api import agents, commands, rag, context, files, auth, settings as setting
 from api import decomposer, suggestions, scheduler, approvals, automation, notifications
 from api import workspace as workspace_api
 from api.native import native_router, runs_router
+from api.definitions import router as definitions_router
 from va_sdk.discovery import include_integration_routers
 
 from app.config import settings
@@ -88,6 +89,7 @@ app.include_router(notifications.router)
 app.include_router(workspace_api.workspace_router)
 app.include_router(native_router)
 app.include_router(runs_router)
+app.include_router(definitions_router)
 
 
 @app.get("/")

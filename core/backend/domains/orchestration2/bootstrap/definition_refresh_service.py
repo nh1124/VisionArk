@@ -1,0 +1,367 @@
+"""Definition refresh service.
+
+Collects tool/skill definitions from all sources (core static config + integrations)
+and upserts them into the DB registries so that the engine can use DB as the
+single source of truth.
+
+Sources:
+  core        — default_catalog.get_core_tools() + default_skills.SKILL_DEFS
+  integration — integrations/* get_tools() + get_skill_defs()
+
+Phases:
+  Sync API  (refresh_core_sync)      — used by seed.py at user creation time
+  Async API (refresh_all / refresh_integrations) — used by the /api/definitions/refresh endpoint
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import uuid
+from datetime import datetime
+from typing import Any
+
+from sqlalchemy import text
+from sqlalchemy.engine import Engine
+from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _version_hash(data: Any) -> str:
+    """Return first 16 hex chars of SHA-256 of the JSON-serialised data."""
+    return hashlib.sha256(
+        json.dumps(data, sort_keys=True, default=str).encode()
+    ).hexdigest()[:16]
+
+
+# ---------------------------------------------------------------------------
+# Sync core refresh — called from seed.py via synchronous Engine
+# ---------------------------------------------------------------------------
+
+def refresh_core_sync(engine: Engine, user_id: str) -> None:
+    """Refresh core tools and skills from static config into DB (sync version)."""
+    _refresh_core_tools_sync(engine, user_id)
+    _refresh_core_skills_sync(engine, user_id)
+
+
+def _refresh_core_tools_sync(engine: Engine, user_id: str) -> None:
+    """Upsert all core tool definitions into tool_registry."""
+    try:
+        from domains.orchestration2.config.tools.default_catalog import get_core_tools
+        tools = get_core_tools()
+    except Exception as exc:
+        logger.warning("Core tool refresh skipped — could not load default_catalog: %s", exc)
+        return
+
+    now = datetime.utcnow()
+    with engine.begin() as conn:
+        for tool_def, _ in tools:
+            vh = _version_hash({"name": tool_def.name, "description": tool_def.description})
+            conn.execute(
+                text("""
+                    INSERT INTO tool_registry
+                        (id, user_id, name, description, params_schema,
+                         origin_type, origin_id, status, is_active,
+                         version_hash, activated_at, created_at, updated_at)
+                    VALUES
+                        (:id, :user_id, :name, :description,
+                         CAST(:params_schema AS JSON),
+                         'core', NULL, 'active', TRUE,
+                         :vh, :now, :now, :now)
+                    ON CONFLICT (user_id, name) DO UPDATE SET
+                        description  = EXCLUDED.description,
+                        params_schema = EXCLUDED.params_schema,
+                        origin_type  = 'core',
+                        status       = 'active',
+                        is_active    = TRUE,
+                        version_hash = EXCLUDED.version_hash,
+                        updated_at   = EXCLUDED.updated_at
+                """),
+                {
+                    "id": str(uuid.uuid4()),
+                    "user_id": user_id,
+                    "name": tool_def.name,
+                    "description": tool_def.description or "",
+                    "params_schema": json.dumps({}),
+                    "vh": vh,
+                    "now": now,
+                },
+            )
+
+    logger.info("✅ Refreshed %d core tools into tool_registry for user %s", len(tools), user_id)
+
+
+def _refresh_core_skills_sync(engine: Engine, user_id: str) -> None:
+    """Upsert all core skill definitions into skill_registry."""
+    try:
+        from domains.orchestration2.config.skills.default_skills import SKILL_DEFS
+    except Exception as exc:
+        logger.warning("Core skill refresh skipped — could not import SKILL_DEFS: %s", exc)
+        return
+
+    now = datetime.utcnow()
+    with engine.begin() as conn:
+        for skill in SKILL_DEFS:
+            vh = _version_hash({"name": skill.name, "tools": skill.tools})
+            conn.execute(
+                text("""
+                    INSERT INTO skill_registry
+                        (id, user_id, name, description, tools, is_builtin,
+                         origin_type, origin_id, status, is_active,
+                         version_hash, activated_at, created_at, updated_at)
+                    VALUES
+                        (:id, :user_id, :name, :description,
+                         CAST(:tools AS JSON), TRUE,
+                         'core', NULL, 'active', TRUE,
+                         :vh, :now, :now, :now)
+                    ON CONFLICT (user_id, name) DO UPDATE SET
+                        description  = EXCLUDED.description,
+                        tools        = EXCLUDED.tools,
+                        origin_type  = 'core',
+                        status       = 'active',
+                        is_active    = TRUE,
+                        version_hash = EXCLUDED.version_hash,
+                        updated_at   = EXCLUDED.updated_at
+                """),
+                {
+                    "id": str(uuid.uuid4()),
+                    "user_id": user_id,
+                    "name": skill.name,
+                    "description": skill.description or "",
+                    "tools": json.dumps(skill.tools),
+                    "vh": vh,
+                    "now": now,
+                },
+            )
+
+    logger.info("✅ Refreshed %d core skills into skill_registry for user %s", len(SKILL_DEFS), user_id)
+
+
+# ---------------------------------------------------------------------------
+# Async integration refresh — called from the API endpoint
+# ---------------------------------------------------------------------------
+
+async def refresh_all(user_id: str, db: AsyncSession) -> dict:
+    """Refresh core + integration definitions. Returns a summary dict."""
+    import asyncio
+    from shared.database import get_engine
+
+    engine = get_engine()
+    await asyncio.to_thread(refresh_core_sync, engine, user_id)
+    integration_result = await refresh_integrations(user_id, db)
+    return {
+        "core_refreshed": True,
+        "integration_tools": integration_result["tools"],
+        "integration_skills": integration_result["skills"],
+        "errors": integration_result.get("errors", []),
+    }
+
+
+async def refresh_integrations(user_id: str, db: AsyncSession) -> dict:
+    """Refresh integration tools and skills into DB.
+
+    After upserting tools and skills, updates the 'operation' skill in DB so
+    that integration tools not assigned to any dedicated skill are included.
+    This replaces the per-request runtime append that was previously done in
+    tool_reflection.py.
+    """
+    from integrations.loader import load_integration_tools, load_integration_skills
+
+    tools_count = 0
+    skills_count = 0
+    errors: list[str] = []
+
+    tools: list = []
+    skill_entries: list = []
+
+    # --- Integration tools ---
+    try:
+        tools = await load_integration_tools(user_id, db)
+        tools_count = await _upsert_tools_async(db, user_id, tools, origin_type="integration")
+    except Exception as exc:
+        msg = f"Integration tool refresh failed: {exc}"
+        logger.warning(msg)
+        errors.append(msg)
+
+    # --- Integration skills ---
+    try:
+        skill_entries = await load_integration_skills(user_id, db)
+        skills_count = await _upsert_skills_async(db, user_id, skill_entries, origin_type="integration")
+    except Exception as exc:
+        msg = f"Integration skill refresh failed: {exc}"
+        logger.warning(msg)
+        errors.append(msg)
+
+    # --- Update 'operation' skill with unassigned integration tools ---
+    # Tools that belong to a dedicated integration skill (e.g. ms_office) are excluded.
+    # All other integration tools are added to the 'operation' skill in DB,
+    # replacing the per-request dynamic injection that was done in tool_reflection.py.
+    try:
+        await _update_operation_skill(db, user_id, tools, skill_entries)
+    except Exception as exc:
+        msg = f"Operation skill update failed: {exc}"
+        logger.warning(msg)
+        errors.append(msg)
+
+    await db.commit()
+    logger.info(
+        "Integration refresh done for user %s: %d tools, %d skills",
+        user_id, tools_count, skills_count,
+    )
+    return {"tools": tools_count, "skills": skills_count, "errors": errors}
+
+
+async def _update_operation_skill(
+    db: AsyncSession,
+    user_id: str,
+    integration_tools: list,      # list of (ToolDef, impl) from active integrations
+    integration_skill_entries: list,  # list of (SkillDef, origin_id)
+) -> None:
+    """Recompute the 'operation' skill's tool list and persist to DB.
+
+    The new list = core operation tools + integration tools not covered by any
+    dedicated integration skill.  This is recomputed from scratch on each
+    refresh so that deactivated integrations are automatically removed.
+    """
+    # Tools already assigned to a dedicated integration skill
+    covered: set[str] = set()
+    for skill_def, _ in integration_skill_entries:
+        covered.update(skill_def.tools)
+
+    # Integration tools NOT covered by any dedicated skill
+    uncovered = [td.name for td, _ in integration_tools if td.name not in covered]
+
+    # Base: core operation tools from static config (always the foundation)
+    try:
+        from domains.orchestration2.config.skills.default_skills import SKILL_DEFS
+        core_op_tools: list[str] = next(
+            (list(sd.tools) for sd in SKILL_DEFS if sd.name == "operation"), []
+        )
+    except Exception:
+        core_op_tools = []
+
+    # Merge: core tools first, then uncovered integration tools (deduped, order preserved)
+    merged = list(dict.fromkeys(core_op_tools + uncovered))
+
+    now = datetime.utcnow()
+    vh = _version_hash({"name": "operation", "tools": merged})
+    await db.execute(
+        text("""
+            UPDATE skill_registry
+            SET tools        = CAST(:tools AS JSON),
+                version_hash = :vh,
+                updated_at   = :now
+            WHERE user_id = :user_id AND name = 'operation'
+        """),
+        {
+            "tools": json.dumps(merged),
+            "vh": vh,
+            "now": now,
+            "user_id": user_id,
+        },
+    )
+    logger.debug(
+        "Updated operation skill for user %s: %d core + %d integration tools",
+        user_id, len(core_op_tools), len(uncovered),
+    )
+
+
+async def _upsert_tools_async(
+    db: AsyncSession,
+    user_id: str,
+    tools: list,  # list of (ToolDef, impl)
+    origin_type: str = "core",
+    origin_id: str | None = None,
+) -> int:
+    now = datetime.utcnow()
+    count = 0
+    for tool_def, _ in tools:
+        origin_id_val = origin_id or getattr(tool_def, "origin_id", None)
+        vh = _version_hash({"name": tool_def.name, "description": tool_def.description})
+        await db.execute(
+            text("""
+                INSERT INTO tool_registry
+                    (id, user_id, name, description, params_schema,
+                     origin_type, origin_id, status, is_active,
+                     version_hash, activated_at, created_at, updated_at)
+                VALUES
+                    (:id, :user_id, :name, :description,
+                     CAST(:params_schema AS JSON),
+                     :origin_type, :origin_id, 'active', TRUE,
+                     :vh, :now, :now, :now)
+                ON CONFLICT (user_id, name) DO UPDATE SET
+                    description  = EXCLUDED.description,
+                    params_schema = EXCLUDED.params_schema,
+                    origin_type  = EXCLUDED.origin_type,
+                    origin_id    = EXCLUDED.origin_id,
+                    status       = 'active',
+                    is_active    = TRUE,
+                    version_hash = EXCLUDED.version_hash,
+                    updated_at   = EXCLUDED.updated_at
+            """),
+            {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
+                "name": tool_def.name,
+                "description": tool_def.description or "",
+                "params_schema": json.dumps({}),
+                "origin_type": origin_type,
+                "origin_id": origin_id_val,
+                "vh": vh,
+                "now": now,
+            },
+        )
+        count += 1
+    return count
+
+
+async def _upsert_skills_async(
+    db: AsyncSession,
+    user_id: str,
+    skill_entries: list,  # list of (SkillDef, origin_id_str)
+    origin_type: str = "core",
+) -> int:
+    now = datetime.utcnow()
+    count = 0
+    for skill_def, origin_id in skill_entries:
+        vh = _version_hash({"name": skill_def.name, "tools": skill_def.tools})
+        await db.execute(
+            text("""
+                INSERT INTO skill_registry
+                    (id, user_id, name, description, tools, is_builtin,
+                     origin_type, origin_id, status, is_active,
+                     version_hash, activated_at, created_at, updated_at)
+                VALUES
+                    (:id, :user_id, :name, :description,
+                     CAST(:tools AS JSON), FALSE,
+                     :origin_type, :origin_id, 'active', TRUE,
+                     :vh, :now, :now, :now)
+                ON CONFLICT (user_id, name) DO UPDATE SET
+                    description  = EXCLUDED.description,
+                    tools        = EXCLUDED.tools,
+                    origin_type  = EXCLUDED.origin_type,
+                    origin_id    = EXCLUDED.origin_id,
+                    status       = 'active',
+                    is_active    = TRUE,
+                    version_hash = EXCLUDED.version_hash,
+                    updated_at   = EXCLUDED.updated_at
+            """),
+            {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
+                "name": skill_def.name,
+                "description": skill_def.description or "",
+                "tools": json.dumps(skill_def.tools),
+                "origin_type": origin_type,
+                "origin_id": origin_id,
+                "vh": vh,
+                "now": now,
+            },
+        )
+        count += 1
+    return count
