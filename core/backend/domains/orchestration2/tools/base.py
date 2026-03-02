@@ -103,3 +103,45 @@ async def get_file_service(ctx: ExecutionContext) -> Any:
     user_id = get_user_id(ctx)
     key = await get_user_api_key(ctx)
     return FileService(db, user_id, api_key=key)
+
+
+async def get_api_key(ctx: ExecutionContext, provider: str) -> str | None:
+    """Return the stored API key for the given provider ("gemini" | "openai" | "anthropic")."""
+    db = get_db(ctx)
+    user_id = get_user_id(ctx)
+    try:
+        from shared.database import UserSettings
+
+        res = await db.execute(select(UserSettings).filter(UserSettings.user_id == user_id))
+        settings = res.scalars().first()
+        if not settings:
+            return None
+        attr = {"gemini": "gemini_api_key", "openai": "openai_api_key", "anthropic": "anthropic_api_key"}.get(provider)
+        return getattr(settings, attr, None) if attr else None
+    except Exception:
+        return None
+
+
+def resolve_reference_image(path: str, user_id: str, project_id: str) -> tuple[bytes, str]:
+    """Resolve a project-relative path to (bytes, mime_type).
+
+    Raises:
+        ValueError: path escapes project root, not an image, or exceeds 20 MB.
+        FileNotFoundError: file does not exist.
+    """
+    import mimetypes
+    from shared.paths import get_project_dir
+
+    root = get_project_dir(user_id, project_id).resolve()
+    full_path = (root / path).resolve()
+    if not str(full_path).startswith(str(root)):
+        raise ValueError(f"Path escapes project directory: {path}")
+    if not full_path.exists():
+        raise FileNotFoundError(f"Reference image not found: {path}")
+    mime, _ = mimetypes.guess_type(str(full_path))
+    if not mime or not mime.startswith("image/"):
+        raise ValueError(f"Not an image file: {path}")
+    data = full_path.read_bytes()
+    if len(data) > 20 * 1024 * 1024:
+        raise ValueError(f"Image too large ({len(data) / 1e6:.1f} MB > 20 MB): {path}")
+    return data, mime
