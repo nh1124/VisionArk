@@ -62,7 +62,7 @@ class GeminiLLMProvider:
 
         # 4. Config
         config = types.GenerateContentConfig(
-            temperature=0.2,
+            temperature=1.0,
             tools=gemini_tools,
             system_instruction=system_content,
         )

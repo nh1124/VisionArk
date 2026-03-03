@@ -25,7 +25,7 @@ class ModelGroup:
 # --- カタログ定義 ---
 CATALOG: list[ModelGroup] = [
     ModelGroup(group="Gemini", provider="gemini", models=[
-        ModelEntry("gemini-3-pro-preview",   "Gemini 3 Pro",     "gemini", priority=0),
+        ModelEntry("gemini-3.1-pro-preview", "Gemini 3.1 Pro",   "gemini", priority=0),
         ModelEntry("gemini-3-flash-preview", "Gemini 3 Flash",   "gemini", priority=1),
         ModelEntry("gemini-2.5-pro",         "Gemini 2.5 Pro",   "gemini", priority=2),
         ModelEntry("gemini-2.5-flash",       "Gemini 2.5 Flash", "gemini", priority=3),

@@ -54,9 +54,9 @@ class GeminiEngine(LLMEngine):
     ) -> None:
         self._client = Client(
             api_key=api_key,
-            http_options={"api_version": "v1alpha", "timeout": 600000},
+            http_options={"api_version": "v1alpha", "timeout": 1800000},
         )
-        self._model = model or "gemini-3-pro-preview"
+        self._model = model or "gemini-3.1-pro-preview"
         self._tools = tool_registry
         # In-memory run status tracking
         self._active_runs: dict[str, EngineRunStatus] = {}
@@ -118,7 +118,7 @@ class GeminiEngine(LLMEngine):
 
                 # ── 1. Call Gemini ────────────────────────────────
                 config = types.GenerateContentConfig(
-                    temperature=0.2,
+                    temperature=1.0,
                     tools=gemini_tools,
                     system_instruction=system_content,
                     max_output_tokens=opts.max_output_tokens,

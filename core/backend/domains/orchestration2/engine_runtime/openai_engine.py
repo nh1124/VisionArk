@@ -41,7 +41,7 @@ class OpenAIEngine(LLMEngine):
         *,
         model: str | None = None,
     ) -> None:
-        self._client = AsyncOpenAI(api_key=api_key, timeout=600.0)
+        self._client = AsyncOpenAI(api_key=api_key, timeout=1800.0)
         self._model = model or "gpt-4.1-mini"
         self._tools = tool_registry
         self._active_runs: dict[str, EngineRunStatus] = {}

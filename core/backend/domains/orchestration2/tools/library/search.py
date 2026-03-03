@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from domains.orchestration2.engine.models.execution import ExecutionContext, ToolResult
@@ -11,11 +12,15 @@ from domains.orchestration2.tools.base import fail, get_api_key, get_gemini_clie
 
 logger = logging.getLogger(__name__)
 
+# Polling settings for Gemini Interactions API (deep research)
+_GEMINI_POLL_INTERVAL_SEC = 10
+_GEMINI_POLL_TIMEOUT_SEC  = 1800  # 30 minutes max
+
 # ── Model routing table ──────────────────────────────────────────────────────
 # (provider, speed) -> model_id
 _MODEL_MAP: dict[tuple[str, str], str] = {
-    ("gemini",    "deep"): "gemini-3.1-pro",
-    ("gemini",    "fast"): "gemini-3-flash",
+    ("gemini",    "deep"): "deep-research-pro-preview-12-2025",
+    ("gemini",    "fast"): "gemini-3.1-pro-preview",
     ("openai",    "deep"): "o3-deep-research",
     ("openai",    "fast"): "o4-mini-deep-research",
     ("anthropic", "deep"): "claude-opus-4.6",
@@ -249,6 +254,106 @@ class DeepResearchTool:
         model: str,
         api_key: str,
     ) -> ToolResult:
+        """Route to Interactions API (deep) or generate_content (fast).
+
+        deep: Gemini Deep Research requires the Interactions API — it is NOT
+        compatible with models.generate_content.  The call is started in
+        background mode and polled until completion.
+
+        fast: Regular Gemini model (gemini-3-flash) via generate_content
+        with Google Search grounding.
+        """
+        speed = call.arguments.get("speed", "deep").lower()
+        if speed == "deep":
+            return await self._research_gemini_deep(call, query, model, api_key)
+        else:
+            return await self._research_gemini_fast(call, query, model, api_key)
+
+    async def _research_gemini_deep(
+        self,
+        call: ToolCallRef,
+        query: str,
+        model: str,
+        api_key: str,
+    ) -> ToolResult:
+        """Gemini Deep Research via Interactions API with background polling.
+
+        Official pattern from https://ai.google.dev/gemini-api/docs/deep-research
+        """
+        try:
+            from google import genai
+
+            client = genai.Client(api_key=api_key)
+
+            # Start background interaction (run sync call in thread)
+            interaction = await asyncio.to_thread(
+                client.interactions.create,
+                input=query,
+                agent=model,
+                background=True,
+            )
+            interaction_id = interaction.id
+            logger.info(
+                "[DeepResearch/Gemini] started interaction=%s model=%s",
+                interaction_id, model,
+            )
+
+            # Poll until completed or timeout
+            elapsed = 0
+            while elapsed < _GEMINI_POLL_TIMEOUT_SEC:
+                await asyncio.sleep(_GEMINI_POLL_INTERVAL_SEC)
+                elapsed += _GEMINI_POLL_INTERVAL_SEC
+
+                interaction = await asyncio.to_thread(
+                    client.interactions.get,
+                    interaction_id,
+                )
+                status = interaction.status
+                logger.debug(
+                    "[DeepResearch/Gemini] poll id=%s status=%s elapsed=%ds",
+                    interaction_id, status, elapsed,
+                )
+
+                if status == "completed":
+                    # outputs[-1] contains the final research text
+                    outputs = getattr(interaction, "outputs", []) or []
+                    text = outputs[-1].text if outputs else ""
+                    if not text:
+                        return fail(
+                            call,
+                            f"Deep research with Gemini ({model}) completed but returned no text.",
+                        )
+                    return make_result(call, text)
+
+                elif status == "failed":
+                    error = getattr(interaction, "error", "Unknown error")
+                    return fail(
+                        call,
+                        f"Deep research with Gemini ({model}) failed during execution: {error}.",
+                    )
+
+            # Timed out
+            return fail(
+                call,
+                f"Deep research with Gemini ({model}) timed out after "
+                f"{_GEMINI_POLL_TIMEOUT_SEC}s (interaction={interaction_id}).",
+            )
+
+        except Exception as e:
+            return fail(
+                call,
+                f"Deep research with Gemini ({model}) failed: {e}. "
+                "Check that your Gemini API key is valid and that the model is available for your account.",
+            )
+
+    async def _research_gemini_fast(
+        self,
+        call: ToolCallRef,
+        query: str,
+        model: str,
+        api_key: str,
+    ) -> ToolResult:
+        """Fast Gemini research via generate_content + Google Search grounding."""
         try:
             from google.genai import Client, types
 
@@ -257,17 +362,23 @@ class DeepResearchTool:
                 model=model,
                 contents=query,
                 config=types.GenerateContentConfig(
-                    tools=[types.Tool(google_search=types.GoogleSearch())]
+                    tools=[
+                        types.Tool(google_search=types.GoogleSearch()),
+                        {"url_context": {}},
+                    ]
                 ),
             )
             text = response.text or ""
             if not text:
-                return fail(call, f"Deep research with Gemini ({model}) returned no content.")
+                return fail(
+                    call,
+                    f"Deep research with Gemini/{model} returned no content.",
+                )
             return make_result(call, text)
         except Exception as e:
             return fail(
                 call,
-                f"Deep research with Gemini ({model}) failed: {e}. "
+                f"Deep research with Gemini/{model} failed: {e}. "
                 "Check that your Gemini API key is valid and that the model is available for your account.",
             )
 
