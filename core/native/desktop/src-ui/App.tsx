@@ -19,7 +19,7 @@ import SettingsView from "./components/SettingsView"
 import DevicesView from "./components/DevicesView"
 import DaemonConsole from "./components/DaemonConsole"
 import FileViewerWindow from "./components/FileViewerWindow"
-import { isLoggedIn, logout, listProjects, initApiBase, getApiBase, getToken, handleRefresh, type Project } from "./lib/api"
+import { isLoggedIn, logout, listProjects, initApiBase, getApiBase, getToken, handleRefresh, getMe, type Project } from "./lib/api"
 import { listRuns, registerDevice, heartbeatDevice, configure as configureBridge } from "../../bridge/api"
 
 const DEVICE_ID_KEY = "va_device_id"
@@ -84,7 +84,17 @@ function MainApp() {
       // 2. Wire bridge (the HTTP client) to desktop's URL/token/refresh management
       configureBridge({ getBaseUrl: getApiBase, getToken, handleRefresh })
       // 3. Now check authentication
-      const status = await isLoggedIn()
+      let status = await isLoggedIn()
+      if (status) {
+        try {
+          const profile = await getMe()
+          setUsername(profile.username)
+        } catch (e) {
+          console.warn("Failed to fetch user profile, clearing auth state", e)
+          status = false
+          await logout()
+        }
+      }
       setLoggedIn(status)
       setAuthChecked(true)
     }

@@ -14,8 +14,8 @@
 
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import {
-  apiFetch as _apiFetch,
-  apiJson as _apiJson,
+    apiFetch as _apiFetch,
+    apiJson as _apiJson,
 } from "../../../bridge/api"
 
 const IS_TAURI = isTauri()
@@ -194,6 +194,17 @@ export async function login(username: string, password: string) {
         throw new Error("Failed to save tokens securely")
     }
     return data
+}
+
+export interface UserProfile {
+    user_id: string
+    username: string
+    email: string | null
+    is_active: boolean
+}
+
+export async function getMe(): Promise<UserProfile> {
+    return _apiJson<UserProfile>("/api/auth/me")
 }
 
 export async function isLoggedIn(): Promise<boolean> {

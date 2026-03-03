@@ -63,3 +63,6 @@ target/
 **/*.rs.bk
 *.pdb
 *.exe
+
+# VisionArk
+exports/
