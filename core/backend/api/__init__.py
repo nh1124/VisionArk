@@ -4,3 +4,4 @@ from . import approvals, decomposer, suggestions, scheduler, export, notes
 from . import automation, notifications
 from . import native
 from . import definitions
+from . import llm

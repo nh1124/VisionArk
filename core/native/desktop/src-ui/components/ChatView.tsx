@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
-import { fetchHistory, sendChat, getTaskStatus, cancelTask, type ChatMessage as ChatMessageType } from "../lib/api"
+import type { ModelGroup } from "./ChatInput"
+import { fetchHistory, sendChat, getTaskStatus, cancelTask, apiJson, type ChatMessage as ChatMessageType } from "../lib/api"
 import ChatMessage from "./ChatMessage"
 import ChatInput from "./ChatInput"
 import FileViewer from "./FileViewer"
@@ -24,7 +25,8 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
     const [messages, setMessages] = useState<ChatMessageType[]>([])
     const [loading, setLoading] = useState(false)
     const [statusText, setStatusText] = useState("")
-    const [model, setModel] = useState("gemini-3.1-pro")
+    const [model, setModel] = useState("gemini-3-pro-preview")
+    const [modelGroups, setModelGroups] = useState<ModelGroup[]>([])
     const [elapsedTime, setElapsedTime] = useState(0)
     const currentTaskIdRef = useRef<string | null>(null)
     const [fileViewer, setFileViewer] = useState<{ content: string; path: string; format: "markdown" | "code" | "pdf"; fileUrl?: string; mode: "overlay" | "inline" | "popout" } | null>(null)
@@ -60,6 +62,16 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
         setMessages([])
         loadHistory()
     }, [sessionId, loadHistory])
+
+    // Fetch model catalog from backend
+    useEffect(() => {
+        apiJson<{ groups: ModelGroup[]; default_model: string }>("/api/llm/models")
+            .then(data => {
+                setModelGroups(data.groups)
+                setModel(data.default_model)
+            })
+            .catch(() => { /* keep fallback */ })
+    }, [])
 
     // Cleanup intervals on unmount only
     useEffect(() => {
@@ -231,6 +243,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                     statusText={elapsedTime > 0 ? `${statusText} (${elapsedTime}s)` : statusText}
                     model={model}
                     onModelChange={setModel}
+                    modelGroups={modelGroups}
                 />
             </div>
 

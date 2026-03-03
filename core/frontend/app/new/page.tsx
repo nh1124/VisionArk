@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import { Send, Loader2, Paperclip, X, FileText } from "lucide-react";
-import { useModel, MODEL_OPTIONS, getModelDisplayName } from "@/lib/ModelContext";
+import { useModel, getModelDisplayName } from "@/lib/ModelContext";
 
 export default function NewProjectPage() {
     const [prompt, setPrompt] = useState("");
@@ -15,7 +15,7 @@ export default function NewProjectPage() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const modelMenuRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
-    const { selectedModel, setSelectedModel } = useModel();
+    const { selectedModel, setSelectedModel, modelGroups } = useModel();
 
     const suggestionChips = [
         "Research project planning",
@@ -211,7 +211,7 @@ export default function NewProjectPage() {
                                 {/* Model Dropdown */}
                                 {showModelMenu && (
                                     <div className="absolute bottom-full right-0 mb-4 bg-gray-900 border border-gray-700/50 rounded-2xl shadow-2xl py-3 min-w-[240px] z-50 overflow-hidden backdrop-blur-xl">
-                                        {MODEL_OPTIONS.map((group) => (
+                                        {modelGroups.map((group) => (
                                             <div key={group.group}>
                                                 <div className="px-4 py-2 text-[10px] text-gray-500 font-bold uppercase tracking-widest">{group.group}</div>
                                                 {group.models.map((model) => (
@@ -221,7 +221,7 @@ export default function NewProjectPage() {
                                                         className={`w-full text-left px-4 py-2.5 text-sm hover:bg-white/5 transition-all flex items-center justify-between ${selectedModel === model.id ? "text-purple-400 bg-purple-500/5" : "text-gray-300"
                                                             }`}
                                                     >
-                                                        <span>{getModelDisplayName(model.id)}</span>
+                                                        <span>{getModelDisplayName(model.id, modelGroups)}</span>
                                                         {selectedModel === model.id && <div className="w-1.5 h-1.5 rounded-full bg-purple-400 shadow-[0_0_8px_rgba(168,85,247,0.5)]"></div>}
                                                     </button>
                                                 ))}

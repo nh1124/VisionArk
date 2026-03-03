@@ -1,17 +1,23 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect } from "react";
+import { apiFetch } from "@/lib/api";
 
 interface ModelContextType {
     selectedModel: string;
     setSelectedModel: (model: string) => void;
     configuredProviders: string[];
     setConfiguredProviders: (providers: string[]) => void;
+    modelGroups: ModelGroup[];
+    defaultModel: string;
+    isLoadingModels: boolean;
 }
 
 export interface ModelOption {
     id: string;
     name: string;
+    status?: string;
+    priority?: number;
 }
 
 export interface ModelGroup {
@@ -20,39 +26,18 @@ export interface ModelGroup {
     models: ModelOption[];
 }
 
-export const MODEL_OPTIONS: ModelGroup[] = [
+// Fallback used when API is unavailable
+const FALLBACK_GROUPS: ModelGroup[] = [
     {
         group: "Gemini", provider: "gemini", models: [
             { id: "gemini-3-pro-preview", name: "Gemini 3 Pro" },
-            { id: "gemini-3-flash-preview", name: "Gemini 3 Flash" },
-            { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
-            { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
-        ]
-    },
-    {
-        group: "OpenAI", provider: "openai", models: [
-            { id: "openai:gpt-5", name: "GPT-5" },
-            { id: "openai:gpt-5-mini", name: "GPT-5 Mini" },
-            { id: "openai:gpt-5-nano", name: "GPT-5 Nano" },
-            { id: "openai:gpt-5.1", name: "GPT-5.1" },
-            { id: "openai:gpt-4.1", name: "GPT-4.1" },
-            { id: "openai:gpt-4.1-mini", name: "GPT-4.1 Mini" },
-            { id: "openai:o4-mini", name: "o4 Mini (reasoning)" },
-            { id: "openai:o3", name: "o3 (reasoning)" },
-        ]
-    },
-    {
-        group: "Claude", provider: "anthropic", models: [
-            { id: "anthropic:claude-opus-4-6-20260220", name: "Claude Opus 4.6" },
-            { id: "anthropic:claude-opus-4-5-20251101", name: "Claude Opus 4.5" },
-            { id: "anthropic:claude-sonnet-4-20250514", name: "Claude Sonnet 4" },
-            { id: "anthropic:claude-haiku-4-5", name: "Claude Haiku 4.5" },
         ]
     },
 ];
+const FALLBACK_DEFAULT = "gemini-3-pro-preview";
 
-export const getModelDisplayName = (modelId: string): string => {
-    for (const group of MODEL_OPTIONS) {
+export const getModelDisplayName = (modelId: string, groups: ModelGroup[] = FALLBACK_GROUPS): string => {
+    for (const group of groups) {
         for (const m of group.models) {
             if (m.id === modelId) return m.name;
         }
@@ -62,8 +47,8 @@ export const getModelDisplayName = (modelId: string): string => {
     return clean.split("-").map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
 };
 
-export const getProviderForModel = (modelId: string): string => {
-    for (const group of MODEL_OPTIONS) {
+export const getProviderForModel = (modelId: string, groups: ModelGroup[] = FALLBACK_GROUPS): string => {
+    for (const group of groups) {
         for (const m of group.models) {
             if (m.id === modelId) return group.provider;
         }
@@ -85,8 +70,23 @@ export const getProviderDisplayName = (provider: string): string => {
 const ModelContext = createContext<ModelContextType | undefined>(undefined);
 
 export function ModelProvider({ children }: { children: React.ReactNode }) {
-    const [selectedModel, setSelectedModel] = useState("gemini-3-pro-preview");
+    const [selectedModel, setSelectedModel] = useState(FALLBACK_DEFAULT);
     const [configuredProviders, setConfiguredProviders] = useState<string[]>([]);
+    const [modelGroups, setModelGroups] = useState<ModelGroup[]>(FALLBACK_GROUPS);
+    const [defaultModel, setDefaultModel] = useState(FALLBACK_DEFAULT);
+    const [isLoadingModels, setIsLoadingModels] = useState(true);
+
+    // Fetch model catalog from backend
+    useEffect(() => {
+        apiFetch("/api/llm/models")
+            .then(r => r.json())
+            .then((data: { groups: ModelGroup[]; default_model: string }) => {
+                setModelGroups(data.groups);
+                setDefaultModel(data.default_model);
+            })
+            .catch(() => { /* keep fallback */ })
+            .finally(() => setIsLoadingModels(false));
+    }, []);
 
     // Load saved model from localStorage
     useEffect(() => {
@@ -107,6 +107,9 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
             setSelectedModel: handleSetSelectedModel,
             configuredProviders,
             setConfiguredProviders,
+            modelGroups,
+            defaultModel,
+            isLoadingModels,
         }}>
             {children}
         </ModelContext.Provider>

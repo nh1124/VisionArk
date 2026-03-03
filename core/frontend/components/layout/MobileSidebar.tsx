@@ -4,7 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useProjects } from "@/hooks/useProjects";
-import { useModel, MODEL_OPTIONS, getModelDisplayName } from "@/lib/ModelContext";
+import { useModel, getModelDisplayName } from "@/lib/ModelContext";
 import { X, Home, LayoutDashboard, ListTodo, MessageSquare, Plus, Settings, ChevronDown, Check } from "lucide-react";
 
 interface MobileSidebarProps {
@@ -15,7 +15,7 @@ interface MobileSidebarProps {
 export default function MobileSidebar({ isOpen, onClose }: MobileSidebarProps) {
     const pathname = usePathname();
     const { projects } = useProjects();
-    const { selectedModel, setSelectedModel } = useModel();
+    const { selectedModel, setSelectedModel, modelGroups } = useModel();
     if (!isOpen) return null;
 
     return (
@@ -91,7 +91,7 @@ export default function MobileSidebar({ isOpen, onClose }: MobileSidebarProps) {
                         <div className="mt-4 p-4 rounded-xl bg-gray-900/50 border border-gray-800">
                             <div className="flex items-center gap-3 text-sm font-medium text-gray-300">
                                 <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                                {getModelDisplayName(selectedModel)}
+                                {getModelDisplayName(selectedModel, modelGroups)}
                             </div>
                         </div>
                     </div>

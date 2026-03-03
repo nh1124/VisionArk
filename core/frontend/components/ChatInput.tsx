@@ -27,7 +27,7 @@ interface ChatInputProps {
     compact?: boolean;
 }
 
-import { MODEL_OPTIONS, getModelDisplayName } from "@/lib/ModelContext";
+import { useModel, getModelDisplayName } from "@/lib/ModelContext";
 
 function ChatInputComponent({
     value,
@@ -68,6 +68,7 @@ function ChatInputComponent({
 
     const { showToast } = useNotification();
     const isMobile = useIsMobile();
+    const { modelGroups } = useModel();
     const [mounted, setMounted] = useState(false);
 
     useEffect(() => {
@@ -490,7 +491,7 @@ function ChatInputComponent({
                                 title="Select model"
                             >
                                 <span className="font-medium text-[10px] uppercase tracking-wider text-gray-500 hidden xs:inline">Model:</span>
-                                <span className="max-w-[100px] sm:max-w-none truncate font-semibold">{getModelDisplayName(selectedModel)}</span>
+                                <span className="max-w-[100px] sm:max-w-none truncate font-semibold">{getModelDisplayName(selectedModel, modelGroups)}</span>
                                 <svg className="w-4 h-4 text-gray-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                                 </svg>
@@ -514,7 +515,7 @@ function ChatInputComponent({
                                         }
                                     }}
                                 >
-                                    {MODEL_OPTIONS.filter(group => configuredProviders.length === 0 || configuredProviders.includes(group.provider)).map((group) => (
+                                    {modelGroups.filter(group => configuredProviders.length === 0 || configuredProviders.includes(group.provider)).map((group) => (
                                         <div key={group.group}>
                                             <div className="px-4 py-2 text-[10px] text-gray-500 font-bold uppercase tracking-widest">{group.group}</div>
                                             {group.models.map((model) => (

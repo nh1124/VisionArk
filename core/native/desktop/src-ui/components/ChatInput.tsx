@@ -1,6 +1,17 @@
 import React, { useState, useRef, useEffect } from "react"
 import { Send, Plus, ChevronDown, X, FileText, Paperclip } from "lucide-react"
 
+export interface ModelOption {
+    id: string
+    name: string
+}
+
+export interface ModelGroup {
+    group: string
+    provider?: string
+    models: ModelOption[]
+}
+
 interface Props {
     onSend: (message: string, files?: File[]) => void
     onStop?: () => void
@@ -8,6 +19,7 @@ interface Props {
     statusText: string
     model: string
     onModelChange: (model: string) => void
+    modelGroups?: ModelGroup[]
 }
 
 // ── Slash Commands ──────────────────────────────────────────────────────────
@@ -26,42 +38,17 @@ const SLASH_COMMANDS: SlashCommand[] = [
     { command: "/reset", label: "Reset", description: "Reset the session" },
 ]
 
-// ── Model definitions ───────────────────────────────────────────────────────
-const MODEL_GROUPS = [
+// Fallback model list used when API catalog has not yet loaded
+const FALLBACK_MODEL_GROUPS: ModelGroup[] = [
     {
         group: "Gemini", models: [
-            { id: "gemini-3.1-pro", name: "Gemini 3.1 Pro" },
-            { id: "gemini-3.1-flash", name: "Gemini 3.1 Flash" },
             { id: "gemini-3-pro-preview", name: "Gemini 3 Pro" },
-            { id: "gemini-3-flash-preview", name: "Gemini 3 Flash" },
-            { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
-            { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
-        ]
-    },
-    {
-        group: "OpenAI", models: [
-            { id: "openai:gpt-5", name: "GPT-5" },
-            { id: "openai:gpt-5-mini", name: "GPT-5 Mini" },
-            { id: "openai:gpt-5-nano", name: "GPT-5 Nano" },
-            { id: "openai:gpt-5.1", name: "GPT-5.1" },
-            { id: "openai:gpt-4.1", name: "GPT-4.1" },
-            { id: "openai:gpt-4.1-mini", name: "GPT-4.1 Mini" },
-            { id: "openai:o4-mini", name: "o4 Mini (reasoning)" },
-            { id: "openai:o3", name: "o3 (reasoning)" },
-        ]
-    },
-    {
-        group: "Claude", models: [
-            { id: "anthropic:claude-opus-4-6-20260220", name: "Claude Opus 4.6" },
-            { id: "anthropic:claude-opus-4-5-20251101", name: "Claude Opus 4.5" },
-            { id: "anthropic:claude-sonnet-4-20250514", name: "Claude Sonnet 4" },
-            { id: "anthropic:claude-haiku-4-5", name: "Claude Haiku 4.5" },
         ]
     },
 ]
 
-const getModelDisplayName = (modelId: string): string => {
-    for (const g of MODEL_GROUPS) {
+const getModelDisplayName = (modelId: string, groups: ModelGroup[]): string => {
+    for (const g of groups) {
         const m = g.models.find(x => x.id === modelId);
         if (m) return m.name;
     }
@@ -76,7 +63,8 @@ const formatFileSize = (bytes: number): string => {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-export default function ChatInput({ onSend, onStop, loading, statusText, model, onModelChange }: Props) {
+export default function ChatInput({ onSend, onStop, loading, statusText, model, onModelChange, modelGroups: modelGroupsProp }: Props) {
+    const modelGroups = modelGroupsProp && modelGroupsProp.length > 0 ? modelGroupsProp : FALLBACK_MODEL_GROUPS
     const [value, setValue] = useState("")
     const [showModels, setShowModels] = useState(false)
     const [attachedFiles, setAttachedFiles] = useState<File[]>([])
@@ -227,7 +215,7 @@ export default function ChatInput({ onSend, onStop, loading, statusText, model, 
         return () => document.removeEventListener("mousedown", handler)
     }, [])
 
-    const currentModelLabel = getModelDisplayName(model)
+    const currentModelLabel = getModelDisplayName(model, modelGroups)
     const hasContent = value.trim() || attachedFiles.length > 0
 
     return (
@@ -354,7 +342,7 @@ export default function ChatInput({ onSend, onStop, loading, statusText, model, 
 
                             {showModels && (
                                 <div className="absolute bottom-[calc(100%+0.5rem)] right-0 bg-gray-900 border border-gray-800 rounded-2xl shadow-xl py-2 min-w-[200px] z-[100] custom-scrollbar max-h-[300px] overflow-y-auto w-64">
-                                    {MODEL_GROUPS.map((group) => (
+                                    {modelGroups.map((group) => (
                                         <div key={group.group}>
                                             <div className="px-4 py-1.5 text-[10px] text-gray-400 font-bold uppercase tracking-widest bg-gray-900/90 sticky top-0 backdrop-blur-sm z-10 border-b border-gray-800/50 mb-1">{group.group}</div>
                                             {group.models.map((m) => (
