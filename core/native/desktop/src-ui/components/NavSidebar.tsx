@@ -35,15 +35,15 @@ interface Props {
 }
 
 const navItems: { id: NavView; icon: React.ElementType; label: string }[] = [
-  { id: "dashboard",   icon: LayoutGrid,   label: "Dashboard" },
-  { id: "projects",    icon: Folder,       label: "Projects" },
-  { id: "agents",      icon: Bot,          label: "Agents" },
-  { id: "tasks",       icon: ClipboardList, label: "Tasks" },
-  { id: "run_center",  icon: Activity,     label: "Run Center" },
-  { id: "devices",     icon: Monitor,      label: "Devices" },
-  { id: "cron",        icon: AlarmClock,   label: "Cron Tasks" },
-  { id: "notes",       icon: StickyNote,   label: "Notes" },
-  { id: "workspace",   icon: Library,      label: "Workspace" },
+  { id: "dashboard", icon: LayoutGrid, label: "Dashboard" },
+  { id: "projects", icon: Folder, label: "Projects" },
+  { id: "agents", icon: Bot, label: "Agents" },
+  { id: "tasks", icon: ClipboardList, label: "Tasks" },
+  { id: "run_center", icon: Activity, label: "Run Center" },
+  { id: "devices", icon: Monitor, label: "Devices" },
+  { id: "cron", icon: AlarmClock, label: "Cron Tasks" },
+  { id: "notes", icon: StickyNote, label: "Notes" },
+  { id: "workspace", icon: Library, label: "Workspace" },
 ]
 
 const taskCategories: { id: TaskFilter; label: string; icon: React.ElementType }[] = [
@@ -64,6 +64,7 @@ export default function NavSidebar({
   const [sessions, setSessions] = useState<Session[]>([])
   const [projectsExpanded, setProjectsExpanded] = useState(true)
   const [chatsExpanded, setChatsExpanded] = useState(true)
+  const [mainNavExpanded, setMainNavExpanded] = useState(true)
   const [taskContexts, setTaskContexts] = useState<string[]>([])
 
   // User menu & shortcut modal states
@@ -246,6 +247,19 @@ export default function NavSidebar({
     setSessionMenuOpen(null); setSessionMenuPos(null)
   }
 
+  async function handleExportSession(session: Session) {
+    try {
+      const token = await getFileToken()
+      const url = `${BASE_URL}/api/export/chat/session/${session.id}?token=${token}`
+      const a = document.createElement("a")
+      a.href = url
+      const titleSlug = (session.title || "Untitled").replace(/ /g, "_").toLowerCase()
+      a.download = `chat_export_${titleSlug}.md`
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+    } catch (e) { console.error("Export session failed:", e) }
+    setSessionMenuOpen(null); setSessionMenuPos(null)
+  }
+
   async function handleNewChat() {
     if (!selectedProjectId) return
     try {
@@ -289,31 +303,50 @@ export default function NavSidebar({
       </div>
 
       {/* ── Nav Items (fixed — never pushed off screen) ───────────────────── */}
-      <div className="flex-shrink-0 px-3 py-2 space-y-1">
-        {navItems.map(({ id, icon: Icon, label }) => {
-          const isActive = active === id
-          const badge = id === "run_center" && pendingApprovals > 0
-          return (
-            <button
-              key={id}
-              onClick={() => onChange(id)}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${isCollapsed ? "justify-center" : ""
-                } ${isActive
-                  ? "bg-cyan-500 text-white shadow-lg shadow-cyan-500/20"
-                  : "text-gray-500 hover:bg-gray-800/50 hover:text-gray-300"
-                }`}
-              title={isCollapsed ? label : ""}
-            >
-              <span className={isActive ? "text-white" : "text-gray-500"}>
-                <Icon size={20} />
-              </span>
-              {!isCollapsed && <span>{label}</span>}
-              {badge && !isCollapsed && (
-                <span className="ml-auto w-2 h-2 rounded-full bg-yellow-400" />
-              )}
-            </button>
-          )
-        })}
+      <div className="flex-shrink-0 pt-2 pb-1 space-y-1">
+        <button
+          onClick={() => setMainNavExpanded(!mainNavExpanded)}
+          className={`flex items-center w-full px-4 py-1.5 mb-1 text-xs font-medium text-gray-500 hover:text-gray-300 transition-colors ${isCollapsed ? "justify-center px-2" : ""
+            }`}
+        >
+          {isCollapsed ? (
+            <LayoutGrid size={14} />
+          ) : (
+            <>
+              <span className="flex-1 text-left uppercase tracking-wider">Menu</span>
+              <span className={`transition-transform duration-200 ${mainNavExpanded ? "" : "-rotate-90"}`}>▾</span>
+            </>
+          )}
+        </button>
+
+        {mainNavExpanded && (
+          <div className="px-3 space-y-1">
+            {navItems.map(({ id, icon: Icon, label }) => {
+              const isActive = active === id
+              const badge = id === "run_center" && pendingApprovals > 0
+              return (
+                <button
+                  key={id}
+                  onClick={() => onChange(id)}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${isCollapsed ? "justify-center" : ""
+                    } ${isActive
+                      ? "bg-cyan-500 text-white shadow-lg shadow-cyan-500/20"
+                      : "text-gray-500 hover:bg-gray-800/50 hover:text-gray-300"
+                    }`}
+                  title={isCollapsed ? label : ""}
+                >
+                  <span className={isActive ? "text-white" : "text-gray-500"}>
+                    <Icon size={20} />
+                  </span>
+                  {!isCollapsed && <span>{label}</span>}
+                  {badge && !isCollapsed && (
+                    <span className="ml-auto w-2 h-2 rounded-full bg-yellow-400" />
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        )}
       </div>
 
       {/* ── Scrollable bottom section (Projects+Chats or Task Filter) ─────── */}
@@ -352,8 +385,8 @@ export default function NavSidebar({
                 <button
                   onClick={() => onTaskFilterChange?.("inbox")}
                   className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${taskFilter !== "project"
-                      ? "bg-gray-800 text-white"
-                      : "text-gray-500 hover:text-gray-300 hover:bg-gray-900/40"
+                    ? "bg-gray-800 text-white"
+                    : "text-gray-500 hover:text-gray-300 hover:bg-gray-900/40"
                     }`}
                 >
                   <InboxIcon
@@ -367,8 +400,8 @@ export default function NavSidebar({
                     key={ctx}
                     onClick={() => onTaskFilterChange?.("project", ctx)}
                     className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${taskFilter === "project" && taskFilterContext === ctx
-                        ? "bg-gray-800 text-cyan-400"
-                        : "text-gray-500 hover:text-gray-300 hover:bg-gray-900/40"
+                      ? "bg-gray-800 text-cyan-400"
+                      : "text-gray-500 hover:text-gray-300 hover:bg-gray-900/40"
                       }`}
                   >
                     <Folder
@@ -445,8 +478,8 @@ export default function NavSidebar({
                             <button
                               onClick={() => onChange("chat", project.id)}
                               className={`w-full flex items-center px-3 py-2 rounded-lg text-sm transition-colors text-left ${isActive
-                                  ? "bg-gray-800 text-white"
-                                  : "text-gray-400 hover:bg-gray-800/50 hover:text-white"
+                                ? "bg-gray-800 text-white"
+                                : "text-gray-400 hover:bg-gray-800/50 hover:text-white"
                                 }`}
                             >
                               <span className="truncate flex-1">
@@ -525,8 +558,8 @@ export default function NavSidebar({
                                 <button
                                   onClick={() => onChange("chat", selectedProjectId, session.id)}
                                   className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg text-xs transition-colors text-left ${isActiveSession
-                                      ? "bg-cyan-500/15 text-white"
-                                      : "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200"
+                                    ? "bg-cyan-500/15 text-white"
+                                    : "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200"
                                     }`}
                                 >
                                   <MessageSquare size={11} className="flex-shrink-0 opacity-40" />
@@ -669,6 +702,13 @@ export default function NavSidebar({
           >
             <Pencil size={14} /> Rename
           </button>
+          <button
+            onClick={() => handleExportSession(openMenuSession)}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
+          >
+            <Download size={14} /> Export
+          </button>
+          <div className="my-1 border-t border-gray-700" />
           <button
             onClick={() => handleArchiveSession(openMenuSession.id)}
             className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10"

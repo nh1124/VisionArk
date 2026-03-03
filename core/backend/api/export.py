@@ -110,4 +110,65 @@ async def export_project_chat(
         logger.error(f"Export failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/chat/session/{session_id}")
+async def export_session_chat(
+    session_id: str,
+    identity: Identity = Depends(resolve_identity_for_download),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Export a specific Chat Session's history as a Markdown file"""
+    logger.info(f"Export session request: session_id='{session_id}' user='{identity.user_id}' auth='{identity.auth_method}'")
 
+    try:
+        # Get session by ID
+        result = await db.execute(select(ChatSession).filter(
+            ChatSession.id == session_id
+        ))
+        session = result.scalars().first()
+        
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found.")
+            
+        # Get project to verify access and use its name
+        result = await db.execute(select(Project).filter(
+            Project.user_id == identity.user_id,
+            Project.id == session.project_id
+        ))
+        project = result.scalars().first()
+        
+        if not project:
+            raise HTTPException(status_code=403, detail="Not authorized to access this session's project.")
+
+        # Get messages
+        result = await db.execute(select(ChatMessage).filter(
+            ChatMessage.session_id == session.id
+        ).order_by(ChatMessage.created_at.asc()))
+        messages = result.scalars().all()
+
+        content = await format_chat_history(messages)
+        
+        title_slug = (session.title or "Untitled").replace(" ", "_").lower()
+        filename = f"{project.name}_{title_slug}_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+        
+        safe_filename = urllib.parse.quote(filename)
+        
+        try:
+            filename.encode('ascii')
+            fallback_filename = filename
+        except UnicodeEncodeError:
+            fallback_filename = "chat_export.md"
+            
+        content_disposition = f"attachment; filename=\"{fallback_filename}\"; filename*=utf-8''{safe_filename}"
+        
+        logger.info(f"Export success: session='{session.id}' messages={len(messages)}")
+        
+        return StreamingResponse(
+            io.BytesIO(content.encode("utf-8")),
+            media_type="text/markdown",
+            headers={"Content-Disposition": content_disposition}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Export failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
