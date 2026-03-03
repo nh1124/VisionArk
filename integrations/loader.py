@@ -59,7 +59,7 @@ async def load_integration_tools(user_id: str, db: AsyncSession) -> List[Tuple[T
                     # Fallback: scan for tool classes directly.
                     # WARNING: This bypasses the is_active check in get_tools().
                     # All integration packages MUST define get_tools() in __init__.py.
-                    logger.warning(
+                    logger.error(
                         "Integration '%s' has no get_tools() in __init__.py. "
                         "Falling back to direct class scan — is_active check is SKIPPED.",
                         pkg_name

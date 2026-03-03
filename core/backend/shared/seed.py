@@ -35,19 +35,19 @@ _SUB_AGENT_DEFS: list[dict] = [
     {
         "display_name": "researcher",
         "description": "Delegation sub-agent: research & investigation tasks",
-        "skill_ids": ["investigation"],
+        "skill_ids": ["research"],
         "graph_id": "direct_assistant",
     },
     {
         "display_name": "writer",
         "description": "Delegation sub-agent: document creation & writing tasks",
-        "skill_ids": ["investigation", "document_creation"],
+        "skill_ids": ["research", "authoring"],
         "graph_id": "direct_assistant",
     },
     {
         "display_name": "reviewer",
         "description": "Delegation sub-agent: research & review tasks",
-        "skill_ids": ["investigation"],
+        "skill_ids": ["research"],
         "graph_id": "direct_assistant",
     },
 ]

@@ -330,6 +330,7 @@ async def list_skills(
             "name": r.name,
             "description": r.description,
             "tools": r.tools,
+            "instructions": r.instructions,
             "origin_type": r.origin_type,
             "origin_id": r.origin_id,
             "is_active": r.is_active,

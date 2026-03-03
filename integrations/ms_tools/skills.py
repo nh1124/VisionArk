@@ -16,12 +16,8 @@ from domains.orchestration2.engine.models.skill import SkillDef
 SKILL_DEFS: list[SkillDef] = [
     SkillDef(
         name="ms_office",
-        description=(
-            "Create and edit Microsoft Office files (Word, Excel, PowerPoint) "
-            "and render production-quality PDFs"
-        ),
+        description="Create and edit Microsoft Office files (Word, Excel, PowerPoint)",
         tools=[
-            "render_pdf",
             "word_tool",
             "excel_tool",
             "ppt_tool",

@@ -16,7 +16,6 @@ from ...tools.library.ai import (
 from ...tools.library.browser import (
     BrowserOpenTool, BrowserClickTool, BrowserFillTool, BrowserScreenshotTool,
 )
-from ...tools.library.canvas import UpdateCanvasTool
 from ...tools.library.governance import GetProjectRulesTool, UpdateProjectRulesTool
 from ...tools.library.notes import ListNotesTool, ReadNoteTool, CreateNoteTool
 from ...tools.library.workspace import (
@@ -29,9 +28,7 @@ from ...tools.library.system import (
     ListUserProjectsTool, UpdateProjectTool,
     GetProjectHealthTool, SetTimerTool, RaiseContinueTool,
 )
-from ...tools.library.members import (
-    ListMembersTool, ManageMemberTool, UpdateAgentDescriptionTool,
-)
+from ...tools.library.delegation import ListMembersTool
 from ...tools.library.writer import RecursiveWriterTool
 from ...tools.library.shell import RunSafeShellTool
 
@@ -39,6 +36,7 @@ from ...tools.library.markdown import (
     ReadMDSectionTool, InitPlanTool, UpdatePlanProgressTool,
     GetCurrentStatusTool, UpdateMDSectionTool,
 )
+from ...tools.library.document import RenderPdfTool
 
 def get_delegation_tool(engine: Any) -> tuple[ToolDef, Any]:
     """Return (ToolDef, DelegateTaskTool) bound to the given engine."""
@@ -61,8 +59,6 @@ def get_core_tools() -> list[tuple[ToolDef, Any]]:
         GenerateImageTool, MermaidVisualizerTool, ExecuteCodeTool,
         # Browser
         BrowserOpenTool, BrowserClickTool, BrowserFillTool, BrowserScreenshotTool,
-        # Canvas
-        UpdateCanvasTool,
         # Governance
         GetProjectRulesTool, UpdateProjectRulesTool,
         # Notes
@@ -75,8 +71,8 @@ def get_core_tools() -> list[tuple[ToolDef, Any]]:
         ListAgentsTool, GetAgentProfileTool,
         ListUserProjectsTool, UpdateProjectTool,
         GetProjectHealthTool, SetTimerTool, RaiseContinueTool,
-        # Members
-        ListMembersTool, ManageMemberTool, UpdateAgentDescriptionTool,
+        # Members (delegation)
+        ListMembersTool,
         # Writer
         RecursiveWriterTool,
         # Shell
@@ -85,6 +81,9 @@ def get_core_tools() -> list[tuple[ToolDef, Any]]:
         # Markdown
         ReadMDSectionTool, InitPlanTool, UpdatePlanProgressTool,
         GetCurrentStatusTool, UpdateMDSectionTool,
+
+        # Document output
+        RenderPdfTool,
     ]
 
     result = []

@@ -684,6 +684,100 @@ class GetFileStatTool:
 # ImportGitHubRepoTool  (unchanged)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# ReadReferenceTool  (internal helper — not registered in default_catalog)
+# ---------------------------------------------------------------------------
+
+class ReadReferenceTool:
+    """Internal helper used by markdown/canvas/ai tools to read a project file."""
+
+    definition = ToolDef(
+        name="read_reference",
+        description="Read a project file by relative path and return its full text content.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Project-root-relative path (searches refs/, files/, artifacts/ automatically)",
+                },
+            },
+            "required": ["file_path"],
+        },
+    )
+
+    async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
+        file_path = call.arguments.get("file_path", "")
+        try:
+            root = _resolve_root(ctx)
+            p = _find_file(root, file_path)
+        except Exception:
+            return fail(call, f"Invalid path: {file_path}")
+
+        if p is None:
+            return fail(call, f"File not found: {file_path}")
+
+        try:
+            return make_result(call, p.read_text(encoding="utf-8"))
+        except Exception as e:
+            return fail(call, f"Read failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# SaveArtifactTool  (internal helper — not registered in default_catalog)
+# ---------------------------------------------------------------------------
+
+class SaveArtifactTool:
+    """Internal helper used by markdown/canvas/ai tools to write a project file."""
+
+    definition = ToolDef(
+        name="save_artifact",
+        description="Write content to a project-root-relative path.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Project-root-relative destination path",
+                },
+                "content": {"type": "string", "description": "Content to write"},
+                "overwrite": {
+                    "type": "boolean",
+                    "description": "Overwrite if file exists (default false)",
+                },
+            },
+            "required": ["file_path", "content"],
+        },
+    )
+
+    async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
+        file_path = call.arguments.get("file_path", "")
+        content = call.arguments.get("content", "")
+        overwrite = call.arguments.get("overwrite", False)
+
+        try:
+            root = _resolve_root(ctx)
+            p = secure_path_join(root, file_path)
+        except Exception:
+            return _err(call, "INVALID_PATH", f"Invalid path: {file_path}")
+
+        if p.exists() and not overwrite:
+            return _err(call, "ALREADY_EXISTS", f"File already exists: {file_path}. Set overwrite=true to replace.")
+
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8")
+        except Exception as e:
+            return _err(call, "IO_ERROR", f"Write failed: {e}")
+
+        await _sync(ctx)
+        return make_result(call, f"Saved {file_path}")
+
+
+# ---------------------------------------------------------------------------
+# ImportGitHubRepoTool  (unchanged)
+# ---------------------------------------------------------------------------
+
 class ImportGitHubRepoTool:
     definition = ToolDef(
         name="import_github_repo",

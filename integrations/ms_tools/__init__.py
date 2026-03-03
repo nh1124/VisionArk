@@ -1,13 +1,12 @@
 """MS Office integration for VisionArk.
 
-Provides tools for Word, Excel, PowerPoint, PDF rendering,
-and Microsoft Graph authentication.
+Provides tools for Word, Excel, PowerPoint, and Microsoft Graph authentication.
+PDF rendering has moved to core (render_pdf is a core tool).
 
 Tools are always available for local file operations.
 Microsoft Graph API features require AZURE_CLIENT_ID / AZURE_CLIENT_SECRET / AZURE_TENANT_ID.
 """
 from .agent_tools import (
-    RenderPdfTool,
     WordTool,
     ExcelTool,
     PptTool,
@@ -16,13 +15,13 @@ from .agent_tools import (
 
 
 async def get_tools(user_id: str, db):
-    """Return all MS Office tools.
+    """Return MS Office tools.
 
     These tools work in offline/local-file mode without any activation check.
     Graph API features are gated by environment credentials at call time.
+    Note: render_pdf is a core tool and is not included here.
     """
     return [
-        RenderPdfTool(),
         WordTool(),
         ExcelTool(),
         PptTool(),
@@ -31,17 +30,12 @@ async def get_tools(user_id: str, db):
 
 
 def get_skill_defs():
-    """Return SkillDef list for this integration.
-
-    Called by tool_reflection when it is extended to support per-integration
-    skill registration. Until then, this is a no-op declaration.
-    """
+    """Return SkillDef list for this integration."""
     from .skills import SKILL_DEFS
     return SKILL_DEFS
 
 
 __all__ = [
-    "RenderPdfTool",
     "WordTool",
     "ExcelTool",
     "PptTool",

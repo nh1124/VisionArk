@@ -1,4 +1,4 @@
-"""Delegation tool: delegate tasks to sub-agents."""
+"""Delegation and member-listing tools for the orchestration2 engine."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Any
 from domains.orchestration2.engine.models.execution import ExecutionContext, ToolResult
 from domains.orchestration2.engine.models.message import ToolCallRef
 from domains.orchestration2.engine.models.tool import ToolDef
-from domains.orchestration2.tools.base import fail, make_result
+from domains.orchestration2.tools.base import fail, get_db, get_project_id, make_result
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,8 @@ class DelegateTaskTool:
         description=(
             "Delegate a subtask to a specialized sub-agent. "
             "Use this when a task requires expertise outside your current role. "
-            "Available agents: 'researcher' (investigation), 'writer' (document creation). "
+            "Available agents: 'researcher' (research & information gathering), "
+            "'writer' (document creation & authoring), 'reviewer' (research & review). "
             "The delegated task runs synchronously and returns the result."
         ),
         parameters={
@@ -27,7 +28,7 @@ class DelegateTaskTool:
             "properties": {
                 "child_agent": {
                     "type": "string",
-                    "description": "Name of sub-agent: 'researcher' or 'writer'",
+                    "description": "Name of sub-agent: 'researcher', 'writer', or 'reviewer'",
                 },
                 "task": {
                     "type": "string",
@@ -79,3 +80,39 @@ class DelegateTaskTool:
         except Exception as exc:
             logger.exception("DelegateTaskTool error: %s", exc)
             return fail(call, f"Delegation error: {exc}")
+
+
+class ListMembersTool:
+    definition = ToolDef(
+        name="list_members",
+        description="List all dynamic member agents for the current project.",
+        parameters={"type": "object", "properties": {}, "required": []},
+    )
+
+    async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
+        db = get_db(ctx)
+        project_id = get_project_id(ctx)
+
+        try:
+            from sqlalchemy import select
+            from shared.database import ProjectAgent
+
+            result = await db.execute(
+                select(ProjectAgent).where(
+                    ProjectAgent.project_id == project_id,
+                    ProjectAgent.agent_type == "MEMBER",
+                    ProjectAgent.status == "active",
+                )
+            )
+            members = result.scalars().all()
+
+            if not members:
+                return make_result(call, "No dynamic members found for this project.")
+
+            lines = [f"Found {len(members)} members:"]
+            for m in members:
+                lines.append(f"- {m.role_name} ({m.display_name}): tools={m.tools or []}")
+
+            return make_result(call, "\n".join(lines))
+        except Exception as e:
+            return fail(call, f"Failed to list members: {e}")

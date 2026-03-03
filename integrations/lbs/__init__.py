@@ -7,7 +7,9 @@ async def get_tools(user_id: str, db):
     from .agent_tools import (
         ListTasksTool, CreateTaskTool, UpdateTaskTool, DeleteTaskTool,
         CompleteLBSTaskTool, GetLBSScheduleTool, GetLoadOnDayTool,
-        GetLoadInPeriodTool, ManageTaskExceptionTool, ListExceptionsTool
+        GetLoadInPeriodTool, ManageTaskExceptionTool, ListExceptionsTool,
+        GetCurrentConditionTool, UpdateUserConditionTool,
+        GetTaskHistoryTool, ResetUserConditionTool,
     )
     
     result = await db.execute(select(ServiceRegistry).filter(
@@ -19,7 +21,9 @@ async def get_tools(user_id: str, db):
         return [
             ListTasksTool(), CreateTaskTool(), UpdateTaskTool(), DeleteTaskTool(),
             CompleteLBSTaskTool(), GetLBSScheduleTool(), GetLoadOnDayTool(),
-            GetLoadInPeriodTool(), ManageTaskExceptionTool(), ListExceptionsTool()
+            GetLoadInPeriodTool(), ManageTaskExceptionTool(), ListExceptionsTool(),
+            GetCurrentConditionTool(), UpdateUserConditionTool(),
+            GetTaskHistoryTool(), ResetUserConditionTool(),
         ]
     return []
 
