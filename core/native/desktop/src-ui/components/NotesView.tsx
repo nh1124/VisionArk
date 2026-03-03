@@ -68,13 +68,6 @@ export default function NotesView({ onOpenProject }: { onOpenProject: (projectId
                 e.preventDefault()
                 performUndo()
             }
-            // Ctrl+N — new text note
-            if ((e.ctrlKey || e.metaKey) && e.key === "n") {
-                e.preventDefault()
-                setEditingNote(null)
-                setNewNote({ title: "", content: "", project_id: "", tags: [] })
-                setIsCreating(true)
-            }
         }
         window.addEventListener("keydown", handler)
         return () => window.removeEventListener("keydown", handler)

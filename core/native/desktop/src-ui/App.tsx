@@ -54,8 +54,9 @@ async function saveDeviceId(id: string): Promise<void> {
 }
 
 export default function App() {
-  const [isConsole] = useState(() => isTauri() && getCurrentWindow().label === "console")
-  const [isFileViewer] = useState(() => isTauri() && getCurrentWindow().label.startsWith("fileviewer"))
+  const [windowLabel] = useState(() => isTauri() ? getCurrentWindow().label : "main")
+  const isConsole = windowLabel === "console"
+  const isFileViewer = windowLabel.startsWith("fileviewer")
   if (isConsole) return <DaemonConsole />
   if (isFileViewer) return <FileViewerWindow />
   return <MainApp />
@@ -207,7 +208,7 @@ function MainApp() {
     return () => clearInterval(timer)
   }, [loggedIn])
 
-  // Window close → hide to tray; listen for approval events
+  // Window close → hide to tray; listen for approval events; Ctrl+N for new window
   useEffect(() => {
     const cleanups: Array<Promise<() => void>> = []
     try {
@@ -238,8 +239,39 @@ function MainApp() {
       // Not in Tauri
     }
 
+    // Ctrl+N → new window (capture phase to intercept before WebView2)
+    const handleKeyDown = async (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "n" && !e.shiftKey && !e.altKey) {
+        // Don't trigger if user is typing in an input/textarea
+        const tag = (e.target as HTMLElement)?.tagName?.toLowerCase()
+        if (tag === "input" || tag === "textarea" || tag === "select") return
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        if (isTauri()) {
+          try {
+            const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow")
+            const label = `main-${Date.now()}`
+            new WebviewWindow(label, {
+              url: "/",
+              title: "VisionArk",
+              width: 1100,
+              height: 700,
+              minWidth: 800,
+              minHeight: 520,
+              resizable: true,
+              decorations: true,
+            })
+          } catch (err) {
+            console.error("Failed to create new window:", err)
+          }
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown, { capture: true })
+
     return () => {
       cleanups.forEach((c) => c.then((unlisten) => unlisten()))
+      window.removeEventListener("keydown", handleKeyDown, { capture: true })
     }
   }, [])
 

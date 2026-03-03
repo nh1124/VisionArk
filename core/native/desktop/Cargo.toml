@@ -22,6 +22,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
 tauri-plugin-global-shortcut = "2.0.0-rc.0"
+tauri-plugin-single-instance = "2"
 tracing = "0.1"
 bridge-rs = { path = "../bridge-rs" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

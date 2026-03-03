@@ -14,9 +14,15 @@ const shortcuts: { category: string; items: { keys: string[]; description: strin
         ],
     },
     {
+        category: "Window",
+        items: [
+            { keys: ["Ctrl", "N"], description: "New Window" },
+            { keys: ["Shift", "Click"], description: "New Window (Taskbar icon)" },
+        ],
+    },
+    {
         category: "Notes",
         items: [
-            { keys: ["Ctrl", "N"], description: "New Note" },
             { keys: ["Ctrl", "Z"], description: "Undo Delete" },
         ],
     },

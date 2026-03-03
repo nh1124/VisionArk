@@ -11,10 +11,15 @@ use tauri::{
 };
 
 static QUICK_NOTE_COUNTER: AtomicU32 = AtomicU32::new(0);
+static MAIN_WINDOW_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // Second instance launched (e.g. Shift+Click on taskbar) → spawn new window
+            spawn_main_window(app);
+        }))
         .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -69,10 +74,10 @@ pub fn run() {
             let console = MenuItem::with_id(app, "console", "Daemon Console", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
             let quit = MenuItem::with_id(app, "quit", "終了", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &jobs, &console, &sep, &quit])?;
+            let tray_menu = Menu::with_items(app, &[&show, &jobs, &console, &sep, &quit])?;
 
             let mut builder = TrayIconBuilder::new()
-                .menu(&menu)
+                .menu(&tray_menu)
                 .show_menu_on_left_click(false)
                 .tooltip("VisionArk");
 
@@ -83,7 +88,7 @@ pub fn run() {
 
             builder
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => toggle_main_window(app),
+                    "show" => spawn_main_window(app),
                     "jobs" => open_main_window(app),
                     "console" => {
                         if let Some(console_window) = app.get_webview_window("console") {
@@ -111,8 +116,9 @@ pub fn run() {
         // Window close button: hide main window (stay in tray) OR exit, depending on config.
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "main" {
-                    // Check background setting
+                let label = window.label().to_string();
+                if label == "main" {
+                    // Original main window: hide to tray or exit
                     let app_handle = window.app_handle().clone();
                     let run_in_bg = match commands::read_app_config(app_handle.clone()) {
                         Ok(cfg) => cfg.run_daemon_in_background,
@@ -123,15 +129,11 @@ pub fn run() {
                         api.prevent_close();
                         window.hide().ok();
                     } else {
-                        // User wants to close completely.
-                        // Wait, stopping the app will automatically kill sidecars spawned by tauri-plugin-shell if not detached.
-                        // But let's be safe and kill it explicitly.
                         daemon_manager::stop_daemon(&app_handle);
-                        // Do not prevent_close(); let it close gracefully, which exits the app if it's the main window.
                         std::process::exit(0);
                     }
                 }
-                // quick-note windows: allow default close (destroy)
+                // Dynamic main-* windows, quick-note windows, etc.: allow default close (destroy)
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -149,6 +151,7 @@ pub fn run() {
             commands::bridge_request,
             commands::start_daemon_command,
             commands::stop_daemon_command,
+            create_new_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VisionArk");
@@ -175,6 +178,32 @@ fn spawn_quick_note(app: &tauri::AppHandle) {
         Ok(_) => {}
         Err(e) => eprintln!("Failed to create quick-note window: {e}"),
     }
+}
+
+/// Spawn a new main application window.
+fn spawn_main_window(app: &tauri::AppHandle) {
+    let id = MAIN_WINDOW_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let label = format!("main-{id}");
+
+    let url = tauri::WebviewUrl::App("index.html".into());
+
+    match WebviewWindowBuilder::new(app, &label, url)
+        .title("VisionArk")
+        .inner_size(1100.0, 700.0)
+        .min_inner_size(800.0, 520.0)
+        .resizable(true)
+        .decorations(true)
+        .focused(true)
+        .build()
+    {
+        Ok(_) => {}
+        Err(e) => eprintln!("Failed to create main window: {e}"),
+    }
+}
+
+#[tauri::command]
+fn create_new_window(app: tauri::AppHandle) {
+    spawn_main_window(&app);
 }
 
 fn toggle_main_window(app: &tauri::AppHandle) {
