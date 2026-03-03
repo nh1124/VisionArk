@@ -18,6 +18,7 @@ import TasksView from "./components/TasksView"
 import SettingsView from "./components/SettingsView"
 import DevicesView from "./components/DevicesView"
 import DaemonConsole from "./components/DaemonConsole"
+import FileViewerWindow from "./components/FileViewerWindow"
 import { isLoggedIn, logout, listProjects, initApiBase, getApiBase, getToken, handleRefresh, type Project } from "./lib/api"
 import { listRuns, registerDevice, heartbeatDevice, configure as configureBridge } from "../../bridge/api"
 
@@ -54,7 +55,9 @@ async function saveDeviceId(id: string): Promise<void> {
 
 export default function App() {
   const [isConsole] = useState(() => isTauri() && getCurrentWindow().label === "console")
+  const [isFileViewer] = useState(() => isTauri() && getCurrentWindow().label.startsWith("fileviewer"))
   if (isConsole) return <DaemonConsole />
+  if (isFileViewer) return <FileViewerWindow />
   return <MainApp />
 }
 

@@ -27,7 +27,8 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
     const [model, setModel] = useState("gemini-3.1-pro")
     const [elapsedTime, setElapsedTime] = useState(0)
     const currentTaskIdRef = useRef<string | null>(null)
-    const [fileViewer, setFileViewer] = useState<{ content: string; path: string; format: "markdown" | "code" | "pdf"; fileUrl?: string } | null>(null)
+    const [fileViewer, setFileViewer] = useState<{ content: string; path: string; format: "markdown" | "code" | "pdf"; fileUrl?: string; mode: "overlay" | "inline" | "popout" } | null>(null)
+    const [inlineWidth, setInlineWidth] = useState(560)
     const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null)
     const messagesEndRef = useRef<HTMLDivElement>(null)
     const pollRef = useRef<NodeJS.Timeout | null>(null)
@@ -180,7 +181,8 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
 
     return (
         <div className="flex h-full w-full overflow-hidden bg-gray-950 min-w-0">
-            <div className="flex-1 flex flex-col h-full overflow-hidden">
+            {/* ── Chat column (shrinks when inline panel is open) ── */}
+            <div className={`flex flex-col h-full overflow-hidden ${fileViewer?.mode === "inline" ? "flex-1 min-w-0" : "flex-1"}`}>
                 {/* Messages area */}
                 <div className="flex-1 overflow-y-auto overflow-x-hidden px-6">
                     <div className="max-w-3xl mx-auto py-6">
@@ -264,7 +266,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                                 nodeType="project"
                                 nodeName={projectId}
                                 onOpenFile={(content, path, format, fileUrl) => {
-                                    setFileViewer({ content, path, format, fileUrl })
+                                    setFileViewer(prev => ({ content, path, format, fileUrl, mode: prev?.mode || "overlay" }))
                                 }}
                                 onPreviewImage={(url, name) => {
                                     setPreviewImage({ url, name })
@@ -287,8 +289,8 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                 </div>
             )}
 
-            {/* File Viewer Panel */}
-            {fileViewer && (
+            {/* ── Inline FileViewer — rendered as flex sibling so chat shrinks ── */}
+            {fileViewer && fileViewer.mode === "inline" && (
                 <FileViewer
                     content={fileViewer.content}
                     filePath={fileViewer.path}
@@ -296,6 +298,26 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                     projectId={projectId}
                     onClose={() => setFileViewer(null)}
                     fileUrl={fileViewer.fileUrl}
+                    initialMode="inline"
+                    inlineWidth={inlineWidth}
+                    onInlineWidthChange={setInlineWidth}
+                    onModeChange={(m) => setFileViewer(fv => fv ? { ...fv, mode: m } : null)}
+                />
+            )}
+
+            {/* ── Overlay / Popout FileViewer (fixed-positioned, rendered outside flex flow) ── */}
+            {fileViewer && fileViewer.mode !== "inline" && (
+                <FileViewer
+                    content={fileViewer.content}
+                    filePath={fileViewer.path}
+                    format={fileViewer.format}
+                    projectId={projectId}
+                    onClose={() => setFileViewer(null)}
+                    fileUrl={fileViewer.fileUrl}
+                    initialMode={fileViewer.mode}
+                    inlineWidth={inlineWidth}
+                    onInlineWidthChange={setInlineWidth}
+                    onModeChange={(m) => setFileViewer(fv => fv ? { ...fv, mode: m } : null)}
                 />
             )}
 

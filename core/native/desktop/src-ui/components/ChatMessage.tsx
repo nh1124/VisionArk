@@ -1,5 +1,5 @@
 import React, { useState } from "react"
-import { User, Bot, ChevronDown, ChevronRight, Sparkles, Copy, Check, ThumbsUp, ThumbsDown, RotateCcw, Trash2, MoreHorizontal } from "lucide-react"
+import { User, Bot, ChevronDown, ChevronUp, ChevronRight, Sparkles, Copy, Check, ThumbsUp, ThumbsDown, RotateCcw, Trash2, MoreHorizontal } from "lucide-react"
 import type { ChatMessage as ChatMessageType } from "../lib/api"
 import MarkdownRenderer from "./MarkdownRenderer"
 
@@ -11,7 +11,11 @@ interface Props {
 export default function ChatMessage({ message, projectId }: Props) {
     const [thinkingOpen, setThinkingOpen] = useState(false)
     const [isCopied, setIsCopied] = useState(false)
+    const [isExpanded, setIsExpanded] = useState(false)
+
     const isUser = message.role === "user"
+    const contentStr = message.content || ""
+    const isLongMessage = isUser && (contentStr.length > 800 || contentStr.split("\n").length > 15)
 
     const thinkingTurns = message.sub_messages?.length || 0
 
@@ -35,8 +39,25 @@ export default function ChatMessage({ message, projectId }: Props) {
                 <div className="text-xs font-semibold text-gray-500 mb-1 select-none">
                     {isUser ? "You" : "Assistant"}
                 </div>
-                <div className="text-sm">
-                    <MarkdownRenderer content={message.content} nodeType="project" nodeName={projectId} projectId={projectId} />
+                <div className="text-sm relative">
+                    <div className={`transition-all duration-300 ${isLongMessage && !isExpanded ? "max-h-[300px] overflow-hidden relative" : ""}`}>
+                        <MarkdownRenderer content={contentStr} nodeType="project" nodeName={projectId} projectId={projectId} />
+                        {isLongMessage && !isExpanded && (
+                            <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-gray-950 to-transparent pointer-events-none" />
+                        )}
+                    </div>
+                    {isLongMessage && (
+                        <button
+                            onClick={() => setIsExpanded(!isExpanded)}
+                            className="mt-2 text-xs font-semibold text-cyan-500 hover:text-cyan-400 flex items-center gap-1"
+                        >
+                            {isExpanded ? (
+                                <>Show Less <ChevronUp size={14} /></>
+                            ) : (
+                                <>Read More <ChevronDown size={14} /></>
+                            )}
+                        </button>
+                    )}
                 </div>
 
                 {/* Thinking Process */}

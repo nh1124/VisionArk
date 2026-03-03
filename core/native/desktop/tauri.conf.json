@@ -32,6 +32,15 @@
         "height": 500,
         "resizable": true,
         "visible": false
+      },
+      {
+        "label": "fileviewer",
+        "title": "File Viewer",
+        "width": 900,
+        "height": 650,
+        "resizable": true,
+        "visible": false,
+        "decorations": true
       }
     ],
     "security": {
