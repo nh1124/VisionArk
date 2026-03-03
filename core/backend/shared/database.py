@@ -743,7 +743,7 @@ class ToolRegistry(Base):
     id = Column(String(36), primary_key=True)               # UUID
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     name = Column(String(100), nullable=False)               # e.g. "google_search"
-    description = Column(String(500), nullable=True)
+    description = Column(Text, nullable=True)
     params_schema = Column(JSON, default=dict)              # JSON Schema for tool arguments
     origin_type = Column(String(20), nullable=False, default="core")  # core|integration|upload
     origin_id = Column(String(100), nullable=True)          # integration pkg name or upload id
@@ -1379,6 +1379,20 @@ def _run_migrations(engine):
                 "CREATE INDEX IF NOT EXISTS ix_mcp_server_configs_user_id ON mcp_server_configs(user_id)"
             ))
             conn.commit()
+
+    # Migration: Widen tool_registry.description from VARCHAR(500) to TEXT
+    if 'tool_registry' in inspector.get_table_names():
+        cols = {c['name']: c for c in inspector.get_columns('tool_registry')}
+        if 'description' in cols:
+            col_type = cols['description']['type']
+            # Only migrate if it's still a VARCHAR (has a length attribute)
+            if hasattr(col_type, 'length') and col_type.length is not None:
+                with engine.connect() as conn:
+                    conn.execute(text(
+                        "ALTER TABLE tool_registry ALTER COLUMN description TYPE TEXT"
+                    ))
+                    conn.commit()
+                    print("✅ Migration: Widened tool_registry.description to TEXT")
 
 
 # Global sync session maker
