@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react"
 import { listen } from "@tauri-apps/api/event"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { invoke, isTauri } from "@tauri-apps/api/core"
-export type ProjectSidebarMode = "files" | "automation" | "notes" | "activity" | null;
+export type ProjectSidebarMode = "files" | "automation" | "notes" | "activity" | "settings" | null;
 import NavSidebar, { type NavView, type TaskFilter } from "./components/NavSidebar"
 import TopBar from "./components/TopBar"
 import DashboardView from "./components/DashboardView"

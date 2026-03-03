@@ -68,8 +68,9 @@ export default function TopBar({ projectName, username, sidebarMode, setSidebarM
                 </button>
 
                 <button
-                    className="p-2 rounded-lg hover:bg-gray-800 transition-colors text-gray-400 hover:text-white"
-                    title="Settings"
+                    onClick={() => setSidebarMode && setSidebarMode(sidebarMode === "settings" ? null : "settings")}
+                    className={`p-2 rounded-lg transition-colors ${sidebarMode === "settings" ? "bg-cyan-500/20 text-cyan-400" : "text-gray-400 hover:text-white hover:bg-gray-800"}`}
+                    title="Project Settings"
                 >
                     <Settings size={18} />
                 </button>

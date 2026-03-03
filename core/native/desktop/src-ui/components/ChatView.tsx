@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
-import { fetchHistory, sendChat, getTaskStatus, type ChatMessage as ChatMessageType } from "../lib/api"
+import { fetchHistory, sendChat, getTaskStatus, cancelTask, type ChatMessage as ChatMessageType } from "../lib/api"
 import ChatMessage from "./ChatMessage"
 import ChatInput from "./ChatInput"
 import FileViewer from "./FileViewer"
@@ -10,6 +10,7 @@ import ProjectNotes from "./ProjectNotes"
 import AutomationTab from "./AutomationTab"
 import ActivitySidebar from "./ActivitySidebar"
 import FilesSidebar from "./FilesSidebar"
+import ProjectSettingsPanel from "./ProjectSettingsPanel"
 
 interface Props {
     projectId: string
@@ -24,6 +25,8 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
     const [loading, setLoading] = useState(false)
     const [statusText, setStatusText] = useState("")
     const [model, setModel] = useState("gemini-3.1-pro")
+    const [elapsedTime, setElapsedTime] = useState(0)
+    const currentTaskIdRef = useRef<string | null>(null)
     const [fileViewer, setFileViewer] = useState<{ content: string; path: string; format: "markdown" | "code" | "pdf"; fileUrl?: string } | null>(null)
     const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null)
     const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -43,22 +46,54 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
         }
     }, [projectId])
 
-    // Keep effectiveSessionRef in sync when sessionId prop changes (e.g. user switches session)
+    // Reload history whenever session or project changes
     useEffect(() => {
         effectiveSessionRef.current = sessionId
-    }, [sessionId])
-
-    useEffect(() => {
+        // Stop any in-progress polling from the previous session
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+        if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+        setLoading(false)
+        setStatusText("")
+        setElapsedTime(0)
+        currentTaskIdRef.current = null
+        setMessages([])
         loadHistory()
+    }, [sessionId, loadHistory])
+
+    // Cleanup intervals on unmount only
+    useEffect(() => {
         return () => {
             if (pollRef.current) clearInterval(pollRef.current)
             if (timerRef.current) clearInterval(timerRef.current)
         }
-    }, [loadHistory])
+    }, [])
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
     }, [messages])
+
+    const stopPolling = () => {
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+        if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+    }
+
+    const handleStop = async () => {
+        const taskId = currentTaskIdRef.current
+        stopPolling()
+        setLoading(false)
+        setStatusText("")
+        setElapsedTime(0)
+        if (taskId) {
+            try { await cancelTask(taskId) } catch { /* best-effort */ }
+        }
+        setMessages((prev) => {
+            const last = prev[prev.length - 1]
+            if (last?.role === "assistant" && !last.content) {
+                return [...prev.slice(0, -1), { role: "assistant", content: "Generation stopped." }]
+            }
+            return prev
+        })
+    }
 
     const handleSend = async (content: string, files?: File[]) => {
         if ((!content.trim() && (!files || files.length === 0)) || loading) return
@@ -67,9 +102,11 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
         setMessages((prev) => [...prev, { role: "user", content }])
         setLoading(true)
         setStatusText("Processing your request...")
+        setElapsedTime(0)
 
         try {
             const { task_id, session_id: usedSessionId } = await sendChat(projectId, content, sessionId, model, files)
+            currentTaskIdRef.current = task_id
 
             // Update the effective session if the backend resolved to a different one
             if (usedSessionId) {
@@ -79,19 +116,29 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
             // Add placeholder for assistant
             setMessages((prev) => [...prev, { role: "assistant", content: "" }])
 
+            // Elapsed time counter
+            const startTime = Date.now()
+            timerRef.current = setInterval(() => {
+                setElapsedTime(Math.floor((Date.now() - startTime) / 1000))
+            }, 1000)
+
             // Poll task status
             pollRef.current = setInterval(async () => {
                 try {
                     const taskData = await getTaskStatus(task_id)
                     if (taskData.status === "completed") {
-                        if (pollRef.current) clearInterval(pollRef.current)
+                        stopPolling()
                         setLoading(false)
                         setStatusText("")
+                        setElapsedTime(0)
+                        currentTaskIdRef.current = null
                         await loadHistory()
                     } else if (taskData.status === "failed" || taskData.status === "cancelled") {
-                        if (pollRef.current) clearInterval(pollRef.current)
+                        stopPolling()
                         setLoading(false)
                         setStatusText("")
+                        setElapsedTime(0)
+                        currentTaskIdRef.current = null
                         setMessages((prev) => {
                             const last = prev[prev.length - 1]
                             if (last?.role === "assistant" && !last.content) {
@@ -103,16 +150,27 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                             return prev
                         })
                     } else {
-                        setStatusText(taskData.status === "queued" ? "Queued..." : "Processing...")
+                        // Show detailed status using phase/step if available
+                        if (taskData.status === "queued") {
+                            setStatusText("Queued...")
+                        } else if (taskData.step) {
+                            setStatusText(`Running: ${taskData.step}`)
+                        } else if (taskData.phase) {
+                            setStatusText(`${taskData.phase}...`)
+                        } else {
+                            setStatusText("Processing...")
+                        }
                     }
                 } catch {
                     // polling error, keep trying
                 }
-            }, 3000)
+            }, 1000)
         } catch (e) {
             console.error("Failed to send:", e)
+            stopPolling()
             setLoading(false)
             setStatusText("")
+            setElapsedTime(0)
             setMessages((prev) => [
                 ...prev,
                 { role: "assistant", content: "❌ Failed to send message. Please try again." },
@@ -124,7 +182,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
         <div className="flex h-full w-full overflow-hidden bg-gray-950 min-w-0">
             <div className="flex-1 flex flex-col h-full overflow-hidden">
                 {/* Messages area */}
-                <div className="flex-1 overflow-y-auto px-6">
+                <div className="flex-1 overflow-y-auto overflow-x-hidden px-6">
                     <div className="max-w-3xl mx-auto py-6">
                         {messages.length === 0 && !loading ? (
                             <div className="flex flex-col items-center justify-center h-full py-20">
@@ -166,8 +224,9 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                 {/* Chat Input */}
                 <ChatInput
                     onSend={handleSend}
+                    onStop={handleStop}
                     loading={loading}
-                    statusText={statusText}
+                    statusText={elapsedTime > 0 ? `${statusText} (${elapsedTime}s)` : statusText}
                     model={model}
                     onModelChange={setModel}
                 />
@@ -182,7 +241,8 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                             {sidebarMode === "files" ? "Files & Artifacts"
                                 : sidebarMode === "notes" ? "Project Notes"
                                     : sidebarMode === "activity" ? "Project Activity"
-                                        : "Project Automation"}
+                                        : sidebarMode === "settings" ? "Project Settings"
+                                            : "Project Automation"}
                         </h2>
                         {setSidebarMode && (
                             <button
@@ -219,6 +279,9 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                         )}
                         {sidebarMode === "automation" && (
                             <AutomationTab projectId={projectId} onScheduleClick={() => console.log('Schedule clicked')} />
+                        )}
+                        {sidebarMode === "settings" && (
+                            <ProjectSettingsPanel projectId={projectId} />
                         )}
                     </div>
                 </div>

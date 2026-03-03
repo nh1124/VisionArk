@@ -301,8 +301,12 @@ export async function sendChat(
 
 export async function getTaskStatus(
     taskId: string
-): Promise<{ status: string; result?: string }> {
-    return _apiJson<{ status: string; result?: string }>(`/api/agents/tasks/${taskId}`)
+): Promise<{ status: string; result?: string; phase?: string; step?: string }> {
+    return _apiJson<{ status: string; result?: string; phase?: string; step?: string }>(`/api/agents/tasks/${taskId}`)
+}
+
+export async function cancelTask(taskId: string): Promise<void> {
+    await _apiFetch(`/api/agents/tasks/${taskId}`, { method: "DELETE" })
 }
 
 // ─── Files ─────────────────────────────────────────────────────────────────────

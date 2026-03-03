@@ -3,6 +3,7 @@ import { Send, Plus, ChevronDown, X, FileText, Paperclip } from "lucide-react"
 
 interface Props {
     onSend: (message: string, files?: File[]) => void
+    onStop?: () => void
     loading: boolean
     statusText: string
     model: string
@@ -75,7 +76,7 @@ const formatFileSize = (bytes: number): string => {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-export default function ChatInput({ onSend, loading, statusText, model, onModelChange }: Props) {
+export default function ChatInput({ onSend, onStop, loading, statusText, model, onModelChange }: Props) {
     const [value, setValue] = useState("")
     const [showModels, setShowModels] = useState(false)
     const [attachedFiles, setAttachedFiles] = useState<File[]>([])
@@ -230,7 +231,7 @@ export default function ChatInput({ onSend, loading, statusText, model, onModelC
     const hasContent = value.trim() || attachedFiles.length > 0
 
     return (
-        <div className="flex-shrink-0 px-4 pb-4 pt-2 max-w-4xl mx-auto w-full">
+        <div className="flex-shrink-0 px-4 pb-4 pt-2 max-w-3xl mx-auto w-full">
             {/* Status text */}
             {loading && statusText && (
                 <div className="flex items-center gap-2 mb-2 px-2">
@@ -376,18 +377,28 @@ export default function ChatInput({ onSend, loading, statusText, model, onModelC
                             )}
                         </div>
 
-                        {/* Send button */}
-                        <button
-                            onClick={handleSend}
-                            disabled={!hasContent || loading}
-                            className={`p-2 rounded-lg transition-all ${hasContent && !loading
-                                ? "bg-cyan-500 text-white hover:bg-cyan-400 shadow-lg shadow-cyan-500/20"
-                                : "bg-gray-800 text-gray-600"
-                                }`}
-                            title="Send (Ctrl+Enter)"
-                        >
-                            <Send size={16} />
-                        </button>
+                        {/* Stop / Send button */}
+                        {loading && onStop ? (
+                            <button
+                                onClick={onStop}
+                                className="p-2 rounded-lg transition-all bg-red-500/20 hover:bg-red-500/30 text-red-400 hover:text-red-300"
+                                title="Stop generation"
+                            >
+                                <div className="w-4 h-4 bg-red-400 rounded-sm" />
+                            </button>
+                        ) : (
+                            <button
+                                onClick={handleSend}
+                                disabled={!hasContent || loading}
+                                className={`p-2 rounded-lg transition-all ${hasContent && !loading
+                                    ? "bg-cyan-500 text-white hover:bg-cyan-400 shadow-lg shadow-cyan-500/20"
+                                    : "bg-gray-800 text-gray-600"
+                                    }`}
+                                title="Send (Ctrl+Enter)"
+                            >
+                                <Send size={16} />
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>
