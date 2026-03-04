@@ -2,17 +2,27 @@ import React, { useState, useEffect, useRef } from "react";
 import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./index.css";
-import { apiFetch } from "./lib/api";
+import { apiFetch, initApiBase, getApiBase, getToken, handleRefresh } from "./lib/api";
+import { configure as configureBridge } from "../../bridge/api";
 
 const QuickNoteApp = () => {
     const [noteContent, setNoteContent] = useState("");
     const [isSaving, setIsSaving] = useState(false);
+    const [isReady, setIsReady] = useState(false);
     const textRef = useRef<HTMLTextAreaElement>(null);
     const appWindow = getCurrentWindow();
 
-    // Auto-focus textarea on mount
+    // Initialize API bridge and auto-focus
     useEffect(() => {
-        textRef.current?.focus();
+        const init = async () => {
+            await initApiBase();
+            configureBridge({ getBaseUrl: getApiBase, getToken, handleRefresh });
+            setIsReady(true);
+            setTimeout(() => {
+                textRef.current?.focus();
+            }, 10);
+        };
+        init();
     }, []);
 
     const handleClose = () => {
@@ -91,7 +101,7 @@ const QuickNoteApp = () => {
                     onKeyDown={handleKeyDown}
                     placeholder="Type here... (Ctrl+Enter to save, Esc to close)"
                     className="flex-1 bg-black/30 text-white p-3 rounded-lg border border-gray-800 focus:outline-none focus:border-cyan-500/50 resize-none font-sans text-sm"
-                    disabled={isSaving}
+                    disabled={isSaving || !isReady}
                 />
 
                 {/* Footer */}
@@ -101,7 +111,7 @@ const QuickNoteApp = () => {
                     </span>
                     <button
                         onClick={handleSave}
-                        disabled={isSaving || !noteContent.trim()}
+                        disabled={isSaving || !isReady || !noteContent.trim()}
                         className="bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-1.5 rounded-lg text-xs font-bold transition-all"
                     >
                         {isSaving ? "Saving..." : "Save"}
