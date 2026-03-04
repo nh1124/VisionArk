@@ -46,6 +46,53 @@ class RunService:
         return run
 
     @staticmethod
+    async def create_run_from_orchestration(
+        db: AsyncSession,
+        run_id: str,
+        user_id: str,
+        project_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        summary: Optional[str] = None,
+    ) -> AgentRun:
+        """orchestration2 engine の run_id を PK として AgentRun を作成する.
+
+        FK: agent_runs.id -> orchestration_runs.run_id
+        この関数は engine.execute_run() 呼び出し後に run_id が確定してから呼ぶこと。
+        """
+        run = AgentRun(
+            id=run_id,
+            user_id=user_id,
+            project_id=project_id,
+            session_id=session_id,
+            status="running",
+            summary=summary,
+            started_at=datetime.utcnow(),
+        )
+        db.add(run)
+        await db.flush()
+        logger.info("run.created_from_orchestration user=%s run=%s", user_id, run_id)
+        return run
+
+    @staticmethod
+    async def finish_run(
+        db: AsyncSession,
+        run_id: str,
+        status: str,
+    ) -> None:
+        """run_id で AgentRun のステータスを終端状態に更新する (user_id 不要)."""
+        from sqlalchemy import update as sa_update
+        await db.execute(
+            sa_update(AgentRun)
+            .where(AgentRun.id == run_id)
+            .values(
+                status=status,
+                finished_at=datetime.utcnow(),
+            )
+        )
+        await db.flush()
+        logger.info("run.finished run=%s status=%s", run_id, status)
+
+    @staticmethod
     async def get_run(db: AsyncSession, run_id: str, user_id: str) -> Optional[AgentRun]:
         res = await db.execute(
             select(AgentRun).where(AgentRun.id == run_id, AgentRun.user_id == user_id)
@@ -167,6 +214,86 @@ class RunService:
         await db.refresh(exc)
         logger.info("execution.updated exec=%s %s->%s", exec_id, prev, status)
         return exc
+
+    # ── Cancel / Retry ────────────────────────────────────────────────────────
+
+    @staticmethod
+    async def cancel_run(
+        db: AsyncSession,
+        run_id: str,
+        user_id: str,
+    ) -> AgentRun:
+        """Cancel a run and all its non-terminal executions."""
+        res = await db.execute(
+            select(AgentRun).where(AgentRun.id == run_id, AgentRun.user_id == user_id)
+        )
+        run = res.scalars().first()
+        if not run:
+            raise ValueError(f"AgentRun {run_id} not found")
+        if run.status in ("completed", "failed", "canceled"):
+            raise ValueError(f"Run already in terminal state: {run.status}")
+
+        # Bulk-cancel non-terminal executions
+        non_terminal = ("pending", "running", "waiting_approval")
+        await db.execute(
+            update(RunExecution)
+            .where(
+                RunExecution.run_id == run_id,
+                RunExecution.status.in_(non_terminal),
+            )
+            .values(status="failed", error_log="Run canceled by user", finished_at=datetime.utcnow())
+        )
+
+        run.status = "canceled"
+        run.finished_at = datetime.utcnow()
+        await db.commit()
+        await db.refresh(run)
+        logger.info("run.canceled user=%s run=%s", user_id, run_id)
+        return run
+
+    @staticmethod
+    async def retry_execution(
+        db: AsyncSession,
+        run_id: str,
+        exec_id: str,
+    ) -> RunExecution:
+        """Clone a failed/rejected execution as a new pending execution."""
+        res = await db.execute(
+            select(RunExecution).where(
+                RunExecution.id == exec_id,
+                RunExecution.run_id == run_id,
+            )
+        )
+        original = res.scalars().first()
+        if not original:
+            raise ValueError(f"RunExecution {exec_id} not found")
+        if original.status not in ("failed", "rejected"):
+            raise ValueError(f"Only failed/rejected executions can be retried, got: {original.status}")
+
+        new_exec = RunExecution(
+            id=str(uuid.uuid4()),
+            run_id=run_id,
+            kind=original.kind,
+            status="pending",
+            risk_level=original.risk_level,
+            payload=original.payload or {},
+            target_device_id=original.target_device_id,
+        )
+        db.add(new_exec)
+
+        # Reset run to running if it's in a terminal state
+        run_res = await db.execute(
+            select(AgentRun).where(AgentRun.id == run_id)
+        )
+        run = run_res.scalars().first()
+        if run and run.status in ("completed", "failed", "canceled"):
+            run.status = "running"
+            run.finished_at = None
+
+        await db.commit()
+        await db.refresh(new_exec)
+        logger.info("execution.retried original=%s new=%s run=%s", exec_id, new_exec.id, run_id)
+        return new_exec
 
     # ── RunApproval ───────────────────────────────────────────────────────────
 

@@ -258,8 +258,39 @@ async def list_runs(
     return [_run_to_response(r) for r in runs]
 
 
-# NOTE: /pull and /executions/{exec_id}/claim must appear before /{run_id}
-# to avoid FastAPI routing conflicts with the path parameter.
+# NOTE: /pull, /cancel, /retry, and /executions/{exec_id}/claim must appear
+# before /{run_id} to avoid FastAPI routing conflicts with the path parameter.
+
+@runs_router.post("/{run_id}/cancel", response_model=RunResponse)
+async def cancel_run(
+    run_id: str,
+    db: AsyncSession = Depends(get_async_db),
+    identity: Identity = Depends(resolve_identity),
+):
+    """Cancel a run and all its non-terminal executions."""
+    try:
+        run = await RunService.cancel_run(db=db, run_id=run_id, user_id=identity.user_id)
+        return _run_to_response(run)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@runs_router.post("/{run_id}/executions/{exec_id}/retry", response_model=ExecutionResponse)
+async def retry_execution(
+    run_id: str,
+    exec_id: str,
+    db: AsyncSession = Depends(get_async_db),
+    identity: Identity = Depends(resolve_identity),
+):
+    """Clone a failed/rejected execution as a new pending one."""
+    run = await RunService.get_run(db, run_id, identity.user_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    try:
+        new_exec = await RunService.retry_execution(db=db, run_id=run_id, exec_id=exec_id)
+        return _exec_to_response(new_exec)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @runs_router.get("/pull", response_model=List[ExecutionResponse])
 async def pull_executions_for_device(

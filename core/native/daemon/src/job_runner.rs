@@ -34,6 +34,16 @@ pub async fn run(
                         let exec_id = exec["id"].as_str().unwrap_or("").to_string();
                         let run_id = exec["run_id"].as_str().unwrap_or("").to_string();
 
+                        // Pre-claim cancel check: skip if parent run is already canceled
+                        match get_run_status(&client, &run_id).await {
+                            Ok(ref s) if s == "canceled" || s == "cancelled" => {
+                                info!("Run {} is canceled — skipping execution {}", run_id, exec_id);
+                                continue;
+                            }
+                            Err(e) => warn!("Could not check run status for {}: {} — proceeding", run_id, e),
+                            _ => {}
+                        }
+
                         // Atomic claim to prevent double-execution
                         match claim_execution(&client, &exec_id, did).await {
                             Ok(_) => info!("Claimed execution {} on device {}", exec_id, did),
@@ -141,6 +151,7 @@ enum ApprovalResult {
 }
 
 /// Poll the execution until it transitions out of waiting_approval.
+/// Also polls the parent run and aborts if the run is canceled.
 async fn wait_for_approval(
     client: &BridgeClient,
     run_id: &str,
@@ -148,6 +159,17 @@ async fn wait_for_approval(
 ) -> Result<ApprovalResult> {
     loop {
         tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+
+        // Check parent run cancellation first
+        match get_run_status(client, run_id).await {
+            Ok(ref s) if s == "canceled" || s == "cancelled" => {
+                info!("Run {} canceled during approval wait — aborting execution {}", run_id, exec_id);
+                return Ok(ApprovalResult::Rejected);
+            }
+            Err(e) => warn!("Could not check run status during approval wait: {}", e),
+            _ => {}
+        }
+
         match client
             .get_value(&format!("/api/runs/{}/executions/{}", run_id, exec_id))
             .await
@@ -168,6 +190,13 @@ async fn wait_for_approval(
 }
 
 // ── API helpers ───────────────────────────────────────────────────────────────
+
+/// Fetch the status string of a Run from the backend.
+async fn get_run_status(client: &BridgeClient, run_id: &str) -> Result<String> {
+    let val = client.get_value(&format!("/api/runs/{}", run_id)).await?;
+    let status = val["status"].as_str().unwrap_or("").to_string();
+    Ok(status)
+}
 
 async fn pull_executions(client: &BridgeClient, device_id: &str) -> Result<Vec<Value>> {
     let path = format!(

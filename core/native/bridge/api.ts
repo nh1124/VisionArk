@@ -354,6 +354,14 @@ export async function rejectExecution(run_id: string, approval_id: string): Prom
   return _json<RunApproval>(`/api/runs/${run_id}/reject/${approval_id}`, { method: "POST" })
 }
 
+export async function cancelRun(run_id: string): Promise<AgentRun> {
+  return _json<AgentRun>(`/api/runs/${run_id}/cancel`, { method: "POST" })
+}
+
+export async function retryExecution(run_id: string, exec_id: string): Promise<RunExecution> {
+  return _json<RunExecution>(`/api/runs/${run_id}/executions/${exec_id}/retry`, { method: "POST" })
+}
+
 export async function pullExecutions(params: {
   device_id: string
   limit?: number

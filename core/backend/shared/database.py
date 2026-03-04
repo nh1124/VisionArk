@@ -877,9 +877,17 @@ class NativeDevice(Base):
 #   RunApproval  … Execution に紐づく承認要求（従）
 
 class AgentRun(Base):
-    """Agent Run — 1 エージェント実行セッション."""
+    """Agent Run — 1 エージェント実行セッション.
+
+    id は orchestration_runs.run_id と 1:1 で対応する。
+    orchestration2 engine が run_id を発行し、それをそのまま PK として使う。
+    """
     __tablename__ = "agent_runs"
-    id          = Column(String(36), primary_key=True)
+    id          = Column(
+        String(36),
+        ForeignKey("orchestration_runs.run_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
     user_id     = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     project_id  = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
     agent_id    = Column(String(36), nullable=True)
@@ -1440,6 +1448,27 @@ def _run_migrations(engine):
                     ))
                     conn.commit()
                     print("✅ Migration: Widened tool_registry.description to TEXT")
+
+    # Migration: Add FK agent_runs.id -> orchestration_runs.run_id
+    if 'agent_runs' in inspector.get_table_names() and 'orchestration_runs' in inspector.get_table_names():
+        constraints = inspector.get_foreign_keys('agent_runs')
+        has_orch_fk = any(
+            c.get('referred_table') == 'orchestration_runs' for c in constraints
+        )
+        if not has_orch_fk:
+            with engine.connect() as conn:
+                try:
+                    conn.execute(text("""
+                        ALTER TABLE agent_runs
+                        ADD CONSTRAINT fk_agent_runs_orchestration_run_id
+                        FOREIGN KEY (id) REFERENCES orchestration_runs(run_id)
+                        ON DELETE CASCADE
+                        NOT VALID
+                    """))
+                    conn.commit()
+                    print("✅ Migration: Added FK agent_runs.id -> orchestration_runs.run_id")
+                except Exception as e:
+                    print(f"[WARN] Migration: FK agent_runs->orchestration_runs failed (non-fatal): {e}")
 
 
 # Global sync session maker

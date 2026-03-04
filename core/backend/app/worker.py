@@ -453,8 +453,45 @@ class Worker:
         if task_id:
             await self.manager.set_run_for_task(task_id, run_id)
 
+        # Create AgentRun projection (1:1 with orchestration_runs, best-effort)
+        native_run_id = None
+        try:
+            from domains.native.run_service import RunService
+            await RunService.create_run_from_orchestration(
+                db_session,
+                run_id=run_id,
+                user_id=user_id,
+                project_id=project_id,
+                session_id=session_id,
+                summary=message[:120] if message else "",
+            )
+            await db_session.commit()   # ensure it's visible to daemon / other sessions
+            native_run_id = run_id
+        except Exception as _e:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "AgentRun projection failed (non-fatal): %s", _e
+            )
+
         # 8. Wait for the run to complete (CancelledError propagates cleanly)
         run_response = await engine.wait_response(run_id)
+
+        # Update AgentRun status to reflect completion (best-effort)
+        if native_run_id:
+            try:
+                _orch_error = getattr(run_response, "error", None) or ""
+                _final_status = (
+                    "canceled" if _orch_error in ("Cancelled by user", "cancelled")
+                    else "completed" if run_response.completed
+                    else "failed"
+                )
+                from domains.native.run_service import RunService
+                await RunService.finish_run(db_session, native_run_id, _final_status)
+            except Exception as _e2:
+                import logging as _logging2
+                _logging2.getLogger(__name__).warning(
+                    "AgentRun finish failed (non-fatal): %s", _e2
+                )
 
         # 9. Extract response text
         response_text = ""

@@ -266,17 +266,34 @@ class RunNativeJobTool(BaseTool):
                     )
                 device_label = device.display_name
 
-            # ── Create AgentRun + RunExecution ────────────────────────────
-            run = AgentRun(
-                id=str(uuid.uuid4()),
-                user_id=ctx.user_id,
-                project_id=ctx.project_id,
-                session_id=getattr(ctx, "session_id", None),
-                status="running",
-                summary=f"{job_type.strip()} — {device_label}",
-            )
-            db.add(run)
-            await db.flush()
+            # ── Resolve or create AgentRun ────────────────────────────────
+            # Prefer the orchestration2 run_id already projected as AgentRun.
+            # This keeps native executions in the same run timeline.
+            metadata = getattr(ctx, "metadata", {}) or {}
+            orch_run_id = metadata.get("run_id") or metadata.get("orchestration_run_id")
+
+            if orch_run_id:
+                # Reuse existing AgentRun (created by worker.py projection)
+                res = await db.execute(
+                    select(AgentRun).where(AgentRun.id == orch_run_id)
+                )
+                run = res.scalars().first()
+                if run is None:
+                    # Fallback: projection may not have committed yet — create standalone
+                    orch_run_id = None
+
+            if not orch_run_id:
+                # Standalone native-only run (no orchestration context)
+                run = AgentRun(
+                    id=str(uuid.uuid4()),
+                    user_id=ctx.user_id,
+                    project_id=ctx.project_id,
+                    session_id=getattr(ctx, "session_id", None),
+                    status="running",
+                    summary=f"{job_type.strip()} — {device_label}",
+                )
+                db.add(run)
+                await db.flush()
 
             exc = RunExecution(
                 id=str(uuid.uuid4()),
