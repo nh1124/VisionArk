@@ -114,6 +114,20 @@ SKILL_DEFS: list[SkillDef] = [
         ),
     ),
     SkillDef(
+        name="native_execution",
+        description="Run Center integration & native device control",
+        tools=[
+            "list_native_devices", "run_native_job",
+            "check_execution_result", "wait_for_execution",
+        ],
+        instructions=(
+            "When to use: executing jobs on the user's local or remote native devices (e.g. file ops, window management, shell).\n"
+            "Do first: call list_native_devices to find the appropriate target device ID.\n"
+            "Do not: perform high-risk actions without user approval.\n"
+            "Output contract: return the execution result or queued status ID from the Run Center."
+        ),
+    ),
+    SkillDef(
         name="external_comms",
         description="Email, calendar, messaging & external task management (populated by integration refresh)",
         tools=[],

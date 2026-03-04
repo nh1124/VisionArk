@@ -32,6 +32,10 @@ from ...tools.library.system import (
 from ...tools.library.delegation import ListMembersTool
 from ...tools.library.writer import RecursiveWriterTool
 from ...tools.library.shell import RunSafeShellTool
+from ...tools.library.native import (
+    ListNativeDevicesTool, RunNativeJobTool,
+    CheckExecutionResultTool, WaitForExecutionTool,
+)
 
 from ...tools.library.markdown import (
     ReadMDSectionTool, InitPlanTool, UpdatePlanProgressTool,
@@ -79,6 +83,9 @@ def get_core_tools() -> list[tuple[ToolDef, Any]]:
         RecursiveWriterTool,
         # Shell
         RunSafeShellTool,
+        # Native device execution (Run Center integrated)
+        ListNativeDevicesTool, RunNativeJobTool,
+        CheckExecutionResultTool, WaitForExecutionTool,
 
         # Markdown
         ReadMDSectionTool, InitPlanTool, UpdatePlanProgressTool,
