@@ -6,7 +6,7 @@ steps:
   - id: research
     type: role
     role: planner
-    skills: [investigation]
+    skills: []
     limits:
       max_turns: 15
       max_tool_calls: 30
@@ -32,7 +32,7 @@ steps:
   - id: review
     type: role
     role: verifier
-    skills: [investigation]
+    skills: []
     limits:
       max_turns: 10
     on:
@@ -44,7 +44,7 @@ steps:
   - id: fallback_write
     type: role
     role: project
-    skills: [investigation, document_creation]
+    skills: []
     limits:
       max_turns: 20
     on:

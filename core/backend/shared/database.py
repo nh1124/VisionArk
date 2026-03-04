@@ -929,6 +929,53 @@ class RunApproval(Base):
     created_at   = Column(DateTime, default=datetime.utcnow)
 
 
+class LongRunningJob(Base):
+    """Background job for long-running operations (e.g. Gemini deep research)."""
+    __tablename__ = "long_running_jobs"
+
+    id               = Column(String(36), primary_key=True)
+    user_id          = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    project_id       = Column(String(36), nullable=True, index=True)
+    session_id       = Column(String(36), nullable=True)
+    tool_name        = Column(String(100), nullable=False)
+    job_kind         = Column(String(100), nullable=False)      # e.g. "research.deep"
+    provider         = Column(String(50), nullable=True)
+    model            = Column(String(100), nullable=True)
+    input_payload    = Column(JSON, default=dict)
+    # queued | running | completed | failed | expired | cancelled
+    status           = Column(String(30), default="queued", index=True)
+    progress         = Column(JSON, nullable=True)              # {percent, stage, last_message}
+    result_payload   = Column(JSON, nullable=True)
+    result_path      = Column(Text, nullable=True)
+    error_code       = Column(String(50), nullable=True)
+    error_message    = Column(Text, nullable=True)
+    external_ref     = Column(Text, nullable=True)              # e.g. Gemini interaction_id
+    sync_timeout_sec = Column(Integer, default=300)
+    retry_count      = Column(Integer, default=0)
+    max_retries      = Column(Integer, default=0)
+    created_at       = Column(DateTime, default=datetime.utcnow)
+    started_at       = Column(DateTime, nullable=True)
+    updated_at       = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    completed_at     = Column(DateTime, nullable=True)
+    expires_at       = Column(DateTime, nullable=True)
+
+    user = relationship("User")
+
+
+class LongRunningJobEvent(Base):
+    """Audit log events for LongRunningJob lifecycle."""
+    __tablename__ = "long_running_job_events"
+
+    id            = Column(String(36), primary_key=True)
+    job_id        = Column(String(36), ForeignKey("long_running_jobs.id"), nullable=False, index=True)
+    # created|queued|running|progress|completed|failed|cancelled|expired
+    event_type    = Column(String(30), nullable=False)
+    event_payload = Column(JSON, nullable=True)
+    created_at    = Column(DateTime, default=datetime.utcnow)
+
+    job = relationship("LongRunningJob")
+
+
 # Global engine instances (Singletons for connection pooling)
 _engine = None
 _async_engine = None

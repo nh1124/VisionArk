@@ -9,6 +9,7 @@ from ...tools.library.files import (
 )
 from ...tools.library.search import (
     GoogleSearchTool, ResearchURLTool, SearchPlacesTool, DeepResearchTool,
+    DeepResearchStatusTool, DeepResearchCancelTool,
 )
 from ...tools.library.ai import (
     GenerateImageTool, MermaidVisualizerTool, ExecuteCodeTool,
@@ -55,6 +56,7 @@ def get_core_tools() -> list[tuple[ToolDef, Any]]:
         GetFileStatTool, ImportGitHubRepoTool,
         # Search
         GoogleSearchTool, ResearchURLTool, SearchPlacesTool, DeepResearchTool,
+        DeepResearchStatusTool, DeepResearchCancelTool,
         # AI
         GenerateImageTool, MermaidVisualizerTool, ExecuteCodeTool,
         # Browser

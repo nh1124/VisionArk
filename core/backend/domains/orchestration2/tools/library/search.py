@@ -161,7 +161,8 @@ class DeepResearchTool:
             "Supports Gemini (Google Search grounding), OpenAI (o3/o4-mini-deep-research via Responses API), "
             "and Anthropic (Claude Opus). "
             "HOW TO USE: deep_research(query=\"Quantum computing trends\") "
-            "  or with options: deep_research(query=\"...\", provider=\"openai\", speed=\"fast\")"
+            "  or with options: deep_research(query=\"...\", provider=\"openai\", speed=\"fast\") "
+            "  or with timeout: deep_research(query=\"...\", timeout_sec=60) — returns a job_id if not finished in time."
         ),
         parameters={
             "type": "object",
@@ -187,6 +188,30 @@ class DeepResearchTool:
                         "'fast' uses a lightweight, lower-latency model."
                     ),
                 },
+                "timeout_sec": {
+                    "type": "integer",
+                    "description": (
+                        "Maximum seconds to wait synchronously for the result (default: 300, range: 60–3600). "
+                        "Applies to all providers. If the research is still running at timeout and "
+                        "async_on_timeout is true, a job_id is returned so you can check progress "
+                        "with deep_research_status()."
+                    ),
+                },
+                "async_on_timeout": {
+                    "type": "boolean",
+                    "description": (
+                        "When true (default), if timeout_sec is exceeded the job continues in the background "
+                        "and a job_id is returned. When false, timeout returns an error."
+                    ),
+                },
+                "result_path": {
+                    "type": "string",
+                    "description": (
+                        "Optional file path where the research result will be saved "
+                        "(relative to the user's artifacts directory). "
+                        "Defaults to 'research/<job_id>.md'."
+                    ),
+                },
             },
             "required": ["query"],
         },
@@ -195,9 +220,12 @@ class DeepResearchTool:
     # ── Public entry point ────────────────────────────────────────────────────
 
     async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
-        query    = call.arguments.get("query", "").strip()
-        provider = (call.arguments.get("provider") or "auto").lower()
-        speed    = (call.arguments.get("speed")    or "deep").lower()
+        query            = call.arguments.get("query", "").strip()
+        provider         = (call.arguments.get("provider") or "auto").lower()
+        speed            = (call.arguments.get("speed")    or "deep").lower()
+        timeout_sec      = call.arguments.get("timeout_sec", 300)
+        async_on_timeout = call.arguments.get("async_on_timeout", True)
+        result_path_arg  = call.arguments.get("result_path")
 
         # ── Validate inputs ──────────────────────────────────────────────────
         if provider not in _VALID_PROVIDERS:
@@ -206,25 +234,23 @@ class DeepResearchTool:
                 f"Invalid provider '{provider}'. Valid options: {list(_VALID_PROVIDERS)}. "
                 f"Currently configured providers with API keys: {await self._configured_providers(ctx)}.",
             )
-
         if speed not in _VALID_SPEEDS:
-            return fail(
-                call,
-                f"Invalid speed '{speed}'. Valid options: {list(_VALID_SPEEDS)}.",
-            )
+            return fail(call, f"Invalid speed '{speed}'. Valid options: {list(_VALID_SPEEDS)}.")
 
-        # ── Resolve 'auto' to the active engine ──────────────────────────────
+        try:
+            timeout_sec = max(60, min(3600, int(timeout_sec)))
+        except (TypeError, ValueError):
+            timeout_sec = 300
+
+        # ── Resolve 'auto' ────────────────────────────────────────────────────
         if provider == "auto":
             provider = (ctx.engine_kind or "gemini").lower()
-            # Normalize unknown kinds to gemini
             if provider not in ("gemini", "openai", "anthropic"):
                 provider = "gemini"
 
-        # ── Look up target model ─────────────────────────────────────────────
         model = _MODEL_MAP[(provider, speed)]
         logger.info("[DeepResearch] provider=%s speed=%s model=%s", provider, speed, model)
 
-        # ── Validate API key is present before attempting the call ───────────
         api_key = await get_api_key(ctx, provider)
         if not api_key:
             configured = await self._configured_providers(ctx)
@@ -236,56 +262,61 @@ class DeepResearchTool:
                 f"Please add an API key in Settings → AI Configuration.",
             )
 
-        # ── Dispatch to provider implementation ──────────────────────────────
+        # ── Dispatch — no job created here; jobs are created lazily on timeout ─
+        if provider == "gemini" and speed == "deep":
+            return await self._research_gemini_deep(
+                call, ctx, query, model, api_key, timeout_sec, async_on_timeout, result_path_arg
+            )
+
+        from domains.long_running.providers import do_gemini_fast, do_openai, do_anthropic
         if provider == "gemini":
-            return await self._research_gemini(call, ctx, query, model, api_key)
+            coro = do_gemini_fast(query, model, api_key)
         elif provider == "openai":
-            return await self._research_openai(call, query, model, api_key)
-        else:  # anthropic
-            return await self._research_anthropic(call, query, model, api_key)
+            coro = do_openai(query, model, api_key)
+        else:
+            coro = do_anthropic(query, model, api_key)
 
-    # ── Gemini ────────────────────────────────────────────────────────────────
+        return await self._run_with_timeout(
+            call, ctx, provider, query, model, coro, timeout_sec, async_on_timeout, result_path_arg
+        )
 
-    async def _research_gemini(
+    # ── Gemini deep — poll Interactions API, create job lazily on timeout ─────
+
+    async def _research_gemini_deep(
         self,
         call: ToolCallRef,
         ctx: ExecutionContext,
         query: str,
         model: str,
         api_key: str,
+        timeout_sec: int = 300,
+        async_on_timeout: bool = True,
+        result_path_arg: str | None = None,
     ) -> ToolResult:
-        """Route to Interactions API (deep) or generate_content (fast).
+        """Gemini Deep Research via Interactions API.
 
-        deep: Gemini Deep Research requires the Interactions API — it is NOT
-        compatible with models.generate_content.  The call is started in
-        background mode and polled until completion.
-
-        fast: Regular Gemini model (gemini-3-flash) via generate_content
-        with Google Search grounding.
+        Sync phase: poll for up to timeout_sec.
+          - Completes in time → save file, return text (no job created).
+          - Timeout + async_on_timeout=True → create job(external_ref=interaction_id)
+            → executor resumes polling via DeepResearchJobHandler.
+          - Timeout + async_on_timeout=False → return error (no job created).
         """
-        speed = call.arguments.get("speed", "deep").lower()
-        if speed == "deep":
-            return await self._research_gemini_deep(call, query, model, api_key)
-        else:
-            return await self._research_gemini_fast(call, query, model, api_key)
+        import json as _json
+        import uuid
+        from domains.orchestration2.tools.base import get_db, get_user_id
+        from domains.long_running.services.job_service import LongRunningJobService
+        from domains.long_running.models import JobCreateOptions
+        from domains.long_running.utils import save_result_to_file
 
-    async def _research_gemini_deep(
-        self,
-        call: ToolCallRef,
-        query: str,
-        model: str,
-        api_key: str,
-    ) -> ToolResult:
-        """Gemini Deep Research via Interactions API with background polling.
+        db      = get_db(ctx)
+        user_id = get_user_id(ctx)
 
-        Official pattern from https://ai.google.dev/gemini-api/docs/deep-research
-        """
         try:
             from google import genai
 
             client = genai.Client(api_key=api_key)
 
-            # Start background interaction (run sync call in thread)
+            # Start the interaction on Google's servers (runs asynchronously there)
             interaction = await asyncio.to_thread(
                 client.interactions.create,
                 input=query,
@@ -298,16 +329,13 @@ class DeepResearchTool:
                 interaction_id, model,
             )
 
-            # Poll until completed or timeout
+            # ── Poll until done or timeout ────────────────────────────────────
             elapsed = 0
-            while elapsed < _GEMINI_POLL_TIMEOUT_SEC:
+            while elapsed < timeout_sec:
                 await asyncio.sleep(_GEMINI_POLL_INTERVAL_SEC)
                 elapsed += _GEMINI_POLL_INTERVAL_SEC
 
-                interaction = await asyncio.to_thread(
-                    client.interactions.get,
-                    interaction_id,
-                )
+                interaction = await asyncio.to_thread(client.interactions.get, interaction_id)
                 status = interaction.status
                 logger.debug(
                     "[DeepResearch/Gemini] poll id=%s status=%s elapsed=%ds",
@@ -315,189 +343,167 @@ class DeepResearchTool:
                 )
 
                 if status == "completed":
-                    # outputs[-1] contains the final research text
                     outputs = getattr(interaction, "outputs", []) or []
                     text = outputs[-1].text if outputs else ""
                     if not text:
                         return fail(
                             call,
-                            f"Deep research with Gemini ({model}) completed but returned no text.",
+                            f"Gemini ({model}) completed but returned no text.",
                         )
+                    # Sync success: save file directly, no job needed
+                    result_path = await save_result_to_file(
+                        user_id, str(uuid.uuid4()), text,
+                        sub_dir="research", filename=result_path_arg,
+                    )
+                    logger.info(
+                        "[DeepResearch/Gemini] sync completed interaction=%s result=%s",
+                        interaction_id, result_path,
+                    )
                     return make_result(call, text)
 
                 elif status == "failed":
                     error = getattr(interaction, "error", "Unknown error")
-                    return fail(
-                        call,
-                        f"Deep research with Gemini ({model}) failed during execution: {error}.",
-                    )
+                    return fail(call, f"Gemini ({model}) failed during execution: {error}.")
 
-            # Timed out
-            return fail(
-                call,
-                f"Deep research with Gemini ({model}) timed out after "
-                f"{_GEMINI_POLL_TIMEOUT_SEC}s (interaction={interaction_id}).",
-            )
-
-        except Exception as e:
-            return fail(
-                call,
-                f"Deep research with Gemini ({model}) failed: {e}. "
-                "Check that your Gemini API key is valid and that the model is available for your account.",
-            )
-
-    async def _research_gemini_fast(
-        self,
-        call: ToolCallRef,
-        query: str,
-        model: str,
-        api_key: str,
-    ) -> ToolResult:
-        """Fast Gemini research via generate_content + Google Search grounding."""
-        try:
-            from google.genai import Client, types
-
-            client = Client(api_key=api_key, http_options={"api_version": "v1alpha"})
-            response = client.models.generate_content(
-                model=model,
-                contents=query,
-                config=types.GenerateContentConfig(
-                    tools=[
-                        types.Tool(google_search=types.GoogleSearch()),
-                        {"url_context": {}},
-                    ]
-                ),
-            )
-            text = response.text or ""
-            if not text:
+            # ── Timeout reached ───────────────────────────────────────────────
+            if not async_on_timeout:
                 return fail(
                     call,
-                    f"Deep research with Gemini/{model} returned no content.",
+                    f"Gemini ({model}) timed out after {timeout_sec}s "
+                    f"(interaction={interaction_id}).",
                 )
-            return make_result(call, text)
-        except Exception as e:
-            return fail(
-                call,
-                f"Deep research with Gemini/{model} failed: {e}. "
-                "Check that your Gemini API key is valid and that the model is available for your account.",
-            )
 
-    # ── OpenAI ────────────────────────────────────────────────────────────────
-
-    async def _research_openai(
-        self,
-        call: ToolCallRef,
-        query: str,
-        model: str,
-        api_key: str,
-    ) -> ToolResult:
-        """Use OpenAI Responses API with web_search tool for deep research.
-
-        o3-deep-research / o4-mini-deep-research are purpose-built for multi-step
-        research and require at least one data source (web_search here).
-        Falls back to gpt-4o + web_search_preview if the deep-research model is
-        unavailable (e.g. Tier 1 accounts).
-        """
-        try:
-            from openai import AsyncOpenAI
-
-            client = AsyncOpenAI(api_key=api_key, timeout=600.0)
-
-            async def _call_responses(m: str) -> str:
-                response = await client.responses.create(
-                    model=m,
-                    input=query,
-                    tools=[{"type": "web_search_preview"}],
-                )
-                # Extract final message text from output items
-                parts: list[str] = []
-                for item in response.output:
-                    if getattr(item, "type", None) == "message":
-                        for content in getattr(item, "content", []):
-                            text = getattr(content, "text", None)
-                            if text:
-                                parts.append(text)
-                return "\n\n".join(parts)
-
-            # Try the requested deep-research model first
+            # Create job NOW — executor will resume polling the running interaction
             try:
-                text = await _call_responses(model)
-            except Exception as primary_err:
-                # If the model itself is unavailable (e.g. model_not_found),
-                # fall back to gpt-4o + web_search_preview
-                logger.warning(
-                    "[DeepResearch] OpenAI model '%s' unavailable (%s), retrying with '%s'",
-                    model, primary_err, _OPENAI_FALLBACK_MODEL,
+                opts = JobCreateOptions(
+                    result_path=result_path_arg,
+                    external_ref=interaction_id,
+                    project_id=ctx.metadata.get("project_id"),
+                    session_id=ctx.metadata.get("session_id"),
                 )
-                try:
-                    text = await _call_responses(_OPENAI_FALLBACK_MODEL)
-                    model = _OPENAI_FALLBACK_MODEL   # update for logging
-                except Exception as fallback_err:
-                    return fail(
-                        call,
-                        f"Deep research with OpenAI failed. "
-                        f"Primary model '{model}' error: {primary_err}. "
-                        f"Fallback model '{_OPENAI_FALLBACK_MODEL}' error: {fallback_err}. "
-                        "Ensure your OpenAI API key is valid and has sufficient tier access.",
-                    )
+                job = await LongRunningJobService.create_job(
+                    db=db,
+                    user_id=user_id,
+                    tool_name="deep_research",
+                    job_kind="research.gemini.deep",
+                    input_payload={"query": query, "model": model},
+                    provider="gemini",
+                    model=model,
+                    options=opts,
+                )
+            except Exception as exc:
+                logger.error("[DeepResearch/Gemini] failed to create background job: %s", exc)
+                return fail(call, f"Research timed out and background job creation failed: {exc}")
 
-            if not text:
-                return fail(call, f"Deep research with OpenAI ({model}) returned no content.")
-
-            logger.info("[DeepResearch] OpenAI responded with model=%s", model)
-            return make_result(call, text)
+            logger.info(
+                "[DeepResearch/Gemini] timeout, job %s created for background (interaction=%s)",
+                job.id, interaction_id,
+            )
+            return make_result(
+                call,
+                _json.dumps({
+                    "status": "running",
+                    "job_id": job.id,
+                    "result_path": result_path_arg,
+                    "message": (
+                        "Research is still in progress. "
+                        f"Use deep_research_status(job_id=\"{job.id}\") to check progress."
+                    ),
+                }),
+            )
 
         except Exception as e:
             return fail(
                 call,
-                f"Deep research with OpenAI ({model}) failed: {e}. "
-                "Check that your OpenAI API key is valid and that the Responses API is accessible.",
+                f"Gemini ({model}) failed: {e}. "
+                "Check that your Gemini API key is valid and the model is available.",
             )
 
-    # ── Anthropic ────────────────────────────────────────────────────────────
+    # ── All other providers — run inline, create job lazily on timeout ────────
 
-    async def _research_anthropic(
+    async def _run_with_timeout(
         self,
         call: ToolCallRef,
+        ctx: ExecutionContext,
+        provider: str,
         query: str,
         model: str,
-        api_key: str,
+        coro,
+        timeout_sec: int,
+        async_on_timeout: bool,
+        result_path_arg: str | None,
     ) -> ToolResult:
-        """Use Anthropic Messages API for research.
+        """Run a provider coroutine with a timeout.
 
-        Note: Anthropic does not currently provide a native web search tool via
-        its public API. This implementation uses the top Claude model with a
-        research-focused system prompt. Results are based on the model's training
-        data and do not include live web access.
+        Sync success → save file, return text (no job created).
+        Timeout + async_on_timeout=True → create job → ResearchInlineHandler re-runs from scratch.
+        Timeout + async_on_timeout=False → return error (no job created).
         """
-        try:
-            import anthropic
+        import json as _json
+        import uuid
+        from domains.orchestration2.tools.base import get_db, get_user_id
+        from domains.long_running.services.job_service import LongRunningJobService
+        from domains.long_running.models import JobCreateOptions
+        from domains.long_running.utils import save_result_to_file
 
-            client = anthropic.AsyncAnthropic(api_key=api_key)
-            response = await client.messages.create(
-                model=model,
-                max_tokens=4096,
-                system=(
-                    "You are an expert research analyst. Conduct thorough, structured research "
-                    "on the given topic. Provide detailed analysis, key findings, relevant context, "
-                    "and actionable insights. Clearly note the knowledge cutoff date and any "
-                    "limitations of your response (e.g., no live web access)."
-                ),
-                messages=[{"role": "user", "content": query}],
+        db      = get_db(ctx)
+        user_id = get_user_id(ctx)
+
+        try:
+            text, _ = await asyncio.wait_for(coro, timeout=timeout_sec)
+        except asyncio.TimeoutError:
+            if not async_on_timeout:
+                return fail(call, f"Deep research timed out after {timeout_sec}s.")
+            # Create job — handler will re-run the query from scratch in background
+            try:
+                opts = JobCreateOptions(
+                    result_path=result_path_arg,
+                    project_id=ctx.metadata.get("project_id"),
+                    session_id=ctx.metadata.get("session_id"),
+                )
+                job = await LongRunningJobService.create_job(
+                    db=db,
+                    user_id=user_id,
+                    tool_name="deep_research",
+                    job_kind="research.inline",
+                    input_payload={"query": query, "model": model},
+                    provider=provider,
+                    model=model,
+                    options=opts,
+                )
+            except Exception as exc:
+                logger.error("[DeepResearch] failed to create background job: %s", exc)
+                return fail(call, f"Research timed out and background job creation failed: {exc}")
+
+            logger.info(
+                "[DeepResearch] timeout, job %s created for background provider=%s",
+                job.id, provider,
             )
-            text = ""
-            for block in response.content:
-                if hasattr(block, "text"):
-                    text += block.text
-            if not text:
-                return fail(call, f"Deep research with Anthropic ({model}) returned no content.")
-            return make_result(call, text)
-        except Exception as e:
-            return fail(
+            return make_result(
                 call,
-                f"Deep research with Anthropic ({model}) failed: {e}. "
-                "Check that your Anthropic API key is valid and the model identifier is correct.",
+                _json.dumps({
+                    "status": "running",
+                    "job_id": job.id,
+                    "result_path": result_path_arg,
+                    "message": (
+                        "Research is still in progress. "
+                        f"Use deep_research_status(job_id=\"{job.id}\") to check progress."
+                    ),
+                }),
             )
+        except Exception as exc:
+            return fail(call, str(exc))
+
+        if not text:
+            return fail(call, "Deep research returned no content.")
+
+        # Sync success: save file, no job needed
+        result_path = await save_result_to_file(
+            user_id, str(uuid.uuid4()), text,
+            sub_dir="research", filename=result_path_arg,
+        )
+        logger.info("[DeepResearch] sync completed provider=%s result=%s", provider, result_path)
+        return make_result(call, text)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -509,3 +515,108 @@ class DeepResearchTool:
             if key:
                 result.append(p)
         return result
+
+
+class DeepResearchStatusTool:
+    """Check the status and progress of a background deep research job."""
+
+    definition = ToolDef(
+        name="deep_research_status",
+        description=(
+            "Check the status of a background deep_research job. "
+            "Use this after deep_research() returns a job_id. "
+            "HOW TO USE: deep_research_status(job_id=\"<uuid>\")"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "job_id": {
+                    "type": "string",
+                    "description": "The job_id returned by deep_research() when async_on_timeout is true.",
+                },
+            },
+            "required": ["job_id"],
+        },
+    )
+
+    async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
+        import json as _json
+        from domains.orchestration2.tools.base import get_db, get_user_id
+        from domains.long_running.services.job_service import LongRunningJobService
+
+        job_id  = call.arguments.get("job_id", "").strip()
+        db      = get_db(ctx)
+        user_id = get_user_id(ctx)
+
+        if not job_id:
+            return fail(call, "job_id is required.")
+
+        job = await LongRunningJobService.get_job(db, job_id, user_id)
+        if not job:
+            return fail(call, f"Job '{job_id}' not found or access denied.")
+
+        data: dict = {
+            "job_id": job.id,
+            "status": job.status,
+            "tool_name": job.tool_name,
+            "job_kind": job.job_kind,
+            "progress": job.progress,
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+            "started_at": job.started_at.isoformat() if job.started_at else None,
+            "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+            "result_path": job.result_path,
+        }
+
+        if job.status == "completed":
+            data["result_summary"] = (
+                job.result_payload.get("text", "")[:500] if job.result_payload else None
+            )
+        elif job.status in ("failed", "cancelled"):
+            data["error_code"]    = job.error_code
+            data["error_message"] = job.error_message
+
+        return make_result(call, _json.dumps(data, ensure_ascii=False))
+
+
+class DeepResearchCancelTool:
+    """Cancel a running background deep research job."""
+
+    definition = ToolDef(
+        name="deep_research_cancel",
+        description=(
+            "Cancel a background deep_research job that is still running. "
+            "HOW TO USE: deep_research_cancel(job_id=\"<uuid>\")"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "job_id": {
+                    "type": "string",
+                    "description": "The job_id to cancel.",
+                },
+            },
+            "required": ["job_id"],
+        },
+    )
+
+    async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
+        import json as _json
+        from domains.orchestration2.tools.base import get_db, get_user_id
+        from domains.long_running.services.job_service import LongRunningJobService
+
+        job_id  = call.arguments.get("job_id", "").strip()
+        db      = get_db(ctx)
+        user_id = get_user_id(ctx)
+
+        if not job_id:
+            return fail(call, "job_id is required.")
+
+        cancelled = await LongRunningJobService.cancel_job(db, job_id, user_id)
+        if cancelled:
+            return make_result(call, _json.dumps({"status": "cancelled", "job_id": job_id}))
+        else:
+            return fail(
+                call,
+                f"Could not cancel job '{job_id}'. "
+                "It may not exist, be already completed/failed, or not belong to you.",
+            )

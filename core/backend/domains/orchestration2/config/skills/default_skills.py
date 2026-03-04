@@ -6,6 +6,7 @@ SKILL_DEFS: list[SkillDef] = [
         description="Research & information gathering",
         tools=[
             "google_search", "research_url", "search_places", "deep_research",
+            "deep_research_status", "deep_research_cancel",
             "read_file_chunk", "list_files", "get_file_stat", "read_md_section",
             "list_notes", "read_note",
             "get_project_rules", "get_project_health",

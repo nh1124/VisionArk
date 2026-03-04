@@ -4,7 +4,7 @@ steps:
   - id: plan
     type: role
     role: planner
-    skills: [investigation]
+    skills: []
     limits:
       max_turns: 10
       max_output_tokens: 1024
@@ -16,7 +16,7 @@ steps:
   - id: execute
     type: role
     role: project
-    skills: [investigation, document_creation, file_management, operation]
+    skills: []
     limits:
       max_turns: 25
       max_tool_calls: 50
@@ -29,7 +29,7 @@ steps:
   - id: verify
     type: role
     role: verifier
-    skills: [investigation]
+    skills: []
     limits:
       max_turns: 5
       max_tool_calls: 10

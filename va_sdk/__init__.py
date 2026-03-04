@@ -2,7 +2,7 @@
 # A centralized API for building integrations without hacking the core.
 
 # Re-export Registries
-from .registry import task_registry, aes_registry, reply_registry, sync_registry
+from .registry import task_registry, aes_registry, reply_registry, sync_registry, lrj_registry
 
 # Re-export Common Models & Tools
 from shared.database import TaskType, ServiceRegistry, ExternalIdentity, User, AsyncSessionLocal
@@ -15,6 +15,7 @@ __all__ = [
     "aes_registry",
     "reply_registry",
     "sync_registry",
+    "lrj_registry",
     "IntegrationContext",
     "TaskType",
     "ServiceRegistry", 

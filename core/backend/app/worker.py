@@ -33,11 +33,15 @@ def make_json_serializable(obj):
 class Worker:
     def __init__(self):
         from app.config import settings
+        import domains.long_running.handlers  # triggers @register_lrj_handler decorators  # noqa: F401
+        from domains.long_running.executor.job_executor import LongRunningJobExecutor
         self.manager = QueueManager()
         self.dispatcher = AESDispatcher(AsyncSessionLocal)
         self.semaphore = asyncio.Semaphore(settings.max_worker_concurrency)
         # Maps task_id → running asyncio.Task for cancel support
         self._running_tasks: Dict[str, asyncio.Task] = {}
+        # Long-running job executor (background polling, handlers self-registered via lrj_registry)
+        self.long_running_executor = LongRunningJobExecutor()
 
     async def wait_for_database(self):
         """Wait for the database to be ready and tables to exist"""
@@ -88,6 +92,11 @@ class Worker:
 
         # Start cancel watcher: polls Redis and cancels tasks marked as cancelled
         asyncio.create_task(self._cancel_watcher())
+
+        # Start long-running job executor (background polling for research.deep etc.)
+        from shared.database import get_async_engine
+        self.long_running_executor.start(get_async_engine())
+        asyncio.create_task(self.long_running_executor.run_forever())
 
         while True:
             try:

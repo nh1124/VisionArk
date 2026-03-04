@@ -5,3 +5,4 @@ from . import automation, notifications
 from . import native
 from . import definitions
 from . import llm
+from . import long_running_jobs
