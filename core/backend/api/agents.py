@@ -2078,35 +2078,28 @@ async def list_available_skills(
     If the user has no skills yet (e.g. registered before per-user seeding was
     introduced), seeds them on demand so the page always shows skill options.
     """
+    # Always refresh builtin skills from SKILL_DEFS so that any change to name,
+    # description, tools, or instructions is immediately reflected without needing
+    # a manual migration or server restart.
+    try:
+        from domains.orchestration2.bootstrap.definition_refresh_service import refresh_core_sync
+        from shared.database import get_engine
+        import asyncio
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, refresh_core_sync, get_engine(), identity.user_id)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Skill refresh failed for user %s: %s", identity.user_id, exc
+        )
+
     result = await db.execute(
         select(SkillRegistry)
         .where(SkillRegistry.user_id == identity.user_id)
+        .where(SkillRegistry.is_active == True)  # noqa: E712
         .order_by(SkillRegistry.name)
     )
     skills = result.scalars().all()
-
-    if not skills:
-        # Lazy seed: user pre-dates per-user skill seeding; run it now.
-        try:
-            from shared.seed import seed_user_definitions
-            from shared.database import get_engine
-            import asyncio
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None, seed_user_definitions, get_engine(), identity.user_id
-            )
-            # Re-query after seeding
-            result2 = await db.execute(
-                select(SkillRegistry)
-                .where(SkillRegistry.user_id == identity.user_id)
-                .order_by(SkillRegistry.name)
-            )
-            skills = result2.scalars().all()
-        except Exception as exc:
-            import logging
-            logging.getLogger(__name__).warning(
-                "Lazy skill seeding failed for user %s: %s", identity.user_id, exc
-            )
 
     return {
         "skills": [
