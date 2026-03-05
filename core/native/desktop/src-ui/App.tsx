@@ -331,7 +331,7 @@ function MainApp() {
 
         <main className="flex-1 min-w-0 flex overflow-hidden">
           <div className="flex-1 overflow-hidden">
-            {view === "dashboard" && <DashboardView />}
+            {view === "dashboard" && <DashboardView onNavigate={handleNavChange} />}
             {view === "run_center" && <RunCenterView />}
             {view === "notes" && <NotesView onOpenProject={(id) => handleNavChange("chat", id)} />}
             {view === "cron" && <CronTasksView />}

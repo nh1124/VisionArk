@@ -215,6 +215,10 @@ export async function logout(): Promise<void> {
     await clearTokens()
 }
 
+export async function getSettings(): Promise<any> {
+    return _apiJson<any>("/api/settings")
+}
+
 // ─── Projects ──────────────────────────────────────────────────────────────────
 
 export interface Project {
@@ -227,6 +231,43 @@ export interface Project {
 export async function listProjects(): Promise<Project[]> {
     const res = await _apiJson<{ projects: Project[] }>("/api/agents/project/list")
     return res.projects
+}
+
+export interface ProjectWithProgress extends Project {
+    completed_tasks: number
+    total_tasks: number
+    progress: number
+}
+
+export async function listProjectsWithProgress(): Promise<ProjectWithProgress[]> {
+    const projects = await listProjects()
+    const allTasks = await listLBSTasks({ active: true })
+    const overdueTasks = await getOverdueTasks()
+
+    // Combine or use active tasks to calculate progress
+    // For simplicity, we'll aggregate by context
+    const taskMap = new Map<string, { done: number, total: number }>()
+
+    const processTask = (t: LBSTask) => {
+        const ctx = t.context || "inbox"
+        if (!taskMap.has(ctx)) taskMap.set(ctx, { done: 0, total: 0 })
+        const stats = taskMap.get(ctx)!
+        stats.total++
+        if (t.status === "done") stats.done++
+    }
+
+    allTasks.forEach(processTask)
+    overdueTasks.forEach(processTask)
+
+    return projects.map(p => {
+        const stats = taskMap.get(p.name) || { done: 0, total: 0 }
+        return {
+            ...p,
+            completed_tasks: stats.done,
+            total_tasks: stats.total,
+            progress: stats.total > 0 ? (stats.done / stats.total) * 100 : 0
+        }
+    })
 }
 
 // ─── Sessions ──────────────────────────────────────────────────────────────────
@@ -308,6 +349,8 @@ export async function sendChat(
     return res.json() as Promise<{ task_id: string; session_id?: string }>
 }
 
+export { listRuns } from "../../../bridge/api"
+
 // ─── Task Polling ──────────────────────────────────────────────────────────────
 
 export async function getTaskStatus(
@@ -331,6 +374,24 @@ export async function getFileToken(): Promise<string> {
 
 export async function getDashboard(): Promise<any> {
     return _apiJson<any>("/api/lbs/dashboard")
+}
+
+export interface Memory {
+    id: string
+    content: string
+    memory_type: string
+    created_at: string
+}
+
+export async function getRecentMemories(limit = 5): Promise<Memory[]> {
+    // Attempt to fetch from knowledge_core if possible, otherwise return empty
+    try {
+        const res = await _apiJson<{ memories: Memory[] }>(`/api/lbs/memories?limit=${limit}`)
+        return res.memories || []
+    } catch {
+        // Fallback to empty if not implemented on backend yet
+        return []
+    }
 }
 
 // ─── LBS Tasks ─────────────────────────────────────────────────────────────────
