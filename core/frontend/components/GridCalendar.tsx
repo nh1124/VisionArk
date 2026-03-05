@@ -31,9 +31,10 @@ interface GridCalendarProps {
     month: Date;
     onDayClick?: (date: string) => void;
     includeCompleted?: boolean;
+    refreshKey?: number;
 }
 
-export default function GridCalendar({ month, onDayClick, includeCompleted = true }: GridCalendarProps) {
+export default function GridCalendar({ month, onDayClick, includeCompleted = true, refreshKey }: GridCalendarProps) {
     const { calendarTasks, rescheduleTask, fetchMonthTasks, activeProject } = useTaskStore();
 
     // Fetch data for the current month view
@@ -41,7 +42,7 @@ export default function GridCalendar({ month, onDayClick, includeCompleted = tru
         const start = format(startOfWeek(startOfMonth(month)), 'yyyy-MM-dd');
         const end = format(endOfWeek(endOfMonth(month)), 'yyyy-MM-dd');
         fetchMonthTasks(start, end);
-    }, [month, fetchMonthTasks]);
+    }, [month, fetchMonthTasks, refreshKey]);
 
     // Filter tasks if includeCompleted is false or if a project is selected
     const displayTasksForCalendar = useMemo(() => {

@@ -224,6 +224,7 @@ export default function DesktopTasksView({ logic }: { logic: TasksLogic }) {
                                     setIsDayDetailsOpen(true);
                                 }}
                                 includeCompleted={true}
+                                refreshKey={refreshKey}
                             />
                             {isDayDetailsOpen && (
                                 <>

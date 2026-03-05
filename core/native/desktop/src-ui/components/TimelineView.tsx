@@ -50,11 +50,12 @@ function timeDuration(start: string | null, end: string | null): number {
 interface Props {
   targetDate: string
   onTaskClick?: (task: LBSTask & { due_date: string }) => void
+  refreshKey?: number
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function TimelineView({ targetDate, onTaskClick }: Props) {
+export default function TimelineView({ targetDate, onTaskClick, refreshKey }: Props) {
   const today = getLocalDate()
   const [schedule, setSchedule] = useState<LBSScheduleDay[]>([])
   const [loading, setLoading] = useState(false)
@@ -66,9 +67,9 @@ export default function TimelineView({ targetDate, onTaskClick }: Props) {
     setLoading(true)
     getSchedule(weekDays[0], weekDays[6])
       .then(d => setSchedule(Array.isArray(d) ? d : []))
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => setLoading(false))
-  }, [weekDays])
+  }, [weekDays, refreshKey])
 
   // Scroll to 8am on mount
   useEffect(() => {
@@ -128,7 +129,7 @@ export default function TimelineView({ targetDate, onTaskClick }: Props) {
                   {allDay.map(t => (
                     <div
                       key={t.task_id}
-                      onClick={() => onTaskClick?.({ ...t, active: true, due_date: ds })}
+                      onClick={() => onTaskClick?.({ ...t, base_load_score: t.load, rule_type: "ONCE", active: true, due_date: ds })}
                       className="text-[9px] font-bold px-1.5 py-1 rounded-md border border-white/5 bg-gray-900/80 cursor-pointer hover:bg-white/10 transition-colors truncate"
                       style={{ borderLeft: `2px solid ${spokeColor(t.context)}` }}
                       title={t.task_name}
@@ -177,13 +178,13 @@ export default function TimelineView({ targetDate, onTaskClick }: Props) {
               return (
                 <div key={ds} className="relative px-0.5 py-0.5">
                   {timed.map(t => {
-                    const top    = timeToY(t.start_time)
+                    const top = timeToY(t.start_time)
                     const height = timeDuration(t.start_time, t.end_time)
-                    const color  = spokeColor(t.context)
+                    const color = spokeColor(t.context)
                     return (
                       <div
                         key={t.task_id}
-                        onClick={() => onTaskClick?.({ ...t, active: true, due_date: ds })}
+                        onClick={() => onTaskClick?.({ ...t, base_load_score: t.load, rule_type: "ONCE", active: true, due_date: ds })}
                         style={{
                           top: top + 2,
                           height: height - 4,

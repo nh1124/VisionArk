@@ -27,19 +27,9 @@ export default function UnifiedTasksPage() {
         setIsDayDetailsOpen,
         fetchTasks,
         fetchAllTasks,
-        fetchMonthTasks
+        fetchMonthTasks,
+        handleRefresh
     } = logic;
-
-    // Shared refresh logic for modals
-    const handleRefreshData = () => {
-        fetchTasks(targetDate);
-        fetchAllTasks();
-        // Refetch month tasks to update "Planned" view
-        const start = new Date();
-        const end = new Date();
-        end.setDate(start.getDate() + 30);
-        fetchMonthTasks(getLocalDateString(start), getLocalDateString(end));
-    };
 
     return (
         <div className="flex-1 flex flex-col min-h-0 bg-gray-950">
@@ -60,22 +50,22 @@ export default function UnifiedTasksPage() {
                         setIsDayDetailsOpen(true);
                     }
                 }}
-                onSave={handleRefreshData}
-                onDelete={handleRefreshData}
+                onSave={handleRefresh}
+                onDelete={handleRefresh}
                 availableProjects={availableProjects}
             />
 
             <TaskCreateModal
                 isOpen={createModalOpen}
                 onClose={() => setCreateModalOpen(false)}
-                onTaskCreated={handleRefreshData}
+                onTaskCreated={handleRefresh}
                 availableProjects={availableProjects}
             />
 
             <TaskImportModal
                 isOpen={importModalOpen}
                 onClose={() => setImportModalOpen(false)}
-                onImportComplete={handleRefreshData}
+                onImportComplete={handleRefresh}
                 existingProjects={availableProjects}
             />
         </div>

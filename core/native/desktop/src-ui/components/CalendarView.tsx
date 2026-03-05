@@ -19,13 +19,13 @@ function spokeColor(name?: string | null) {
 }
 
 function monthStart(d: Date) { return new Date(d.getFullYear(), d.getMonth(), 1) }
-function monthEnd(d: Date)   { return new Date(d.getFullYear(), d.getMonth() + 1, 0) }
+function monthEnd(d: Date) { return new Date(d.getFullYear(), d.getMonth() + 1, 0) }
 
 function gridDays(month: Date): Date[] {
   const start = monthStart(month)
-  const end   = monthEnd(month)
+  const end = monthEnd(month)
   const firstDow = start.getDay()   // 0=Sun
-  const lastDow  = end.getDay()
+  const lastDow = end.getDay()
   const days: Date[] = []
   // pad before
   for (let i = firstDow; i > 0; i--) {
@@ -46,11 +46,12 @@ function gridDays(month: Date): Date[] {
 
 interface Props {
   onTaskClick?: (task: LBSTask & { due_date: string }) => void
+  refreshKey?: number
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function CalendarView({ onTaskClick }: Props) {
+export default function CalendarView({ onTaskClick, refreshKey }: Props) {
   const today = getLocalDate()
   const [month, setMonth] = useState(() => {
     const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1)
@@ -66,14 +67,14 @@ export default function CalendarView({ onTaskClick }: Props) {
     try {
       // Fetch the full visible grid range
       const start = getLocalDate(days[0])
-      const end   = getLocalDate(days[days.length - 1])
-      const data  = await getSchedule(start, end)
+      const end = getLocalDate(days[days.length - 1])
+      const data = await getSchedule(start, end)
       setSchedule(data)
     } catch { /* ignore */ }
     finally { setLoading(false) }
   }, [days])
 
-  useEffect(() => { fetchMonth() }, [fetchMonth])
+  useEffect(() => { fetchMonth() }, [fetchMonth, refreshKey])
 
   const tasksByDay = useMemo(() => {
     const map: Record<string, LBSScheduleDay["tasks"]> = {}
@@ -83,7 +84,7 @@ export default function CalendarView({ onTaskClick }: Props) {
 
   function prevMonth() { setMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1)) }
   function nextMonth() { setMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1)) }
-  function goToday()  { setMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1)) }
+  function goToday() { setMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1)) }
 
   const dayDetailsTasks = dayDetails ? (tasksByDay[dayDetails] ?? []) : []
   const monthLabel = month.toLocaleDateString("en-US", { month: "long", year: "numeric" })
@@ -113,12 +114,12 @@ export default function CalendarView({ onTaskClick }: Props) {
 
           {/* Day cells */}
           {days.map(d => {
-            const ds     = getLocalDate(d)
-            const isToday    = ds === today
-            const inMonth    = isCurrentMonth(d)
-            const dayTasks   = tasksByDay[ds] ?? []
-            const doneCnt    = dayTasks.filter(t => t.status === "done" || t.status === "completed").length
-            const totalCnt   = dayTasks.length
+            const ds = getLocalDate(d)
+            const isToday = ds === today
+            const inMonth = isCurrentMonth(d)
+            const dayTasks = tasksByDay[ds] ?? []
+            const doneCnt = dayTasks.filter(t => t.status === "done" || t.status === "completed").length
+            const totalCnt = dayTasks.length
 
             return (
               <div
@@ -198,11 +199,11 @@ export default function CalendarView({ onTaskClick }: Props) {
               ) : (
                 dayDetailsTasks.map(t => {
                   const isDone = t.status === "done" || t.status === "completed"
-                  const color  = spokeColor(t.context)
+                  const color = spokeColor(t.context)
                   return (
                     <div
                       key={t.task_id}
-                      onClick={() => { onTaskClick?.({ ...t, active: true, due_date: dayDetails }); setDayDetails(null) }}
+                      onClick={() => { onTaskClick?.({ ...t, base_load_score: t.load, rule_type: "ONCE", active: true, due_date: dayDetails }); setDayDetails(null) }}
                       className="group bg-gray-950/60 border border-gray-800/40 rounded-xl p-3 hover:bg-gray-900 hover:border-gray-700 transition-all cursor-pointer"
                     >
                       <div className="flex items-center gap-2.5 mb-1.5">

@@ -14,9 +14,9 @@ import {
 } from "../lib/api"
 import type { TaskFilter } from "./NavSidebar"
 import TaskEditPanel from "./TaskEditPanel"
-import CalendarView  from "./CalendarView"
-import TimelineView  from "./TimelineView"
-import ImportModal   from "./ImportModal"
+import CalendarView from "./CalendarView"
+import TimelineView from "./TimelineView"
+import ImportModal from "./ImportModal"
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
@@ -29,10 +29,10 @@ type ViewMode = "list" | "calendar" | "timeline"
 
 const LOAD_COLORS = { low: "text-emerald-400", medium: "text-yellow-400", high: "text-orange-400", critical: "text-red-400" }
 function loadLabel(score: number) {
-  if (score <= 1) return { color: LOAD_COLORS.low,      label: "L"  }
-  if (score <= 2) return { color: LOAD_COLORS.medium,   label: "M"  }
-  if (score <= 3) return { color: LOAD_COLORS.high,     label: "H"  }
-  return              { color: LOAD_COLORS.critical, label: "!!" }
+  if (score <= 1) return { color: LOAD_COLORS.low, label: "L" }
+  if (score <= 2) return { color: LOAD_COLORS.medium, label: "M" }
+  if (score <= 3) return { color: LOAD_COLORS.high, label: "H" }
+  return { color: LOAD_COLORS.critical, label: "!!" }
 }
 function toDisplayDate(iso: string) {
   return new Date(iso).toLocaleDateString("ja-JP", { month: "short", day: "numeric" })
@@ -60,26 +60,24 @@ interface TaskRowProps {
 }
 
 function TaskRow({ task, showStatus, selected, selectionMode, onToggle, onClick, onContextMenu }: TaskRowProps) {
-  const isDone    = task.status === "done"
+  const isDone = task.status === "done"
   const isSkipped = task.status === "skipped"
-  const load      = loadLabel(task.base_load_score)
+  const load = loadLabel(task.base_load_score)
 
   return (
     <div
       onClick={e => onClick(task, e)}
       onContextMenu={e => onContextMenu(task, e)}
-      className={`flex items-start gap-3 px-4 py-3 rounded-xl transition-colors group cursor-pointer select-none ${
-        selected         ? "bg-blue-900/25 ring-1 ring-blue-700/40"
-        : isDone         ? "opacity-50 hover:opacity-70"
-        : "hover:bg-gray-800/50"
-      }`}
+      className={`flex items-start gap-3 px-4 py-3 rounded-xl transition-colors group cursor-pointer select-none ${selected ? "bg-blue-900/25 ring-1 ring-blue-700/40"
+          : isDone ? "opacity-50 hover:opacity-70"
+            : "hover:bg-gray-800/50"
+        }`}
     >
       {/* Selection checkbox / status toggle */}
       <div className="flex-shrink-0 mt-0.5">
         {selectionMode ? (
-          <div className={`w-[18px] h-[18px] rounded-[4px] border transition-all flex items-center justify-center ${
-            selected ? "bg-blue-600 border-blue-500" : "border-gray-600 hover:border-blue-500"
-          }`}>
+          <div className={`w-[18px] h-[18px] rounded-[4px] border transition-all flex items-center justify-center ${selected ? "bg-blue-600 border-blue-500" : "border-gray-600 hover:border-blue-500"
+            }`}>
             {selected && <CheckSquare size={14} className="text-white" />}
           </div>
         ) : showStatus && onToggle ? (
@@ -90,7 +88,7 @@ function TaskRow({ task, showStatus, selected, selectionMode, onToggle, onClick,
           >
             {isDone ? <CheckCircle2 size={18} className="text-cyan-500" />
               : isSkipped ? <Circle size={18} className="text-gray-600" />
-              : <Circle size={18} />}
+                : <Circle size={18} />}
           </button>
         ) : (
           <Circle size={14} className="text-gray-700 mt-0.5" />
@@ -183,13 +181,13 @@ function AddTaskForm({ onAdd, onCancel, defaultContext, availableProjects = [] }
   defaultContext?: string
   availableProjects?: string[]
 }) {
-  const [name, setName]         = useState("")
-  const [context, setContext]   = useState(defaultContext || "inbox")
-  const [load, setLoad]         = useState("1")
+  const [name, setName] = useState("")
+  const [context, setContext] = useState(defaultContext || "inbox")
+  const [load, setLoad] = useState("1")
   const [ruleType, setRuleType] = useState("ONCE")
-  const [dueDate, setDueDate]   = useState(TODAY)
-  const [notes, setNotes]       = useState("")
-  const [saving, setSaving]     = useState(false)
+  const [dueDate, setDueDate] = useState(TODAY)
+  const [notes, setNotes] = useState("")
+  const [saving, setSaving] = useState(false)
   const [showMore, setShowMore] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
   const dateRef = useRef<HTMLInputElement>(null)
@@ -227,7 +225,7 @@ function AddTaskForm({ onAdd, onCancel, defaultContext, availableProjects = [] }
         </div>
         <div className="relative w-20">
           <select value={load} onChange={e => setLoad(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer z-10 w-full">
-            {["0.5","1","2","3","5","8"].map(n => <option key={n} value={n}>{n}</option>)}
+            {["0.5", "1", "2", "3", "5", "8"].map(n => <option key={n} value={n}>{n}</option>)}
           </select>
           <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-800 rounded-xl border border-gray-700 text-[10px] font-bold text-gray-400">
             <Hash size={10} /><span>{load}</span>
@@ -274,8 +272,8 @@ function ExportSheet({ onClose, onExport, taskCount }: {
   taskCount: number
 }) {
   const [filename, setFilename] = useState(`tasks_export_${TODAY}.csv`)
-  const [status, setStatus]     = useState<"idle" | "loading" | "done" | "err">("idle")
-  const [errMsg, setErrMsg]     = useState("")
+  const [status, setStatus] = useState<"idle" | "loading" | "done" | "err">("idle")
+  const [errMsg, setErrMsg] = useState("")
 
   async function handleExport() {
     setStatus("loading")
@@ -513,24 +511,25 @@ interface Props { filter?: TaskFilter; filterContext?: string }
 
 export default function TasksView({ filter = "today", filterContext }: Props) {
   // Core state
-  const [tasks,       setTasks]       = useState<LBSTask[]>([])
-  const [loading,     setLoading]     = useState(false)
-  const [error,       setError]       = useState<string | null>(null)
+  const [tasks, setTasks] = useState<LBSTask[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [showAddForm, setShowAddForm] = useState(false)
-  const [toggling,    setToggling]    = useState<Set<string>>(new Set())
-  const [viewMode,    setViewMode]    = useState<ViewMode>("list")
-  const [editTaskId,  setEditTaskId]  = useState<string | null>(null)
-  const [editDate,    setEditDate]    = useState<string | undefined>()
-  const [importOpen,  setImportOpen]  = useState(false)
-  const [projects,    setProjects]    = useState<string[]>([])
+  const [toggling, setToggling] = useState<Set<string>>(new Set())
+  const [viewMode, setViewMode] = useState<ViewMode>("list")
+  const [editTaskId, setEditTaskId] = useState<string | null>(null)
+  const [editDate, setEditDate] = useState<string | undefined>()
+  const [importOpen, setImportOpen] = useState(false)
+  const [projects, setProjects] = useState<string[]>([])
+  const [refreshKey, setRefreshKey] = useState(0)
 
   // Export sheet
-  const [exportOpen, setExportOpen]   = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
   const [exportCount, setExportCount] = useState(0)
   const [allTasksCache, setAllTasksCache] = useState<LBSTask[]>([])
 
   // Selection
-  const [selectedIds,    setSelectedIds]    = useState<Set<string>>(new Set())
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null)
 
   // Context menu
@@ -552,7 +551,7 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
     apiFetch("/api/agents/project/list")
       .then(r => r.ok ? r.json() : { projects: [] })
       .then(d => { if (d.projects) setProjects(d.projects.map((p: any) => p.name)) })
-      .catch(() => {})
+      .catch(() => { })
   }, [])
 
   // ── Fetch tasks ─────────────────────────────────────────────────────────────
@@ -560,13 +559,14 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
     setLoading(true); setError(null)
     try {
       let result: LBSTask[] = []
-      if (filter === "today")                         result = await listLBSTasks({ targetDate: TODAY })
-      else if (filter === "overdue")                  result = await getOverdueTasks()
-      else if (filter === "my-day")                   result = (await listLBSTasks({ active: true })).filter(t => t.meta_payload?.is_my_day)
-      else if (filter === "planned")                  result = (await listLBSTasks({ active: true })).filter(t => t.due_date && t.due_date > TODAY)
+      if (filter === "today") result = await listLBSTasks({ targetDate: TODAY })
+      else if (filter === "overdue") result = await getOverdueTasks()
+      else if (filter === "my-day") result = (await listLBSTasks({ active: true })).filter(t => t.meta_payload?.is_my_day)
+      else if (filter === "planned") result = (await listLBSTasks({ active: true })).filter(t => t.due_date && t.due_date > TODAY)
       else if (filter === "project" && filterContext) result = await listLBSTasks({ active: true, context: filterContext })
-      else                                            result = await listLBSTasks({ active: true })
+      else result = await listLBSTasks({ active: true })
       setTasks(result)
+      setRefreshKey(k => k + 1)
     } catch (e: any) { setError(e.message || "Failed to load tasks") }
     finally { setLoading(false) }
   }, [filter, filterContext])
@@ -616,7 +616,7 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
         setSelectedIds(new Set([task.task_id]))
       } else {
         const from = ids.indexOf(lastSelectedId)
-        const to   = ids.indexOf(task.task_id)
+        const to = ids.indexOf(task.task_id)
         if (from === -1 || to === -1) {
           setSelectedIds(new Set([task.task_id]))
         } else {
@@ -647,7 +647,7 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
     if (!ctxMenu) return
     const { task } = ctxMenu
     const date = task.due_date || TODAY
-    await completeLBSTask(task.task_id, date, status as any).catch(() => {})
+    await completeLBSTask(task.task_id, date, status as any).catch(() => { })
     setTasks(prev => prev.map(t => t.task_id === task.task_id ? { ...t, status } : t))
     setCtxMenu(null)
   }
@@ -656,7 +656,7 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
     if (!ctxMenu) return
     const { task } = ctxMenu
     if (!window.confirm(`Delete "${task.task_name}"?`)) return
-    await apiFetch(`/api/lbs/tasks/${task.task_id}?force_override=true`, { method: "DELETE" }).catch(() => {})
+    await apiFetch(`/api/lbs/tasks/${task.task_id}?force_override=true`, { method: "DELETE" }).catch(() => { })
     setTasks(prev => prev.filter(t => t.task_id !== task.task_id))
     setCtxMenu(null)
   }
@@ -667,7 +667,7 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ due_date: date }),
-    }).catch(() => {})
+    }).catch(() => { })
     await fetchTasks()
     setCtxMenu(null)
   }
@@ -675,7 +675,7 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
   // ── Bulk actions ─────────────────────────────────────────────────────────────
   async function handleBulkStatus(status: string) {
     const ids = Array.from(selectedIds)
-    await Promise.all(ids.map(id => completeLBSTask(id, TODAY, status as any).catch(() => {})))
+    await Promise.all(ids.map(id => completeLBSTask(id, TODAY, status as any).catch(() => { })))
     setTasks(prev => prev.map(t => selectedIds.has(t.task_id) ? { ...t, status } : t))
     setSelectedIds(new Set()); setLastSelectedId(null)
   }
@@ -684,7 +684,7 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
     if (!window.confirm(`Delete ${selectedIds.size} tasks?`)) return
     const ids = Array.from(selectedIds)
     await Promise.all(ids.map(id =>
-      apiFetch(`/api/lbs/tasks/${id}?force_override=true`, { method: "DELETE" }).catch(() => {})
+      apiFetch(`/api/lbs/tasks/${id}?force_override=true`, { method: "DELETE" }).catch(() => { })
     ))
     setTasks(prev => prev.filter(t => !selectedIds.has(t.task_id)))
     setSelectedIds(new Set()); setLastSelectedId(null)
@@ -697,7 +697,7 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ due_date: date }),
-      }).catch(() => {})
+      }).catch(() => { })
     ))
     await fetchTasks()
     setSelectedIds(new Set()); setLastSelectedId(null)
@@ -714,18 +714,18 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
 
   async function doExport(filename: string) {
     const src = allTasksCache.length > 0 ? allTasksCache : tasks
-    const headers = ["task_name","context","base_load_score","rule_type","due_date","start_time","end_time","notes"]
+    const headers = ["task_name", "context", "base_load_score", "rule_type", "due_date", "start_time", "end_time", "notes"]
     const rows = src.map(t => [
-      `"${(t.task_name||"").replace(/"/g,'""')}"`,
-      `"${(t.context||"").replace(/"/g,'""')}"`,
+      `"${(t.task_name || "").replace(/"/g, '""')}"`,
+      `"${(t.context || "").replace(/"/g, '""')}"`,
       t.base_load_score, t.rule_type,
-      t.due_date??"", t.start_time??"", t.end_time??"",
-      `"${(t.notes||"").replace(/"/g,'""')}"`,
+      t.due_date ?? "", t.start_time ?? "", t.end_time ?? "",
+      `"${(t.notes || "").replace(/"/g, '""')}"`,
     ].join(","))
-    const csv  = [headers.join(","), ...rows].join("\n")
+    const csv = [headers.join(","), ...rows].join("\n")
     const blob = new Blob([csv], { type: "text/csv" })
-    const url  = URL.createObjectURL(blob)
-    const a    = document.createElement("a")
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
     a.href = url; a.download = filename.endsWith(".csv") ? filename : filename + ".csv"
     a.click(); URL.revokeObjectURL(url)
   }
@@ -740,12 +740,12 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
     setEditTaskId(task.task_id)
   }
 
-  const grouped    = groupByContext(tasks)
-  const todayDone  = tasks.filter(t => t.status === "done").length
+  const grouped = groupByContext(tasks)
+  const todayDone = tasks.filter(t => t.status === "done").length
   const todayTotal = tasks.length
-  const progress   = todayTotal > 0 ? (todayDone / todayTotal) * 100 : 0
-  const title      = filter === "project" && filterContext ? filterContext : FILTER_LABELS[filter] ?? filter
-  const selMode    = selectedIds.size > 0
+  const progress = todayTotal > 0 ? (todayDone / todayTotal) * 100 : 0
+  const title = filter === "project" && filterContext ? filterContext : FILTER_LABELS[filter] ?? filter
+  const selMode = selectedIds.size > 0
 
   return (
     <div
@@ -754,141 +754,140 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
       onClick={() => ctxMenu && setCtxMenu(null)}
     >
       <div className="flex flex-col flex-1 min-w-0 min-h-0">
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="flex-shrink-0 px-6 pt-6 pb-4 border-b border-gray-800/50">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <h1 className="text-lg font-bold text-white">{title}</h1>
-            <p className="text-xs text-gray-500 mt-0.5">
-              {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
-            </p>
-          </div>
+        {/* ── Header ─────────────────────────────────────────────────────────── */}
+        <div className="flex-shrink-0 px-6 pt-6 pb-4 border-b border-gray-800/50">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h1 className="text-lg font-bold text-white">{title}</h1>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+              </p>
+            </div>
 
-          <div className="flex items-center gap-2">
-            {/* View mode */}
-            <div className="flex items-center gap-0.5 bg-gray-900/80 border border-gray-800 rounded-xl p-1">
-              {([["list",<List size={14}/>], ["calendar",<CalendarDays size={14}/>], ["timeline",<Calendar size={14}/>]] as const).map(([mode, icon]) => (
-                <button key={mode} onClick={() => setViewMode(mode as ViewMode)} title={mode}
-                  className={`p-1.5 rounded-lg transition-all ${viewMode === mode ? "bg-cyan-600 text-white" : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}>
-                  {icon}
+            <div className="flex items-center gap-2">
+              {/* View mode */}
+              <div className="flex items-center gap-0.5 bg-gray-900/80 border border-gray-800 rounded-xl p-1">
+                {([["list", <List size={14} />], ["calendar", <CalendarDays size={14} />], ["timeline", <Calendar size={14} />]] as const).map(([mode, icon]) => (
+                  <button key={mode} onClick={() => setViewMode(mode as ViewMode)} title={mode}
+                    className={`p-1.5 rounded-lg transition-all ${viewMode === mode ? "bg-cyan-600 text-white" : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}>
+                    {icon}
+                  </button>
+                ))}
+              </div>
+
+              {/* Utility buttons — always present so layout doesn't shift */}
+              <div className="flex items-center gap-1">
+                <button onClick={() => setImportOpen(true)} title="Import CSV"
+                  className="p-2 text-gray-500 hover:text-gray-300 rounded-xl hover:bg-gray-800 transition-all"><Upload size={15} /></button>
+                <button onClick={openExportSheet} title="Export CSV"
+                  className="p-2 text-gray-500 hover:text-gray-300 rounded-xl hover:bg-gray-800 transition-all"><Download size={15} /></button>
+                <button onClick={fetchTasks} title="Refresh"
+                  className="p-2 text-gray-500 hover:text-gray-300 rounded-xl hover:bg-gray-800 transition-all">
+                  <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
                 </button>
-              ))}
-            </div>
+              </div>
 
-            {/* Utility buttons — always present so layout doesn't shift */}
-            <div className="flex items-center gap-1">
-              <button onClick={() => setImportOpen(true)} title="Import CSV"
-                className="p-2 text-gray-500 hover:text-gray-300 rounded-xl hover:bg-gray-800 transition-all"><Upload size={15} /></button>
-              <button onClick={openExportSheet} title="Export CSV"
-                className="p-2 text-gray-500 hover:text-gray-300 rounded-xl hover:bg-gray-800 transition-all"><Download size={15} /></button>
-              <button onClick={fetchTasks} title="Refresh"
-                className="p-2 text-gray-500 hover:text-gray-300 rounded-xl hover:bg-gray-800 transition-all">
-                <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
+              {/* Add — always shown */}
+              <button onClick={() => { setViewMode("list"); setShowAddForm(v => !v) }} title="Add task"
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${showAddForm && viewMode === "list" ? "bg-gray-800 text-gray-300" : "bg-cyan-600 hover:bg-cyan-500 text-white"
+                  }`}>
+                <Plus size={14} />Add
               </button>
             </div>
-
-            {/* Add — always shown */}
-            <button onClick={() => { setViewMode("list"); setShowAddForm(v => !v) }} title="Add task"
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                showAddForm && viewMode === "list" ? "bg-gray-800 text-gray-300" : "bg-cyan-600 hover:bg-cyan-500 text-white"
-              }`}>
-              <Plus size={14} />Add
-            </button>
           </div>
+
+          {/* Progress */}
+          {viewMode === "list" && showStatus && todayTotal > 0 && (
+            <div>
+              <div className="flex justify-between text-xs text-gray-500 mb-1">
+                <span>{filter === "overdue" ? "Completion" : "Today's progress"}</span>
+                <span className="text-cyan-400 font-medium">{todayDone}/{todayTotal}</span>
+              </div>
+              <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                <div className="h-full bg-gradient-to-r from-cyan-600 to-cyan-400 rounded-full transition-all duration-500"
+                  style={{ width: `${progress}%` }} />
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Progress */}
-        {viewMode === "list" && showStatus && todayTotal > 0 && (
-          <div>
-            <div className="flex justify-between text-xs text-gray-500 mb-1">
-              <span>{filter === "overdue" ? "Completion" : "Today's progress"}</span>
-              <span className="text-cyan-400 font-medium">{todayDone}/{todayTotal}</span>
-            </div>
-            <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-cyan-600 to-cyan-400 rounded-full transition-all duration-500"
-                style={{ width: `${progress}%` }} />
-            </div>
+        {/* ── Bulk action bar ─────────────────────────────────────────────────── */}
+        {selMode && viewMode === "list" && (
+          <BulkActionBar
+            count={selectedIds.size}
+            onDone={() => handleBulkStatus("done")}
+            onTodo={() => handleBulkStatus("todo")}
+            onDelete={handleBulkDelete}
+            onMoveDate={handleBulkMoveDate}
+            onClear={() => { setSelectedIds(new Set()); setLastSelectedId(null) }}
+          />
+        )}
+
+        {/* ── Add form ────────────────────────────────────────────────────────── */}
+        {showAddForm && viewMode === "list" && (
+          <div className="flex-shrink-0 pt-4">
+            <AddTaskForm onAdd={handleAddTask} onCancel={() => setShowAddForm(false)}
+              defaultContext={filter === "project" ? filterContext : undefined} availableProjects={projects} />
           </div>
         )}
-      </div>
 
-      {/* ── Bulk action bar ─────────────────────────────────────────────────── */}
-      {selMode && viewMode === "list" && (
-        <BulkActionBar
-          count={selectedIds.size}
-          onDone={() => handleBulkStatus("done")}
-          onTodo={() => handleBulkStatus("todo")}
-          onDelete={handleBulkDelete}
-          onMoveDate={handleBulkMoveDate}
-          onClear={() => { setSelectedIds(new Set()); setLastSelectedId(null) }}
-        />
-      )}
-
-      {/* ── Add form ────────────────────────────────────────────────────────── */}
-      {showAddForm && viewMode === "list" && (
-        <div className="flex-shrink-0 pt-4">
-          <AddTaskForm onAdd={handleAddTask} onCancel={() => setShowAddForm(false)}
-            defaultContext={filter === "project" ? filterContext : undefined} availableProjects={projects} />
-        </div>
-      )}
-
-      {/* ── Content ─────────────────────────────────────────────────────────── */}
-      <div className={`flex-1 min-h-0 ${viewMode === "list" ? "overflow-y-auto custom-scrollbar py-3" : "overflow-hidden p-4"}`}>
-        {viewMode === "list" ? (
-          error ? (
-            <div className="mx-4 p-4 bg-red-900/20 border border-red-800/40 rounded-2xl text-sm text-red-400">{error}</div>
-          ) : loading && tasks.length === 0 ? (
-            <div className="flex items-center justify-center h-40 text-gray-600 text-sm">Loading…</div>
-          ) : tasks.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-40 gap-3">
-              <CheckCircle2 size={32} className="text-gray-800" />
-              <p className="text-sm text-gray-600">No tasks found</p>
-              <button onClick={() => setShowAddForm(true)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-semibold transition-all">
-                <Plus size={12} />Add Task
-              </button>
-            </div>
+        {/* ── Content ─────────────────────────────────────────────────────────── */}
+        <div className={`flex-1 min-h-0 ${viewMode === "list" ? "overflow-y-auto custom-scrollbar py-3" : "overflow-hidden p-4"}`}>
+          {viewMode === "list" ? (
+            error ? (
+              <div className="mx-4 p-4 bg-red-900/20 border border-red-800/40 rounded-2xl text-sm text-red-400">{error}</div>
+            ) : loading && tasks.length === 0 ? (
+              <div className="flex items-center justify-center h-40 text-gray-600 text-sm">Loading…</div>
+            ) : tasks.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-40 gap-3">
+                <CheckCircle2 size={32} className="text-gray-800" />
+                <p className="text-sm text-gray-600">No tasks found</p>
+                <button onClick={() => setShowAddForm(true)}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-semibold transition-all">
+                  <Plus size={12} />Add Task
+                </button>
+              </div>
+            ) : (
+              Array.from(grouped.entries()).map(([ctx, ctxTasks]) => (
+                <ContextGroup key={ctx} context={ctx} tasks={ctxTasks} showStatus={showStatus}
+                  selectionMode={selMode} selectedIds={selectedIds}
+                  onToggle={showStatus ? handleToggle : undefined}
+                  onRowClick={handleRowClick}
+                  onContextMenu={handleContextMenu}
+                />
+              ))
+            )
+          ) : viewMode === "calendar" ? (
+            <CalendarView onTaskClick={openEdit} refreshKey={refreshKey} />
           ) : (
-            Array.from(grouped.entries()).map(([ctx, ctxTasks]) => (
-              <ContextGroup key={ctx} context={ctx} tasks={ctxTasks} showStatus={showStatus}
-                selectionMode={selMode} selectedIds={selectedIds}
-                onToggle={showStatus ? handleToggle : undefined}
-                onRowClick={handleRowClick}
-                onContextMenu={handleContextMenu}
-              />
-            ))
-          )
-        ) : viewMode === "calendar" ? (
-          <CalendarView onTaskClick={openEdit} />
-        ) : (
-          <TimelineView targetDate={TODAY} onTaskClick={openEdit} />
+            <TimelineView targetDate={TODAY} onTaskClick={openEdit} refreshKey={refreshKey} />
+          )}
+        </div>
+
+        {/* ── Context menu ─────────────────────────────────────────────────────── */}
+        {ctxMenu && (
+          <ContextMenu
+            x={ctxMenu.x} y={ctxMenu.y} task={ctxMenu.task}
+            onStatus={handleCtxStatus}
+            onEdit={() => { openEdit(ctxMenu.task); setCtxMenu(null) }}
+            onDelete={handleCtxDelete}
+            onMoveDate={handleCtxMoveDate}
+            onClose={() => setCtxMenu(null)}
+          />
         )}
-      </div>
 
-      {/* ── Context menu ─────────────────────────────────────────────────────── */}
-      {ctxMenu && (
-        <ContextMenu
-          x={ctxMenu.x} y={ctxMenu.y} task={ctxMenu.task}
-          onStatus={handleCtxStatus}
-          onEdit={() => { openEdit(ctxMenu.task); setCtxMenu(null) }}
-          onDelete={handleCtxDelete}
-          onMoveDate={handleCtxMoveDate}
-          onClose={() => setCtxMenu(null)}
-        />
-      )}
+        {/* ── Export sheet ─────────────────────────────────────────────────────── */}
+        {exportOpen && (
+          <ExportSheet
+            taskCount={exportCount}
+            onExport={doExport}
+            onClose={() => setExportOpen(false)}
+          />
+        )}
 
-      {/* ── Export sheet ─────────────────────────────────────────────────────── */}
-      {exportOpen && (
-        <ExportSheet
-          taskCount={exportCount}
-          onExport={doExport}
-          onClose={() => setExportOpen(false)}
-        />
-      )}
-
-      {/* ── Import modal ─────────────────────────────────────────────────────── */}
-      <ImportModal isOpen={importOpen} onClose={() => setImportOpen(false)}
-        onImportComplete={() => { setImportOpen(false); fetchTasks() }} existingProjects={projects} />
+        {/* ── Import modal ─────────────────────────────────────────────────────── */}
+        <ImportModal isOpen={importOpen} onClose={() => setImportOpen(false)}
+          onImportComplete={() => { setImportOpen(false); fetchTasks() }} existingProjects={projects} />
       </div>{/* end main content column */}
 
       {/* ── Task edit panel ──────────────────────────────────────────────────── */}

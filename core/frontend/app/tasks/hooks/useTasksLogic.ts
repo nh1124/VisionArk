@@ -70,9 +70,13 @@ export function useTasksLogic() {
         }
     };
 
-    // Load data
+    // Load target date specific data
     useEffect(() => {
         fetchTasks(targetDate);
+    }, [targetDate, fetchTasks]);
+
+    // Initial load for global data
+    useEffect(() => {
         fetchAllTasks();
         fetchOverdueTasks();
         loadAllProjects();
@@ -85,7 +89,7 @@ export function useTasksLogic() {
             getLocalDateString(start),
             getLocalDateString(end)
         );
-    }, [targetDate, fetchTasks, fetchAllTasks, fetchOverdueTasks, fetchMonthTasks]);
+    }, [fetchAllTasks, fetchOverdueTasks, fetchMonthTasks]);
 
     const availableProjects = useMemo(() => {
         const projectsFromTasks = tasks.map(t => t.context);

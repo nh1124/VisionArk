@@ -218,6 +218,7 @@ export default function MobileTasksView({ logic }: { logic: TasksLogic }) {
                                 setIsDayDetailsOpen(true);
                             }}
                             includeCompleted={true}
+                            refreshKey={refreshKey}
                         />
                         {/* Day Details Modal for Mobile */}
                         {isDayDetailsOpen && (
