@@ -270,6 +270,7 @@ export default function NavSidebar({
       })
       const newSession: Session = await res.json()
       setSessions((prev) => [newSession, ...prev])
+      localStorage.setItem(`va_last_session_${selectedProjectId}`, newSession.id)
       onChange("chat", selectedProjectId, newSession.id)
     } catch (e) { console.error("New chat failed:", e) }
   }
@@ -476,7 +477,10 @@ export default function NavSidebar({
                             />
                           ) : (
                             <button
-                              onClick={() => onChange("chat", project.id)}
+                              onClick={() => {
+                                const lastSessionId = localStorage.getItem(`va_last_session_${project.id}`)
+                                onChange("chat", project.id, lastSessionId || undefined)
+                              }}
                               className={`w-full flex items-center px-3 py-2 rounded-lg text-sm transition-colors text-left ${isActive
                                 ? "bg-gray-800 text-white"
                                 : "text-gray-400 hover:bg-gray-800/50 hover:text-white"
@@ -556,7 +560,10 @@ export default function NavSidebar({
                                 />
                               ) : (
                                 <button
-                                  onClick={() => onChange("chat", selectedProjectId, session.id)}
+                                  onClick={() => {
+                                    localStorage.setItem(`va_last_session_${selectedProjectId}`, session.id)
+                                    onChange("chat", selectedProjectId, session.id)
+                                  }}
                                   className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg text-xs transition-colors text-left ${isActiveSession
                                     ? "bg-cyan-500/15 text-white"
                                     : "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200"
@@ -566,9 +573,6 @@ export default function NavSidebar({
                                   <span className="truncate flex-1">
                                     {session.title || "Untitled Chat"}
                                   </span>
-                                  {session.is_default && (
-                                    <span className="text-[9px] text-cyan-500/50 flex-shrink-0">●</span>
-                                  )}
                                 </button>
                               )}
 
@@ -668,7 +672,12 @@ export default function NavSidebar({
             <Copy size={14} /> Clone Project
           </button>
           <button
-            onClick={() => { onChange("chat", openMenuProject.id); setProjectMenuOpen(null); setProjectMenuPos(null) }}
+            onClick={() => {
+              const lastSessionId = localStorage.getItem(`va_last_session_${openMenuProject.id}`)
+              onChange("chat", openMenuProject.id, lastSessionId || undefined)
+              setProjectMenuOpen(null)
+              setProjectMenuPos(null)
+            }}
             className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
           >
             <MessageSquare size={14} /> Open Chat

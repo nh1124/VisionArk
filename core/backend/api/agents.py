@@ -83,6 +83,7 @@ class CreateSession(BaseModel):
 class UpdateSession(BaseModel):
     title: Optional[str] = None
     is_archived: Optional[bool] = None
+    is_default: Optional[bool] = None
 
 
 def _session_to_dict(s: ChatSession) -> dict:
@@ -1457,6 +1458,7 @@ async def update_session(
 
     if body.title is not None:
         session.title = body.title
+        
     if body.is_archived is not None:
         session.is_archived = body.is_archived
         # If archiving the default session, promote the next most recent session
@@ -1472,6 +1474,15 @@ async def update_session(
             next_session = next_res.scalars().first()
             if next_session:
                 next_session.is_default = True
+
+    if body.is_default is True:
+        # Unset default for all other sessions in the project
+        await db.execute(
+            update(ChatSession)
+            .where(ChatSession.project_id == session.project_id)
+            .values(is_default=False)
+        )
+        session.is_default = True
 
     await db.commit()
     return _session_to_dict(session)
