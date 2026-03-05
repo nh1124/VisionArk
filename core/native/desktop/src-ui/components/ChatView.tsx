@@ -33,8 +33,8 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
     const [inlineWidth, setInlineWidth] = useState(560)
     const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null)
     const messagesEndRef = useRef<HTMLDivElement>(null)
-    const pollRef = useRef<NodeJS.Timeout | null>(null)
-    const timerRef = useRef<NodeJS.Timeout | null>(null)
+    const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+    const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
     const isInitialLoad = useRef(true)
 
     // effectiveSessionId: session confirmed by backend (may differ from prop when
