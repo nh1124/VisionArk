@@ -35,6 +35,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
     const messagesEndRef = useRef<HTMLDivElement>(null)
     const pollRef = useRef<NodeJS.Timeout | null>(null)
     const timerRef = useRef<NodeJS.Timeout | null>(null)
+    const isInitialLoad = useRef(true)
 
     // effectiveSessionId: session confirmed by backend (may differ from prop when
     // the provided session was not found and backend fell back to default)
@@ -51,6 +52,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
 
     // Reload history whenever session or project changes
     useEffect(() => {
+        isInitialLoad.current = true
         effectiveSessionRef.current = sessionId
         // Stop any in-progress polling from the previous session
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
@@ -82,7 +84,12 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
     }, [])
 
     useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+        if (messages.length > 0 && isInitialLoad.current) {
+            messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+            isInitialLoad.current = false;
+        } else if (!isInitialLoad.current) {
+            messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        }
     }, [messages])
 
     const stopPolling = () => {
