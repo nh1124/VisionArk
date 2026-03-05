@@ -188,7 +188,7 @@ async def create_engine_for_project(
     engine.register_tool(delegation_tool_def, delegation_tool_impl)
 
     # 6. Register model config
-    engine.register_model("default", preferred_model or "gemini-3-pro-preview")
+    engine.register_model("default", preferred_model or "gemini-3.1-pro-preview")
 
     # 7. Register skills (for tool filtering)
     for skill_def in dynamic_skills:

@@ -38,7 +38,7 @@ function ChatInputComponent({
     placeholder,
     disabled = false,
     allowFileAttach = true,
-    selectedModel = "gemini-3-pro-preview",
+    selectedModel = "gemini-3.1-pro-preview",
     onModelChange,
     showModelSelector = false,
     configuredProviders = [],

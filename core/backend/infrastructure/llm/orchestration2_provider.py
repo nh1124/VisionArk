@@ -34,7 +34,7 @@ class GeminiLLMProvider:
         preferred_model: str | None = None,
     ) -> None:
         self._api_key = api_key
-        self._model = preferred_model or "gemini-3-pro-preview"
+        self._model = preferred_model or "gemini-3.1-pro-preview"
         self._client = Client(
             api_key=api_key,
             http_options={"api_version": "v1alpha", "timeout": 600000},

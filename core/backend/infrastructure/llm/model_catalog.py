@@ -47,7 +47,7 @@ CATALOG: list[ModelGroup] = [
     ]),
 ]
 
-DEFAULT_MODEL = "gemini-3-pro-preview"
+DEFAULT_MODEL = "gemini-3.1-pro-preview"
 
 # 全モデルIDセット (バリデーション用)
 _ALL_MODEL_IDS: set[str] = {m.id for g in CATALOG for m in g.models}

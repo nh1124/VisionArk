@@ -30,11 +30,11 @@ export interface ModelGroup {
 const FALLBACK_GROUPS: ModelGroup[] = [
     {
         group: "Gemini", provider: "gemini", models: [
-            { id: "gemini-3-pro-preview", name: "Gemini 3 Pro" },
+            { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro Preview" },
         ]
     },
 ];
-const FALLBACK_DEFAULT = "gemini-3-pro-preview";
+const FALLBACK_DEFAULT = "gemini-3.1-pro-preview";
 
 export const getModelDisplayName = (modelId: string, groups: ModelGroup[] = FALLBACK_GROUPS): string => {
     for (const group of groups) {
