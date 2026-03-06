@@ -151,6 +151,7 @@ export default function WorkspaceView() {
     const [preview, setPreview] = useState<PreviewState | null>(null)
     const [showPreview, setShowPreview] = useState(true)
     const [expandedPreview, setExpandedPreview] = useState(false)
+    const [expandedWorkspace, setExpandedWorkspace] = useState(false)
 
     const { folders, files } = useMemo(() => getEntries(items, currentPath), [items, currentPath])
     const crumbs = useMemo(() => breadcrumbs(currentPath), [currentPath])
@@ -432,23 +433,45 @@ export default function WorkspaceView() {
     const multiSelected = selectedIds.size > 1
 
     return (
-        <div className="flex-1 overflow-y-auto px-6 py-6 bg-[#030712] custom-scrollbar">
-            <div className="max-w-6xl mx-auto h-[90vh] flex flex-col border border-gray-800/60 rounded-3xl overflow-hidden shadow-2xl">
+        <div className="flex-1 overflow-y-auto px-6 py-6 pb-10 bg-[#030712] custom-scrollbar">
+            <div className={`max-w-6xl mx-auto h-[90vh] flex flex-col border border-gray-800/60 rounded-3xl overflow-hidden shadow-2xl ${expandedWorkspace ? "fixed inset-3 z-40 max-w-none h-auto" : ""}`}>
                 <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileSelect} />
 
                 {/* ── Top bar ── */}
                 <div className="flex items-center justify-between px-5 py-3 border-b border-gray-800/60 flex-shrink-0 bg-gray-950">
-                    <h1 className="text-base font-bold text-white tracking-tight">Workspace</h1>
+                    <div className="flex items-center gap-1 flex-wrap min-h-[24px]">
+                        <button onClick={() => navigateTo("")} className="text-gray-500 hover:text-cyan-400 transition-colors" title="Root"><Home size={13} /></button>
+                        {crumbs.map((crumb, idx) => {
+                            const crumbPath = crumbs.slice(0, idx + 1).join("/")
+                            const isLast = idx === crumbs.length - 1
+                            return (
+                                <span key={crumbPath} className="flex items-center gap-1">
+                                    <ChevronRight size={10} className="text-gray-700" />
+                                    <button
+                                        onClick={() => navigateTo(crumbPath)}
+                                        className={`text-xs transition-colors ${isLast ? "text-gray-200 font-semibold" : "text-gray-500 hover:text-cyan-400"}`}
+                                    >{crumb}</button>
+                                </span>
+                            )
+                        })}
+                    </div>
                     <div className="flex items-center gap-2">
                         {moving && <span className="text-[10px] text-cyan-500 font-bold uppercase tracking-wider flex items-center gap-1"><Loader2 size={10} className="animate-spin" />Moving…</span>}
-                        <button onClick={() => setFolderModal({ name: "", scope: "private" })} className="flex items-center gap-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-1.5 rounded-lg text-xs font-bold transition-all active:scale-95 border border-gray-700/50">
-                            <FolderPlus size={13} /> New Folder
-                        </button>
                         <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-1.5 rounded-lg text-xs font-bold transition-all active:scale-95 border border-gray-700/50">
                             <Upload size={13} /> Upload
                         </button>
+                        <button onClick={() => setFolderModal({ name: "", scope: "private" })} className="flex items-center gap-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-1.5 rounded-lg text-xs font-bold transition-all active:scale-95 border border-gray-700/50">
+                            <FolderPlus size={13} /> New Folder
+                        </button>
                         <button onClick={openCreate} className="flex items-center gap-1.5 bg-cyan-500 hover:bg-cyan-400 text-black px-3 py-1.5 rounded-lg text-xs font-bold transition-all active:scale-95 shadow-md shadow-cyan-500/20">
                             <Plus size={14} /> New Note
+                        </button>
+                        <button
+                            onClick={() => setExpandedWorkspace(v => !v)}
+                            className="flex items-center justify-center w-8 h-8 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg transition-all active:scale-95 border border-gray-700/50"
+                            title={expandedWorkspace ? "Exit full screen" : "Full screen"}
+                        >
+                            {expandedWorkspace ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
                         </button>
                     </div>
                 </div>
@@ -459,30 +482,12 @@ export default function WorkspaceView() {
                     {/* ── LEFT: tree ── */}
                     <div className="w-64 flex-shrink-0 border-r border-gray-800/60 flex flex-col bg-gray-950/60">
 
-                        {/* breadcrumb */}
-                        <div className="flex items-center gap-1 px-3 py-2 border-b border-gray-800/40 flex-wrap min-h-[36px]">
-                            <button onClick={() => navigateTo("")} className="text-gray-500 hover:text-cyan-400 transition-colors" title="Root"><Home size={13} /></button>
-                            {crumbs.map((crumb, idx) => {
-                                const crumbPath = crumbs.slice(0, idx + 1).join("/")
-                                const isLast = idx === crumbs.length - 1
-                                return (
-                                    <span key={crumbPath} className="flex items-center gap-1">
-                                        <ChevronRight size={10} className="text-gray-700" />
-                                        <button
-                                            onClick={() => navigateTo(crumbPath)}
-                                            className={`text-xs transition-colors ${isLast ? "text-gray-200 font-semibold" : "text-gray-500 hover:text-cyan-400"}`}
-                                        >{crumb}</button>
-                                    </span>
-                                )
-                            })}
-                        </div>
-
                         {/* tree list */}
                         {loading ? (
                             <div className="flex flex-1 items-center justify-center"><Loader2 size={18} className="text-cyan-500 animate-spin" /></div>
                         ) : (
                             <div
-                                className="flex-1 overflow-y-auto py-0.5 custom-scrollbar"
+                                className="flex-1 overflow-y-auto py-0.5 pb-8 custom-scrollbar"
                                 onClick={e => { if (e.target === e.currentTarget) { setSelectedIds(new Set()); setSelectedItem(null); setIsCreating(false) } }}
                             >
                                 {/* parent (..) – also a drop target */}
@@ -602,7 +607,7 @@ export default function WorkspaceView() {
                     </div>
 
                     {/* ── RIGHT: detail / multi-select / empty ── */}
-                    <div className="flex-1 overflow-y-auto bg-gray-950/20 custom-scrollbar">
+                    <div className="flex-1 overflow-y-auto pb-8 bg-gray-950/20 custom-scrollbar">
 
                         {/* multi-select panel */}
                         {multiSelected && (

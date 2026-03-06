@@ -2,11 +2,13 @@ import React, { useState, useEffect, useRef } from "react";
 import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./index.css";
-import { apiFetch, initApiBase, getApiBase, getToken, handleRefresh } from "./lib/api";
+import { apiFetch, initApiBase, getApiBase, getToken, handleRefresh, listProjects, type Project } from "./lib/api";
 import { configure as configureBridge } from "../../bridge/api";
 
 const QuickNoteApp = () => {
     const [noteContent, setNoteContent] = useState("");
+    const [projects, setProjects] = useState<Project[]>([]);
+    const [selectedProjectId, setSelectedProjectId] = useState("");
     const [isSaving, setIsSaving] = useState(false);
     const [isReady, setIsReady] = useState(false);
     const textRef = useRef<HTMLTextAreaElement>(null);
@@ -17,6 +19,12 @@ const QuickNoteApp = () => {
         const init = async () => {
             await initApiBase();
             configureBridge({ getBaseUrl: getApiBase, getToken, handleRefresh });
+            const projectList = await listProjects().catch(() => []);
+            setProjects(projectList);
+            const activeProjectId = localStorage.getItem("va_active_project_id") || "";
+            if (activeProjectId && projectList.some((p) => p.id === activeProjectId)) {
+                setSelectedProjectId(activeProjectId);
+            }
             setIsReady(true);
             setTimeout(() => {
                 textRef.current?.focus();
@@ -44,6 +52,7 @@ const QuickNoteApp = () => {
                     title: "",
                     content: noteContent,
                     tags: ["quick-note"],
+                    project_id: selectedProjectId || undefined,
                 }),
             });
 
@@ -106,9 +115,20 @@ const QuickNoteApp = () => {
 
                 {/* Footer */}
                 <div className="flex justify-between items-center mt-3">
-                    <span className="text-[10px] text-gray-500">
-                        Saved to VisionArk Notes
-                    </span>
+                    <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-gray-500">Project</span>
+                        <select
+                            value={selectedProjectId}
+                            onChange={(e) => setSelectedProjectId(e.target.value)}
+                            className="bg-black/30 border border-gray-800 rounded-md px-2 py-1 text-[11px] text-gray-300 focus:outline-none focus:border-cyan-500/50"
+                            disabled={isSaving || !isReady}
+                        >
+                            <option value="" className="bg-gray-900 text-white">None</option>
+                            {projects.map((p) => (
+                                <option key={p.id} value={p.id} className="bg-gray-900 text-white">{p.display_name || p.name}</option>
+                            ))}
+                        </select>
+                    </div>
                     <button
                         onClick={handleSave}
                         disabled={isSaving || !isReady || !noteContent.trim()}

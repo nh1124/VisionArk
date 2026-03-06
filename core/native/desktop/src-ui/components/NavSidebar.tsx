@@ -1,24 +1,67 @@
-import React, { useEffect, useRef, useState } from "react"
+import React, { useEffect, useMemo, useRef, useState } from "react"
 import {
-  LayoutGrid, Folder, Bot, ClipboardList, Activity,
-  AlarmClock, StickyNote, Library, Settings, Plus, MessageSquare,
-  MoreVertical, Pencil, Copy, Trash2, Download, Archive,
-  Sun, Star, Calendar, CalendarDays, Inbox as InboxIcon,
-  LogOut, ChevronUp, Keyboard, Monitor,
+  Home,
+  Folder,
+  Bot,
+  ClipboardList,
+  Activity,
+  AlarmClock,
+  StickyNote,
+  Library,
+  Settings,
+  Plus,
+  MessageSquare,
+  MoreVertical,
+  Pencil,
+  Copy,
+  Trash2,
+  Download,
+  Archive,
+  Sun,
+  Star,
+  Calendar,
+  CalendarDays,
+  Inbox as InboxIcon,
+  LogOut,
+  ChevronUp,
+  Keyboard,
+  Monitor,
+  Clock3,
+  CheckSquare,
+  FileText,
+  HardDrive,
+  Menu,
+  ChevronLeft,
 } from "lucide-react"
 import KeyboardShortcutsModal from "./KeyboardShortcutsModal"
 import {
-  apiFetch, listProjects, listSessions, getFileToken, listLBSTasks,
+  apiFetch,
+  listProjects,
+  listSessions,
+  getFileToken,
+  listLBSTasks,
   BASE_URL,
-  type Project, type Session,
+  type Project,
+  type Session,
 } from "../lib/api"
 
 export type NavView =
-  | "dashboard" | "projects" | "agents" | "tasks" | "calendar" | "run_center"
-  | "cron" | "notes" | "workspace" | "chat" | "settings" | "devices"
+  | "dashboard"
+  | "projects"
+  | "agents"
+  | "tasks"
+  | "calendar"
+  | "run_center"
+  | "cron"
+  | "notes"
+  | "workspace"
+  | "chat"
+  | "settings"
+  | "devices"
 
 export type TaskFilter = "today" | "my-day" | "planned" | "overdue" | "inbox" | "project"
 export type CalendarStatusFilter = "all" | "open" | "done"
+type PrimaryNavId = "home" | "projects" | "tasks" | "knowledge" | "automation" | "devices"
 
 interface Props {
   active: NavView
@@ -26,8 +69,8 @@ interface Props {
   selectedProjectId: string | null
   selectedSessionId: string | null
   pendingApprovals: number
-  isCollapsed: boolean
-  onToggle: () => void
+  primaryCollapsed: boolean
+  onTogglePrimaryCollapsed: () => void
   taskFilter?: TaskFilter
   taskFilterContext?: string
   onTaskFilterChange?: (filter: TaskFilter, context?: string) => void
@@ -37,17 +80,13 @@ interface Props {
   onLogout?: () => void
 }
 
-const navItems: { id: NavView; icon: React.ElementType; label: string }[] = [
-  { id: "dashboard", icon: LayoutGrid, label: "Dashboard" },
-  { id: "projects", icon: Folder, label: "Projects" },
-  { id: "agents", icon: Bot, label: "Agents" },
-  { id: "tasks", icon: ClipboardList, label: "Tasks" },
-  { id: "calendar", icon: CalendarDays, label: "Calendar" },
-  { id: "run_center", icon: Activity, label: "Run Center" },
-  { id: "devices", icon: Monitor, label: "Devices" },
-  { id: "cron", icon: AlarmClock, label: "Cron Tasks" },
-  { id: "notes", icon: StickyNote, label: "Notes" },
-  { id: "workspace", icon: Library, label: "Workspace" },
+const primaryNavItems: { id: PrimaryNavId; icon: React.ElementType; label: string; target: NavView }[] = [
+  { id: "home", icon: Home, label: "Home", target: "dashboard" },
+  { id: "projects", icon: Folder, label: "Projects", target: "projects" },
+  { id: "tasks", icon: ClipboardList, label: "Tasks", target: "tasks" },
+  { id: "knowledge", icon: Library, label: "Knowledge", target: "notes" },
+  { id: "automation", icon: Bot, label: "Automation", target: "run_center" },
+  { id: "devices", icon: Monitor, label: "Devices", target: "devices" },
 ]
 
 const taskCategories: { id: TaskFilter; label: string; icon: React.ElementType }[] = [
@@ -58,26 +97,43 @@ const taskCategories: { id: TaskFilter; label: string; icon: React.ElementType }
   { id: "inbox", label: "Inbox", icon: InboxIcon },
 ]
 
+function mapViewToPrimary(view: NavView): PrimaryNavId {
+  if (view === "projects" || view === "chat") return "projects"
+  if (view === "tasks" || view === "calendar") return "tasks"
+  if (view === "notes" || view === "workspace") return "knowledge"
+  if (view === "agents" || view === "run_center" || view === "cron") return "automation"
+  if (view === "devices") return "devices"
+  return "home"
+}
+
+function SectionTitle({ title }: { title: string }) {
+  return <h3 className="px-3 text-[10px] font-black uppercase tracking-[0.16em] text-gray-600">{title}</h3>
+}
+
 export default function NavSidebar({
-  active, onChange, selectedProjectId, selectedSessionId,
-  pendingApprovals, isCollapsed, onToggle,
-  taskFilter = "today", taskFilterContext, onTaskFilterChange,
-  calendarStatusFilter = "all", onCalendarStatusFilterChange,
-  username, onLogout,
+  active,
+  onChange,
+  selectedProjectId,
+  selectedSessionId,
+  pendingApprovals,
+  primaryCollapsed,
+  onTogglePrimaryCollapsed,
+  taskFilter = "today",
+  taskFilterContext,
+  onTaskFilterChange,
+  calendarStatusFilter = "all",
+  onCalendarStatusFilterChange,
+  username,
+  onLogout,
 }: Props) {
   const [projects, setProjects] = useState<Project[]>([])
   const [sessions, setSessions] = useState<Session[]>([])
-  const [projectsExpanded, setProjectsExpanded] = useState(true)
-  const [chatsExpanded, setChatsExpanded] = useState(true)
-  const [mainNavExpanded, setMainNavExpanded] = useState(true)
   const [taskContexts, setTaskContexts] = useState<string[]>([])
 
-  // User menu & shortcut modal states
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const userMenuRef = useRef<HTMLDivElement>(null)
 
-  // Hover / dropdown states
   const [hoveredProject, setHoveredProject] = useState<string | null>(null)
   const [projectMenuOpen, setProjectMenuOpen] = useState<string | null>(null)
   const [projectMenuPos, setProjectMenuPos] = useState<{ top: number; right: number } | null>(null)
@@ -88,7 +144,6 @@ export default function NavSidebar({
   const [sessionMenuPos, setSessionMenuPos] = useState<{ top: number; right: number } | null>(null)
   const sessionMenuRef = useRef<HTMLDivElement>(null)
 
-  // Inline edit states
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
   const [editProjectTitle, setEditProjectTitle] = useState("")
   const projectEditRef = useRef<HTMLInputElement>(null)
@@ -96,33 +151,55 @@ export default function NavSidebar({
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
   const [editSessionTitle, setEditSessionTitle] = useState("")
   const sessionEditRef = useRef<HTMLInputElement>(null)
+  const [projectSearchQuery, setProjectSearchQuery] = useState("")
+  const [chatSearchQuery, setChatSearchQuery] = useState("")
 
-  // Data fetching
-  useEffect(() => { listProjects().then(setProjects).catch(() => { }) }, [])
+  const primaryActive = useMemo(() => mapViewToPrimary(active), [active])
+  const filteredProjects = useMemo(() => {
+    const query = projectSearchQuery.trim().toLowerCase()
+    if (!query) return projects
+    return projects.filter((project) => {
+      const name = (project.display_name || project.name || "").toLowerCase()
+      return name.includes(query)
+    })
+  }, [projects, projectSearchQuery])
+  const filteredSessions = useMemo(() => {
+    const query = chatSearchQuery.trim().toLowerCase()
+    if (!query) return sessions
+    return sessions.filter((session) => (session.title || "untitled chat").toLowerCase().includes(query))
+  }, [sessions, chatSearchQuery])
 
   useEffect(() => {
-    if (!selectedProjectId) { setSessions([]); return }
-    listSessions(selectedProjectId).then(setSessions).catch(() => { })
+    listProjects().then(setProjects).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (!selectedProjectId) {
+      setSessions([])
+      return
+    }
+    listSessions(selectedProjectId).then(setSessions).catch(() => {})
   }, [selectedProjectId])
 
   useEffect(() => {
-    if (active !== "tasks" && active !== "calendar") return
+    if (primaryActive !== "tasks") return
     listLBSTasks({ active: true })
       .then((tasks) => {
-        const ctxs = Array.from(new Set(tasks.map((t) => t.context).filter(Boolean))).sort() as string[]
-        setTaskContexts(ctxs)
+        const contexts = Array.from(new Set(tasks.map((t) => t.context).filter(Boolean))).sort() as string[]
+        setTaskContexts(contexts)
       })
-      .catch(() => { })
-  }, [active])
+      .catch(() => {})
+  }, [primaryActive])
 
-  // Close dropdowns on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (projectMenuRef.current && !projectMenuRef.current.contains(e.target as Node)) {
-        setProjectMenuOpen(null); setProjectMenuPos(null)
+        setProjectMenuOpen(null)
+        setProjectMenuPos(null)
       }
       if (sessionMenuRef.current && !sessionMenuRef.current.contains(e.target as Node)) {
-        setSessionMenuOpen(null); setSessionMenuPos(null)
+        setSessionMenuOpen(null)
+        setSessionMenuPos(null)
       }
       if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
         setUserMenuOpen(false)
@@ -132,40 +209,61 @@ export default function NavSidebar({
     return () => document.removeEventListener("mousedown", handler)
   }, [])
 
-  // ── Project actions ───────────────────────────────────────────────────────
-
   function openProjectMenu(e: React.MouseEvent, projectId: string) {
-    e.preventDefault(); e.stopPropagation()
+    e.preventDefault()
+    e.stopPropagation()
     if (projectMenuOpen === projectId) {
-      setProjectMenuOpen(null); setProjectMenuPos(null)
-    } else {
-      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-      setProjectMenuOpen(projectId)
-      setProjectMenuPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right })
-      setSessionMenuOpen(null); setSessionMenuPos(null)
+      setProjectMenuOpen(null)
+      setProjectMenuPos(null)
+      return
     }
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    setProjectMenuOpen(projectId)
+    setProjectMenuPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right })
+    setSessionMenuOpen(null)
+    setSessionMenuPos(null)
+  }
+
+  function openSessionMenu(e: React.MouseEvent, sessionId: string) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (sessionMenuOpen === sessionId) {
+      setSessionMenuOpen(null)
+      setSessionMenuPos(null)
+      return
+    }
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    setSessionMenuOpen(sessionId)
+    setSessionMenuPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right })
+    setProjectMenuOpen(null)
+    setProjectMenuPos(null)
   }
 
   function startEditProject(project: Project) {
     setEditingProjectId(project.id)
     setEditProjectTitle(project.display_name || project.name || "")
-    setProjectMenuOpen(null); setProjectMenuPos(null)
+    setProjectMenuOpen(null)
+    setProjectMenuPos(null)
     setTimeout(() => projectEditRef.current?.focus(), 50)
   }
 
   async function handleRenameProject(projectId: string, newTitle: string) {
-    if (!newTitle.trim()) { setEditingProjectId(null); return }
+    if (!newTitle.trim()) {
+      setEditingProjectId(null)
+      return
+    }
     try {
       await apiFetch(`/api/agents/project/${projectId}/rename`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ new_display_name: newTitle.trim() }),
       })
-      setProjects((prev) =>
-        prev.map((p) => p.id === projectId ? { ...p, display_name: newTitle.trim() } : p)
-      )
-    } catch (e) { console.error("Rename project failed:", e) }
-    finally { setEditingProjectId(null) }
+      setProjects((prev) => prev.map((p) => (p.id === projectId ? { ...p, display_name: newTitle.trim() } : p)))
+    } catch (e) {
+      console.error("Rename project failed:", e)
+    } finally {
+      setEditingProjectId(null)
+    }
   }
 
   async function handleCloneProject(project: Project) {
@@ -175,9 +273,12 @@ export default function NavSidebar({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ new_display_name: `${project.display_name || project.name} (Copy)` }),
       })
-      if (res.ok) listProjects().then(setProjects).catch(() => { })
-    } catch (e) { console.error("Clone project failed:", e) }
-    setProjectMenuOpen(null); setProjectMenuPos(null)
+      if (res.ok) listProjects().then(setProjects).catch(() => {})
+    } catch (e) {
+      console.error("Clone project failed:", e)
+    }
+    setProjectMenuOpen(null)
+    setProjectMenuPos(null)
   }
 
   async function handleDeleteProject(project: Project) {
@@ -187,8 +288,11 @@ export default function NavSidebar({
       await apiFetch(`/api/agents/project/${project.id}`, { method: "DELETE" })
       setProjects((prev) => prev.filter((p) => p.id !== project.id))
       if (selectedProjectId === project.id) onChange("projects")
-    } catch (e) { console.error("Delete project failed:", e) }
-    setProjectMenuOpen(null); setProjectMenuPos(null)
+    } catch (e) {
+      console.error("Delete project failed:", e)
+    }
+    setProjectMenuOpen(null)
+    setProjectMenuPos(null)
   }
 
   async function handleExportChat(project: Project) {
@@ -198,34 +302,29 @@ export default function NavSidebar({
       const a = document.createElement("a")
       a.href = url
       a.download = `${project.display_name || project.name}_chat.md`
-      document.body.appendChild(a); a.click(); document.body.removeChild(a)
-    } catch (e) { console.error("Export chat failed:", e) }
-    setProjectMenuOpen(null); setProjectMenuPos(null)
-  }
-
-  // ── Session actions ───────────────────────────────────────────────────────
-
-  function openSessionMenu(e: React.MouseEvent, sessionId: string) {
-    e.preventDefault(); e.stopPropagation()
-    if (sessionMenuOpen === sessionId) {
-      setSessionMenuOpen(null); setSessionMenuPos(null)
-    } else {
-      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-      setSessionMenuOpen(sessionId)
-      setSessionMenuPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right })
-      setProjectMenuOpen(null); setProjectMenuPos(null)
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+    } catch (e) {
+      console.error("Export chat failed:", e)
     }
+    setProjectMenuOpen(null)
+    setProjectMenuPos(null)
   }
 
   function startEditSession(session: Session) {
     setEditingSessionId(session.id)
     setEditSessionTitle(session.title || "")
-    setSessionMenuOpen(null); setSessionMenuPos(null)
+    setSessionMenuOpen(null)
+    setSessionMenuPos(null)
     setTimeout(() => sessionEditRef.current?.focus(), 50)
   }
 
   async function handleRenameSession(sessionId: string, newTitle: string) {
-    if (!newTitle.trim()) { setEditingSessionId(null); return }
+    if (!newTitle.trim()) {
+      setEditingSessionId(null)
+      return
+    }
     try {
       const res = await apiFetch(`/api/agents/sessions/${sessionId}`, {
         method: "PATCH",
@@ -233,11 +332,12 @@ export default function NavSidebar({
         body: JSON.stringify({ title: newTitle.trim() }),
       })
       const updated = await res.json()
-      setSessions((prev) =>
-        prev.map((s) => s.id === sessionId ? { ...s, title: updated.title } : s)
-      )
-    } catch (e) { console.error("Rename session failed:", e) }
-    finally { setEditingSessionId(null) }
+      setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, title: updated.title } : s)))
+    } catch (e) {
+      console.error("Rename session failed:", e)
+    } finally {
+      setEditingSessionId(null)
+    }
   }
 
   async function handleArchiveSession(sessionId: string) {
@@ -248,8 +348,11 @@ export default function NavSidebar({
         body: JSON.stringify({ is_archived: true }),
       })
       setSessions((prev) => prev.filter((s) => s.id !== sessionId))
-    } catch (e) { console.error("Archive session failed:", e) }
-    setSessionMenuOpen(null); setSessionMenuPos(null)
+    } catch (e) {
+      console.error("Archive session failed:", e)
+    }
+    setSessionMenuOpen(null)
+    setSessionMenuPos(null)
   }
 
   async function handleExportSession(session: Session) {
@@ -260,9 +363,14 @@ export default function NavSidebar({
       a.href = url
       const titleSlug = (session.title || "Untitled").replace(/ /g, "_").toLowerCase()
       a.download = `chat_export_${titleSlug}.md`
-      document.body.appendChild(a); a.click(); document.body.removeChild(a)
-    } catch (e) { console.error("Export session failed:", e) }
-    setSessionMenuOpen(null); setSessionMenuPos(null)
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+    } catch (e) {
+      console.error("Export session failed:", e)
+    }
+    setSessionMenuOpen(null)
+    setSessionMenuPos(null)
   }
 
   async function handleNewChat() {
@@ -277,470 +385,461 @@ export default function NavSidebar({
       setSessions((prev) => [newSession, ...prev])
       localStorage.setItem(`va_last_session_${selectedProjectId}`, newSession.id)
       onChange("chat", selectedProjectId, newSession.id)
-    } catch (e) { console.error("New chat failed:", e) }
+    } catch (e) {
+      console.error("New chat failed:", e)
+    }
   }
 
   const openMenuProject = projects.find((p) => p.id === projectMenuOpen)
   const openMenuSession = sessions.find((s) => s.id === sessionMenuOpen)
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  const secondaryTitle: Record<PrimaryNavId, string> = {
+    home: "Home Context",
+    projects: "Projects",
+    tasks: "Tasks",
+    knowledge: "Knowledge",
+    automation: "Automation",
+    devices: "Devices",
+  }
 
-  return (
-    <div
-      className={`bg-gray-950 border-r border-gray-800/50 flex flex-col h-full transition-all duration-200 relative flex-shrink-0 ${isCollapsed ? "w-16" : "w-64"
-        }`}
-    >
-      {/* Toggle Button */}
-      <button
-        onClick={onToggle}
-        className="absolute -right-3 top-5 w-6 h-6 bg-gray-800 border border-gray-700 rounded-full flex items-center justify-center text-gray-500 hover:text-white hover:bg-gray-700 transition-all z-10"
-      >
-        <span className={`text-xs transition-transform duration-200 ${isCollapsed ? "rotate-180" : ""}`}>◀</span>
-      </button>
+  const secondaryDescription: Record<PrimaryNavId, string> = {
+    home: "Overview and quick links",
+    projects: "Project and chat navigation",
+    tasks: "Task views and filters",
+    knowledge: "",
+    automation: "Runs, agents, and schedules",
+    devices: "Device and access context",
+  }
 
-      {/* ── Header (fixed) ────────────────────────────────────────────────── */}
-      <div className={`p-3 border-b border-gray-800/50 flex-shrink-0 ${isCollapsed ? "px-2" : ""}`}>
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-white text-sm flex-shrink-0">
-            V
-          </div>
-          {!isCollapsed && <span className="text-sm font-semibold text-white">Vision Ark</span>}
+  const renderHomeSecondary = () => (
+    <div className="space-y-5">
+      <section className="space-y-1">
+        <SectionTitle title="Overview" />
+        <button onClick={() => onChange("dashboard")} className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${active === "dashboard" ? "bg-cyan-500/12 text-cyan-300" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}>
+          <Home size={15} />
+          <span>Dashboard</span>
+        </button>
+        <button onClick={() => onChange("tasks")} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-gray-800/70 hover:text-gray-200">
+          <CheckSquare size={15} />
+          <span>Today</span>
+        </button>
+      </section>
+    </div>
+  )
+
+  const renderProjectsSecondary = () =>
+    active === "projects" ? (
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 px-1 py-1 text-gray-300">
+          <Folder size={16} />
+          <span className="text-xl font-semibold">All Projects</span>
         </div>
-      </div>
 
-      {/* ── Nav Items (fixed — never pushed off screen) ───────────────────── */}
-      <div className="flex-shrink-0 pt-2 pb-1 space-y-1">
+        <div className="px-1">
+          <input
+            type="text"
+            placeholder="Search projects..."
+            value={projectSearchQuery}
+            onChange={(e) => setProjectSearchQuery(e.target.value)}
+            className="w-full h-11 rounded-xl bg-gray-900/80 border border-gray-800 px-4 text-gray-200 placeholder:text-gray-500 outline-none focus:border-cyan-500/40"
+          />
+        </div>
+
         <button
-          onClick={() => setMainNavExpanded(!mainNavExpanded)}
-          className={`flex items-center w-full px-4 py-1.5 mb-1 text-xs font-medium text-gray-500 hover:text-gray-300 transition-colors ${isCollapsed ? "justify-center px-2" : ""
-            }`}
+          onClick={() => onChange("projects")}
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-cyan-400 hover:bg-cyan-500/10"
         >
-          {isCollapsed ? (
-            <LayoutGrid size={14} />
-          ) : (
-            <>
-              <span className="flex-1 text-left uppercase tracking-wider">Menu</span>
-              <span className={`transition-transform duration-200 ${mainNavExpanded ? "" : "-rotate-90"}`}>▾</span>
-            </>
-          )}
+          <Plus size={15} />
+          <span>New Project</span>
         </button>
 
-        {mainNavExpanded && (
-          <div className="px-3 space-y-1">
-            {navItems.map(({ id, icon: Icon, label }) => {
-              const isActive = active === id
-              const badge = id === "run_center" && pendingApprovals > 0
+        <div className="border-t border-gray-800/60 pt-2">
+          <div className="space-y-1 max-h-[calc(100vh-320px)] overflow-y-auto pr-1">
+            {filteredProjects.length === 0 ? (
+              <div className="px-3 py-2 text-xs text-gray-600 italic">No matching projects</div>
+            ) : filteredProjects.map((project) => {
+              const isHovered = hoveredProject === project.id
               return (
-                <button
-                  key={id}
-                  onClick={() => onChange(id)}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${isCollapsed ? "justify-center" : ""
-                    } ${isActive
-                      ? "bg-cyan-500 text-white shadow-lg shadow-cyan-500/20"
-                      : "text-gray-500 hover:bg-gray-800/50 hover:text-gray-300"
-                    }`}
-                  title={isCollapsed ? label : ""}
+                <div
+                  key={`project-${project.id}`}
+                  className="relative"
+                  onMouseEnter={() => setHoveredProject(project.id)}
+                  onMouseLeave={() => { if (projectMenuOpen !== project.id) setHoveredProject(null) }}
                 >
-                  <span className={isActive ? "text-white" : "text-gray-500"}>
-                    <Icon size={20} />
-                  </span>
-                  {!isCollapsed && <span>{label}</span>}
-                  {badge && !isCollapsed && (
-                    <span className="ml-auto w-2 h-2 rounded-full bg-yellow-400" />
+                  {editingProjectId === project.id ? (
+                    <input
+                      ref={projectEditRef}
+                      value={editProjectTitle}
+                      onChange={(e) => setEditProjectTitle(e.target.value)}
+                      onBlur={() => handleRenameProject(project.id, editProjectTitle)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleRenameProject(project.id, editProjectTitle)
+                        if (e.key === "Escape") setEditingProjectId(null)
+                      }}
+                      className="w-full px-3 py-2 text-sm bg-gray-800 text-white rounded-lg border border-cyan-500/50 outline-none"
+                    />
+                  ) : (
+                    <button
+                      onClick={() => {
+                        const lastSessionId = localStorage.getItem(`va_last_session_${project.id}`)
+                        onChange("chat", project.id, lastSessionId || undefined)
+                      }}
+                      className="w-full flex items-center px-3 py-2 rounded-lg text-sm text-left text-gray-400 hover:bg-gray-800/50 hover:text-white"
+                    >
+                      <span className="truncate flex-1">{project.display_name || project.name}</span>
+                    </button>
                   )}
-                </button>
+                  {(isHovered || projectMenuOpen === project.id) && editingProjectId !== project.id && (
+                    <button
+                      onClick={(e) => openProjectMenu(e, project.id)}
+                      className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 text-gray-500 hover:text-white hover:bg-gray-700 rounded transition-colors"
+                    >
+                      <MoreVertical size={14} />
+                    </button>
+                  )}
+                </div>
               )
             })}
           </div>
+        </div>
+      </div>
+    ) : (
+      <div className="space-y-4">
+        <button
+          onClick={() => onChange("projects")}
+          className="w-full flex items-center gap-2 px-1 py-1 text-gray-300 hover:text-white"
+        >
+          <ChevronLeft size={16} />
+          <span className="text-xl font-semibold">Projects</span>
+        </button>
+
+        <div className="px-1">
+          <input
+            type="text"
+            placeholder="Search chats..."
+            value={chatSearchQuery}
+            onChange={(e) => setChatSearchQuery(e.target.value)}
+            className="w-full h-11 rounded-xl bg-gray-900/80 border border-gray-800 px-4 text-gray-200 placeholder:text-gray-500 outline-none focus:border-cyan-500/40"
+          />
+        </div>
+
+        <button
+          onClick={handleNewChat}
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-cyan-400 hover:bg-cyan-500/10"
+        >
+          <Plus size={15} />
+          <span>New Chat</span>
+        </button>
+
+        <div className="border-t border-gray-800/60 pt-2">
+          <div className="space-y-1 max-h-[calc(100vh-320px)] overflow-y-auto pr-1">
+            {filteredSessions.length === 0 ? (
+              <div className="px-3 py-2 text-xs text-gray-600 italic">No matching chats</div>
+            ) : filteredSessions.map((session) => {
+              const isActiveSession = selectedSessionId === session.id
+              const isHovered = hoveredSession === session.id
+              return (
+                <div
+                  key={`session-${session.id}`}
+                  className="relative"
+                  onMouseEnter={() => setHoveredSession(session.id)}
+                  onMouseLeave={() => { if (sessionMenuOpen !== session.id) setHoveredSession(null) }}
+                >
+                  {editingSessionId === session.id ? (
+                    <input
+                      ref={sessionEditRef}
+                      value={editSessionTitle}
+                      onChange={(e) => setEditSessionTitle(e.target.value)}
+                      onBlur={() => handleRenameSession(session.id, editSessionTitle)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleRenameSession(session.id, editSessionTitle)
+                        if (e.key === "Escape") setEditingSessionId(null)
+                      }}
+                      className="w-full px-3 py-2 text-sm bg-gray-800 text-white rounded-lg border border-cyan-500/50 outline-none"
+                    />
+                  ) : (
+                    <button
+                      onClick={() => {
+                        if (!selectedProjectId) return
+                        localStorage.setItem(`va_last_session_${selectedProjectId}`, session.id)
+                        onChange("chat", selectedProjectId, session.id)
+                      }}
+                      className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm text-left ${isActiveSession ? "bg-cyan-500/15 text-white" : "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200"}`}
+                    >
+                      <MessageSquare size={11} className="flex-shrink-0 opacity-40" />
+                      <span className="truncate flex-1">{session.title || "Untitled Chat"}</span>
+                    </button>
+                  )}
+                  {(isHovered || sessionMenuOpen === session.id) && editingSessionId !== session.id && (
+                    <button
+                      onClick={(e) => openSessionMenu(e, session.id)}
+                      className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 text-gray-500 hover:text-white hover:bg-gray-700 rounded transition-colors"
+                    >
+                      <MoreVertical size={12} />
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    )
+
+  const renderTasksSecondary = () => (
+    <div className="space-y-5">
+      <section className="space-y-1">
+        <button onClick={() => onChange("tasks")} className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${active === "tasks" ? "bg-cyan-500/12 text-cyan-300" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}>
+          <ClipboardList size={15} />
+          <span>Task List</span>
+        </button>
+        <button onClick={() => onChange("calendar")} className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${active === "calendar" ? "bg-cyan-500/12 text-cyan-300" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}>
+          <CalendarDays size={15} />
+          <span>Calendar</span>
+        </button>
+      </section>
+
+      <div className="border-t border-gray-800/60 pt-3 space-y-5">
+        {active === "tasks" && (
+          <section className="space-y-1">
+            <SectionTitle title="Task Filters" />
+            {taskCategories.map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                onClick={() => onTaskFilterChange?.(id, taskFilterContext)}
+                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${taskFilter === id ? "bg-blue-600/10 text-blue-400" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}
+              >
+                <Icon size={15} />
+                <span className="flex-1 text-left">{label}</span>
+              </button>
+            ))}
+          </section>
+        )}
+
+        {active === "calendar" && (
+          <section className="space-y-1">
+            <SectionTitle title="Calendar Status" />
+            {([
+              { id: "all", label: "All Status" },
+              { id: "open", label: "Open Only" },
+              { id: "done", label: "Done Only" },
+            ] as const).map((item) => (
+              <button
+                key={item.id}
+                onClick={() => onCalendarStatusFilterChange?.(item.id)}
+                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${calendarStatusFilter === item.id ? "bg-blue-600/10 text-blue-400" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}
+              >
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </section>
         )}
       </div>
 
-      {/* ── Scrollable bottom section (Projects+Chats or Task Filter) ─────── */}
-      {/*   flex-1 + overflow-y-auto → always reachable by scrolling         */}
-      <div className="flex-1 min-h-0 overflow-y-auto border-t border-gray-800/50 flex flex-col custom-scrollbar">
+      {taskContexts.length > 0 && (
+        <section className="space-y-1">
+          <SectionTitle title="Projects" />
+          <button
+            onClick={() => onTaskFilterChange?.(taskFilter, undefined)}
+            className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${!taskFilterContext ? "bg-gray-800 text-white" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}
+          >
+            <InboxIcon size={15} />
+            <span>All Projects</span>
+          </button>
+          {taskContexts.map((ctx) => (
+            <button
+              key={ctx}
+              onClick={() => onTaskFilterChange?.(taskFilter, ctx)}
+              className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${taskFilterContext === ctx ? "bg-gray-800 text-cyan-400" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}
+            >
+              <Folder size={15} />
+              <span className="truncate">{ctx}</span>
+            </button>
+          ))}
+        </section>
+      )}
+    </div>
+  )
 
-        {active === "tasks" ? (
-          /* ─ Task Filter Sidebar ──────────────────────────────────────── */
-          <div className="py-2">
-            <div className="space-y-1 px-3">
-              {taskCategories.map(({ id, label, icon: Icon }) => (
+  const renderKnowledgeSecondary = () => (
+    <div className="space-y-5">
+      <section className="space-y-1">
+        <button onClick={() => onChange("notes")} className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${active === "notes" ? "bg-cyan-500/12 text-cyan-300" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}>
+          <StickyNote size={15} />
+          <span>Notes</span>
+        </button>
+        <button onClick={() => onChange("workspace")} className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${active === "workspace" ? "bg-cyan-500/12 text-cyan-300" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}>
+          <FileText size={15} />
+          <span>Artifacts</span>
+        </button>
+      </section>
+    </div>
+  )
+
+  const renderAutomationSecondary = () => (
+    <div className="space-y-1">
+      <button onClick={() => onChange("run_center")} className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${active === "run_center" ? "bg-cyan-500/12 text-cyan-300" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}>
+        <Activity size={15} />
+        <span className="flex-1 text-left">Run Center</span>
+        {pendingApprovals > 0 && <span className="text-[10px] px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-300">{pendingApprovals}</span>}
+      </button>
+      <button onClick={() => onChange("agents")} className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${active === "agents" ? "bg-cyan-500/12 text-cyan-300" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}>
+        <Bot size={15} />
+        <span>Agents</span>
+      </button>
+      <button onClick={() => onChange("cron")} className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${active === "cron" ? "bg-cyan-500/12 text-cyan-300" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}>
+        <Clock3 size={15} />
+        <span>Cron</span>
+      </button>
+    </div>
+  )
+
+  const renderDevicesSecondary = () => (
+    <div className="space-y-1">
+      <button onClick={() => onChange("devices")} className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${active === "devices" ? "bg-cyan-500/12 text-cyan-300" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}>
+        <HardDrive size={15} />
+        <span>All Devices</span>
+      </button>
+    </div>
+  )
+
+  const renderSecondary = () => {
+    if (primaryActive === "projects") return renderProjectsSecondary()
+    if (primaryActive === "tasks") return renderTasksSecondary()
+    if (primaryActive === "knowledge") return renderKnowledgeSecondary()
+    if (primaryActive === "automation") return renderAutomationSecondary()
+    if (primaryActive === "devices") return renderDevicesSecondary()
+    return renderHomeSecondary()
+  }
+
+  return (
+    <>
+      <div className="h-full flex border-r border-gray-800/50 bg-gray-950 flex-shrink-0">
+        <aside className={`${primaryCollapsed ? "w-16" : "w-52"} border-r border-gray-800/50 flex flex-col transition-all duration-200`}>
+          <div className={`p-3 ${primaryCollapsed ? "flex justify-center" : ""}`}>
+            <button
+              onClick={onTogglePrimaryCollapsed}
+              className="w-8 h-8 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors flex items-center justify-center"
+              title={primaryCollapsed ? "Expand" : "Collapse"}
+            >
+              <Menu size={18} />
+            </button>
+          </div>
+
+          <nav className={`flex-1 p-3 space-y-1 overflow-y-auto ${primaryCollapsed ? "px-2" : ""}`}>
+            {primaryNavItems.map(({ id, icon: Icon, label, target }) => {
+              const isPrimaryActive = primaryActive === id
+              return (
                 <button
                   key={id}
-                  onClick={() => onTaskFilterChange?.(id, taskFilterContext)}
-                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-bold transition-all ${isCollapsed ? "justify-center" : ""
-                    } ${taskFilter === id
-                      ? "bg-blue-600/10 text-blue-400"
-                      : "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200"
-                    }`}
-                  title={isCollapsed ? label : ""}
+                  onClick={() => onChange(target)}
+                  title={primaryCollapsed ? label : undefined}
+                  className={`w-full flex items-center ${primaryCollapsed ? "justify-center px-2" : "gap-3 px-3"} py-2.5 rounded-xl text-sm font-semibold transition-colors ${isPrimaryActive ? "bg-cyan-500 text-white shadow-lg shadow-cyan-500/15" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}
                 >
-                  <span className={taskFilter === id ? "text-blue-400" : "text-gray-500"}>
-                    <Icon size={18} />
-                  </span>
-                  {!isCollapsed && <span className="flex-1 text-left">{label}</span>}
+                  <Icon size={18} />
+                  {!primaryCollapsed && <span>{label}</span>}
                 </button>
-              ))}
-            </div>
+              )
+            })}
+          </nav>
 
-            {/* Context (Projects) list for task filter */}
-            {!isCollapsed && taskContexts.length > 0 && (
-              <div className="mt-4 px-3">
-                <h4 className="px-3 text-[10px] font-black text-gray-600 uppercase tracking-widest mb-2">
-                  Projects
-                </h4>
-                <button
-                  onClick={() => onTaskFilterChange?.(taskFilter, undefined)}
-                  className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${!taskFilterContext
-                    ? "bg-gray-800 text-white"
-                    : "text-gray-500 hover:text-gray-300 hover:bg-gray-900/40"
-                    }`}
-                >
-                  <InboxIcon
-                    size={14}
-                    className={!taskFilterContext ? "text-blue-400" : "text-gray-600"}
-                  />
-                  <span className="truncate flex-1 text-left">All Projects</span>
-                </button>
-                {taskContexts.map((ctx) => (
-                  <button
-                    key={ctx}
-                    onClick={() => onTaskFilterChange?.(taskFilter, ctx)}
-                    className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${taskFilterContext === ctx
-                      ? "bg-gray-800 text-cyan-400"
-                      : "text-gray-500 hover:text-gray-300 hover:bg-gray-900/40"
-                      }`}
-                  >
-                    <Folder
-                      size={14}
-                      className={
-                        taskFilterContext === ctx
-                          ? "text-cyan-400" : "text-gray-600"
-                      }
-                    />
-                    <span className="truncate flex-1 text-left">{ctx}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        ) : active === "calendar" ? (
-          <div className="py-2">
-            {!isCollapsed && (
-              <div className="px-3 space-y-4">
-                <div>
-                  <h4 className="px-3 text-[10px] font-black text-gray-600 uppercase tracking-widest mb-2">
-                    Calendar Filter
-                  </h4>
-                  <div className="space-y-1">
-                    {([
-                      { id: "all", label: "All Status" },
-                      { id: "open", label: "Open Only" },
-                      { id: "done", label: "Done Only" },
-                    ] as const).map((item) => (
-                      <button
-                        key={item.id}
-                        onClick={() => onCalendarStatusFilterChange?.(item.id)}
-                        className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${calendarStatusFilter === item.id
-                          ? "bg-blue-600/10 text-blue-400"
-                          : "text-gray-500 hover:text-gray-300 hover:bg-gray-900/40"
-                          }`}
-                      >
-                        <span className="truncate flex-1 text-left">{item.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {taskContexts.length > 0 && (
-                  <div>
-                    <h4 className="px-3 text-[10px] font-black text-gray-600 uppercase tracking-widest mb-2">
-                      Projects
-                    </h4>
-                    <button
-                      onClick={() => onTaskFilterChange?.(taskFilter, undefined)}
-                      className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${!taskFilterContext
-                        ? "bg-gray-800 text-white"
-                        : "text-gray-500 hover:text-gray-300 hover:bg-gray-900/40"
-                        }`}
-                    >
-                      <InboxIcon
-                        size={14}
-                        className={!taskFilterContext ? "text-blue-400" : "text-gray-600"}
-                      />
-                      <span className="truncate flex-1 text-left">All Projects</span>
-                    </button>
-                    {taskContexts.map((ctx) => (
-                      <button
-                        key={ctx}
-                        onClick={() => onTaskFilterChange?.(taskFilter, ctx)}
-                        className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${taskFilterContext === ctx
-                          ? "bg-gray-800 text-cyan-400"
-                          : "text-gray-500 hover:text-gray-300 hover:bg-gray-900/40"
-                          }`}
-                      >
-                        <Folder
-                          size={14}
-                          className={taskFilterContext === ctx ? "text-cyan-400" : "text-gray-600"}
-                        />
-                        <span className="truncate flex-1 text-left">{ctx}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        ) : (
-          /* ─ Projects + Chats ─────────────────────────────────────────── */
-          <div className="py-2">
-            {/* Projects header */}
+          <div className={`p-3 border-t border-gray-800/50 relative ${primaryCollapsed ? "px-2" : ""}`} ref={userMenuRef}>
             <button
-              onClick={() => setProjectsExpanded(!projectsExpanded)}
-              className={`flex items-center w-full px-4 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-300 transition-colors ${isCollapsed ? "justify-center px-2" : ""
-                }`}
+              onClick={() => setUserMenuOpen(!userMenuOpen)}
+              className={`w-full flex items-center ${primaryCollapsed ? "justify-center px-2" : "gap-3 px-3"} py-2.5 rounded-xl text-sm font-semibold transition-colors ${userMenuOpen ? "bg-gray-800 text-white" : "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200"}`}
             >
-              {isCollapsed ? (
-                <span>P</span>
-              ) : (
+              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0 shadow-md">
+                {(username || "U").charAt(0).toUpperCase()}
+              </div>
+              {!primaryCollapsed && (
                 <>
-                  <span className="flex-1 text-left uppercase tracking-wider">Projects</span>
-                  <span className={`transition-transform duration-200 ${projectsExpanded ? "" : "-rotate-90"}`}>▾</span>
+                  <span className="flex-1 text-left truncate">{username || "User"}</span>
+                  <ChevronUp size={14} className={`text-gray-500 transition-transform duration-200 ${userMenuOpen ? "" : "rotate-180"}`} />
                 </>
               )}
             </button>
 
-            {projectsExpanded && !isCollapsed && (
-              <div className="px-2 mt-1">
-                {/* New Project */}
+            {userMenuOpen && (
+              <div className={`absolute bottom-full mb-2 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl py-1.5 z-[9999] ${primaryCollapsed ? "left-0 min-w-[220px]" : "left-3 right-3"}`}>
                 <button
-                  onClick={() => onChange("projects")}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs text-cyan-500 hover:bg-cyan-500/10 hover:text-cyan-400 transition-colors w-full text-left"
+                  onClick={() => { onChange("settings"); setUserMenuOpen(false) }}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
                 >
-                  <Plus size={13} />
-                  <span>New Project</span>
+                  <Settings size={16} /> Settings
                 </button>
+                <button
+                  onClick={() => { setShortcutsOpen(true); setUserMenuOpen(false) }}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
+                >
+                  <Keyboard size={16} /> Keyboard Shortcuts
+                </button>
+                <div className="my-1 border-t border-gray-700" />
+                <button
+                  onClick={() => { onLogout?.(); setUserMenuOpen(false) }}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10 transition-colors"
+                >
+                  <LogOut size={16} /> Log out
+                </button>
+              </div>
+            )}
+          </div>
+        </aside>
 
-                {/* Project list */}
-                <div className="space-y-0.5 mt-0.5">
-                  {projects.length === 0 ? (
-                    <div className="px-3 py-2 text-xs text-gray-600 italic">No projects yet</div>
-                  ) : (
-                    projects.map((project) => {
-                      const isActive = selectedProjectId === project.id && active === "chat"
-                      const isHovered = hoveredProject === project.id
-                      return (
-                        <div
-                          key={project.id}
-                          className="relative"
-                          onMouseEnter={() => setHoveredProject(project.id)}
-                          onMouseLeave={() => { if (projectMenuOpen !== project.id) setHoveredProject(null) }}
-                        >
-                          {editingProjectId === project.id ? (
-                            <input
-                              ref={projectEditRef}
-                              value={editProjectTitle}
-                              onChange={(e) => setEditProjectTitle(e.target.value)}
-                              onBlur={() => handleRenameProject(project.id, editProjectTitle)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") handleRenameProject(project.id, editProjectTitle)
-                                if (e.key === "Escape") setEditingProjectId(null)
-                              }}
-                              className="w-full px-3 py-2 text-sm bg-gray-800 text-white rounded-lg border border-cyan-500/50 outline-none"
-                            />
-                          ) : (
-                            <button
-                              onClick={() => {
-                                const lastSessionId = localStorage.getItem(`va_last_session_${project.id}`)
-                                onChange("chat", project.id, lastSessionId || undefined)
-                              }}
-                              className={`w-full flex items-center px-3 py-2 rounded-lg text-sm transition-colors text-left ${isActive
-                                ? "bg-gray-800 text-white"
-                                : "text-gray-400 hover:bg-gray-800/50 hover:text-white"
-                                }`}
-                            >
-                              <span className="truncate flex-1">
-                                {project.display_name || project.name}
-                              </span>
-                            </button>
-                          )}
-
-                          {(isHovered || projectMenuOpen === project.id) && editingProjectId !== project.id && (
-                            <button
-                              onClick={(e) => openProjectMenu(e, project.id)}
-                              className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 text-gray-500 hover:text-white hover:bg-gray-700 rounded transition-colors"
-                            >
-                              <MoreVertical size={14} />
-                            </button>
-                          )}
-                        </div>
-                      )
-                    })
-                  )}
+        {primaryActive !== "home" && (
+          <aside className="w-72 flex flex-col bg-gray-950/80">
+            {primaryActive === "tasks" ? (
+              <div className="px-4 py-3">
+                <div className="flex items-center gap-2 text-gray-300">
+                  <ClipboardList size={16} />
+                  <span className="text-xl font-semibold">Tasks</span>
                 </div>
               </div>
-            )}
-
-            {/* Chats section — shown when a project is selected */}
-            {selectedProjectId && !isCollapsed && (
-              <div className="mt-3 pt-3 border-t border-gray-800/50">
-                <button
-                  onClick={() => setChatsExpanded(!chatsExpanded)}
-                  className="flex items-center w-full px-4 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-300 transition-colors"
-                >
-                  <MessageSquare size={11} className="mr-1.5 flex-shrink-0" />
-                  <span className="flex-1 text-left uppercase tracking-wider">Chats</span>
-                  <span className={`transition-transform duration-200 ${chatsExpanded ? "" : "-rotate-90"}`}>▾</span>
-                </button>
-
-                {chatsExpanded && (
-                  <div className="px-2 mt-1">
-                    {/* New Chat */}
-                    <button
-                      onClick={handleNewChat}
-                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs text-cyan-500 hover:bg-cyan-500/10 hover:text-cyan-400 transition-colors w-full text-left"
-                    >
-                      <Plus size={13} />
-                      <span>New Chat</span>
-                    </button>
-
-                    {/* Session list */}
-                    <div className="space-y-0.5 mt-0.5">
-                      {sessions.length === 0 ? (
-                        <div className="px-3 py-2 text-xs text-gray-600 italic">No chats yet</div>
-                      ) : (
-                        sessions.map((session) => {
-                          const isActiveSession = selectedSessionId === session.id
-                          const isHovered = hoveredSession === session.id
-                          return (
-                            <div
-                              key={session.id}
-                              className="relative"
-                              onMouseEnter={() => setHoveredSession(session.id)}
-                              onMouseLeave={() => { if (sessionMenuOpen !== session.id) setHoveredSession(null) }}
-                            >
-                              {editingSessionId === session.id ? (
-                                <input
-                                  ref={sessionEditRef}
-                                  value={editSessionTitle}
-                                  onChange={(e) => setEditSessionTitle(e.target.value)}
-                                  onBlur={() => handleRenameSession(session.id, editSessionTitle)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") handleRenameSession(session.id, editSessionTitle)
-                                    if (e.key === "Escape") setEditingSessionId(null)
-                                  }}
-                                  className="w-full px-3 py-2 text-xs bg-gray-800 text-white rounded-lg border border-cyan-500/50 outline-none"
-                                />
-                              ) : (
-                                <button
-                                  onClick={() => {
-                                    localStorage.setItem(`va_last_session_${selectedProjectId}`, session.id)
-                                    onChange("chat", selectedProjectId, session.id)
-                                  }}
-                                  className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg text-xs transition-colors text-left ${isActiveSession
-                                    ? "bg-cyan-500/15 text-white"
-                                    : "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200"
-                                    }`}
-                                >
-                                  <MessageSquare size={11} className="flex-shrink-0 opacity-40" />
-                                  <span className="truncate flex-1">
-                                    {session.title || "Untitled Chat"}
-                                  </span>
-                                </button>
-                              )}
-
-                              {(isHovered || sessionMenuOpen === session.id) && editingSessionId !== session.id && (
-                                <button
-                                  onClick={(e) => openSessionMenu(e, session.id)}
-                                  className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 text-gray-500 hover:text-white hover:bg-gray-700 rounded transition-colors"
-                                >
-                                  <MoreVertical size={12} />
-                                </button>
-                              )}
-                            </div>
-                          )
-                        })
-                      )}
-                    </div>
-                  </div>
-                )}
+            ) : primaryActive === "knowledge" ? (
+              <div className="px-4 py-3">
+                <div className="flex items-center gap-2 text-gray-300">
+                  <Library size={16} />
+                  <span className="text-xl font-semibold">Knowledge</span>
+                </div>
+              </div>
+            ) : primaryActive === "automation" ? (
+              <div className="px-4 py-3">
+                <div className="flex items-center gap-2 text-gray-300">
+                  <Bot size={16} />
+                  <span className="text-xl font-semibold">Automation</span>
+                </div>
+              </div>
+            ) : primaryActive === "devices" ? (
+              <div className="px-4 py-3">
+                <div className="flex items-center gap-2 text-gray-300">
+                  <Monitor size={16} />
+                  <span className="text-xl font-semibold">Devices</span>
+                </div>
+              </div>
+            ) : primaryActive !== "projects" && (
+              <div className="px-4 py-3 border-b border-gray-800/50">
+                <h2 className="text-sm font-semibold text-gray-200">{secondaryTitle[primaryActive]}</h2>
+                <p className="text-[11px] text-gray-500 mt-1">{secondaryDescription[primaryActive]}</p>
               </div>
             )}
-          </div>
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-3">
+              {renderSecondary()}
+            </div>
+          </aside>
         )}
       </div>
 
-      {/* ── Footer — User Menu ────────────────────────────────────────────── */}
-      <div className="p-3 border-t border-gray-800/50 flex-shrink-0 relative" ref={userMenuRef}>
-        <button
-          onClick={() => setUserMenuOpen(!userMenuOpen)}
-          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${isCollapsed ? "justify-center" : ""
-            } ${userMenuOpen
-              ? "bg-gray-800 text-white"
-              : "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200"
-            }`}
-          title={isCollapsed ? (username || "Menu") : ""}
-        >
-          {/* Avatar initial */}
-          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0 shadow-md">
-            {(username || "U").charAt(0).toUpperCase()}
-          </div>
-          {!isCollapsed && (
-            <>
-              <span className="flex-1 text-left truncate">{username || "User"}</span>
-              <ChevronUp size={14} className={`text-gray-500 transition-transform duration-200 ${userMenuOpen ? "" : "rotate-180"}`} />
-            </>
-          )}
-        </button>
-
-        {/* Popup menu */}
-        {userMenuOpen && (
-          <div
-            className={`absolute bottom-full mb-2 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl py-1.5 z-[9999] min-w-[200px] ${isCollapsed ? "left-0" : "left-3 right-3"
-              }`}
-          >
-            <button
-              onClick={() => { onChange("settings"); setUserMenuOpen(false) }}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
-            >
-              <Settings size={16} /> Settings
-            </button>
-            <button
-              onClick={() => { setShortcutsOpen(true); setUserMenuOpen(false) }}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
-            >
-              <Keyboard size={16} /> Keyboard Shortcuts
-            </button>
-            <div className="my-1 border-t border-gray-700" />
-            <button
-              onClick={() => { onLogout?.(); setUserMenuOpen(false) }}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10 transition-colors"
-            >
-              <LogOut size={16} /> Log out
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Keyboard Shortcuts Modal */}
       <KeyboardShortcutsModal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 
-      {/* ── Project dropdown (fixed-position) ─────────────────────────────── */}
       {projectMenuOpen && projectMenuPos && openMenuProject && (
         <div
           ref={projectMenuRef}
           style={{ position: "fixed", top: projectMenuPos.top, right: projectMenuPos.right, zIndex: 9999 }}
           className="bg-gray-800 border border-gray-700 rounded-lg shadow-xl py-1 min-w-[160px]"
         >
-          <button
-            onClick={() => startEditProject(openMenuProject)}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
-          >
+          <button onClick={() => startEditProject(openMenuProject)} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white">
             <Pencil size={14} /> Rename
           </button>
-          <button
-            onClick={() => handleCloneProject(openMenuProject)}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
-          >
+          <button onClick={() => handleCloneProject(openMenuProject)} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white">
             <Copy size={14} /> Clone Project
           </button>
           <button
@@ -754,50 +853,34 @@ export default function NavSidebar({
           >
             <MessageSquare size={14} /> Open Chat
           </button>
-          <button
-            onClick={() => handleExportChat(openMenuProject)}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
-          >
+          <button onClick={() => handleExportChat(openMenuProject)} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white">
             <Download size={14} /> Export Chat
           </button>
           <div className="my-1 border-t border-gray-700" />
-          <button
-            onClick={() => handleDeleteProject(openMenuProject)}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10"
-          >
+          <button onClick={() => handleDeleteProject(openMenuProject)} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10">
             <Trash2 size={14} /> Delete Project
           </button>
         </div>
       )}
 
-      {/* ── Session dropdown (fixed-position) ─────────────────────────────── */}
       {sessionMenuOpen && sessionMenuPos && openMenuSession && (
         <div
           ref={sessionMenuRef}
           style={{ position: "fixed", top: sessionMenuPos.top, right: sessionMenuPos.right, zIndex: 9999 }}
           className="bg-gray-800 border border-gray-700 rounded-lg shadow-xl py-1 min-w-[140px]"
         >
-          <button
-            onClick={() => startEditSession(openMenuSession)}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
-          >
+          <button onClick={() => startEditSession(openMenuSession)} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white">
             <Pencil size={14} /> Rename
           </button>
-          <button
-            onClick={() => handleExportSession(openMenuSession)}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
-          >
+          <button onClick={() => handleExportSession(openMenuSession)} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white">
             <Download size={14} /> Export
           </button>
           <div className="my-1 border-t border-gray-700" />
-          <button
-            onClick={() => handleArchiveSession(openMenuSession.id)}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10"
-          >
+          <button onClick={() => handleArchiveSession(openMenuSession.id)} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10">
             <Archive size={14} /> Archive
           </button>
         </div>
       )}
-    </div>
+    </>
   )
 }

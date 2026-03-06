@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useAuth } from "@/lib/AuthContext";
 import { usePathname } from "next/navigation";
-import SystemStatus from "./SystemStatus";
 import { NotificationBell } from "./NotificationBell";
 
 export default function Navbar() {

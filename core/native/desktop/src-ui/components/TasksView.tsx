@@ -66,6 +66,41 @@ function loadLabel(score: number) {
 function toDisplayDate(iso: string) {
   return new Date(iso).toLocaleDateString("ja-JP", { month: "short", day: "numeric" })
 }
+function recurrenceLabel(ruleType?: string) {
+  const normalized = (ruleType || "").toUpperCase()
+  if (normalized === "ONCE") return "once"
+  if (normalized === "WEEKLY") return "weekly"
+  if (normalized === "EVERY_N_DAYS") return "every n days"
+  if (normalized === "MONTHLY_DAY") return "monthly"
+  if (normalized === "MONTHLY_NTH_WEEKDAY") return "monthly (nth weekday)"
+  return normalized ? normalized.toLowerCase().replace(/_/g, " ") : "recurring"
+}
+function weeklyDaysText(task: LBSTask) {
+  const raw = task as LBSTask & {
+    mon?: boolean; tue?: boolean; wed?: boolean; thu?: boolean; fri?: boolean; sat?: boolean; sun?: boolean
+  }
+  const days = [
+    raw.mon ? "Mon" : null, raw.tue ? "Tue" : null, raw.wed ? "Wed" : null,
+    raw.thu ? "Thu" : null, raw.fri ? "Fri" : null, raw.sat ? "Sat" : null, raw.sun ? "Sun" : null,
+  ].filter(Boolean) as string[]
+  return days.length > 0 ? days.join("/") : "weekly"
+}
+function recurrenceMeta(task: LBSTask) {
+  const rule = (task.rule_type || "").toUpperCase()
+  const raw = task as LBSTask & { interval_days?: number; anchor_date?: string | null; month_day?: number }
+  if (rule === "ONCE") return task.due_date ? `due ${toDisplayDate(task.due_date)}` : null
+  if (rule === "WEEKLY") return weeklyDaysText(task)
+  if (rule === "EVERY_N_DAYS") {
+    const everyText = raw.interval_days && raw.interval_days > 0 ? `every ${raw.interval_days}d` : "every n days"
+    return raw.anchor_date ? `${everyText} from ${toDisplayDate(raw.anchor_date)}` : everyText
+  }
+  if (rule === "MONTHLY_DAY") {
+    if (raw.month_day && raw.month_day > 0) return `monthly day ${raw.month_day}`
+    return "monthly"
+  }
+  if (rule === "MONTHLY_NTH_WEEKDAY") return "monthly (nth weekday)"
+  return null
+}
 function groupByContext(tasks: LBSTask[]): Map<string, LBSTask[]> {
   const map = new Map<string, LBSTask[]>()
   for (const t of tasks) {
@@ -133,14 +168,14 @@ function TaskRow({ task, showStatus, selected, selectionMode, onToggle, onClick,
             <Zap size={9} className="inline mr-0.5" />{load.label} {task.base_load_score.toFixed(1)}
           </span>
           <span className="flex items-center gap-1 text-[10px] text-gray-500"><Tag size={9} />{task.context}</span>
-          <span className="text-[10px] text-gray-600 capitalize">{task.rule_type?.replace(/_/g, " ")}</span>
+          <span className="text-[10px] text-gray-600">{recurrenceLabel(task.rule_type)}</span>
           {(task.start_time || task.end_time) && (
             <span className="flex items-center gap-1 text-[10px] text-gray-500">
               <Clock size={9} />{task.start_time}{task.end_time ? `  E${task.end_time}` : ""}
             </span>
           )}
-          {!showStatus && task.due_date && (
-            <span className="text-[10px] text-gray-600">due {toDisplayDate(task.due_date)}</span>
+          {!showStatus && recurrenceMeta(task) && (
+            <span className="text-[10px] text-gray-600">{recurrenceMeta(task)}</span>
           )}
           {task.notes && (
             <span className="text-[10px] text-gray-600 italic truncate max-w-[140px]">{task.notes}</span>

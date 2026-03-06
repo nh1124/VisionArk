@@ -39,13 +39,13 @@ function MainApp() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
   const [selectedProjectName, setSelectedProjectName] = useState("")
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [pendingApprovals, setPendingApprovals] = useState(0)
   const [projects, setProjects] = useState<Project[]>([])
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("today")
   const [taskFilterContext, setTaskFilterContext] = useState<string | undefined>(undefined)
   const [calendarStatusFilter, setCalendarStatusFilter] = useState<CalendarStatusFilter>("all")
   const [projectSidebarMode, setProjectSidebarMode] = useState<ProjectSidebarMode>(null)
+  const [primaryCollapsed, setPrimaryCollapsed] = useState(false)
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -98,6 +98,14 @@ function MainApp() {
 
     startDaemon()
   }, [loggedIn])
+
+  useEffect(() => {
+    if (selectedProjectId) {
+      localStorage.setItem("va_active_project_id", selectedProjectId)
+    } else {
+      localStorage.removeItem("va_active_project_id")
+    }
+  }, [selectedProjectId])
 
   const handleNavChange = useCallback(
     (newView: NavView, projectId?: string, sessionId?: string) => {
@@ -240,8 +248,8 @@ function MainApp() {
         selectedProjectId={selectedProjectId}
         selectedSessionId={selectedSessionId}
         pendingApprovals={pendingApprovals}
-        isCollapsed={sidebarCollapsed}
-        onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+        primaryCollapsed={primaryCollapsed}
+        onTogglePrimaryCollapsed={() => setPrimaryCollapsed((v) => !v)}
         taskFilter={taskFilter}
         taskFilterContext={taskFilterContext}
         onTaskFilterChange={handleTaskFilterChange}
