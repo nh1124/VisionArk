@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react"
-import { ChevronLeft, ChevronRight, Clock, Lock } from "lucide-react"
+import { Clock, Lock } from "lucide-react"
 import { getSchedule, type LBSScheduleDay, type LBSTask } from "../lib/api"
+import type { CalendarStatusFilter } from "./NavSidebar"
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -51,11 +52,19 @@ interface Props {
   targetDate: string
   onTaskClick?: (task: LBSTask & { due_date: string }) => void
   refreshKey?: number
+  filterContext?: string
+  statusFilter?: CalendarStatusFilter
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function TimelineView({ targetDate, onTaskClick, refreshKey }: Props) {
+export default function TimelineView({
+  targetDate,
+  onTaskClick,
+  refreshKey,
+  filterContext,
+  statusFilter = "all",
+}: Props) {
   const today = getLocalDate()
   const [schedule, setSchedule] = useState<LBSScheduleDay[]>([])
   const [loading, setLoading] = useState(false)
@@ -123,7 +132,14 @@ export default function TimelineView({ targetDate, onTaskClick, refreshKey }: Pr
           <div className="grid grid-cols-7 divide-x divide-gray-800/30">
             {weekDays.map(ds => {
               const day = schedule.find(d => d.date === ds)
-              const allDay = (day?.tasks ?? []).filter(t => !t.start_time)
+              const filtered = (day?.tasks ?? []).filter((t) => {
+                const done = t.status === "done" || t.status === "completed"
+                if (filterContext && t.context !== filterContext) return false
+                if (statusFilter === "open") return !done
+                if (statusFilter === "done") return done
+                return true
+              })
+              const allDay = filtered.filter(t => !t.start_time)
               return (
                 <div key={ds} className="min-h-[40px] p-1 flex flex-col gap-0.5 bg-white/[0.01]">
                   {allDay.map(t => (
@@ -174,7 +190,14 @@ export default function TimelineView({ targetDate, onTaskClick, refreshKey }: Pr
             {/* Day columns */}
             {weekDays.map(ds => {
               const day = schedule.find(d => d.date === ds)
-              const timed = (day?.tasks ?? []).filter(t => !!t.start_time)
+              const timed = (day?.tasks ?? []).filter((t) => {
+                const done = t.status === "done" || t.status === "completed"
+                if (!t.start_time) return false
+                if (filterContext && t.context !== filterContext) return false
+                if (statusFilter === "open") return !done
+                if (statusFilter === "done") return done
+                return true
+              })
               return (
                 <div key={ds} className="relative px-0.5 py-0.5">
                   {timed.map(t => {

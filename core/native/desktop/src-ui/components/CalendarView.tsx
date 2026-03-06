@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react"
 import { ChevronLeft, ChevronRight, X, Plus, CheckCircle2, Circle } from "lucide-react"
 import { getSchedule, type LBSScheduleDay, type LBSTask } from "../lib/api"
+import type { CalendarStatusFilter } from "./NavSidebar"
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -47,11 +48,18 @@ function gridDays(month: Date): Date[] {
 interface Props {
   onTaskClick?: (task: LBSTask & { due_date: string }) => void
   refreshKey?: number
+  filterContext?: string
+  statusFilter?: CalendarStatusFilter
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function CalendarView({ onTaskClick, refreshKey }: Props) {
+export default function CalendarView({
+  onTaskClick,
+  refreshKey,
+  filterContext,
+  statusFilter = "all",
+}: Props) {
   const today = getLocalDate()
   const [month, setMonth] = useState(() => {
     const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1)
@@ -78,9 +86,19 @@ export default function CalendarView({ onTaskClick, refreshKey }: Props) {
 
   const tasksByDay = useMemo(() => {
     const map: Record<string, LBSScheduleDay["tasks"]> = {}
-    schedule.forEach(d => { if (d.tasks?.length) map[d.date] = d.tasks })
+    schedule.forEach(d => {
+      if (!d.tasks?.length) return
+      const filtered = d.tasks.filter((t) => {
+        const done = t.status === "done" || t.status === "completed"
+        if (filterContext && t.context !== filterContext) return false
+        if (statusFilter === "open") return !done
+        if (statusFilter === "done") return done
+        return true
+      })
+      if (filtered.length) map[d.date] = filtered
+    })
     return map
-  }, [schedule])
+  }, [filterContext, schedule, statusFilter])
 
   function prevMonth() { setMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1)) }
   function nextMonth() { setMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1)) }

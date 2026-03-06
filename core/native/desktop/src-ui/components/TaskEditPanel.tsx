@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from "react"
 import {
-  X, CheckCircle2, Circle, Plus, Trash2, Clock, Lock, Unlock,
-  ChevronDown, Save, AlertTriangle,
+  X, CheckCircle2, Circle, Plus, Trash2, Lock,
+  ChevronDown, Save,
 } from "lucide-react"
 import {
-  apiFetch, apiJson, getLBSTask, updateLBSTask, deleteLBSTask, createLBSException,
+  apiFetch, apiJson, getLBSTask, updateLBSTask, deleteLBSTask,
   type LBSTaskFull,
 } from "../lib/api"
 
@@ -80,7 +80,6 @@ export default function TaskEditPanel({
   const [saving, setSaving]       = useState(false)
   const [deleting, setDeleting]   = useState(false)
   const [msg, setMsg]             = useState<{ type: "ok" | "err"; text: string } | null>(null)
-  const [instanceOnly, setInstanceOnly] = useState(false)
   const [history, setHistory]     = useState<HistoryEntry[]>([])
   const [histLoading, setHistLoading] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
@@ -90,7 +89,6 @@ export default function TaskEditPanel({
     if (!taskId) { setTask(null); return }
     setLoading(true)
     setMsg(null)
-    setInstanceOnly(false)
     setShowHistory(false)
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
     getLBSTask(taskId, targetDate)
@@ -145,24 +143,8 @@ export default function TaskEditPanel({
     setSaving(true)
     setMsg(null)
     try {
-      const isRecurring = task.rule_type !== "ONCE"
-
-      if (instanceOnly && isRecurring) {
-        const date = task.due_date ?? targetDate ?? new Date().toISOString().split("T")[0]
-        await createLBSException({
-          task_id: task.task_id,
-          target_date: date,
-          exception_type: "OVERRIDE_LOAD",
-          override_load_value: task.base_load_score,
-          start_time: task.start_time,
-          end_time: task.end_time,
-          notes: task.notes,
-        })
-        setMsg({ type: "ok", text: "This occurrence updated!" })
-      } else {
-        await updateLBSTask(task.task_id, task)
-        setMsg({ type: "ok", text: "Task saved!" })
-      }
+      await updateLBSTask(task.task_id, task)
+      setMsg({ type: "ok", text: "Task saved!" })
       setTimeout(() => { onSaved?.(); onClose() }, 800)
     } catch (e: any) {
       setMsg({ type: "err", text: e.message || "Save failed" })
@@ -177,15 +159,8 @@ export default function TaskEditPanel({
     if (!ok) return
     setDeleting(true)
     try {
-      const isRecurring = task.rule_type !== "ONCE"
-      if (instanceOnly && isRecurring) {
-        const date = task.due_date ?? targetDate ?? new Date().toISOString().split("T")[0]
-        await createLBSException({ task_id: task.task_id, target_date: date, exception_type: "SKIP" })
-        setMsg({ type: "ok", text: "Occurrence skipped!" })
-      } else {
-        await deleteLBSTask(task.task_id)
-        setMsg({ type: "ok", text: "Task deleted!" })
-      }
+      await deleteLBSTask(task.task_id)
+      setMsg({ type: "ok", text: "Task deleted!" })
       setTimeout(() => { onSaved?.(); onClose() }, 800)
     } catch (e: any) {
       setMsg({ type: "err", text: e.message || "Delete failed" })
@@ -370,18 +345,19 @@ export default function TaskEditPanel({
               </div>
             )}
 
-            {/* Due date + times */}
-            <div className="flex gap-3">
-              <div className="flex-1">
-                <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 block mb-1.5">Due Date</label>
-                <input
-                  type="date"
-                  value={task.due_date ?? ""}
-                  onChange={e => update("due_date", e.target.value || null)}
-                  className="w-full bg-gray-900 border border-gray-800 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-600 transition-colors"
-                />
+            {!isRecurring && (
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 block mb-1.5">Due Date</label>
+                  <input
+                    type="date"
+                    value={task.due_date ?? ""}
+                    onChange={e => update("due_date", e.target.value || null)}
+                    className="w-full bg-gray-900 border border-gray-800 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-600 transition-colors"
+                  />
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="flex gap-3">
               <div className="flex-1">
@@ -419,27 +395,28 @@ export default function TaskEditPanel({
               </select>
             </div>
 
-            {/* Start / End date range */}
-            <div className="flex gap-3">
-              <div className="flex-1">
-                <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 block mb-1.5">Active From</label>
-                <input
-                  type="date"
-                  value={task.start_date ?? ""}
-                  onChange={e => update("start_date", e.target.value || null)}
-                  className="w-full bg-gray-900 border border-gray-800 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-600 transition-colors"
-                />
+            {isRecurring && (
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 block mb-1.5">Active From</label>
+                  <input
+                    type="date"
+                    value={task.start_date ?? ""}
+                    onChange={e => update("start_date", e.target.value || null)}
+                    className="w-full bg-gray-900 border border-gray-800 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-600 transition-colors"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 block mb-1.5">Active Until</label>
+                  <input
+                    type="date"
+                    value={task.end_date ?? ""}
+                    onChange={e => update("end_date", e.target.value || null)}
+                    className="w-full bg-gray-900 border border-gray-800 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-600 transition-colors"
+                  />
+                </div>
               </div>
-              <div className="flex-1">
-                <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 block mb-1.5">Active Until</label>
-                <input
-                  type="date"
-                  value={task.end_date ?? ""}
-                  onChange={e => update("end_date", e.target.value || null)}
-                  className="w-full bg-gray-900 border border-gray-800 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-600 transition-colors"
-                />
-              </div>
-            </div>
+            )}
 
             {/* Notes */}
             <div>
@@ -486,29 +463,6 @@ export default function TaskEditPanel({
                 </div>
               )}
             </div>
-
-            {/* Instance-only toggle for recurring tasks */}
-            {isRecurring && (
-              <div
-                onClick={() => setInstanceOnly(v => !v)}
-                className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
-                  instanceOnly
-                    ? "bg-amber-900/20 border-amber-600/40 text-amber-300"
-                    : "bg-gray-900 border-gray-800 text-gray-500 hover:border-gray-700"
-                }`}
-              >
-                <AlertTriangle size={14} className={instanceOnly ? "text-amber-400" : "text-gray-600"} />
-                <div className="flex-1">
-                  <p className="text-xs font-bold">Apply to this occurrence only</p>
-                  {instanceOnly && (
-                    <p className="text-[10px] mt-0.5 opacity-70">Changes won't affect the recurring template</p>
-                  )}
-                </div>
-                <div className={`w-8 h-4 rounded-full transition-all ${instanceOnly ? "bg-amber-500" : "bg-gray-700"}`}>
-                  <div className={`w-3 h-3 rounded-full bg-white m-0.5 transition-transform ${instanceOnly ? "translate-x-4" : ""}`} />
-                </div>
-              </div>
-            )}
 
             {/* History */}
             <div>
@@ -566,7 +520,7 @@ export default function TaskEditPanel({
                 className="flex items-center gap-1.5 px-3 py-2 bg-gray-900 hover:bg-red-900/40 border border-gray-800 hover:border-red-700/50 text-gray-400 hover:text-red-300 rounded-xl text-xs font-semibold transition-all disabled:opacity-40"
               >
                 <Trash2 size={13} />
-                {instanceOnly ? "Skip" : "Delete"}
+                Delete
               </button>
               <button
                 onClick={handleSave}
@@ -574,7 +528,7 @@ export default function TaskEditPanel({
                 className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-bold transition-all disabled:opacity-40"
               >
                 <Save size={13} />
-                {saving ? "Saving…" : instanceOnly ? "Save Occurrence" : "Save Task"}
+                {saving ? "Saving..." : "Save Task"}
               </button>
             </div>
           </div>
@@ -590,3 +544,4 @@ export default function TaskEditPanel({
     </>
   )
 }
+

@@ -3,7 +3,7 @@ import React, {
 } from "react"
 import {
   CheckCircle2, Circle, Clock, Plus, RefreshCw, Tag, Zap,
-  List, CalendarDays, Calendar, ChevronDown, ChevronRight,
+  CalendarDays, Calendar, ChevronDown, ChevronRight,
   Hash, Archive, Download, Upload, Trash2, CalendarCheck,
   Square, CheckSquare, X, FileDown,
 } from "lucide-react"
@@ -12,7 +12,7 @@ import {
   listLBSTasks, completeLBSTask, createLBSTask, getOverdueTasks,
   type LBSTask, type LBSTaskCreate,
 } from "../lib/api"
-import type { TaskFilter } from "./NavSidebar"
+import type { CalendarStatusFilter, TaskFilter } from "./NavSidebar"
 import TaskEditPanel from "./TaskEditPanel"
 import CalendarView from "./CalendarView"
 import TimelineView from "./TimelineView"
@@ -107,7 +107,7 @@ function TaskRow({ task, showStatus, selected, selectionMode, onToggle, onClick,
           <span className="text-[10px] text-gray-600 capitalize">{task.rule_type?.replace(/_/g, " ")}</span>
           {(task.start_time || task.end_time) && (
             <span className="flex items-center gap-1 text-[10px] text-gray-500">
-              <Clock size={9} />{task.start_time}{task.end_time ? ` – ${task.end_time}` : ""}
+              <Clock size={9} />{task.start_time}{task.end_time ? `  E${task.end_time}` : ""}
             </span>
           )}
           {!showStatus && task.due_date && (
@@ -507,16 +507,26 @@ const FILTER_LABELS: Record<string, string> = {
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
-interface Props { filter?: TaskFilter; filterContext?: string }
+interface Props {
+  mode?: "tasks" | "calendar"
+  filter?: TaskFilter
+  filterContext?: string
+  calendarStatusFilter?: CalendarStatusFilter
+}
 
-export default function TasksView({ filter = "today", filterContext }: Props) {
+export default function TasksView({
+  mode = "tasks",
+  filter = "today",
+  filterContext,
+  calendarStatusFilter = "all",
+}: Props) {
   // Core state
   const [tasks, setTasks] = useState<LBSTask[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showAddForm, setShowAddForm] = useState(false)
   const [toggling, setToggling] = useState<Set<string>>(new Set())
-  const [viewMode, setViewMode] = useState<ViewMode>("list")
+  const [viewMode, setViewMode] = useState<ViewMode>(mode === "calendar" ? "calendar" : "list")
   const [editTaskId, setEditTaskId] = useState<string | null>(null)
   const [editDate, setEditDate] = useState<string | undefined>()
   const [importOpen, setImportOpen] = useState(false)
@@ -542,6 +552,12 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
 
   const showStatus = filter === "today" || filter === "overdue"
   const targetDate = filter === "today" ? TODAY : undefined
+  const isTasksPage = mode === "tasks"
+  const isCalendarPage = mode === "calendar"
+
+  useEffect(() => {
+    setViewMode(mode === "calendar" ? "calendar" : "list")
+  }, [mode])
 
   // Flat task list for range selection
   const flatTasks = useMemo(() => tasks, [tasks])
@@ -556,6 +572,7 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
 
   // ── Fetch tasks ─────────────────────────────────────────────────────────────
   const fetchTasks = useCallback(async () => {
+    if (!isTasksPage) return
     setLoading(true); setError(null)
     try {
       let result: LBSTask[] = []
@@ -563,13 +580,15 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
       else if (filter === "overdue") result = await getOverdueTasks()
       else if (filter === "my-day") result = (await listLBSTasks({ active: true })).filter(t => t.meta_payload?.is_my_day)
       else if (filter === "planned") result = (await listLBSTasks({ active: true })).filter(t => t.due_date && t.due_date > TODAY)
-      else if (filter === "project" && filterContext) result = await listLBSTasks({ active: true, context: filterContext })
       else result = await listLBSTasks({ active: true })
+      if (filterContext) {
+        result = result.filter(t => t.context === filterContext)
+      }
       setTasks(result)
       setRefreshKey(k => k + 1)
     } catch (e: any) { setError(e.message || "Failed to load tasks") }
     finally { setLoading(false) }
-  }, [filter, filterContext])
+  }, [filter, filterContext, isTasksPage])
 
   useEffect(() => { fetchTasks() }, [fetchTasks])
 
@@ -740,11 +759,19 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
     setEditTaskId(task.task_id)
   }
 
+  function handleRefresh() {
+    if (isTasksPage) fetchTasks()
+    else setRefreshKey(k => k + 1)
+  }
+
   const grouped = groupByContext(tasks)
   const todayDone = tasks.filter(t => t.status === "done").length
   const todayTotal = tasks.length
   const progress = todayTotal > 0 ? (todayDone / todayTotal) * 100 : 0
-  const title = filter === "project" && filterContext ? filterContext : FILTER_LABELS[filter] ?? filter
+  const baseTitle = FILTER_LABELS[filter] ?? filter
+  const title = isCalendarPage
+    ? (filterContext ? `Calendar - ${filterContext}` : "Calendar")
+    : (filterContext ? `${baseTitle} - ${filterContext}` : baseTitle)
   const selMode = selectedIds.size > 0
 
   return (
@@ -754,7 +781,6 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
       onClick={() => ctxMenu && setCtxMenu(null)}
     >
       <div className="flex flex-col flex-1 min-w-0 min-h-0">
-        {/* ── Header ─────────────────────────────────────────────────────────── */}
         <div className="flex-shrink-0 px-6 pt-6 pb-4 border-b border-gray-800/50">
           <div className="flex items-center justify-between mb-3">
             <div>
@@ -765,39 +791,43 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
             </div>
 
             <div className="flex items-center gap-2">
-              {/* View mode */}
-              <div className="flex items-center gap-0.5 bg-gray-900/80 border border-gray-800 rounded-xl p-1">
-                {([["list", <List size={14} />], ["calendar", <CalendarDays size={14} />], ["timeline", <Calendar size={14} />]] as const).map(([mode, icon]) => (
-                  <button key={mode} onClick={() => setViewMode(mode as ViewMode)} title={mode}
-                    className={`p-1.5 rounded-lg transition-all ${viewMode === mode ? "bg-cyan-600 text-white" : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}>
-                    {icon}
-                  </button>
-                ))}
-              </div>
+              {isCalendarPage && (
+                <div className="flex items-center gap-0.5 bg-gray-900/80 border border-gray-800 rounded-xl p-1">
+                  {([["calendar", <CalendarDays size={14} />], ["timeline", <Calendar size={14} />]] as const).map(([nextMode, icon]) => (
+                    <button key={nextMode} onClick={() => setViewMode(nextMode as ViewMode)} title={nextMode}
+                      className={`p-1.5 rounded-lg transition-all ${viewMode === nextMode ? "bg-cyan-600 text-white" : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}>
+                      {icon}
+                    </button>
+                  ))}
+                </div>
+              )}
 
-              {/* Utility buttons — always present so layout doesn't shift */}
               <div className="flex items-center gap-1">
-                <button onClick={() => setImportOpen(true)} title="Import CSV"
-                  className="p-2 text-gray-500 hover:text-gray-300 rounded-xl hover:bg-gray-800 transition-all"><Upload size={15} /></button>
-                <button onClick={openExportSheet} title="Export CSV"
-                  className="p-2 text-gray-500 hover:text-gray-300 rounded-xl hover:bg-gray-800 transition-all"><Download size={15} /></button>
-                <button onClick={fetchTasks} title="Refresh"
+                {isTasksPage && (
+                  <>
+                    <button onClick={() => setImportOpen(true)} title="Import CSV"
+                      className="p-2 text-gray-500 hover:text-gray-300 rounded-xl hover:bg-gray-800 transition-all"><Upload size={15} /></button>
+                    <button onClick={openExportSheet} title="Export CSV"
+                      className="p-2 text-gray-500 hover:text-gray-300 rounded-xl hover:bg-gray-800 transition-all"><Download size={15} /></button>
+                  </>
+                )}
+                <button onClick={handleRefresh} title="Refresh"
                   className="p-2 text-gray-500 hover:text-gray-300 rounded-xl hover:bg-gray-800 transition-all">
                   <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
                 </button>
               </div>
 
-              {/* Add — always shown */}
-              <button onClick={() => { setViewMode("list"); setShowAddForm(v => !v) }} title="Add task"
-                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${showAddForm && viewMode === "list" ? "bg-gray-800 text-gray-300" : "bg-cyan-600 hover:bg-cyan-500 text-white"
-                  }`}>
-                <Plus size={14} />Add
-              </button>
+              {isTasksPage && (
+                <button onClick={() => { setViewMode("list"); setShowAddForm(v => !v) }} title="Add task"
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${showAddForm && viewMode === "list" ? "bg-gray-800 text-gray-300" : "bg-cyan-600 hover:bg-cyan-500 text-white"
+                    }`}>
+                  <Plus size={14} />Add
+                </button>
+              )}
             </div>
           </div>
 
-          {/* Progress */}
-          {viewMode === "list" && showStatus && todayTotal > 0 && (
+          {isTasksPage && viewMode === "list" && showStatus && todayTotal > 0 && (
             <div>
               <div className="flex justify-between text-xs text-gray-500 mb-1">
                 <span>{filter === "overdue" ? "Completion" : "Today's progress"}</span>
@@ -811,8 +841,7 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
           )}
         </div>
 
-        {/* ── Bulk action bar ─────────────────────────────────────────────────── */}
-        {selMode && viewMode === "list" && (
+        {isTasksPage && selMode && viewMode === "list" && (
           <BulkActionBar
             count={selectedIds.size}
             onDone={() => handleBulkStatus("done")}
@@ -823,21 +852,19 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
           />
         )}
 
-        {/* ── Add form ────────────────────────────────────────────────────────── */}
-        {showAddForm && viewMode === "list" && (
+        {isTasksPage && showAddForm && viewMode === "list" && (
           <div className="flex-shrink-0 pt-4">
             <AddTaskForm onAdd={handleAddTask} onCancel={() => setShowAddForm(false)}
-              defaultContext={filter === "project" ? filterContext : undefined} availableProjects={projects} />
+              defaultContext={filterContext} availableProjects={projects} />
           </div>
         )}
 
-        {/* ── Content ─────────────────────────────────────────────────────────── */}
         <div className={`flex-1 min-h-0 ${viewMode === "list" ? "overflow-y-auto custom-scrollbar py-3" : "overflow-hidden p-4"}`}>
           {viewMode === "list" ? (
             error ? (
               <div className="mx-4 p-4 bg-red-900/20 border border-red-800/40 rounded-2xl text-sm text-red-400">{error}</div>
             ) : loading && tasks.length === 0 ? (
-              <div className="flex items-center justify-center h-40 text-gray-600 text-sm">Loading…</div>
+              <div className="flex items-center justify-center h-40 text-gray-600 text-sm">Loading...</div>
             ) : tasks.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-40 gap-3">
                 <CheckCircle2 size={32} className="text-gray-800" />
@@ -858,14 +885,24 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
               ))
             )
           ) : viewMode === "calendar" ? (
-            <CalendarView onTaskClick={openEdit} refreshKey={refreshKey} />
+            <CalendarView
+              onTaskClick={openEdit}
+              refreshKey={refreshKey}
+              filterContext={filterContext}
+              statusFilter={calendarStatusFilter}
+            />
           ) : (
-            <TimelineView targetDate={TODAY} onTaskClick={openEdit} refreshKey={refreshKey} />
+            <TimelineView
+              targetDate={TODAY}
+              onTaskClick={openEdit}
+              refreshKey={refreshKey}
+              filterContext={filterContext}
+              statusFilter={calendarStatusFilter}
+            />
           )}
         </div>
 
-        {/* ── Context menu ─────────────────────────────────────────────────────── */}
-        {ctxMenu && (
+        {isTasksPage && ctxMenu && (
           <ContextMenu
             x={ctxMenu.x} y={ctxMenu.y} task={ctxMenu.task}
             onStatus={handleCtxStatus}
@@ -876,8 +913,7 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
           />
         )}
 
-        {/* ── Export sheet ─────────────────────────────────────────────────────── */}
-        {exportOpen && (
+        {isTasksPage && exportOpen && (
           <ExportSheet
             taskCount={exportCount}
             onExport={doExport}
@@ -885,14 +921,15 @@ export default function TasksView({ filter = "today", filterContext }: Props) {
           />
         )}
 
-        {/* ── Import modal ─────────────────────────────────────────────────────── */}
-        <ImportModal isOpen={importOpen} onClose={() => setImportOpen(false)}
-          onImportComplete={() => { setImportOpen(false); fetchTasks() }} existingProjects={projects} />
-      </div>{/* end main content column */}
+        {isTasksPage && (
+          <ImportModal isOpen={importOpen} onClose={() => setImportOpen(false)}
+            onImportComplete={() => { setImportOpen(false); fetchTasks() }} existingProjects={projects} />
+        )}
+      </div>
 
       {/* ── Task edit panel ──────────────────────────────────────────────────── */}
       <TaskEditPanel taskId={editTaskId} targetDate={editDate}
-        onClose={() => setEditTaskId(null)} onSaved={fetchTasks} availableProjects={projects}
+        onClose={() => setEditTaskId(null)} onSaved={handleRefresh} availableProjects={projects}
         mode={isWide ? "inline" : "overlay"} />
     </div>
   )

@@ -304,10 +304,10 @@ export default function DashboardView({ onNavigate }: { onNavigate?: (v: any, id
           </GlassCard>
 
           {/* Tile 4: Today's Schedule */}
-          <GlassCard title="Today's Schedule" icon={<Calendar size={16} />} action="Tasks Page" onAction={() => onNavigate?.("tasks")}>
+          <GlassCard title="Today's Schedule" icon={<Calendar size={16} />} action="Calendar Page" onAction={() => onNavigate?.("calendar")}>
             <div className="space-y-2 lg:space-y-3 flex flex-col justify-center h-full">
               {(schedule[0]?.tasks.length || 0) > 0 ? schedule[0].tasks.slice(0, 3).map(item => (
-                <div key={item.task_id} onClick={() => onNavigate?.("tasks")} className="flex items-center gap-4 p-2.5 lg:p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-all group cursor-pointer">
+                <div key={item.task_id} onClick={() => onNavigate?.("calendar")} className="flex items-center gap-4 p-2.5 lg:p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-all group cursor-pointer">
                   <div className="min-w-[45px] lg:min-w-[55px] flex flex-col items-center">
                     <p className="text-[10px] font-bold text-indigo-400 group-hover:text-indigo-300 transition-colors font-mono tracking-tighter">{item.start_time || "00:00"}</p>
                     <div className="h-2 w-px bg-white/10 my-0.5" />

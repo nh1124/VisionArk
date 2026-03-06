@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { invoke, isTauri } from "@tauri-apps/api/core"
 export type ProjectSidebarMode = "files" | "automation" | "notes" | "activity" | "settings" | null;
-import NavSidebar, { type NavView, type TaskFilter } from "./components/NavSidebar"
+import NavSidebar, { type CalendarStatusFilter, type NavView, type TaskFilter } from "./components/NavSidebar"
 import TopBar from "./components/TopBar"
 import DashboardView from "./components/DashboardView"
 import RunCenterView from "./components/RunCenterView"
@@ -44,6 +44,7 @@ function MainApp() {
   const [projects, setProjects] = useState<Project[]>([])
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("today")
   const [taskFilterContext, setTaskFilterContext] = useState<string | undefined>(undefined)
+  const [calendarStatusFilter, setCalendarStatusFilter] = useState<CalendarStatusFilter>("all")
   const [projectSidebarMode, setProjectSidebarMode] = useState<ProjectSidebarMode>(null)
 
   useEffect(() => {
@@ -244,6 +245,8 @@ function MainApp() {
         taskFilter={taskFilter}
         taskFilterContext={taskFilterContext}
         onTaskFilterChange={handleTaskFilterChange}
+        calendarStatusFilter={calendarStatusFilter}
+        onCalendarStatusFilterChange={setCalendarStatusFilter}
         username={username}
         onLogout={handleLogout}
       />
@@ -264,7 +267,15 @@ function MainApp() {
             {view === "notes" && <NotesView onOpenProject={(id) => handleNavChange("chat", id)} />}
             {view === "cron" && <CronTasksView />}
             {view === "tasks" && (
-              <TasksView filter={taskFilter} filterContext={taskFilterContext} />
+              <TasksView mode="tasks" filter={taskFilter} filterContext={taskFilterContext} />
+            )}
+            {view === "calendar" && (
+              <TasksView
+                mode="calendar"
+                filter={taskFilter}
+                filterContext={taskFilterContext}
+                calendarStatusFilter={calendarStatusFilter}
+              />
             )}
             {view === "chat" && selectedProjectId && (
               <ChatView

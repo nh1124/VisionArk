@@ -3,8 +3,8 @@ import {
   LayoutGrid, Folder, Bot, ClipboardList, Activity,
   AlarmClock, StickyNote, Library, Settings, Plus, MessageSquare,
   MoreVertical, Pencil, Copy, Trash2, Download, Archive,
-  Sun, Star, Calendar, Inbox as InboxIcon,
-  LogOut, HelpCircle, ChevronUp, Keyboard, Monitor,
+  Sun, Star, Calendar, CalendarDays, Inbox as InboxIcon,
+  LogOut, ChevronUp, Keyboard, Monitor,
 } from "lucide-react"
 import KeyboardShortcutsModal from "./KeyboardShortcutsModal"
 import {
@@ -14,10 +14,11 @@ import {
 } from "../lib/api"
 
 export type NavView =
-  | "dashboard" | "projects" | "agents" | "tasks" | "run_center"
+  | "dashboard" | "projects" | "agents" | "tasks" | "calendar" | "run_center"
   | "cron" | "notes" | "workspace" | "chat" | "settings" | "devices"
 
 export type TaskFilter = "today" | "my-day" | "planned" | "overdue" | "inbox" | "project"
+export type CalendarStatusFilter = "all" | "open" | "done"
 
 interface Props {
   active: NavView
@@ -30,6 +31,8 @@ interface Props {
   taskFilter?: TaskFilter
   taskFilterContext?: string
   onTaskFilterChange?: (filter: TaskFilter, context?: string) => void
+  calendarStatusFilter?: CalendarStatusFilter
+  onCalendarStatusFilterChange?: (filter: CalendarStatusFilter) => void
   username?: string
   onLogout?: () => void
 }
@@ -39,6 +42,7 @@ const navItems: { id: NavView; icon: React.ElementType; label: string }[] = [
   { id: "projects", icon: Folder, label: "Projects" },
   { id: "agents", icon: Bot, label: "Agents" },
   { id: "tasks", icon: ClipboardList, label: "Tasks" },
+  { id: "calendar", icon: CalendarDays, label: "Calendar" },
   { id: "run_center", icon: Activity, label: "Run Center" },
   { id: "devices", icon: Monitor, label: "Devices" },
   { id: "cron", icon: AlarmClock, label: "Cron Tasks" },
@@ -58,6 +62,7 @@ export default function NavSidebar({
   active, onChange, selectedProjectId, selectedSessionId,
   pendingApprovals, isCollapsed, onToggle,
   taskFilter = "today", taskFilterContext, onTaskFilterChange,
+  calendarStatusFilter = "all", onCalendarStatusFilterChange,
   username, onLogout,
 }: Props) {
   const [projects, setProjects] = useState<Project[]>([])
@@ -101,7 +106,7 @@ export default function NavSidebar({
   }, [selectedProjectId])
 
   useEffect(() => {
-    if (active !== "tasks") return
+    if (active !== "tasks" && active !== "calendar") return
     listLBSTasks({ active: true })
       .then((tasks) => {
         const ctxs = Array.from(new Set(tasks.map((t) => t.context).filter(Boolean))).sort() as string[]
@@ -361,7 +366,7 @@ export default function NavSidebar({
               {taskCategories.map(({ id, label, icon: Icon }) => (
                 <button
                   key={id}
-                  onClick={() => onTaskFilterChange?.(id)}
+                  onClick={() => onTaskFilterChange?.(id, taskFilterContext)}
                   className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-bold transition-all ${isCollapsed ? "justify-center" : ""
                     } ${taskFilter === id
                       ? "bg-blue-600/10 text-blue-400"
@@ -384,23 +389,23 @@ export default function NavSidebar({
                   Projects
                 </h4>
                 <button
-                  onClick={() => onTaskFilterChange?.("inbox")}
-                  className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${taskFilter !== "project"
+                  onClick={() => onTaskFilterChange?.(taskFilter, undefined)}
+                  className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${!taskFilterContext
                     ? "bg-gray-800 text-white"
                     : "text-gray-500 hover:text-gray-300 hover:bg-gray-900/40"
                     }`}
                 >
                   <InboxIcon
                     size={14}
-                    className={taskFilter !== "project" ? "text-blue-400" : "text-gray-600"}
+                    className={!taskFilterContext ? "text-blue-400" : "text-gray-600"}
                   />
-                  <span className="truncate flex-1 text-left">All Tasks</span>
+                  <span className="truncate flex-1 text-left">All Projects</span>
                 </button>
                 {taskContexts.map((ctx) => (
                   <button
                     key={ctx}
-                    onClick={() => onTaskFilterChange?.("project", ctx)}
-                    className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${taskFilter === "project" && taskFilterContext === ctx
+                    onClick={() => onTaskFilterChange?.(taskFilter, ctx)}
+                    className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${taskFilterContext === ctx
                       ? "bg-gray-800 text-cyan-400"
                       : "text-gray-500 hover:text-gray-300 hover:bg-gray-900/40"
                       }`}
@@ -408,13 +413,80 @@ export default function NavSidebar({
                     <Folder
                       size={14}
                       className={
-                        taskFilter === "project" && taskFilterContext === ctx
+                        taskFilterContext === ctx
                           ? "text-cyan-400" : "text-gray-600"
                       }
                     />
                     <span className="truncate flex-1 text-left">{ctx}</span>
                   </button>
                 ))}
+              </div>
+            )}
+          </div>
+        ) : active === "calendar" ? (
+          <div className="py-2">
+            {!isCollapsed && (
+              <div className="px-3 space-y-4">
+                <div>
+                  <h4 className="px-3 text-[10px] font-black text-gray-600 uppercase tracking-widest mb-2">
+                    Calendar Filter
+                  </h4>
+                  <div className="space-y-1">
+                    {([
+                      { id: "all", label: "All Status" },
+                      { id: "open", label: "Open Only" },
+                      { id: "done", label: "Done Only" },
+                    ] as const).map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => onCalendarStatusFilterChange?.(item.id)}
+                        className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${calendarStatusFilter === item.id
+                          ? "bg-blue-600/10 text-blue-400"
+                          : "text-gray-500 hover:text-gray-300 hover:bg-gray-900/40"
+                          }`}
+                      >
+                        <span className="truncate flex-1 text-left">{item.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {taskContexts.length > 0 && (
+                  <div>
+                    <h4 className="px-3 text-[10px] font-black text-gray-600 uppercase tracking-widest mb-2">
+                      Projects
+                    </h4>
+                    <button
+                      onClick={() => onTaskFilterChange?.(taskFilter, undefined)}
+                      className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${!taskFilterContext
+                        ? "bg-gray-800 text-white"
+                        : "text-gray-500 hover:text-gray-300 hover:bg-gray-900/40"
+                        }`}
+                    >
+                      <InboxIcon
+                        size={14}
+                        className={!taskFilterContext ? "text-blue-400" : "text-gray-600"}
+                      />
+                      <span className="truncate flex-1 text-left">All Projects</span>
+                    </button>
+                    {taskContexts.map((ctx) => (
+                      <button
+                        key={ctx}
+                        onClick={() => onTaskFilterChange?.(taskFilter, ctx)}
+                        className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${taskFilterContext === ctx
+                          ? "bg-gray-800 text-cyan-400"
+                          : "text-gray-500 hover:text-gray-300 hover:bg-gray-900/40"
+                          }`}
+                      >
+                        <Folder
+                          size={14}
+                          className={taskFilterContext === ctx ? "text-cyan-400" : "text-gray-600"}
+                        />
+                        <span className="truncate flex-1 text-left">{ctx}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
