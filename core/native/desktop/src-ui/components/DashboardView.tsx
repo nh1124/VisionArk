@@ -6,10 +6,25 @@ import {
   Thermometer, Wind, Droplets
 } from "lucide-react"
 import {
-  getDashboard, getMe, listLBSTasks, getSchedule,
+  getMe, listLBSTasks, getSchedule,
   listProjectsWithProgress, getRecentMemories, getSettings, listRuns,
   type LBSTask, type LBSScheduleDay, type ProjectWithProgress, type Memory
 } from "../lib/api"
+
+type WeatherData = { temp: number, code: number, description: string }
+type DashboardSnapshot = {
+  profile: any
+  settings: any
+  tasks: LBSTask[]
+  schedule: LBSScheduleDay[]
+  projects: ProjectWithProgress[]
+  mergedActivities: any[]
+  weather: WeatherData | null
+  fetchedAt: number
+}
+
+const DASHBOARD_CACHE_TTL_MS = 2 * 60 * 1000
+let dashboardSnapshotCache: DashboardSnapshot | null = null
 
 /**
  * Brushed up Dashboard View - No-Scroll Version
@@ -19,17 +34,18 @@ import {
  * - Exactly 3 items per section
  */
 export default function DashboardView({ onNavigate }: { onNavigate?: (v: any, id?: string) => void }) {
+  const initialSnapshot = dashboardSnapshotCache
   const [currentTime, setCurrentTime] = useState(new Date())
-  const [profile, setProfile] = useState<any>(null)
-  const [settings, setSettings] = useState<any>(null)
-  const [weather, setWeather] = useState<{ temp: number, code: number, description: string } | null>(null)
+  const [profile, setProfile] = useState<any>(initialSnapshot?.profile ?? null)
+  const [settings, setSettings] = useState<any>(initialSnapshot?.settings ?? null)
+  const [weather, setWeather] = useState<WeatherData | null>(initialSnapshot?.weather ?? null)
 
-  const [tasks, setTasks] = useState<LBSTask[]>([])
-  const [schedule, setSchedule] = useState<LBSScheduleDay[]>([])
-  const [projects, setProjects] = useState<ProjectWithProgress[]>([])
-  const [mergedActivities, setMergedActivities] = useState<any[]>([])
+  const [tasks, setTasks] = useState<LBSTask[]>(initialSnapshot?.tasks ?? [])
+  const [schedule, setSchedule] = useState<LBSScheduleDay[]>(initialSnapshot?.schedule ?? [])
+  const [projects, setProjects] = useState<ProjectWithProgress[]>(initialSnapshot?.projects ?? [])
+  const [mergedActivities, setMergedActivities] = useState<any[]>(initialSnapshot?.mergedActivities ?? [])
 
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(!initialSnapshot)
 
   // Real-time clock
   useEffect(() => {
@@ -39,8 +55,28 @@ export default function DashboardView({ onNavigate }: { onNavigate?: (v: any, id
 
   // Initial Data Fetch
   useEffect(() => {
+    const applySnapshot = (snapshot: DashboardSnapshot) => {
+      setProfile(snapshot.profile)
+      setSettings(snapshot.settings)
+      setTasks(snapshot.tasks)
+      setSchedule(snapshot.schedule)
+      setProjects(snapshot.projects)
+      setMergedActivities(snapshot.mergedActivities)
+      setWeather(snapshot.weather)
+    }
+
     async function loadData() {
-      setLoading(true)
+      const now = Date.now()
+      if (dashboardSnapshotCache && now - dashboardSnapshotCache.fetchedAt < DASHBOARD_CACHE_TTL_MS) {
+        applySnapshot(dashboardSnapshotCache)
+        setLoading(false)
+        return
+      }
+
+      if (!dashboardSnapshotCache) {
+        setLoading(true)
+      }
+
       try {
         const todayStr = new Date().toISOString().split("T")[0]
         const [me, sets, t, s, p, m, r] = await Promise.all([
@@ -64,10 +100,23 @@ export default function DashboardView({ onNavigate }: { onNavigate?: (v: any, id
         ].sort((a, b) => b.timestamp - a.timestamp)
 
         setMergedActivities(combined)
-        setProjects(p.sort((a, b) => b.total_tasks - a.total_tasks))
+        const sortedProjects = p.sort((a, b) => b.total_tasks - a.total_tasks)
+        setProjects(sortedProjects)
 
         const location = sets?.general_settings?.location || "Tokyo, Japan"
-        fetchWeather(location)
+        const weatherData = await fetchWeather(location)
+        setWeather(weatherData)
+
+        dashboardSnapshotCache = {
+          profile: me,
+          settings: sets,
+          tasks: t,
+          schedule: s || [],
+          projects: sortedProjects,
+          mergedActivities: combined,
+          weather: weatherData,
+          fetchedAt: Date.now(),
+        }
 
       } catch (err) {
         console.error("Dashboard data load failed:", err)
@@ -78,22 +127,23 @@ export default function DashboardView({ onNavigate }: { onNavigate?: (v: any, id
     loadData()
   }, [])
 
-  const fetchWeather = async (location: string) => {
+  const fetchWeather = async (location: string): Promise<WeatherData | null> => {
     try {
       const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`)
       const geoData = await geoRes.json()
-      if (!geoData.results?.length) return
+      if (!geoData.results?.length) return null
       const { latitude, longitude } = geoData.results[0]
       const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`)
       const weatherData = await weatherRes.json()
       const cw = weatherData.current_weather
-      setWeather({
+      return {
         temp: Math.round(cw.temperature),
         code: cw.weathercode,
         description: getWeatherDescription(cw.weathercode)
-      })
+      }
     } catch (e) {
       console.warn("Weather fetch failed:", e)
+      return null
     }
   }
 
@@ -118,7 +168,7 @@ export default function DashboardView({ onNavigate }: { onNavigate?: (v: any, id
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-gray-950">
+      <div className="h-full w-full flex items-center justify-center bg-gray-950">
         <div className="flex flex-col items-center gap-4">
           <div className="w-12 h-12 border-4 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin" />
           <p className="text-gray-500 font-medium font-mono text-xs tracking-widest uppercase animate-pulse">Initializing Dashboard</p>
