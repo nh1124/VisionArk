@@ -20,38 +20,7 @@ import DevicesView from "./components/DevicesView"
 import DaemonConsole from "./components/DaemonConsole"
 import FileViewerWindow from "./components/FileViewerWindow"
 import { isLoggedIn, logout, listProjects, initApiBase, getApiBase, getToken, handleRefresh, getMe, type Project } from "./lib/api"
-import { listRuns, registerDevice, heartbeatDevice, configure as configureBridge } from "../../bridge/api"
-
-const DEVICE_ID_KEY = "va_device_id"
-const HEARTBEAT_INTERVAL_MS = 30_000
-
-function detectPlatform(): string {
-  const ua = navigator.userAgent.toLowerCase()
-  if (ua.includes("win")) return "windows"
-  if (ua.includes("mac")) return "macos"
-  if (ua.includes("linux")) return "linux"
-  return "other"
-}
-
-async function loadStoredDeviceId(): Promise<string | null> {
-  try {
-    if (isTauri()) {
-      const id = await invoke<string>("get_secure_token", { key: DEVICE_ID_KEY })
-      return id || null
-    }
-  } catch { /* ignore */ }
-  return localStorage.getItem(DEVICE_ID_KEY)
-}
-
-async function saveDeviceId(id: string): Promise<void> {
-  try {
-    if (isTauri()) {
-      await invoke("set_secure_token", { key: DEVICE_ID_KEY, value: id })
-      return
-    }
-  } catch { /* ignore */ }
-  localStorage.setItem(DEVICE_ID_KEY, id)
-}
+import { listRuns, configure as configureBridge } from "../../bridge/api"
 
 export default function App() {
   const [windowLabel] = useState(() => isTauri() ? getCurrentWindow().label : "main")
@@ -104,70 +73,29 @@ function MainApp() {
   useEffect(() => {
     if (!loggedIn) return
     listProjects().then(setProjects).catch(() => { })
-
-    // Device registration + heartbeat loop
-    let heartbeatTimer: ReturnType<typeof setInterval> | null = null
-
-    const setupDevice = async () => {
-      // 1. Try to load an already-registered device_id
-      let deviceId = await loadStoredDeviceId()
-
-      // 1.5 Validate if the device still exists on the backend
-      if (deviceId) {
-        try {
-          await heartbeatDevice(deviceId)
-        } catch (e: any) {
-          const msg = e instanceof Error ? e.message : String(e)
-          // If the backend returns 404 (Not Found) or 403 (Forbidden), the device was deleted.
-          if (msg.includes("404") || msg.includes("403")) {
-            console.warn("Stored device ID is invalid/deleted. Forcing re-registration.", msg)
-            await saveDeviceId("")
-            deviceId = null
-          }
-        }
-      }
-
-      // 2. If not stored or was deleted, register now and persist the result
-      if (!deviceId) {
-        const platform = detectPlatform()
-        try {
-          const device = await registerDevice({
-            display_name: `Desktop (${platform})`,
-            device_kind: "desktop",
-            platform,
-            capabilities: ["run_shell", "file_rw", "open_app"],
-          })
-          deviceId = device.id
-          await saveDeviceId(deviceId)
-        } catch { /* ignore — best-effort */ }
-      }
-
-      // 3. Start daemon if Tauri
-      if (isTauri() && deviceId) {
-        const token = getToken()
-        if (token) {
+    const startDaemon = async () => {
+      // UI responsibility: daemon start trigger only.
+      if (isTauri()) {
+        const token = await getToken()
+        const apiUrl = getApiBase()
+        if (!token) {
+          console.warn(
+            `[daemon-start-skip] apiUrl=${apiUrl} deviceId=(empty) tokenPresent=false`
+          )
+        } else {
           try {
-            await invoke("start_daemon_command", { apiUrl: getApiBase(), token, deviceId })
+            await invoke("start_daemon_command", { apiUrl, token, deviceId: "" })
           } catch (e) {
-            console.error("Failed to start daemon sidecar", e)
+            console.error(
+              `[daemon-start-failed] apiUrl=${apiUrl} deviceId=(empty) tokenPresent=true`,
+              e
+            )
           }
         }
       }
-
-      // 4. Heartbeat loop
-      if (deviceId) {
-        const id = deviceId
-        heartbeatDevice(id).catch(() => { })
-        heartbeatTimer = setInterval(() => {
-          heartbeatDevice(id).catch(() => { })
-        }, HEARTBEAT_INTERVAL_MS)
-      }
     }
 
-    setupDevice()
-    return () => {
-      if (heartbeatTimer) clearInterval(heartbeatTimer)
-    }
+    startDaemon()
   }, [loggedIn])
 
   const handleNavChange = useCallback(
@@ -210,7 +138,7 @@ function MainApp() {
         }
         setPendingApprovals(count)
       } catch {
-        // ignore — not authenticated yet or backend unavailable
+        // ignore - not authenticated yet or backend unavailable
       }
     }
     poll()
@@ -218,7 +146,7 @@ function MainApp() {
     return () => clearInterval(timer)
   }, [loggedIn])
 
-  // Window close → hide to tray; listen for approval events; Ctrl+N for new window
+  // Window close -> hide to tray; listen for approval events; Ctrl+N for new window
   useEffect(() => {
     const cleanups: Array<Promise<() => void>> = []
     try {
@@ -249,7 +177,7 @@ function MainApp() {
       // Not in Tauri
     }
 
-    // Ctrl+N → new window (capture phase to intercept before WebView2)
+    // Ctrl+N -> new window (capture phase to intercept before WebView2)
     const handleKeyDown = async (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "n" && !e.shiftKey && !e.altKey) {
         // Don't trigger if user is typing in an input/textarea
@@ -358,3 +286,4 @@ function MainApp() {
     </div>
   )
 }
+

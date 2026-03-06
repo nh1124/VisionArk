@@ -6,6 +6,7 @@ set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 set "NATIVE_ROOT=%SCRIPT_DIR%\..\core\native"
 
 echo === VisionArk Native Dev ===
+echo [INFO] Daemon startup is managed by desktop (Tauri command), not this script.
 
 echo [1/2] Building daemon sidecar...
 cd /d "%NATIVE_ROOT%\daemon"

@@ -7,11 +7,45 @@ use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::WebviewWindowBuilder,
-    Manager, WindowEvent, Emitter,
+    Manager, WindowEvent,
 };
 
 static QUICK_NOTE_COUNTER: AtomicU32 = AtomicU32::new(0);
 static MAIN_WINDOW_COUNTER: AtomicU32 = AtomicU32::new(0);
+const DEFAULT_API_URL: &str = "http://localhost:8000";
+
+#[derive(Debug, Clone)]
+struct DaemonBootstrap {
+    api_url: String,
+    token: String,
+    device_id: Option<String>,
+}
+
+fn resolve_daemon_bootstrap(app: &tauri::AppHandle) -> Option<DaemonBootstrap> {
+    let config = commands::read_app_config(app.clone()).ok();
+    let api_url = config
+        .and_then(|cfg| {
+            let value = cfg.api_url.trim().to_string();
+            if value.is_empty() { None } else { Some(value) }
+        })
+        .unwrap_or_else(|| DEFAULT_API_URL.to_string());
+
+    let token = commands::get_secure_token("atmos_access_token".into())
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())?;
+
+    let device_id = commands::get_secure_token("va_device_id".into())
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    Some(DaemonBootstrap {
+        api_url,
+        token,
+        device_id,
+    })
+}
 
 pub fn run() {
     tauri::Builder::default()
@@ -47,18 +81,13 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 // Sleep briefly to let UI load/keyring settle if needed
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                if let Ok(config) = commands::read_app_config(app_handle.clone()) {
-                    if let Ok(token) = commands::get_secure_token("atmos_access_token".into()) {
-                        if !token.is_empty() {
-                            // The daemon handles its own auto-registration if device_id isn't provided,
-                            // AS LONG AS VISIONARK_TOKEN is there. However, to keep it in sync with the frontend,
-                            // we only start it if we have a locally stored device_id.
-                            let device_id = commands::get_secure_token("va_device_id".into()).unwrap_or_default();
-                            if !device_id.is_empty() {
-                                daemon_manager::start_daemon(&app_handle, config.api_url, token, device_id);
-                            }
-                        }
-                    }
+                if let Some(bootstrap) = resolve_daemon_bootstrap(&app_handle) {
+                    daemon_manager::start_daemon(
+                        &app_handle,
+                        bootstrap.api_url,
+                        bootstrap.token,
+                        bootstrap.device_id,
+                    );
                 }
             });
 

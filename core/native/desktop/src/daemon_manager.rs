@@ -15,24 +15,31 @@ impl DaemonState {
     }
 }
 
-pub fn start_daemon(app: &AppHandle, api_url: String, token: String, device_id: String) {
+pub fn start_daemon(app: &AppHandle, api_url: String, token: String, device_id: Option<String>) {
     let state = app.state::<DaemonState>();
     let mut child_guard = state.child.lock().unwrap();
 
     // If already running, kill the old one
-    if let Some(mut existing) = child_guard.take() {
+    if let Some(existing) = child_guard.take() {
         info!("Killing existing daemon process...");
         let _ = existing.kill();
     }
 
-    info!("Starting visionark-daemon sidecar with device_id={}", device_id);
+    let device_id_for_log = device_id
+        .as_deref()
+        .filter(|id| !id.is_empty())
+        .unwrap_or("(empty)");
+    info!("Starting visionark-daemon sidecar with device_id={}", device_id_for_log);
 
     // Provide config via env vars
-    let command = app.shell().sidecar("visionark-daemon")
+    let mut command = app.shell().sidecar("visionark-daemon")
         .expect("visionark-daemon sidecar not found")
         .env("VISIONARK_API_URL", api_url)
-        .env("VISIONARK_TOKEN", token)
-        .env("VISIONARK_DEVICE_ID", device_id);
+        .env("VISIONARK_TOKEN", token);
+
+    if let Some(id) = device_id.filter(|id| !id.is_empty()) {
+        command = command.env("VISIONARK_DEVICE_ID", id);
+    }
 
     match command.spawn() {
         Ok((rx, child)) => {

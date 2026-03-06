@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::{AppHandle, Manager};
-use crate::daemon_manager;
 
 // ─── App Config (shared with daemon via config file) ─────────────────────────
 
@@ -193,6 +192,11 @@ pub async fn bridge_request(
 
 #[tauri::command]
 pub fn start_daemon_command(app: tauri::AppHandle, api_url: String, token: String, device_id: String) {
+    let device_id = if device_id.trim().is_empty() {
+        None
+    } else {
+        Some(device_id)
+    };
     crate::daemon_manager::start_daemon(&app, api_url, token, device_id);
 }
 
