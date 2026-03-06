@@ -33,8 +33,9 @@ export default function LoginScreen({ onLogin }: Props) {
         try {
             await login(username, password)
             onLogin(username)
-        } catch {
-            setError("Invalid username or password")
+        } catch (e) {
+            const message = e instanceof Error ? e.message : "Login failed"
+            setError(message)
         } finally {
             setLoading(false)
         }

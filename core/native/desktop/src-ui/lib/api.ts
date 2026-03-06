@@ -34,6 +34,32 @@ function normalizeUrl(url: string): string {
     return url.trim().replace(/\/+$/, "") || DEFAULT_API_URL
 }
 
+function buildLoginBaseCandidates(baseUrl: string): string[] {
+    const normalized = normalizeUrl(baseUrl)
+    const candidates: string[] = [normalized]
+
+    try {
+        const url = new URL(normalized)
+        const host = url.hostname.toLowerCase()
+        const port = url.port
+
+        // Local dev fallback: frontend dev ports -> backend default port.
+        if ((host === "localhost" || host === "127.0.0.1") && (port === "3000" || port === "3001" || port === "1420")) {
+            candidates.push(`${url.protocol}//${host}:8000`)
+        }
+
+        // Production fallback: frontend domain -> api subdomain.
+        if (host !== "localhost" && host !== "127.0.0.1" && !host.startsWith("api.")) {
+            const baseHost = host.startsWith("www.") ? host.slice(4) : host
+            candidates.push(`${url.protocol}//api.${baseHost}${port ? `:${port}` : ""}`)
+        }
+    } catch {
+        // Ignore parse errors and use normalized value only.
+    }
+
+    return [...new Set(candidates.map(normalizeUrl))]
+}
+
 export async function initApiBase(): Promise<string> {
     if (IS_TAURI) {
         try {
@@ -178,22 +204,48 @@ export const apiJson = _apiJson
 // ─── Auth ──────────────────────────────────────────────────────────────────────
 
 export async function login(username: string, password: string) {
-    // Raw fetch — no auth header needed for login
-    const res = await fetch(`${BASE_URL}/api/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-    })
-    if (!res.ok) throw new Error("Login failed")
-    const data = await res.json()
-    try {
-        await setToken(data.access_token)
-        if (data.refresh_token) await setRefreshToken(data.refresh_token)
-    } catch (e) {
-        console.error("[Auth] Failed to save tokens:", e)
-        throw new Error("Failed to save tokens securely")
+    const bases = buildLoginBaseCandidates(BASE_URL)
+    let lastError: Error | null = null
+
+    for (const base of bases) {
+        try {
+            // Raw fetch — no auth header needed for login
+            const res = await fetch(`${base}/api/auth/login`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username, password }),
+            })
+
+            if (res.status === 401) {
+                throw new Error("Invalid username or password")
+            }
+
+            if (!res.ok) {
+                const text = await res.text().catch(() => "")
+                throw new Error(`Login failed (${res.status})${text ? `: ${text}` : ""}`)
+            }
+
+            const data = await res.json()
+            try {
+                await setToken(data.access_token)
+                if (data.refresh_token) await setRefreshToken(data.refresh_token)
+                if (base !== BASE_URL) {
+                    await setApiBase(base)
+                }
+            } catch (e) {
+                console.error("[Auth] Failed to save tokens:", e)
+                throw new Error("Failed to save tokens securely")
+            }
+            return data
+        } catch (e) {
+            const err = e instanceof Error ? e : new Error(String(e))
+            // Invalid credentials should not be retried against another host.
+            if (err.message === "Invalid username or password") throw err
+            lastError = err
+        }
     }
-    return data
+
+    throw lastError ?? new Error("Login failed")
 }
 
 export interface UserProfile {
