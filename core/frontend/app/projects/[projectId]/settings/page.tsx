@@ -55,8 +55,16 @@ export default function ProjectSettingsPage({
             setAllAgents(agentsData.agents ?? []);
 
             const enabledData = await enabledRes.json();
-            setEnabledAgentIds(new Set(enabledData.enabled_agent_ids ?? []));
-            setDefaultAgentId(enabledData.default_agent_id ?? "");
+            const enabledIds = new Set<string>(enabledData.enabled_agent_ids ?? []);
+            setEnabledAgentIds(enabledIds);
+            const loadedDefault = enabledData.default_agent_id ?? "";
+            if (loadedDefault) {
+                setDefaultAgentId(loadedDefault);
+            } else if (enabledIds.size > 0) {
+                setDefaultAgentId(Array.from(enabledIds)[0]);
+            } else {
+                setDefaultAgentId("");
+            }
         } catch (error) {
             console.error("Failed to load settings data:", error);
             setSaveStatus("❌ Failed to load settings");
@@ -96,19 +104,24 @@ export default function ProjectSettingsPage({
             const next = new Set(prev);
             if (next.has(agentId)) {
                 next.delete(agentId);
-                // Clear default if it was removed
+                // Move default when the current default gets disabled.
                 if (defaultAgentId === agentId) {
-                    setDefaultAgentId("");
+                    setDefaultAgentId(next.size > 0 ? Array.from(next)[0] : "");
                 }
             } else {
                 next.add(agentId);
+                // Auto-assign default when enabling first agent.
+                if (!defaultAgentId) {
+                    setDefaultAgentId(agentId);
+                }
             }
             return next;
         });
     };
 
-    const defaultInEnabled = !defaultAgentId || enabledAgentIds.has(defaultAgentId);
-    const agentSaveBlocked = !!defaultAgentId && !enabledAgentIds.has(defaultAgentId);
+    const hasEnabledAgents = enabledAgentIds.size > 0;
+    const defaultInEnabled = !!defaultAgentId && enabledAgentIds.has(defaultAgentId);
+    const agentSaveBlocked = !hasEnabledAgents || !defaultInEnabled;
 
     const saveAgentSettings = async () => {
         if (agentSaveBlocked) return;
@@ -122,7 +135,7 @@ export default function ProjectSettingsPage({
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         enabled_agent_ids: Array.from(enabledAgentIds),
-                        default_agent_id: defaultAgentId || null,
+                        default_agent_id: defaultAgentId,
                     }),
                 }
             );
@@ -142,7 +155,7 @@ export default function ProjectSettingsPage({
     };
 
     return (
-        <div className="h-screen flex flex-col bg-gray-950">
+        <div className="h-screen flex flex-col bg-gray-950 overflow-y-auto">
             {/* Header */}
             <div className="bg-gray-900 border-b border-gray-800 p-6">
                 <div className="flex items-center justify-between">
@@ -196,7 +209,7 @@ export default function ProjectSettingsPage({
             </div>
 
             {/* Content Area */}
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="flex-1 p-6">
                 {loading ? (
                     <div className="flex flex-col items-center justify-center h-full gap-4">
                         <div className="w-12 h-12 border-4 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin"></div>
@@ -229,7 +242,9 @@ export default function ProjectSettingsPage({
                             ) : (
                                 <div className="bg-gray-900/30 border border-gray-800/50 rounded-2xl p-8 transition-all hover:bg-gray-900/40">
                                     {initialPrompt ? (
-                                        <MarkdownRenderer content={initialPrompt} />
+                                        <div className="max-h-48 overflow-y-auto pr-1">
+                                            <MarkdownRenderer content={initialPrompt} />
+                                        </div>
                                     ) : (
                                         <div className="text-center py-12">
                                             <p className="text-gray-600 italic">No custom instructions defined yet.</p>
@@ -333,9 +348,12 @@ export default function ProjectSettingsPage({
                                         <select
                                             value={defaultAgentId}
                                             onChange={(e) => setDefaultAgentId(e.target.value)}
+                                            disabled={!hasEnabledAgents}
                                             className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 transition-colors"
                                         >
-                                            <option value="">— None (use all skills) —</option>
+                                            {!hasEnabledAgents && (
+                                                <option value="">Select enabled agents first</option>
+                                            )}
                                             {allAgents
                                                 .filter((a) => enabledAgentIds.has(a.id))
                                                 .map((a) => (
@@ -344,9 +362,14 @@ export default function ProjectSettingsPage({
                                                     </option>
                                                 ))}
                                         </select>
-                                        {agentSaveBlocked && (
+                                        {!hasEnabledAgents && (
                                             <p className="text-xs text-amber-400 mt-1">
-                                                ⚠ The selected default agent is not in the enabled list. Enable it first.
+                                                Enable at least one agent.
+                                            </p>
+                                        )}
+                                        {hasEnabledAgents && agentSaveBlocked && (
+                                            <p className="text-xs text-amber-400 mt-1">
+                                                The selected default agent must be included in enabled agents.
                                             </p>
                                         )}
                                     </div>

@@ -4,7 +4,7 @@ Implements the LBS (Load Balancing System) schema from BLUEPRINT.md
 """
 from datetime import datetime, date
 from typing import Optional
-from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, Date, DateTime, Text, JSON, ForeignKey, UniqueConstraint
+from sqlalchemy import create_engine, Column, Integer, BigInteger, String, Float, Boolean, Date, DateTime, Text, JSON, ForeignKey, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -550,24 +550,60 @@ class OrchestrationPendingAction(Base):
     run = relationship("OrchestrationRun")
 
 
+class OrchestrationSubagentSession(Base):
+    """Persistent subagent session within a parent chat session."""
+    __tablename__ = "orchestration_subagent_sessions"
+
+    id = Column(String(36), primary_key=True)
+    parent_session_id = Column(String(36), ForeignKey("chat_sessions.id"), nullable=False, index=True)
+    project_agent_id = Column(String(36), ForeignKey("project_agents.id"), nullable=False, index=True)
+    subagent_context_id = Column(String(36), nullable=True, index=True)
+    parent_run_id = Column(String(36), ForeignKey("orchestration_runs.run_id"), nullable=False, index=True)
+    latest_child_run_id = Column(String(36), ForeignKey("orchestration_runs.run_id"), nullable=True, index=True)
+    conversation_state_json = Column(JSON, nullable=True)
+    status = Column(String(20), default="active")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("parent_session_id", "project_agent_id", name="uix_subagent_session_parent_agent"),
+    )
+
+    # Relationships
+    parent_session = relationship("ChatSession")
+    project_agent = relationship("ProjectAgent")
+    parent_run = relationship("OrchestrationRun", foreign_keys=[parent_run_id])
+    latest_child_run = relationship("OrchestrationRun", foreign_keys=[latest_child_run_id])
+
+
 class OrchestrationDelegation(Base):
     """Persistent storage for orchestration2 DelegationRequest/Result"""
     __tablename__ = "orchestration_delegations"
 
     id = Column(String(36), primary_key=True)
     parent_run_id = Column(String(36), ForeignKey("orchestration_runs.run_id"), nullable=False, index=True)
+    subagent_session_id = Column(String(36), ForeignKey("orchestration_subagent_sessions.id"), nullable=True, index=True)
     child_agent_name = Column(String(200), nullable=True)
     child_run_id = Column(String(36), nullable=True)
     task = Column(Text, nullable=True)
     status = Column(String(30), default="pending")
+    delivery_status = Column(String(30), default="pending")
+    delivery_cursor = Column(BigInteger, nullable=True, index=True)
+    request_id = Column(String(100), nullable=True)
+    context_scope = Column(String(20), nullable=True)
     output_json = Column(JSON, nullable=True)
     error = Column(Text, nullable=True)
     timeout_sec = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    __table_args__ = (
+        UniqueConstraint("parent_run_id", "request_id", name="uix_delegation_parent_request"),
+    )
+
     # Relationships
     parent_run = relationship("OrchestrationRun")
+    subagent_session = relationship("OrchestrationSubagentSession")
 
 
 class OrchestrationEvent(Base):
@@ -1302,6 +1338,51 @@ def _run_migrations(engine):
                     conn.execute(text(f"ALTER TABLE orchestration_runs ADD COLUMN {col_name} {col_type}"))
                     conn.commit()
                     print(f"✅ Migration: Added {col_name} column to orchestration_runs")
+
+    # Migration: Add orchestration_delegations V1 delivery/idempotency/session columns
+    if 'orchestration_delegations' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('orchestration_delegations')]
+        new_cols = {
+            'subagent_session_id': "VARCHAR(36) REFERENCES orchestration_subagent_sessions(id)",
+            'delivery_status': "VARCHAR(30) DEFAULT 'pending'",
+            'delivery_cursor': "BIGINT",
+            'request_id': "VARCHAR(100)",
+            'context_scope': "VARCHAR(20)",
+        }
+        with engine.connect() as conn:
+            for col_name, col_type in new_cols.items():
+                if col_name not in columns:
+                    conn.execute(
+                        text(f"ALTER TABLE orchestration_delegations ADD COLUMN {col_name} {col_type}")
+                    )
+                    print(f"✅ Migration: Added {col_name} column to orchestration_delegations")
+
+            # Cursor and lookup indexes for receive/ack path
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_orchestration_delegations_parent_delivery_cursor
+                ON orchestration_delegations(parent_run_id, delivery_cursor)
+            """))
+            conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uix_orch_deleg_parent_request_idx
+                ON orchestration_delegations(parent_run_id, request_id)
+            """))
+            # Postgres sequence used to assign monotonic delivery_cursor values.
+            try:
+                conn.execute(text("""
+                    CREATE SEQUENCE IF NOT EXISTS orchestration_delegations_delivery_cursor_seq
+                """))
+            except Exception:
+                pass
+            conn.commit()
+
+    # Migration: Ensure unique index for orchestration_subagent_sessions continuity key
+    if 'orchestration_subagent_sessions' in inspector.get_table_names():
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uix_orch_subagent_session_parent_agent_idx
+                ON orchestration_subagent_sessions(parent_session_id, project_agent_id)
+            """))
+            conn.commit()
 
     # Migration: Add run_id to approval_requests for orchestration2 tracking
     if 'approval_requests' in inspector.get_table_names():

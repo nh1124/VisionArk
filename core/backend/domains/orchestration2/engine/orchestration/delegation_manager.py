@@ -33,6 +33,8 @@ class DelegationManager:
         task: str,
         step_id: str,
         timeout_sec: int | None = None,
+        request_id: str | None = None,
+        context_scope: str | None = None,
     ) -> DelegationRequest:
         """Create a delegation request for a child agent run."""
         parent_run = await self._store.get_run(parent_run_id)
@@ -44,6 +46,8 @@ class DelegationManager:
             child_agent_name=child_agent_name,
             task=task,
             timeout_sec=timeout_sec,
+            request_id=request_id,
+            context_scope=context_scope,
         )
         await self._store.save_delegation(request)
 

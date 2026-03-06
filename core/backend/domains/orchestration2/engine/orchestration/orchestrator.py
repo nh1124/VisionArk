@@ -50,6 +50,9 @@ class Orchestrator:
         # conversation is always in correct order (user, model, tool, …).
         combined_history = list(history) if history else []
         combined_history.append(message)
+        metadata_data = dict(metadata or {})
+        if parent_run_id and "parent_run_id" not in metadata_data:
+            metadata_data["parent_run_id"] = parent_run_id
         record_kwargs: dict = dict(
             status=RunStatus.RUNNING,
             agent_name=agent_def.name,
@@ -57,7 +60,7 @@ class Orchestrator:
             input_message=message,
             history=combined_history,
             current_step_id=graph.start,
-            metadata=metadata or {},
+            metadata=metadata_data,
         )
         if run_id is not None:
             record_kwargs["run_id"] = run_id
@@ -150,11 +153,13 @@ class Orchestrator:
                 # step executor modified in-memory and haven't been saved yet.
                 refreshed_run = await self._store.get_run(run.run_id)
                 if refreshed_run:
+                    refreshed_run.status = run.status
                     refreshed_run.input_message = run.input_message
                     refreshed_run.history = run.history
                     refreshed_run.output_message = run.output_message
                     refreshed_run.metadata = run.metadata
                     refreshed_run.context = run.context
+                    refreshed_run.error = run.error
                     run = refreshed_run
 
                 if run.status in (
@@ -162,6 +167,10 @@ class Orchestrator:
                     RunStatus.WAITING_DELEGATION,
                 ):
                     return self._build_response(run)
+
+                if run.status == RunStatus.FAILED:
+                    logger.info("Run %s marked failed during step '%s'", run.run_id, current_step_id)
+                    break
 
                 # Check for external cancellation
                 if run.status == RunStatus.CANCELLED:

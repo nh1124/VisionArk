@@ -79,6 +79,12 @@ class AgentEngine:
             engine_runtime=self._engine_runtime,
         )
 
+        # Async run tracking
+        self._async_tasks: dict[str, asyncio.Task[RunResponse]] = {}
+        self._delegation_tasks: dict[str, asyncio.Task[DelegationResult]] = {}
+
+    # ── Engine registration ────────────────────────────────────────
+
     def register_engine(self, engine: LLMEngine) -> None:
         """Register an LLMEngine and propagate it to the step executor."""
         self._engine_runtime = engine
@@ -90,6 +96,7 @@ class AgentEngine:
 
         # Async run tracking
         self._async_tasks: dict[str, asyncio.Task[RunResponse]] = {}
+        self._delegation_tasks: dict[str, asyncio.Task[DelegationResult]] = {}
 
     # ── Registry: Tools ──────────────────────────────────────────────
 
@@ -475,10 +482,18 @@ class AgentEngine:
         task: str,
         *,
         timeout_sec: int | None = None,
-    ) -> DelegationResult:
-        """Delegate a task to a child agent and wait for the result."""
+        mode: str = "sync",
+        request_id: str | None = None,
+        context_scope: str | None = None,
+        child_history: list[Message] | None = None,
+        parent_metadata_override: dict[str, Any] | None = None,
+    ) -> DelegationResult | DelegationRequest:
+        """Delegate a task to a child agent (sync by default, async optional)."""
+        if mode not in {"sync", "async"}:
+            raise ValueError("mode must be 'sync' or 'async'")
+
         # Resolve child agent
-        child_agent_id, child_def = self.agents.get_by_name(child_agent_name)
+        _, child_def = self.agents.get_by_name(child_agent_name)
         child_graph = self.graphs.get(child_def.graph_name)
 
         # Get parent run for context
@@ -492,45 +507,142 @@ class AgentEngine:
             task=task,
             step_id=step_id or "",
             timeout_sec=timeout_sec,
+            request_id=request_id,
+            context_scope=context_scope,
         )
+
+        # Propagate parent metadata (project_id, user_id, db_session, etc.).
+        # NOTE: parent_run loaded from store is JSON-sanitized, so runtime-only
+        # values (e.g. db_session) must come from parent_metadata_override.
+        parent_metadata = dict(parent_run.metadata) if parent_run else {}
+        if parent_metadata_override:
+            parent_metadata.update(parent_metadata_override)
 
         # Execute child run
         from .models.common import MessageRole
-
-        # Propagate parent metadata (project_id, user_id, db_session, etc.)
-        parent_metadata = parent_run.metadata if parent_run else {}
-
         child_message = Message(role=MessageRole.USER, content=task)
+        if mode == "async":
+            task_ref = asyncio.create_task(
+                self._run_child_delegation(
+                    delegation_id=delegation_req.id,
+                    parent_run_id=parent_run_id,
+                    child_def=child_def,
+                    child_graph=child_graph,
+                    child_message=child_message,
+                    parent_metadata=parent_metadata,
+                    child_history=child_history,
+                )
+            )
+            self._delegation_tasks[delegation_req.id] = task_ref
+            task_ref.add_done_callback(
+                lambda _: self._delegation_tasks.pop(delegation_req.id, None)
+            )
+            return delegation_req
+
+        return await self._run_child_delegation(
+            delegation_id=delegation_req.id,
+            parent_run_id=parent_run_id,
+            child_def=child_def,
+            child_graph=child_graph,
+            child_message=child_message,
+            parent_metadata=parent_metadata,
+            child_history=child_history,
+        )
+
+    async def wait_delegation_result(
+        self,
+        delegation_id: str,
+        timeout_sec: int | None = None,
+    ) -> DelegationResult:
+        """Wait for a delegation result (public wrapper over DelegationManager)."""
+        timeout = float(timeout_sec) if timeout_sec is not None else None
+        return await self._delegation_mgr.wait_result(delegation_id, timeout=timeout)
+
+    async def _run_child_delegation(
+        self,
+        *,
+        delegation_id: str,
+        parent_run_id: str,
+        child_def: AgentDef,
+        child_graph: GraphSpec,
+        child_message: Message,
+        parent_metadata: dict[str, Any],
+        child_history: list[Message] | None,
+    ) -> DelegationResult:
+        """Execute delegated child run and persist completion into delegation table."""
         try:
+            logger.info("Delegating task to child agent: %s", child_def.name)
             child_response = await self._orchestrator.run(
                 agent_def=child_def,
                 graph=child_graph,
                 message=child_message,
+                history=child_history,
+                parent_run_id=parent_run_id,
                 metadata=parent_metadata,
             )
+            logger.info("Child run completed (Parent Run ID: %s, Child Run ID: %s)", parent_run_id, child_response.run_id)
 
             status = (
                 DelegationResultStatus.COMPLETED
                 if child_response.completed
                 else DelegationResultStatus.FAILED
             )
-            result = await self._delegation_mgr.complete_delegation(
-                delegation_id=delegation_req.id,
+            output_message = self._extract_output_message_from_history(
+                child_response.message,
+                child_response.history,
+            )
+            if output_message is None:
+                persisted = await self._store.get_run(child_response.run_id)
+                if persisted is not None:
+                    output_message = self._extract_output_message_from_history(
+                        persisted.output_message,
+                        persisted.history,
+                    )
+            return await self._delegation_mgr.complete_delegation(
+                delegation_id=delegation_id,
                 child_run_id=child_response.run_id,
                 status=status,
-                output_message=child_response.message,
+                output_message=output_message,
             )
         except Exception as exc:
-            result = await self._delegation_mgr.complete_delegation(
-                delegation_id=delegation_req.id,
+            return await self._delegation_mgr.complete_delegation(
+                delegation_id=delegation_id,
                 child_run_id="",
                 status=DelegationResultStatus.FAILED,
                 error=str(exc),
             )
 
-        return result
-
     # ── Helpers ───────────────────────────────────────────────────────
+
+    @staticmethod
+    def _extract_output_message_from_history(
+        primary: Message | None,
+        history: list[Message] | None,
+    ) -> Message | None:
+        from .models.common import MessageRole, SubMessageKind
+
+        if primary is not None and (primary.content or "").strip():
+            return primary
+
+        for msg in reversed(history or []):
+            if msg.role != MessageRole.ASSISTANT:
+                continue
+
+            if (msg.content or "").strip():
+                return Message(role=MessageRole.ASSISTANT, content=msg.content)
+
+            text_parts: list[str] = []
+            for sub in msg.submessages or []:
+                if sub.kind in (SubMessageKind.TEXT, SubMessageKind.TOOL_RESULT):
+                    if (sub.content or "").strip():
+                        text_parts.append(sub.content.strip())
+            if text_parts:
+                return Message(
+                    role=MessageRole.ASSISTANT,
+                    content="\n".join(text_parts),
+                )
+
+        return None
 
     def _resolve_agent_def(
         self,

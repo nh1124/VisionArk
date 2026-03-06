@@ -26,11 +26,26 @@ class Store(Protocol):
         self, delegation_id: str
     ) -> DelegationRequest | None: ...
 
+    async def find_delegation_by_request_id(
+        self, parent_run_id: str, request_id: str
+    ) -> DelegationRequest | None: ...
+
     async def save_delegation_result(self, result: DelegationResult) -> None: ...
 
     async def get_delegation_result(
         self, delegation_id: str
     ) -> DelegationResult | None: ...
+
+    async def list_delegation_results_since(
+        self,
+        *,
+        parent_run_id: str,
+        since_cursor: int,
+        limit: int,
+        include_acknowledged: bool = False,
+    ) -> list[DelegationResult]: ...
+
+    async def acknowledge_delegation_result(self, delegation_id: str) -> bool: ...
 
     async def append_event(self, event: OrchestrationEvent) -> None: ...
 

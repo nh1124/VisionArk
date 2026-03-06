@@ -11,7 +11,12 @@ from .common import (
     RunStatus,
     SubMessageKind,
 )
-from .delegation import DelegationRequest, DelegationResult, DelegationResultStatus
+from .delegation import (
+    DelegationDeliveryStatus,
+    DelegationRequest,
+    DelegationResult,
+    DelegationResultStatus,
+)
 from .execution import (
     ExecutionContext,
     LLMResponse,
@@ -37,6 +42,7 @@ __all__ = [
     "ApprovalSourceType",
     "DelegationRequest",
     "DelegationResult",
+    "DelegationDeliveryStatus",
     "DelegationResultStatus",
     "EventSource",
     "EventType",

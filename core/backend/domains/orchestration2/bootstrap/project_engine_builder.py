@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.database import AsyncSessionLocal, ProjectAgentAssignment, Agent as UserAgent, get_engine
+from shared.database import AsyncSessionLocal, ProjectAgentAssignment, Agent as UserAgent
 from ..engine.agent_engine import AgentEngine
 from ..engine.models.agent import AgentDef, AgentLimits
 from ..engine.models.skill import SkillDef
@@ -21,7 +21,7 @@ from ..roles.direct_role import DirectRole
 
 # New components
 from ..config.skills.default_skills import SKILL_DEFS
-from ..config.tools.default_catalog import get_core_tools, get_delegation_tool
+from ..config.tools.default_catalog import get_core_tools, get_delegation_tools
 from ..prompting.prompt_context_loader import load_prompt_components
 from ..integrations.tool_reflection import register_and_reflect_integrations
 from ..skills.noop import NoOpSkill
@@ -81,10 +81,10 @@ async def _load_skills_from_db(user_id: str, db_session: AsyncSession) -> list[S
                 for row in rows
             ]
     except Exception as exc:
-        logger.warning("Failed to load skills from DB for user %s: %s — falling back to SKILL_DEFS", user_id, exc)
+        logger.warning("Failed to load skills from DB for user %s: %s 窶・falling back to SKILL_DEFS", user_id, exc)
 
     # Fallback: DB not ready or empty
-    logger.info("No DB skills found for user %s — using static SKILL_DEFS", user_id)
+    logger.info("No DB skills found for user %s 窶・using static SKILL_DEFS", user_id)
     return [s.model_copy() for s in SKILL_DEFS]
 
 
@@ -126,12 +126,12 @@ async def create_engine_for_project(
     engine = AgentEngine(store=store)
 
     # 2. Load active tool names from DB for filtering.
-    #    Returns None when tool_registry has no rows yet → lazy-seed, then register all tools.
+    #    Returns None when tool_registry has no rows yet 竊・lazy-seed, then register all tools.
     active_tool_names = await _load_active_tool_names_from_db(user_id, db_session)
 
     if active_tool_names is None:
         # Lazy-seed: handles users created before tool_registry was introduced.
-        logger.info("tool_registry empty for user %s — seeding now", user_id)
+        logger.info("tool_registry empty for user %s 窶・seeding now", user_id)
         try:
             from shared.database import get_engine as _get_engine
             from domains.orchestration2.bootstrap.definition_refresh_service import refresh_core_sync
@@ -140,19 +140,19 @@ async def create_engine_for_project(
         except Exception as exc:
             logger.warning("Failed to seed tool_registry for user %s: %s", user_id, exc)
 
-    # Register core tools — only those with is_active=True in tool_registry.
+    # Register core tools 窶・only those with is_active=True in tool_registry.
     # If active_tool_names is still None (seed failed), register all tools as fallback.
     for tool_def, tool_impl in get_core_tools():
         if active_tool_names is None or tool_def.name in active_tool_names:
             engine.register_tool(tool_def, tool_impl)
 
-    # 2b. Load skills from DB (source of truth) — falls back to SKILL_DEFS if needed.
+    # 2b. Load skills from DB (source of truth) 窶・falls back to SKILL_DEFS if needed.
     # We work with copies so integration tool injection doesn't mutate the DB rows.
     dynamic_skills = await _load_skills_from_db(user_id, db_session)
     dynamic_skills = [s.model_copy() for s in dynamic_skills]
 
     # Register integration tools and build the prompt text about available integrations.
-    # Skills are NOT modified here — operation skill injection now happens via DB refresh.
+    # Skills are NOT modified here 窶・operation skill injection now happens via DB refresh.
     integration_tools_text = await register_and_reflect_integrations(
         user_id, db_session, engine
     )
@@ -183,9 +183,9 @@ async def create_engine_for_project(
     # 5. Register engine runtime via public API
     engine.register_engine(llm_engine)
 
-    # 5b. Register delegation tool (requires engine reference — _orchestrator must exist)
-    delegation_tool_def, delegation_tool_impl = get_delegation_tool(engine)
-    engine.register_tool(delegation_tool_def, delegation_tool_impl)
+    # 5b. Register delegation tools (require engine reference 窶・_orchestrator must exist)
+    for delegation_tool_def, delegation_tool_impl in get_delegation_tools(engine):
+        engine.register_tool(delegation_tool_def, delegation_tool_impl)
 
     # 6. Register model config
     engine.register_model("default", preferred_model or "gemini-3.1-pro-preview")
@@ -221,16 +221,12 @@ async def create_engine_for_project(
     if integration_tools_text:
         prompt_data["integration_tools_text"] = integration_tools_text
 
-    # 11. Resolve skills and graph from the project's default agent assignment (if any)
-    #
-    # graph_name is currently PINNED to "direct_assistant" for all projects.
-    # The resolved_graph_id below is fetched from the agent record in DB so that
-    # future dynamic graph routing only requires removing the override line.
-    #   TODO: replace `graph_name = "direct_assistant"` with `graph_name = resolved_graph_id`
-    #         once multi-graph support is fully tested.
-    # Default: use all active skills loaded for this user (from DB or SKILL_DEFS fallback)
+    # 11. Resolve main agent from the project's default assignment.
+    # Source of truth is the project settings page:
+    # - enabled agents: project_agent_assignments
+    # - main agent: is_default=True assignment
     agent_skills = [s.name for s in dynamic_skills]
-    resolved_graph_id: str = "direct_assistant"  # default
+    resolved_graph_id: str = "direct_assistant"
     try:
         assignment_res = await db_session.execute(
             select(ProjectAgentAssignment).where(
@@ -239,36 +235,48 @@ async def create_engine_for_project(
             )
         )
         assignment = assignment_res.scalar_one_or_none()
-        if assignment:
-            user_agent_res = await db_session.execute(
-                select(UserAgent).where(UserAgent.id == assignment.agent_id)
+        if assignment is None:
+            raise ValueError(
+                f"No default agent assignment configured for project {project_id}"
             )
-            user_agent = user_agent_res.scalar_one_or_none()
-            if user_agent:
-                # skill_ids=[] (empty list) means "all skills" — created by default
-                # on project creation. Only override when the list is non-empty.
-                if user_agent.skill_ids:
-                    agent_skills = user_agent.skill_ids
-                    logger.info(
-                        "Project %s: using agent '%s' skills: %s",
-                        project_id, user_agent.display_name, agent_skills,
-                    )
-                if user_agent.graph_id:
-                    resolved_graph_id = user_agent.graph_id
-                    logger.debug(
-                        "Project %s: agent '%s' has graph_id='%s' "
-                        "(currently overridden to 'direct_assistant' — see TODO above)",
-                        project_id, user_agent.display_name, resolved_graph_id,
-                    )
-    except Exception as e:
-        logger.warning("Failed to resolve default agent config for project %s: %s", project_id, e)
 
-    # 12. Register agent
-    # NOTE: graph_name is pinned to "direct_assistant" regardless of resolved_graph_id.
-    #       To enable dynamic routing: swap the hardcoded value for `resolved_graph_id`.
+        user_agent_res = await db_session.execute(
+            select(UserAgent).where(
+                UserAgent.id == assignment.agent_id,
+                UserAgent.user_id == user_id,
+                UserAgent.status == "active",
+            )
+        )
+        user_agent = user_agent_res.scalar_one_or_none()
+        if user_agent is None:
+            raise ValueError(
+                f"Default assigned agent {assignment.agent_id} is missing or inactive"
+            )
+
+        # skill_ids=[] means "all active skills"; preserve that contract.
+        if user_agent.skill_ids:
+            agent_skills = user_agent.skill_ids
+        if user_agent.graph_id:
+            resolved_graph_id = user_agent.graph_id
+        logger.info(
+            "Project %s: using main agent '%s' (graph=%s, skills=%s)",
+            project_id,
+            user_agent.display_name,
+            resolved_graph_id,
+            agent_skills,
+        )
+    except Exception as e:
+        logger.warning(
+            "Failed to resolve default agent config for project %s: %s",
+            project_id,
+            e,
+        )
+        raise
+
+    # 12. Register main project agent
     agent_def = AgentDef(
         name=f"project_{project_id}",
-        graph_name="direct_assistant",  # TODO: use `resolved_graph_id` for dynamic graph routing
+        graph_name=resolved_graph_id,
         default_model="default",
         skills=agent_skills,
         limits=AgentLimits(max_turns=25),
@@ -278,10 +286,10 @@ async def create_engine_for_project(
     # Store prompt data
     engine._prompt_data = prompt_data  # type: ignore[attr-defined]
 
-    # 13. Load delegation sub-agents from DB and register them in the engine.
-    # Sub-agents are seeded at user registration (shared/seed.py).
-    # If missing (pre-existing users), seed them lazily here.
-    _SUB_AGENT_NAMES = ["researcher", "writer", "reviewer"]
+    # 13. Register delegation sub-agents from project-enabled agents.
+    # Source of truth:
+    # - User agent registry (seeded and user-created)
+    # - Project settings (project_agent_assignments) for enable/default control
     # Max turns per sub-agent (DB has no limits field; use sensible defaults).
     _SUB_AGENT_MAX_TURNS: dict[str, int] = {
         "researcher": 15,
@@ -289,57 +297,53 @@ async def create_engine_for_project(
         "reviewer": 10,
     }
     try:
-        # Fetch all known sub-agents for this user in one query
-        sub_agents_result = await db_session.execute(
-            select(UserAgent).where(
+        enabled_result = await db_session.execute(
+            select(ProjectAgentAssignment, UserAgent)
+            .join(UserAgent, ProjectAgentAssignment.agent_id == UserAgent.id)
+            .where(
+                ProjectAgentAssignment.project_id == project_id,
                 UserAgent.user_id == user_id,
-                UserAgent.display_name.in_(_SUB_AGENT_NAMES),
                 UserAgent.status == "active",
             )
         )
-        sub_agents_by_name = {
-            row.display_name: row for row in sub_agents_result.scalars().all()
-        }
-
-        # Lazy-seed any missing sub-agents (handles users registered before this feature)
-        missing = [n for n in _SUB_AGENT_NAMES if n not in sub_agents_by_name]
-        if missing:
-            logger.info(
-                "Sub-agents %s not found for user %s — seeding now", missing, user_id
+        enabled_rows = enabled_result.all()
+        if not enabled_rows:
+            logger.warning(
+                "No enabled project agents configured for project %s (user=%s)",
+                project_id,
+                user_id,
             )
-            from shared.seed import seed_user_agents
-            await asyncio.to_thread(seed_user_agents, get_engine(), user_id)
 
-            # Re-fetch after seeding
-            sub_agents_result2 = await db_session.execute(
-                select(UserAgent).where(
-                    UserAgent.user_id == user_id,
-                    UserAgent.display_name.in_(_SUB_AGENT_NAMES),
-                    UserAgent.status == "active",
-                )
-            )
-            sub_agents_by_name = {
-                row.display_name: row for row in sub_agents_result2.scalars().all()
-            }
-
-        for sub_name in _SUB_AGENT_NAMES:
-            row = sub_agents_by_name.get(sub_name)
-            if row is None:
-                logger.warning("Sub-agent '%s' still missing after seed — skipping", sub_name)
+        seen_names: set[str] = set()
+        for assignment, row in enabled_rows:
+            # The default assignment is the main project agent, not a delegation sub-agent.
+            if assignment.is_default:
                 continue
+            if not row.display_name:
+                logger.warning("Skipping enabled agent with empty display_name: id=%s", row.id)
+                continue
+            if row.display_name in seen_names:
+                logger.warning(
+                    "Duplicate enabled agent display_name '%s' for project %s; skipping duplicate",
+                    row.display_name,
+                    project_id,
+                )
+                continue
+
+            seen_names.add(row.display_name)
             sub_def = AgentDef(
-                name=sub_name,
+                name=row.display_name,
                 graph_name=row.graph_id or "direct_assistant",
                 default_model="default",
-                skills=row.skill_ids if row.skill_ids else ["investigation"],
-                limits=AgentLimits(max_turns=_SUB_AGENT_MAX_TURNS.get(sub_name, 15)),
+                skills=row.skill_ids or [],
+                limits=AgentLimits(max_turns=_SUB_AGENT_MAX_TURNS.get(row.display_name, 15)),
             )
             engine.register_agent(sub_def)
             logger.debug(
                 "Registered sub-agent '%s' (graph=%s, skills=%s)",
-                sub_name, sub_def.graph_name, sub_def.skills,
+                sub_def.name, sub_def.graph_name, sub_def.skills,
             )
     except Exception as exc:
-        logger.warning("Failed to load delegation sub-agents from DB: %s", exc)
+        logger.warning("Failed to load delegation sub-agents from project settings: %s", exc)
 
     return engine, agent_id

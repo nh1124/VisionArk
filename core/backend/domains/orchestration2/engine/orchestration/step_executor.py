@@ -17,6 +17,7 @@ from ..models.common import (
     EventSource,
     EventType,
     MessageRole,
+    RunStatus,
     SubMessageKind,
 )
 from ..models.execution import (
@@ -230,15 +231,19 @@ class StepExecutor:
         # ── Map engine result back to orchestration2 structures ──
         # Replace run history with the engine's output history
         run.history = engine_result.history
+        resolved_output = self._resolve_output_message(
+            engine_result.output_message,
+            run.history,
+        )
 
         # Post-process with role
         output_content = ""
-        if engine_result.output_message:
-            output_content = engine_result.output_message.content
+        if resolved_output:
+            output_content = resolved_output.content
         role_result = role_impl.post_process(output_content, ctx)
 
         if engine_result.status == "completed":
-            run.output_message = engine_result.output_message
+            run.output_message = resolved_output
 
             event = OrchestrationEvent(
                 type=EventType.DONE,
@@ -253,8 +258,10 @@ class StepExecutor:
             # Engine returned failed/cancelled
             detail = engine_result.error or "Engine run did not complete"
             # If there is partial output, still capture it
-            if engine_result.output_message:
-                run.output_message = engine_result.output_message
+            if resolved_output:
+                run.output_message = resolved_output
+            run.status = RunStatus.FAILED
+            run.error = detail
 
             event = OrchestrationEvent(
                 type=EventType.ERROR,
@@ -268,6 +275,33 @@ class StepExecutor:
 
         run.context.turn_index += 1
         return events
+
+    @staticmethod
+    def _resolve_output_message(
+        primary: Message | None,
+        history: list[Message] | None,
+    ) -> Message | None:
+        if primary is not None and (primary.content or "").strip():
+            return primary
+
+        for msg in reversed(history or []):
+            if msg.role != MessageRole.ASSISTANT:
+                continue
+
+            if (msg.content or "").strip():
+                return Message(role=MessageRole.ASSISTANT, content=msg.content)
+
+            text_parts: list[str] = []
+            for sub in msg.submessages or []:
+                if sub.kind in (SubMessageKind.TEXT, SubMessageKind.TOOL_RESULT):
+                    if (sub.content or "").strip():
+                        text_parts.append(sub.content.strip())
+            if text_parts:
+                return Message(
+                    role=MessageRole.ASSISTANT,
+                    content="\n".join(text_parts),
+                )
+        return primary
 
     async def _handle_tool_call(
         self,

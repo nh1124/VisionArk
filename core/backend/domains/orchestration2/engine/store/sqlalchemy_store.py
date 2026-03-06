@@ -12,14 +12,19 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import text
 
 from ..models.approval import PendingAction
 from ..models.common import ApprovalSourceType, EventSource, EventType, RunStatus
-from ..models.delegation import DelegationRequest, DelegationResult, DelegationResultStatus
+from ..models.delegation import (
+    DelegationDeliveryStatus,
+    DelegationRequest,
+    DelegationResult,
+    DelegationResultStatus,
+)
 from ..models.execution import OrchestrationEvent
 from ..models.message import Message
 from ..models.run import RunContext, RunRecord
@@ -110,6 +115,30 @@ class SQLAlchemyStore:
         if isinstance(data, str):
             data = json.loads(data)
         return [Message(**item) for item in data]
+
+    async def _next_delivery_cursor(self, db) -> int:
+        """Allocate a monotonic cursor for delegation result delivery."""
+        bind = db.get_bind()
+        dialect = bind.dialect.name if bind is not None else ""
+
+        # Preferred path: Postgres sequence for strictly monotonic IDs.
+        if dialect == "postgresql":
+            try:
+                seq_row = await db.execute(
+                    text("SELECT nextval('orchestration_delegations_delivery_cursor_seq') AS cursor")
+                )
+                return int(seq_row.mappings().first()["cursor"])
+            except Exception:
+                logger.warning("Falling back to MAX(delivery_cursor)+1 allocation")
+
+        # Fallback path for non-Postgres engines.
+        max_row = await db.execute(
+            text(
+                "SELECT COALESCE(MAX(delivery_cursor), 0) + 1 AS cursor "
+                "FROM orchestration_delegations"
+            )
+        )
+        return int(max_row.mappings().first()["cursor"])
 
     # ── RunRecord ─────────────────────────────────────────────────────
 
@@ -271,12 +300,13 @@ class SQLAlchemyStore:
                 text("""
                     INSERT INTO orchestration_delegations
                         (id, parent_run_id, child_agent_name, task, status,
-                         timeout_sec, created_at, updated_at)
+                         delivery_status, timeout_sec, request_id, context_scope, created_at, updated_at)
                     VALUES
                         (:id, :parent_run_id, :child_agent_name, :task, :status,
-                         :timeout_sec, :created_at, :updated_at)
+                         :delivery_status, :timeout_sec, :request_id, :context_scope, :created_at, :updated_at)
                     ON CONFLICT (id) DO UPDATE SET
                         status = :status,
+                        delivery_status = :delivery_status,
                         updated_at = :updated_at
                 """),
                 {
@@ -285,7 +315,10 @@ class SQLAlchemyStore:
                     "child_agent_name": request.child_agent_name,
                     "task": request.task,
                     "status": "pending",
+                    "delivery_status": DelegationDeliveryStatus.PENDING.value,
                     "timeout_sec": request.timeout_sec,
+                    "request_id": request.request_id,
+                    "context_scope": request.context_scope,
                     "created_at": datetime.utcnow(),
                     "updated_at": datetime.utcnow(),
                 },
@@ -311,6 +344,36 @@ class SQLAlchemyStore:
             child_agent_name=row["child_agent_name"] or "",
             task=row["task"] or "",
             timeout_sec=row["timeout_sec"],
+            request_id=row.get("request_id"),
+            context_scope=row.get("context_scope"),
+        )
+
+    async def find_delegation_by_request_id(
+        self, parent_run_id: str, request_id: str
+    ) -> DelegationRequest | None:
+        async with self._factory() as db:
+            result = await db.execute(
+                text(
+                    "SELECT * FROM orchestration_delegations "
+                    "WHERE parent_run_id = :parent_run_id AND request_id = :request_id "
+                    "ORDER BY created_at DESC LIMIT 1"
+                ),
+                {
+                    "parent_run_id": parent_run_id,
+                    "request_id": request_id,
+                },
+            )
+            row = result.mappings().first()
+        if row is None:
+            return None
+        return DelegationRequest(
+            id=row["id"],
+            parent_run_id=row["parent_run_id"],
+            child_agent_name=row["child_agent_name"] or "",
+            task=row["task"] or "",
+            timeout_sec=row["timeout_sec"],
+            request_id=row.get("request_id"),
+            context_scope=row.get("context_scope"),
         )
 
     async def save_delegation_result(self, result: DelegationResult) -> None:
@@ -320,11 +383,24 @@ class SQLAlchemyStore:
             output_json = json.dumps(self._serialize_message(result.output_message))
 
         async with self._factory() as db:
+            delivery_cursor = result.delivery_cursor
+            if delivery_cursor is None:
+                delivery_cursor = await self._next_delivery_cursor(db)
+            delivery_status = (
+                result.delivery_status.value
+                if result.delivery_status is not None
+                else DelegationDeliveryStatus.DELIVERED.value
+            )
             await db.execute(
                 text("""
                     UPDATE orchestration_delegations
                     SET child_run_id = :child_run_id,
                         status = :status,
+                        delivery_status = CASE
+                            WHEN delivery_status = 'acknowledged' THEN delivery_status
+                            ELSE :delivery_status
+                        END,
+                        delivery_cursor = COALESCE(delivery_cursor, :delivery_cursor),
                         output_json = :output_json,
                         error = :error,
                         updated_at = :updated_at
@@ -334,12 +410,16 @@ class SQLAlchemyStore:
                     "id": result.delegation_id,
                     "child_run_id": result.child_run_id,
                     "status": result.status.value,
+                    "delivery_status": delivery_status,
+                    "delivery_cursor": delivery_cursor,
                     "output_json": output_json,
                     "error": result.error,
                     "updated_at": datetime.utcnow(),
                 },
             )
             await db.commit()
+        result.delivery_cursor = delivery_cursor
+        result.delivery_status = DelegationDeliveryStatus(delivery_status)
 
     async def get_delegation_result(
         self, delegation_id: str
@@ -367,9 +447,82 @@ class SQLAlchemyStore:
             status=DelegationResultStatus(row["status"]),
             output_message=self._deserialize_message(output_data),
             error=row["error"],
+            delivery_status=DelegationDeliveryStatus(
+                row.get("delivery_status") or DelegationDeliveryStatus.DELIVERED.value
+            ),
+            delivery_cursor=row.get("delivery_cursor"),
         )
 
     # ── Events ────────────────────────────────────────────────────────
+
+    async def list_delegation_results_since(
+        self,
+        *,
+        parent_run_id: str,
+        since_cursor: int,
+        limit: int,
+        include_acknowledged: bool = False,
+    ) -> list[DelegationResult]:
+        query = (
+            "SELECT * FROM orchestration_delegations "
+            "WHERE parent_run_id = :parent_run_id "
+            "AND child_run_id IS NOT NULL "
+            "AND COALESCE(delivery_cursor, 0) > :since_cursor "
+        )
+        if not include_acknowledged:
+            query += "AND COALESCE(delivery_status, 'pending') <> 'acknowledged' "
+        query += "ORDER BY delivery_cursor ASC, updated_at ASC LIMIT :limit"
+
+        async with self._factory() as db:
+            result = await db.execute(
+                text(query),
+                {
+                    "parent_run_id": parent_run_id,
+                    "since_cursor": since_cursor,
+                    "limit": limit,
+                },
+            )
+            rows = result.mappings().all()
+
+        items: list[DelegationResult] = []
+        for row in rows:
+            output_data = row["output_json"]
+            if isinstance(output_data, str):
+                output_data = json.loads(output_data)
+            items.append(
+                DelegationResult(
+                    delegation_id=row["id"],
+                    child_run_id=row["child_run_id"] or "",
+                    status=DelegationResultStatus(row["status"]),
+                    output_message=self._deserialize_message(output_data),
+                    error=row["error"],
+                    delivery_status=DelegationDeliveryStatus(
+                        row.get("delivery_status") or DelegationDeliveryStatus.DELIVERED.value
+                    ),
+                    delivery_cursor=row.get("delivery_cursor"),
+                )
+            )
+        return items
+
+    async def acknowledge_delegation_result(self, delegation_id: str) -> bool:
+        async with self._factory() as db:
+            result = await db.execute(
+                text("""
+                    UPDATE orchestration_delegations
+                    SET delivery_status = :ack_status,
+                        updated_at = :updated_at
+                    WHERE id = :id
+                      AND child_run_id IS NOT NULL
+                      AND COALESCE(delivery_status, 'pending') <> :ack_status
+                """),
+                {
+                    "id": delegation_id,
+                    "ack_status": DelegationDeliveryStatus.ACKNOWLEDGED.value,
+                    "updated_at": datetime.utcnow(),
+                },
+            )
+            await db.commit()
+            return (result.rowcount or 0) > 0
 
     async def append_event(self, event: OrchestrationEvent) -> None:
         """Persist an event to the DB and buffer it in-memory."""

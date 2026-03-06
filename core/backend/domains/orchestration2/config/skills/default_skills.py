@@ -154,7 +154,7 @@ SKILL_DEFS: list[SkillDef] = [
     SkillDef(
         name="delegation",
         description="Delegate subtasks to specialized sub-agents",
-        tools=["delegate_task"],
+        tools=["delegate_task", "wait_for_delegation", "receive_delegation_results"],
         instructions=(
             "When to use: breaking a complex task into sub-tasks to be handled by specialized agents.\n"
             "Do first: clearly define the scope, deliverables, and constraints of each sub-task.\n"

@@ -2076,7 +2076,7 @@ class UpdateAgent(BaseModel):
 
 class UpdateProjectEnabledAgents(BaseModel):
     enabled_agent_ids: List[str]
-    default_agent_id: Optional[str] = None
+    default_agent_id: str
 
 
 @router.get("/skills")
@@ -2341,8 +2341,20 @@ async def update_project_enabled_agents(
     if not proj_res.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Project not found")
 
+    # Validate payload shape
+    if not body.enabled_agent_ids:
+        raise HTTPException(
+            status_code=422,
+            detail="enabled_agent_ids must include at least one agent",
+        )
+    if not body.default_agent_id:
+        raise HTTPException(
+            status_code=422,
+            detail="default_agent_id is required",
+        )
+
     # Validate default_agent_id is in enabled list
-    if body.default_agent_id and body.default_agent_id not in body.enabled_agent_ids:
+    if body.default_agent_id not in body.enabled_agent_ids:
         raise HTTPException(
             status_code=422,
             detail="default_agent_id must be included in enabled_agent_ids",

@@ -43,12 +43,27 @@ from ...tools.library.markdown import (
 )
 from ...tools.library.document import RenderPdfTool
 
-def get_delegation_tool(engine: Any) -> tuple[ToolDef, Any]:
-    """Return (ToolDef, DelegateTaskTool) bound to the given engine."""
-    from ...tools.library.delegation import DelegateTaskTool
+def get_delegation_tools(engine: Any) -> list[tuple[ToolDef, Any]]:
+    """Return delegation-related tool (definition, implementation) pairs."""
+    from ...tools.library.delegation import (
+        DelegateTaskTool,
+        ListDelegationsTool,
+        ReceiveDelegationResultsTool,
+        WaitForDelegationTool,
+    )
 
-    impl = DelegateTaskTool(engine)
-    return impl.definition, impl
+    tools = [
+        DelegateTaskTool(engine),
+        WaitForDelegationTool(engine),
+        ReceiveDelegationResultsTool(engine),
+        ListDelegationsTool(engine),
+    ]
+    return [(tool.definition, tool) for tool in tools]
+
+
+def get_delegation_tool(engine: Any) -> tuple[ToolDef, Any]:
+    """Backward-compatible helper returning the primary delegation tool."""
+    return get_delegation_tools(engine)[0]
 
 
 def get_core_tools() -> list[tuple[ToolDef, Any]]:
