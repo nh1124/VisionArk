@@ -50,6 +50,8 @@ interface Props {
   refreshKey?: number
   filterContext?: string
   statusFilter?: CalendarStatusFilter
+  anchorDate?: string
+  showNavigation?: boolean
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -59,15 +61,22 @@ export default function CalendarView({
   refreshKey,
   filterContext,
   statusFilter = "all",
+  anchorDate,
+  showNavigation = true,
 }: Props) {
   const today = getLocalDate()
-  const [month, setMonth] = useState(() => {
+  const [monthState, setMonthState] = useState(() => {
     const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1)
   })
   const [schedule, setSchedule] = useState<LBSScheduleDay[]>([])
   const [loading, setLoading] = useState(false)
   const [dayDetails, setDayDetails] = useState<string | null>(null)
 
+  const month = useMemo(() => {
+    if (!anchorDate) return monthState
+    const d = new Date(`${anchorDate}T00:00:00`)
+    return new Date(d.getFullYear(), d.getMonth(), 1)
+  }, [anchorDate, monthState])
   const days = useMemo(() => gridDays(month), [month])
 
   const fetchMonth = useCallback(async () => {
@@ -100,9 +109,9 @@ export default function CalendarView({
     return map
   }, [filterContext, schedule, statusFilter])
 
-  function prevMonth() { setMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1)) }
-  function nextMonth() { setMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1)) }
-  function goToday() { setMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1)) }
+  function prevMonth() { setMonthState(m => new Date(m.getFullYear(), m.getMonth() - 1, 1)) }
+  function nextMonth() { setMonthState(m => new Date(m.getFullYear(), m.getMonth() + 1, 1)) }
+  function goToday() { setMonthState(new Date(new Date().getFullYear(), new Date().getMonth(), 1)) }
 
   const dayDetailsTasks = dayDetails ? (tasksByDay[dayDetails] ?? []) : []
   const monthLabel = month.toLocaleDateString("en-US", { month: "long", year: "numeric" })
@@ -110,15 +119,16 @@ export default function CalendarView({
 
   return (
     <div className="flex flex-col h-full">
-      {/* Month header */}
-      <div className="flex items-center justify-between mb-4 flex-shrink-0">
-        <h2 className="text-base font-bold text-white">{monthLabel}</h2>
-        <div className="flex items-center gap-1">
-          <button onClick={prevMonth} className="p-1.5 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-white transition-all"><ChevronLeft size={16} /></button>
-          <button onClick={goToday} className="px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white transition-all border-x border-gray-800">Today</button>
-          <button onClick={nextMonth} className="p-1.5 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-white transition-all"><ChevronRight size={16} /></button>
+      {showNavigation && (
+        <div className="flex items-center justify-between mb-4 flex-shrink-0">
+          <h2 className="text-base font-bold text-white">{monthLabel}</h2>
+          <div className="flex items-center gap-1">
+            <button onClick={prevMonth} className="p-1.5 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-white transition-all"><ChevronLeft size={16} /></button>
+            <button onClick={goToday} className="px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white transition-all border-x border-gray-800">Today</button>
+            <button onClick={nextMonth} className="p-1.5 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-white transition-all"><ChevronRight size={16} /></button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Calendar grid */}
       <div className="flex-1 overflow-y-auto min-h-0">

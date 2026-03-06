@@ -25,6 +25,35 @@ function getLocalDateString(d = new Date()) {
 }
 const TODAY = getLocalDateString()
 
+function addDays(iso: string, days: number) {
+  const d = new Date(`${iso}T00:00:00`)
+  d.setDate(d.getDate() + days)
+  return getLocalDateString(d)
+}
+
+function addMonths(iso: string, months: number) {
+  const d = new Date(`${iso}T00:00:00`)
+  d.setMonth(d.getMonth() + months)
+  return getLocalDateString(d)
+}
+
+function weekRangeLabel(anchor: string) {
+  const d = new Date(`${anchor}T00:00:00`)
+  const dow = d.getDay()
+  const sun = new Date(d)
+  sun.setDate(d.getDate() - dow)
+  const sat = new Date(sun)
+  sat.setDate(sun.getDate() + 6)
+  const s = sun.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+  const e = sat.toLocaleDateString("en-US", { month: "long", day: "numeric" })
+  return `${s} - ${e}`
+}
+
+function monthLabel(anchor: string) {
+  const d = new Date(`${anchor}T00:00:00`)
+  return d.toLocaleDateString("en-US", { year: "numeric", month: "long" })
+}
+
 type ViewMode = "list" | "calendar" | "timeline"
 
 const LOAD_COLORS = { low: "text-emerald-400", medium: "text-yellow-400", high: "text-orange-400", critical: "text-red-400" }
@@ -527,6 +556,7 @@ export default function TasksView({
   const [showAddForm, setShowAddForm] = useState(false)
   const [toggling, setToggling] = useState<Set<string>>(new Set())
   const [viewMode, setViewMode] = useState<ViewMode>(mode === "calendar" ? "calendar" : "list")
+  const [calendarAnchorDate, setCalendarAnchorDate] = useState(TODAY)
   const [editTaskId, setEditTaskId] = useState<string | null>(null)
   const [editDate, setEditDate] = useState<string | undefined>()
   const [importOpen, setImportOpen] = useState(false)
@@ -764,6 +794,18 @@ export default function TasksView({
     else setRefreshKey(k => k + 1)
   }
 
+  function jumpToday() {
+    setCalendarAnchorDate(TODAY)
+  }
+
+  function movePrev() {
+    setCalendarAnchorDate(prev => viewMode === "timeline" ? addDays(prev, -7) : addMonths(prev, -1))
+  }
+
+  function moveNext() {
+    setCalendarAnchorDate(prev => viewMode === "timeline" ? addDays(prev, 7) : addMonths(prev, 1))
+  }
+
   const grouped = groupByContext(tasks)
   const todayDone = tasks.filter(t => t.status === "done").length
   const todayTotal = tasks.length
@@ -784,10 +826,33 @@ export default function TasksView({
         <div className="flex-shrink-0 px-6 pt-6 pb-4 border-b border-gray-800/50">
           <div className="flex items-center justify-between mb-3">
             <div>
-              <h1 className="text-lg font-bold text-white">{title}</h1>
-              <p className="text-xs text-gray-500 mt-0.5">
-                {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
-              </p>
+              {!isCalendarPage && (
+                <>
+                  <h1 className="text-lg font-bold text-white">{title}</h1>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+                  </p>
+                </>
+              )}
+              {isCalendarPage && (
+                <div className="mt-2 flex items-center gap-2">
+                  <button onClick={movePrev} className="px-2 py-1 text-gray-400 hover:text-white transition-all">
+                    {"<"}
+                  </button>
+                  <button
+                    onClick={jumpToday}
+                    className="px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white transition-all"
+                  >
+                    TODAY
+                  </button>
+                  <button onClick={moveNext} className="px-2 py-1 text-gray-400 hover:text-white transition-all">
+                    {">"}
+                  </button>
+                  <span className="text-xs font-bold text-gray-300">
+                    {viewMode === "timeline" ? weekRangeLabel(calendarAnchorDate) : monthLabel(calendarAnchorDate)}
+                  </span>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
@@ -890,10 +955,12 @@ export default function TasksView({
               refreshKey={refreshKey}
               filterContext={filterContext}
               statusFilter={calendarStatusFilter}
+              anchorDate={calendarAnchorDate}
+              showNavigation={false}
             />
           ) : (
             <TimelineView
-              targetDate={TODAY}
+              targetDate={calendarAnchorDate}
               onTaskClick={openEdit}
               refreshKey={refreshKey}
               filterContext={filterContext}
