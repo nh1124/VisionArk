@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react"
-import { Bot, Save, Edit3, X } from "lucide-react"
+import { Bot, Save, Copy } from "lucide-react"
 import { apiFetch } from "../lib/api"
-import MarkdownRenderer from "./MarkdownRenderer"
 
 interface AgentRecord {
     id: string
@@ -16,11 +15,9 @@ interface Props {
 
 export default function ProjectSettingsPanel({ projectId }: Props) {
     const [prompt, setPrompt] = useState("")
-    const [initialPrompt, setInitialPrompt] = useState("")
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
     const [saveStatus, setSaveStatus] = useState("")
-    const [isEditing, setIsEditing] = useState(false)
 
     const [allAgents, setAllAgents] = useState<AgentRecord[]>([])
     const [enabledAgentIds, setEnabledAgentIds] = useState<Set<string>>(new Set())
@@ -42,7 +39,6 @@ export default function ProjectSettingsPanel({ projectId }: Props) {
             ])
             const promptData = await promptRes.json()
             setPrompt(promptData.content || "")
-            setInitialPrompt(promptData.content || "")
 
             const agentsData = await agentsRes.json()
             setAllAgents(agentsData.agents ?? [])
@@ -68,8 +64,6 @@ export default function ProjectSettingsPanel({ projectId }: Props) {
             })
             if (res.ok) {
                 setSaveStatus("✅ Saved")
-                setInitialPrompt(prompt)
-                setIsEditing(false)
                 setTimeout(() => setSaveStatus(""), 3000)
             } else {
                 setSaveStatus("❌ Failed")
@@ -78,6 +72,17 @@ export default function ProjectSettingsPanel({ projectId }: Props) {
             setSaveStatus("❌ Failed")
         } finally {
             setSaving(false)
+        }
+    }
+
+    const copyPrompt = async () => {
+        try {
+            await navigator.clipboard.writeText(prompt)
+            setSaveStatus("Copied")
+            setTimeout(() => setSaveStatus(""), 2000)
+        } catch {
+            setSaveStatus("Copy failed")
+            setTimeout(() => setSaveStatus(""), 2000)
         }
     }
 
@@ -131,7 +136,7 @@ export default function ProjectSettingsPanel({ projectId }: Props) {
     }
 
     return (
-        <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar space-y-6 pr-1">
+        <div className="h-full overflow-y-auto overflow-x-hidden custom-scrollbar space-y-6 pr-1">
             {/* System Instructions */}
             <div className="space-y-3">
                 <div className="flex items-center justify-between">
@@ -142,54 +147,31 @@ export default function ProjectSettingsPanel({ projectId }: Props) {
                         {saveStatus && (
                             <span className="text-[10px] text-gray-400">{saveStatus}</span>
                         )}
-                        {isEditing ? (
-                            <>
-                                <button
-                                    onClick={() => { setPrompt(initialPrompt); setIsEditing(false) }}
-                                    className="p-1.5 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-gray-800 transition-colors"
-                                    title="Cancel"
-                                >
-                                    <X size={13} />
-                                </button>
-                                <button
-                                    onClick={savePrompt}
-                                    disabled={saving}
-                                    className="p-1.5 rounded-lg text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10 transition-colors"
-                                    title="Save"
-                                >
-                                    <Save size={13} />
-                                </button>
-                            </>
-                        ) : (
-                            <button
-                                onClick={() => setIsEditing(true)}
-                                className="p-1.5 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-gray-800 transition-colors"
-                                title="Edit"
-                            >
-                                <Edit3 size={13} />
-                            </button>
-                        )}
+                        <button
+                            onClick={copyPrompt}
+                            className="p-1.5 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-gray-800 transition-colors"
+                            title="Copy"
+                        >
+                            <Copy size={13} />
+                        </button>
+                        <button
+                            onClick={savePrompt}
+                            disabled={saving}
+                            className="p-1.5 rounded-lg text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10 transition-colors"
+                            title="Save"
+                        >
+                            <Save size={13} />
+                        </button>
                     </div>
                 </div>
 
-                {isEditing ? (
-                    <textarea
-                        value={prompt}
-                        onChange={(e) => setPrompt(e.target.value)}
-                        className="w-full min-h-[160px] bg-gray-900/50 border border-gray-700 rounded-xl p-3 text-gray-200 font-mono text-xs focus:outline-none focus:border-cyan-500 transition-all resize-y"
-                        placeholder="Enter system instructions for this project..."
-                    />
-                ) : (
-                    <div className="bg-gray-900/30 border border-gray-800/50 rounded-xl p-3 min-h-[80px]">
-                        {initialPrompt ? (
-                            <div className="text-xs text-gray-300 leading-relaxed">
-                                <MarkdownRenderer content={initialPrompt} nodeType="project" nodeName={projectId} projectId={projectId} />
-                            </div>
-                        ) : (
-                            <p className="text-xs text-gray-600 italic">No custom instructions yet. Click edit to add.</p>
-                        )}
-                    </div>
-                )}
+                <textarea
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    rows={10}
+                    className="w-full h-56 max-h-[38vh] overflow-y-auto bg-gray-900/50 border border-gray-700 rounded-xl p-3 text-gray-200 font-mono text-xs focus:outline-none focus:border-cyan-500 transition-all resize-none"
+                    placeholder="Enter system instructions for this project..."
+                />
             </div>
 
             {/* Agent Settings */}
