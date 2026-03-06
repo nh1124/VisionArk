@@ -1,6 +1,9 @@
 services:
   # PostgreSQL Database
   db:
+    profiles:
+      - core
+      - all
     image: postgres:16-alpine
     container_name: atmos-db
     environment:
@@ -20,10 +23,13 @@ services:
       - atmos-network
     restart: unless-stopped
     env_file:
-      - ../.env
+      - ${CORE_ENV_FILE:-../.env.core}
 
   # Backend API
   backend:
+    profiles:
+      - core
+      - all
     build:
       context: ../core/backend
       dockerfile: Dockerfile
@@ -34,9 +40,9 @@ services:
       - ATMOS_ENV=${ATMOS_ENV:-dev}
       - HOST=0.0.0.0
       - REDIS_HOST=redis
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
       - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
-      - ATMOS_SERVICE_KEY=${ATMOS_SERVICE_KEY}
+      - ATMOS_SERVICE_KEY=${ATMOS_SERVICE_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -55,10 +61,13 @@ services:
       - atmos-network
     restart: unless-stopped
     env_file:
-      - ../.env
+      - ${CORE_ENV_FILE:-../.env.core}
 
   # Background Worker
   worker:
+    profiles:
+      - core
+      - all
     build:
       context: ../core/backend
       dockerfile: Dockerfile
@@ -71,9 +80,9 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
       - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
-      - ATMOS_SERVICE_KEY=${ATMOS_SERVICE_KEY}
+      - ATMOS_SERVICE_KEY=${ATMOS_SERVICE_KEY:-}
     volumes:
       - ../core/backend:/app
       - ../va_sdk:/app/va_sdk
@@ -90,10 +99,13 @@ services:
     restart: unless-stopped
     command: python -m app.worker
     env_file:
-      - ../.env
+      - ${CORE_ENV_FILE:-../.env.core}
 
   # Frontend UI
   frontend:
+    profiles:
+      - ui
+      - all
     build:
       context: ../core/frontend
       dockerfile: Dockerfile
@@ -109,16 +121,17 @@ services:
       - /app/node_modules
       - ../assets/static:/app/public/assets
     command: npm run dev -- -H 0.0.0.0
-    depends_on:
-      - backend
     networks:
       - atmos-network
     restart: unless-stopped
     env_file:
-      - ../.env
+      - ${CORE_ENV_FILE:-../.env.core}
 
   # Redis Queue
   redis:
+    profiles:
+      - core
+      - all
     image: redis:alpine
     container_name: visionark-redis
     restart: always
@@ -128,18 +141,18 @@ services:
 
   # Cloudflare Tunnel
   tunnel:
+    profiles:
+      - edge
+      - all
     image: cloudflare/cloudflared:latest
     container_name: atmos-tunnel
     # Cloudflared will automatically use the TUNNEL_TOKEN environment variable provided by env_file
     command: tunnel --no-autoupdate run
     restart: unless-stopped
-    depends_on:
-      - backend
-      - frontend
     networks:
       - atmos-network
     env_file:
-      - ../.env
+      - ${EDGE_ENV_FILE:-../.env.edge}
 
 networks:
   atmos-network:

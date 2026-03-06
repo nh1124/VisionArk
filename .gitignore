@@ -33,6 +33,8 @@ desktop.ini
 
 # Environment
 .env
+.env.core
+.env.edge
 .env.local
 .env.*.local
 

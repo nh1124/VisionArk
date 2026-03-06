@@ -41,8 +41,12 @@ if not exist "!ARCHIVE!" (
     exit /b 1
 )
 
-:: ── Load .env (non-overriding) ────────────────────────────────────────────────
-set "ENV_FILE=%PROJECT_ROOT%\.env"
+:: ── Load .env.core (non-overriding) ───────────────────────────────────────────
+set "ENV_FILE=%PROJECT_ROOT%\.env.core"
+if not exist "%ENV_FILE%" (
+    echo ERROR: %ENV_FILE% not found. >&2
+    exit /b 1
+)
 if exist "%ENV_FILE%" (
     for /f "usebackq tokens=1,* delims==" %%a in ("%ENV_FILE%") do (
         set "_k=%%a"
@@ -222,7 +226,7 @@ if "!HAS_DATA!"=="true" (
 )
 
 echo Restarting backend and worker...
-docker-compose -f "%COMPOSE_FILE%" start backend worker 2>nul || docker-compose -f "%COMPOSE_FILE%" up -d backend worker
+docker-compose -f "%COMPOSE_FILE%" start backend worker 2>nul || docker-compose -f "%COMPOSE_FILE%" --profile core up -d backend worker
 
 :cleanup_ok
 if exist "%WORK_DIR%" rmdir /s /q "%WORK_DIR%"

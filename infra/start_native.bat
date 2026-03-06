@@ -1,28 +1,25 @@
 @echo off
-:: VisionArk Native App — development startup script (Windows)
 setlocal enabledelayedexpansion
 
-set SCRIPT_DIR=%~dp0
-set ROOT=%SCRIPT_DIR%..
+set "SCRIPT_DIR=%~dp0"
+set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
+set "NATIVE_ROOT=%SCRIPT_DIR%\..\core\native"
 
 echo === VisionArk Native Dev ===
 
-:: Build daemon sidecar
 echo [1/2] Building daemon sidecar...
-cd /d %ROOT%\daemon
+cd /d "%NATIVE_ROOT%\daemon"
 cargo build
 if errorlevel 1 (
     echo [ERROR] Failed to build daemon.
     exit /b 1
 )
 
-:: Ensure binaries dir exists and copy
-if not exist "%ROOT%\desktop\binaries" mkdir "%ROOT%\desktop\binaries"
-copy /Y "%ROOT%\target\debug\visionark-daemon.exe" "%ROOT%\desktop\binaries\visionark-daemon-x86_64-pc-windows-msvc.exe" >nul
+if not exist "%NATIVE_ROOT%\desktop\binaries" mkdir "%NATIVE_ROOT%\desktop\binaries"
+copy /Y "%NATIVE_ROOT%\target\debug\visionark-daemon.exe" "%NATIVE_ROOT%\desktop\binaries\visionark-daemon-x86_64-pc-windows-msvc.exe" >nul
 
-:: Start Tauri desktop
 echo [2/2] Starting Tauri desktop...
-cd /d %ROOT%\desktop
+cd /d "%NATIVE_ROOT%\desktop"
 if not exist node_modules (
     echo     node_modules not found, running npm install...
     npm install
@@ -33,5 +30,4 @@ if not exist node_modules (
 )
 cargo tauri dev
 
-echo.
 endlocal

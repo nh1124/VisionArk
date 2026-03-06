@@ -33,7 +33,7 @@ done
 [[ ! -f "$ARCHIVE" ]]  && { echo "ERROR: Archive not found: $ARCHIVE" >&2; exit 1; }
 ARCHIVE="$(realpath "$ARCHIVE")"
 
-# ── Load .env (non-overriding) ──────────────────────────────────────────────
+# ── Load .env.core (non-overriding) ─────────────────────────────────────────
 _load_env() {
     local env_file="$1"
     [[ ! -f "$env_file" ]] && return
@@ -45,7 +45,12 @@ _load_env() {
         [[ -z "${!key:-}" ]] && export "$key=$rest"
     done < <(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$env_file")
 }
-_load_env "$PROJECT_ROOT/.env"
+if [[ -f "$PROJECT_ROOT/.env.core" ]]; then
+    _load_env "$PROJECT_ROOT/.env.core"
+else
+    echo "ERROR: $PROJECT_ROOT/.env.core not found." >&2
+    exit 1
+fi
 
 PG_USER="${POSTGRES_USER:-atmos}"
 PG_DB="${POSTGRES_DB:-atmos}"
@@ -186,7 +191,7 @@ fi
 
 echo "Restarting backend and worker..."
 docker-compose -f "$COMPOSE_FILE" start backend worker 2>/dev/null || \
-    docker-compose -f "$COMPOSE_FILE" up -d backend worker
+    docker-compose -f "$COMPOSE_FILE" --profile core up -d backend worker
 
 echo
 echo "========================================"

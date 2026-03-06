@@ -1000,7 +1000,7 @@ def get_engine(db_url: str = None):
         
         if not settings.database_url:
             raise ValueError(
-                "DATABASE_URL is required. Set it in .env file.\n"
+                "DATABASE_URL is required. Set it in .env.core (or .env.local).\n"
                 "Example: DATABASE_URL=postgresql://user:pass@localhost:5432/atmos"
             )
         db_url = settings.database_url

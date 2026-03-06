@@ -34,8 +34,12 @@ echo   --no-data          Skip archiving the data\ directory
 exit /b 0
 :done_args
 
-:: ── Load .env (non-overriding) ────────────────────────────────────────────────
-set "ENV_FILE=%PROJECT_ROOT%\.env"
+:: ── Load .env.core (non-overriding) ───────────────────────────────────────────
+set "ENV_FILE=%PROJECT_ROOT%\.env.core"
+if not exist "%ENV_FILE%" (
+    echo ERROR: %ENV_FILE% not found. >&2
+    exit /b 1
+)
 if exist "%ENV_FILE%" (
     for /f "usebackq tokens=1,* delims==" %%a in ("%ENV_FILE%") do (
         set "_k=%%a"

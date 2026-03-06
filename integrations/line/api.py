@@ -1,4 +1,4 @@
-import hmac
+﻿import hmac
 import hashlib
 import base64
 import json
@@ -91,7 +91,7 @@ async def shared_line_webhook(
     channel_access_token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "").strip()
     
     if not channel_secret or not channel_access_token:
-        print("[ERROR] Shared LINE credentials missing in .env", flush=True)
+        print("[ERROR] Shared LINE credentials missing in .env.core/.env.local", flush=True)
         raise HTTPException(status_code=500, detail="LINE Shared App not configured")
 
     body = await request.body()
@@ -146,7 +146,7 @@ async def shared_line_webhook(
             try:
                 line_client = LineClient(channel_access_token)
                 invitation_text = (
-                    "Welcome to VisionArk Shared Bot! 🚀\n\n"
+                    "Welcome to VisionArk Shared Bot! 噫\n\n"
                     "Please link your account to start interacting:\n\n"
                     f"{link_url}"
                 )
@@ -263,7 +263,7 @@ async def line_webhook(
             try:
                 line_client = LineClient(service.api_key)
                 invitation_text = (
-                    "Welcome to VisionArk! 🚀\n\n"
+                    "Welcome to VisionArk! 噫\n\n"
                     "To start using this assistant, please link your VisionArk account by clicking the link below:\n\n"
                     f"{link_url}\n\n"
                     "(This link expires in 15 minutes)"
@@ -351,3 +351,5 @@ async def line_webhook(
                 )
                 
     return {"status": "ok"}
+
+

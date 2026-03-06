@@ -5,7 +5,7 @@ from typing import Optional, Any
 import os
 
 class Settings(BaseSettings):
-    """Application settings using Pydantic Settings and .env"""
+    """Application settings using layered environment files."""
     
     # API Settings
     backend_port: int = 8000
@@ -53,7 +53,11 @@ class Settings(BaseSettings):
     
     # Model configuration
     model_config = SettingsConfigDict(
-        env_file=os.path.join(os.path.dirname(__file__), "../../.env"),
+        env_file=(
+            os.path.join(os.path.dirname(__file__), "../../.env.core"),
+            os.path.join(os.path.dirname(__file__), "../../.env.shared"),
+            os.path.join(os.path.dirname(__file__), "../../.env.local"),
+        ),
         env_file_encoding="utf-8",
         extra="ignore"
     )

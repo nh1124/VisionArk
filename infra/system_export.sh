@@ -31,7 +31,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ── Load .env (non-overriding) ──────────────────────────────────────────────
+# ── Load .env.core (non-overriding) ─────────────────────────────────────────
 _load_env() {
     local env_file="$1"
     [[ ! -f "$env_file" ]] && return
@@ -43,7 +43,12 @@ _load_env() {
         [[ -z "${!key:-}" ]] && export "$key=$rest"    # don't overwrite existing
     done < <(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$env_file")
 }
-_load_env "$PROJECT_ROOT/.env"
+if [[ -f "$PROJECT_ROOT/.env.core" ]]; then
+    _load_env "$PROJECT_ROOT/.env.core"
+else
+    echo "ERROR: $PROJECT_ROOT/.env.core not found." >&2
+    exit 1
+fi
 
 PG_USER="${POSTGRES_USER:-atmos}"
 PG_DB="${POSTGRES_DB:-atmos}"

@@ -1,6 +1,17 @@
 @echo off
 setlocal enabledelayedexpansion
 
+set "CORE_ENV_FILE=../.env.core"
+set "EDGE_ENV_FILE=../.env.edge"
+if not exist ".env.core" (
+    echo ERROR: .env.core not found.
+    exit /b 1
+)
+if not exist ".env.edge" (
+    echo ERROR: .env.edge not found.
+    exit /b 1
+)
+
 echo ========================================
 echo VISION ARK - System Initialization
 echo [WARNING] This will wipe ALL user data and registrations!
@@ -31,7 +42,7 @@ if exist data (
 
 echo.
 echo [3/4] Rebuilding and starting services...
-docker-compose -f infra/docker-compose.yml up -d --build
+docker-compose -f infra/docker-compose.yml --profile all up -d --build
 if errorlevel 1 (
     echo ERROR: Failed to restart services.
     pause

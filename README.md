@@ -1,202 +1,151 @@
-# VisionArk
+﻿# VisionArk
 
-> **⚠️ Experimental Personal OS**  
-> This project is an experimental personal operating system.  
-> Not production-ready. UX is optimized for the author.  
-> Architecture may change without notice.
+> Experimental personal OS for AI-assisted project and task orchestration.
+> This repository is not production-ready.
 
-An AI-powered personal task management system built on a Project-Node architecture. VisionArk combines LBS (Load Balancing System) workload management with multi-agent AI orchestration powered by Google Gemini.
+VisionArk is an AI-powered personal task management system built on a Project/Node architecture.
+It combines LBS (Load Balancing System) workload management with multi-agent orchestration.
 
----
+## Core Features
 
-## ✨ Core Features
+- Project/Node agent architecture (Project Node + Member Nodes)
+- Agent-to-agent coordination (`ask_node`) with bounded recursion
+- Async task execution with worker queue
+- Artifacts and workspace file management
+- LBS scheduling and workload balancing
+- Knowledge retrieval and memory ingestion
+- Optional Cloudflare tunnel for edge exposure
+- Optional native desktop dev flow
 
-### 🤖 AI Agent System
-- **Project Structure**: Work is organized into Projects, each containing one or more AI Nodes.
-- **Node-based Agents**: 
-  - **Project Node**: The primary orchestrator for a project workspace.
-  - **Member Nodes**: Specialized sub-agents or assistants within a project.
-- **Agent-to-Agent Communication**: Nodes can collaborate via `ask_node` tools with recursion depth limiting.
-- **Asynchronous Processing**: Chat requests are enqueued and processed by background workers, supporting long-running tool executions.
-- **Artifacts System**: Agents create and manage artifacts (documents, notes, plans) in their workspace.
-- **Customizable Alerts**: User-configurable notification sounds for timers and events.
+## Tech Stack
 
-### 🧠 Agent Capabilities (Native Tools)
-| Category | Tools |
-|----------|-------|
-| **Research** | `google_search`, `research_url`, `search_places` |
-| **LBS/Tasks** | `create_task`, `list_tasks`, `complete_lbs_task`, `get_load_on_day` |
-| **Knowledge** | `search_knowledge`, `ingest_knowledge` |
-| **Files** | `save_artifact`, `read_artifact`, `list_files`, `upload_file_to_ai` |
-| **Creation** | `generate_image`, `execute_code` |
-| **Coordination** | `ask_node`, `request_coordination`, `check_inbox` |
+- Frontend: Next.js, React, Tailwind CSS
+- Backend: FastAPI, SQLAlchemy (async), Pydantic
+- Queue: Redis
+- Database: PostgreSQL (Docker profile)
+- Deployment: Docker Compose profiles
 
-### 📊 LBS (Load Balancing System)
-- Cognitive load calculation with non-linear scaling.
-- Daily/weekly workload forecasting and heatmaps.
-- Task scheduling with multiple recurrence patterns (daily, weekly, monthly, interval).
-- Per-task execution tracking and history.
+## Prerequisites
 
-### 📁 Knowledge Core
-- Semantic search and retrieval across agent memory.
-- Automatic ingestion of conversation context.
-- Per-agent scoped knowledge with global fallback.
+- Docker + Docker Compose
+- Python 3.11+ (for local backend development only)
+- Node.js 18+ (for local frontend/native development only)
+- Gemini API key (or your configured provider)
 
----
+## Environment Layering
 
-## 🏗️ Architecture
+VisionArk no longer uses `.env`.
+Use layered files instead:
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                       Frontend (Next.js)                        │
-│  Dashboard │ Projects │ Tasks │ Settings                        │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │
-┌──────────────────────────┴──────────────────────────────────────┐
-│                       Backend (FastAPI)                         │
-│  ┌────────┐  ┌────────────┐  ┌─────────────┐  ┌──────────────┐  │
-│  │  Auth  │  │   Agents   │  │     LBS     │  │  Knowledge   │  │
-│  │        │  │ Project/Node│  │   Proxy     │  │    Core      │  │
-│  └────────┘  └────────────┘  └─────────────┘  └──────────────┘  │
-│                    │                 │                          │
-│              ┌─────┴─────┐    ┌──────┴──────┐                   │
-│              │  Gemini   │    │  External   │                   │
-│              │   API     │    │ LBS Service │                   │
-│              └───────────┘    └─────────────┘                   │
-└─────────────────────────────────────────────────────────────────┘
+- `.env.core`: shared vars for `db/backend/worker/frontend`
+- `.env.edge`: vars for `tunnel` only
+- Optional overlays: `.env.shared`, `.env.local`
 
-data/users/{user_id}/
-└── {project_id}/      # Per-project files, artifacts, refs
+Setup:
 
-assets/
-├── static/            # Static assets (sounds, images)
-├── templates/         # Prompt components
-└── schemas/           # Tool validation schemas
-```
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-- Python 3.11+
-- Node.js 18+
-- Google Gemini API Key (AI Studio or Vertex AI)
-- (Optional) External LBS microservice
-
-### 1. Configure Environment
 ```bash
-cp .env.example .env
-# Edit .env and set:
-#   GEMINI_API_KEY=your_api_key
-#   ATMOS_ENV=dev
+cp .env.core.example .env.core
+cp .env.edge.example .env.edge
 ```
 
-### 2. Start Services
+Required minimum:
 
-**Windows (Recommended)**:
+- In `.env.core`: `GEMINI_API_KEY`, `JWT_SECRET_KEY`, `ATMOS_SERVICE_KEY`
+- In `.env.edge`: `TUNNEL_TOKEN`
+
+## Docker Compose Profiles
+
+Defined in `infra/docker-compose.yml`:
+
+- `core`: `db`, `backend`, `worker`, `redis`
+- `ui`: `frontend`
+- `edge`: `tunnel`
+- `all`: all services
+
+Examples:
+
 ```bash
-.\start_service.bat
+docker compose --env-file .env.core -f infra/docker-compose.yml --profile core --profile ui up
 ```
 
-**Or manually**:
 ```bash
-# Backend
-cd core/backend
-pip install -r requirements.txt
-python main.py
-
-# Frontend (new terminal)
-cd core/frontend
-npm install
-npm run dev
+docker compose --env-file .env.edge -f infra/docker-compose.yml --profile edge up tunnel
 ```
 
-### 3. Access
-- **UI**: http://localhost:3000
-- **API Docs**: http://localhost:8000/docs
+## Role-Based Startup Scripts
 
----
+### Windows
 
-## 📡 API Overview
-
-### Authentication
-JWT-based session auth. Register and sign in via the frontend UI.
-- Dev mode: Falls back to default user if no token provided.
-- Prod mode: Set `ATMOS_ENV=prod` and `ATMOS_REQUIRE_API_KEY=true`.
-
-### Key Endpoints
-
-| Module | Endpoint | Description |
-|--------|----------|-------------|
-| **Agents** | `POST /api/agents/project/{id}/chat` | Chat with a Project agent (async) |
-| | `GET /api/agents/tasks/{task_id}` | Poll for chat result status |
-| | `POST /api/agents/project/create` | Create new Project |
-| | `GET /api/agents/project/list` | List all Projects |
-| **LBS** | `GET /api/lbs/dashboard` | Workload overview |
-| | `GET /api/lbs/tasks` | List tasks |
-| | `POST /api/lbs/tasks` | Create task |
-| | `POST /api/lbs/tasks/{id}/complete` | Mark task done |
-| **Inbox** | `GET /api/inbox/pending` | Member→Project reports |
-| **Files** | `POST /api/files/upload` | Upload file |
-| | `GET /api/agents/project/{id}/artifacts` | List project artifacts |
-
----
-
-## 🛠️ Technology Stack
-
-| Layer | Technology |
-|-------|------------|
-| Frontend | Next.js 15, React 19, Tailwind CSS |
-| Backend | FastAPI, SQLAlchemy (async), Pydantic |
-| AI | Google Gemini (genai SDK), Native Function Calling |
-| Database | SQLite (dev), PostgreSQL (prod) |
-| Deployment | Docker & Docker Compose |
-
----
-
-## 📁 Project Structure
-
+```bat
+.\infra\start_backend.bat
+.\infra\start_frontend.bat
+.\infra\start_tunnel.bat
+.\infra\start_native.bat
+.\infra\start_all.bat
 ```
+
+### Linux/macOS
+
+```bash
+./infra/start_backend.sh
+./infra/start_frontend.sh
+./infra/start_tunnel.sh
+./infra/start_native.sh
+./infra/start_all.sh
+```
+
+## Access
+
+- UI: <http://localhost:3000>
+- API Docs: <http://localhost:8000/docs>
+
+## Cloudflare Tunnel Safety
+
+Do **not** use the same `TUNNEL_TOKEN` simultaneously across multiple environments.
+Use separate tokens for local/dev/staging validation.
+
+## Useful Operations
+
+### Initialize system (destructive)
+
+Removes containers/volumes and clears local data.
+
+- `infra/initialize_system.sh`
+- `infra/initialize_system.bat`
+
+### Export / Import backup
+
+- Export: `infra/system_export.sh` or `.bat`
+- Import: `infra/system_import.sh` or `.bat`
+
+These scripts now load `.env.core`.
+
+## Native Development
+
+Native scripts moved to `infra/start_native.sh` and `infra/start_native.bat`.
+Legacy `core/native/scripts/dev.*` has been removed.
+
+## Project Structure
+
+```text
 VisionArk/
-├── core/
-│   ├── backend/           # FastAPI + AI agents
-│   │   ├── agents/        # Project and Node logic
-│   │   ├── api/           # REST endpoints
-│   │   ├── services/      # LBS, Knowledge Core, File services
-│   │   ├── tools/         # Agent tool implementations
-│   │   └── llm/           # Gemini provider
-│   └── frontend/          # Next.js application
-│       ├── app/           # Pages (dashboard, projects, tasks)
-│       └── components/    # UI components
-├── assets/                # Unified static & template assets
-├── data/                  # User data (gitignored)
-├── docs/                  # System design and blueprints
-├── infra/                 # Docker configs
-└── start_service.bat      # Main entry point
+  core/
+    backend/
+    frontend/
+    native/
+  infra/
+    docker-compose.yml
+    start_backend.*
+    start_frontend.*
+    start_tunnel.*
+    start_native.*
+    start_all.*
+  integrations/
+  docs/
+  assets/
+  data/
 ```
 
----
+## License
 
-## 📖 Documentation
-
-- `docs/Vision Ark System Design.md` - Comprehensive architectural specification and system design.
-
----
-
-## ⚠️ Disclaimer
-
-This is an experimental personal project:
-- **Not production-ready** - May contain bugs and incomplete features.
-- **UX optimized for author** - Design choices reflect personal workflow.
-- **Architecture may change** - Breaking changes possible without deprecation.
-
----
-
-## 📄 License
-
-This project is licensed under the [Apache License 2.0](LICENSE).
-
----
-
-**Version**: 0.4.0 (Phase 4: Unified Assets)
+Apache License 2.0. See `LICENSE`.

@@ -1,0 +1,37 @@
+@echo off
+setlocal enabledelayedexpansion
+
+set "SCRIPT_DIR=%~dp0"
+set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
+set "COMPOSE_FILE=%SCRIPT_DIR%\docker-compose.yml"
+set "PROJECT_ROOT=%SCRIPT_DIR%\.."
+
+set "ENV_FILE=%PROJECT_ROOT%\.env.core"
+set "CORE_ENV_FILE=../.env.core"
+set "EDGE_ENV_FILE=../.env.edge"
+if not exist "%PROJECT_ROOT%\.env.core" (
+    echo ERROR: %PROJECT_ROOT%\.env.core not found.
+    exit /b 1
+)
+if not exist "%PROJECT_ROOT%\.env.edge" (
+    echo WARNING: %PROJECT_ROOT%\.env.edge not found. Edge profile will fail until created.
+)
+
+docker compose version >nul 2>&1
+if not errorlevel 1 (
+    set "DC=docker compose"
+) else (
+    docker-compose --version >nul 2>&1
+    if errorlevel 1 (
+        echo ERROR: Docker Compose not found.
+        exit /b 1
+    )
+    set "DC=docker-compose"
+)
+
+echo Starting core services (db, backend, worker, redis)...
+set "CORE_ENV_FILE=%CORE_ENV_FILE%"
+set "EDGE_ENV_FILE=%EDGE_ENV_FILE%"
+%DC% --env-file "%ENV_FILE%" -f "%COMPOSE_FILE%" --profile core up --build
+
+endlocal
