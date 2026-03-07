@@ -27,6 +27,16 @@ interface RealtimeTaskState {
     statusText: string
 }
 
+interface PendingLocalSend {
+    content: string
+    createdAt: number
+}
+
+const LOCAL_SEND_DEDUP_WINDOW_MS = 15_000
+
+const normalizeMessageContent = (content: string): string =>
+    (content || "").trim().replace(/\s+/g, " ")
+
 export default function ChatView({ projectId, sessionId, projectName, sidebarMode, setSidebarMode }: Props) {
     const [messages, setMessages] = useState<ChatMessageType[]>([])
     const [loading, setLoading] = useState(false)
@@ -43,6 +53,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
     const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
     const isInitialLoad = useRef(true)
     const injectedTaskIdsRef = useRef<Set<string>>(new Set())
+    const pendingLocalSendsRef = useRef<PendingLocalSend[]>([])
     const [realtimeTasks, setRealtimeTasks] = useState<RealtimeTaskState[]>([])
 
     // effectiveSessionId: session confirmed by backend (may differ from prop when
@@ -119,10 +130,27 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                 const taskId = String(detail.task_id)
                 const status = String(detail.status || "").toLowerCase()
                 const msg = String(detail.message || "")
+                const normalizedMsg = normalizeMessageContent(msg)
                 const step = detail.step ? ` - ${detail.step}` : ""
                 const phase = detail.phase ? `${detail.phase}${step}` : (status || "processing")
 
+                if (normalizedMsg) {
+                    const now = Date.now()
+                    pendingLocalSendsRef.current = pendingLocalSendsRef.current.filter((s) => now - s.createdAt <= LOCAL_SEND_DEDUP_WINDOW_MS)
+                }
+
                 if (status === "queued" || status === "processing") {
+                    const pendingIdx = normalizedMsg
+                        ? pendingLocalSendsRef.current.findIndex((s) => normalizeMessageContent(s.content) === normalizedMsg)
+                        : -1
+                    if (pendingIdx >= 0) {
+                        pendingLocalSendsRef.current.splice(pendingIdx, 1)
+                        if (!currentTaskIdRef.current) {
+                            currentTaskIdRef.current = taskId
+                        }
+                        return
+                    }
+
                     setRealtimeTasks((prev) => {
                         const existing = prev.find((t) => t.taskId === taskId)
                         if (existing) {
@@ -185,6 +213,10 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
 
     const handleSend = async (content: string, files?: File[]) => {
         if ((!content.trim() && (!files || files.length === 0)) || loading) return
+        const normalizedContent = normalizeMessageContent(content)
+        if (normalizedContent) {
+            pendingLocalSendsRef.current.push({ content: normalizedContent, createdAt: Date.now() })
+        }
 
         // Optimistic add
         setMessages((prev) => [...prev, { role: "user", content }])
@@ -195,6 +227,11 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
         try {
             const { task_id, session_id: usedSessionId } = await sendChat(projectId, content, sessionId, model, files)
             currentTaskIdRef.current = task_id
+            if (normalizedContent) {
+                pendingLocalSendsRef.current = pendingLocalSendsRef.current.filter(
+                    (s) => normalizeMessageContent(s.content) !== normalizedContent
+                )
+            }
 
             // Update the effective session if the backend resolved to a different one
             if (usedSessionId) {
@@ -255,6 +292,11 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
             }, 1000)
         } catch (e) {
             console.error("Failed to send:", e)
+            if (normalizedContent) {
+                pendingLocalSendsRef.current = pendingLocalSendsRef.current.filter(
+                    (s) => normalizeMessageContent(s.content) !== normalizedContent
+                )
+            }
             stopPolling()
             setLoading(false)
             setStatusText("")
