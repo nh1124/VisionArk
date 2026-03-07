@@ -3,12 +3,51 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from domains.orchestration2.engine.models.execution import ExecutionContext, ToolResult
 from domains.orchestration2.engine.models.message import ToolCallRef
 from domains.orchestration2.engine.models.tool import ToolDef
 from domains.orchestration2.tools.base import fail, get_db, get_project_id, get_user_id, make_result
+
+_AES_PRESET_RECURRING_RULES = {"@hourly", "@daily", "@weekly"}
+
+
+def _validate_iana_timezone(name: str) -> str:
+    if not name:
+        return "UTC"
+    try:
+        ZoneInfo(name)
+    except Exception as exc:
+        raise ValueError(f"Invalid timezone: {name}") from exc
+    return name
+
+
+def _next_run_for_preset(rule: str, timezone_name: str, after_utc: datetime | None = None) -> datetime:
+    base = after_utc or datetime.utcnow()
+    if base.tzinfo is None:
+        base = base.replace(tzinfo=timezone.utc)
+    else:
+        base = base.astimezone(timezone.utc)
+
+    tz = ZoneInfo(timezone_name)
+    local = base.astimezone(tz)
+    day_start = local.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if rule == "@hourly":
+        candidate_local = local.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    elif rule == "@daily":
+        candidate_local = day_start + timedelta(days=1)
+    elif rule == "@weekly":
+        days_until_sunday = (6 - day_start.weekday()) % 7
+        candidate_local = day_start + timedelta(days=days_until_sunday)
+        if candidate_local <= local:
+            candidate_local += timedelta(days=7)
+    else:
+        raise ValueError(f"Unsupported recurring rule: {rule}")
+
+    return candidate_local.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 class ListAgentsTool:
@@ -217,8 +256,12 @@ class SetTimerTool:
                 id=str(uuid.uuid4()),
                 user_id=user_id,
                 project_id=project_id,
-                task_type="TIMER",
-                payload={"message": message},
+                task_type="SYSTEM_TIMER",
+                payload={
+                    "title": "Timer",
+                    "content": message,
+                    "link": f"/projects/{project_id}" if project_id else None,
+                },
                 scheduled_at=datetime.utcnow() + timedelta(minutes=minutes),
                 status="pending",
             )
@@ -228,6 +271,103 @@ class SetTimerTool:
             return make_result(call, f"Timer set for {minutes} minutes: {message}")
         except Exception as e:
             return fail(call, f"Failed to set timer: {e}")
+
+
+class ScheduleRecurringPromptTool:
+    definition = ToolDef(
+        name="schedule_recurring_prompt",
+        description=(
+            "Schedule a recurring prompt execution for the current project. "
+            "Uses cron + timezone and enqueues POST_MESSAGE task on each run."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "description": "Prompt/message to run on each schedule"},
+                "cron": {"type": "string", "description": "Recurring rule (@hourly/@daily/@weekly)"},
+                "timezone": {"type": "string", "description": "IANA timezone name (e.g. 'Asia/Tokyo', 'UTC')"},
+                "session_id": {"type": "string", "description": "Optional target chat session id"},
+                "first_run_after": {
+                    "type": "string",
+                    "description": "Optional ISO datetime anchor. Next run will be computed after this timestamp.",
+                },
+            },
+            "required": ["prompt", "cron"],
+        },
+    )
+
+    async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
+        args = call.arguments
+        prompt = str(args.get("prompt", "")).strip()
+        cron = str(args.get("cron", "")).strip()
+        timezone_name = str(args.get("timezone", "UTC") or "UTC").strip()
+        session_id = args.get("session_id")
+        first_run_after_raw = args.get("first_run_after")
+
+        user_id = get_user_id(ctx)
+        project_id = get_project_id(ctx)
+        db = get_db(ctx)
+
+        if not prompt:
+            return fail(call, "prompt is required.")
+        if not cron:
+            return fail(call, "cron is required.")
+        if cron not in _AES_PRESET_RECURRING_RULES:
+            return fail(
+                call,
+                "Unsupported recurring rule. For AES compatibility, use one of: @hourly, @daily, @weekly.",
+            )
+
+        try:
+            from domains.automation.aes_scheduler_service import AESSchedulerService
+
+            timezone_name = _validate_iana_timezone(timezone_name)
+
+            anchor = datetime.utcnow()
+            if first_run_after_raw:
+                raw = str(first_run_after_raw).strip()
+                dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                if dt.tzinfo is not None:
+                    dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+                anchor = dt
+
+            next_run = _next_run_for_preset(
+                rule=cron,
+                timezone_name=timezone_name,
+                after_utc=anchor,
+            )
+
+            payload = {
+                "message": prompt,
+                "timezone": timezone_name,
+            }
+            if session_id:
+                payload["session_id"] = str(session_id)
+
+            scheduler = AESSchedulerService(db)
+            task_id = await scheduler.create_task(
+                user_id=user_id,
+                task_type="POST_MESSAGE",
+                scheduled_at=next_run,
+                project_id=project_id,
+                payload=payload,
+                recurring_rule=cron,
+            )
+
+            return make_result(
+                call,
+                (
+                    "Recurring prompt scheduled.\n"
+                    f"- task_id: {task_id}\n"
+                    f"- task_type: POST_MESSAGE\n"
+                    f"- cron: {cron}\n"
+                    f"- timezone: {timezone_name}\n"
+                    f"- next_run_at_utc: {next_run.isoformat()}\n"
+                    f"- project_id: {project_id}"
+                ),
+            )
+        except Exception as e:
+            return fail(call, f"Failed to schedule recurring prompt: {e}")
 
 
 class ScheduleMonitorJobTool:

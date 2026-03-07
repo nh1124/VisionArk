@@ -27,7 +27,7 @@ from ...tools.library.workspace import (
 from ...tools.library.system import (
     ListAgentsTool, GetAgentProfileTool,
     ListUserProjectsTool, UpdateProjectTool,
-    GetProjectHealthTool, SetTimerTool,
+    GetProjectHealthTool, SetTimerTool, ScheduleRecurringPromptTool,
     ScheduleMonitorJobTool, ListMonitorJobsTool, UpdateMonitorJobTool,
     PauseMonitorJobTool, ResumeMonitorJobTool, TestMonitorJobOnceTool,
     ListMonitorJobRunsTool, ListMonitorAlertsTool,
@@ -95,7 +95,7 @@ def get_core_tools() -> list[tuple[ToolDef, Any]]:
         # System
         ListAgentsTool, GetAgentProfileTool,
         ListUserProjectsTool, UpdateProjectTool,
-        GetProjectHealthTool, SetTimerTool,
+        GetProjectHealthTool, SetTimerTool, ScheduleRecurringPromptTool,
         ScheduleMonitorJobTool, ListMonitorJobsTool, UpdateMonitorJobTool,
         PauseMonitorJobTool, ResumeMonitorJobTool, TestMonitorJobOnceTool,
         ListMonitorJobRunsTool, ListMonitorAlertsTool,
