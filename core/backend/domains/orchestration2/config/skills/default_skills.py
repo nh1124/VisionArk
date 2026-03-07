@@ -114,6 +114,26 @@ SKILL_DEFS: list[SkillDef] = [
         ),
     ),
     SkillDef(
+        name="monitoring_jobs",
+        description="Monitor job scheduling, alert routing, and run/alert inspection",
+        tools=[
+            "schedule_monitor_job",
+            "list_monitor_jobs",
+            "update_monitor_job",
+            "pause_monitor_job",
+            "resume_monitor_job",
+            "test_monitor_job_once",
+            "list_monitor_job_runs",
+            "list_monitor_alerts",
+        ],
+        instructions=(
+            "When to use: creating, tuning, or operating monitor jobs and alert delivery policies.\n"
+            "Do first: confirm source URL, cron, timezone, detector thresholds, and cooldown settings.\n"
+            "Do not: enable agent_delivery without an explicit target project_id.\n"
+            "Output contract: return monitor_job_id, next_run_at, and current alert policy for every change."
+        ),
+    ),
+    SkillDef(
         name="native_execution",
         description="Run Center integration & native device control",
         tools=[

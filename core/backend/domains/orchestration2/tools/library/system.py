@@ -230,6 +230,376 @@ class SetTimerTool:
             return fail(call, f"Failed to set timer: {e}")
 
 
+class ScheduleMonitorJobTool:
+    definition = ToolDef(
+        name="schedule_monitor_job",
+        description=(
+            "Create a monitor job. "
+            "timezone must be IANA (e.g. 'Asia/Tokyo'). "
+            "detector supports {expected_status:int=200, max_latency_ms:int?, contains_any:[str]?, not_contains_any:[str]?}. "
+            "notify supports {channel:'in_app', agent_delivery:{enabled:bool, project_id:str, session_id:str?, min_severity:'warn'|'critical'?}}."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "source_type": {"type": "string", "description": "URL/HTTP etc."},
+                "source_config": {"type": "object", "description": "Source settings, e.g. {url, timeout_seconds}"},
+                "cron": {"type": "string", "description": "Cron rule (5 fields or @daily/@hourly/@weekly)"},
+                "timezone": {"type": "string", "description": "IANA timezone name (e.g. 'Asia/Tokyo', 'UTC')."},
+                "detector": {
+                    "type": "object",
+                    "description": "Rule detector options: expected_status, max_latency_ms, contains_any[], not_contains_any[].",
+                },
+                "notify": {
+                    "type": "object",
+                    "description": "Notification options: channel='in_app', optional agent_delivery{enabled, project_id, session_id, min_severity}.",
+                },
+                "cooldown_seconds": {"type": "integer"},
+            },
+            "required": ["name", "source_config", "cron"],
+        },
+    )
+
+    async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
+        db = get_db(ctx)
+        user_id = get_user_id(ctx)
+        args = call.arguments
+
+        try:
+            from domains.monitoring.service import MonitoringService
+
+            service = MonitoringService(db)
+            job = await service.create_job(
+                user_id=user_id,
+                payload={
+                    "name": args.get("name"),
+                    "source_type": args.get("source_type", "URL"),
+                    "source_config": args.get("source_config", {}),
+                    "schedule_cron": args.get("cron"),
+                    "timezone": args.get("timezone", "UTC"),
+                    "detector_type": "RULE_BASED",
+                    "detector_config": args.get("detector", {}),
+                    "notification_config": args.get("notify", {"channel": "in_app"}),
+                    "cooldown_seconds": args.get("cooldown_seconds", 0),
+                },
+            )
+            return make_result(
+                call,
+                (
+                    f"Monitor job created.\n"
+                    f"- monitor_job_id: {job.id}\n"
+                    f"- next_run_at: {job.next_run_at.isoformat() if job.next_run_at else 'none'}\n"
+                    f"- status: {'active' if job.is_active else 'paused'}"
+                ),
+            )
+        except Exception as e:
+            return fail(call, f"Failed to schedule monitor job: {e}")
+
+
+class ListMonitorJobsTool:
+    definition = ToolDef(
+        name="list_monitor_jobs",
+        description="List monitor jobs and their latest status.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "description": "active | paused"},
+                "source_type": {"type": "string"},
+                "limit": {"type": "integer"},
+            },
+            "required": [],
+        },
+    )
+
+    async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
+        db = get_db(ctx)
+        user_id = get_user_id(ctx)
+        args = call.arguments
+
+        try:
+            from domains.monitoring.service import MonitoringService
+
+            is_active = None
+            status = args.get("status")
+            if status == "active":
+                is_active = True
+            elif status == "paused":
+                is_active = False
+
+            service = MonitoringService(db)
+            jobs = await service.list_jobs(
+                user_id=user_id,
+                is_active=is_active,
+                source_type=args.get("source_type"),
+                limit=int(args.get("limit", 20)),
+            )
+
+            if not jobs:
+                return make_result(call, "No monitor jobs found.")
+
+            lines = [f"Found {len(jobs)} monitor jobs:"]
+            for job in jobs:
+                lines.append(
+                    f"- {job.id} | {job.name} | active={job.is_active} | last={job.last_status or 'none'} | next={job.next_run_at}"
+                )
+            return make_result(call, "\n".join(lines))
+        except Exception as e:
+            return fail(call, f"Failed to list monitor jobs: {e}")
+
+
+class UpdateMonitorJobTool:
+    definition = ToolDef(
+        name="update_monitor_job",
+        description="Update settings for an existing monitor job.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "monitor_job_id": {"type": "string"},
+                "name": {"type": "string"},
+                "source_config": {"type": "object"},
+                "cron": {"type": "string"},
+                "timezone": {"type": "string", "description": "IANA timezone name (e.g. 'Asia/Tokyo', 'UTC')."},
+                "detector": {
+                    "type": "object",
+                    "description": "Rule detector options: expected_status, max_latency_ms, contains_any[], not_contains_any[].",
+                },
+                "notify": {
+                    "type": "object",
+                    "description": "Notification options: channel='in_app', optional agent_delivery{enabled, project_id, session_id, min_severity}.",
+                },
+                "cooldown_seconds": {"type": "integer"},
+            },
+            "required": ["monitor_job_id"],
+        },
+    )
+
+    async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
+        db = get_db(ctx)
+        user_id = get_user_id(ctx)
+        args = call.arguments
+        monitor_job_id = args.get("monitor_job_id")
+
+        try:
+            from domains.monitoring.service import MonitoringService
+
+            service = MonitoringService(db)
+            job = await service.get_job(user_id, monitor_job_id)
+            if not job:
+                return fail(call, f"Monitor job not found: {monitor_job_id}")
+
+            payload = {}
+            if "name" in args:
+                payload["name"] = args["name"]
+            if "source_config" in args:
+                payload["source_config"] = args["source_config"]
+            if "cron" in args:
+                payload["schedule_cron"] = args["cron"]
+            if "timezone" in args:
+                payload["timezone"] = args["timezone"]
+            if "detector" in args:
+                payload["detector_config"] = args["detector"]
+            if "notify" in args:
+                payload["notification_config"] = args["notify"]
+            if "cooldown_seconds" in args:
+                payload["cooldown_seconds"] = args["cooldown_seconds"]
+
+            job = await service.update_job(job, payload)
+            return make_result(
+                call,
+                f"Monitor job updated: {job.id} (next_run_at={job.next_run_at})",
+            )
+        except Exception as e:
+            return fail(call, f"Failed to update monitor job: {e}")
+
+
+class PauseMonitorJobTool:
+    definition = ToolDef(
+        name="pause_monitor_job",
+        description="Pause a monitor job.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "monitor_job_id": {"type": "string"},
+            },
+            "required": ["monitor_job_id"],
+        },
+    )
+
+    async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
+        db = get_db(ctx)
+        user_id = get_user_id(ctx)
+        monitor_job_id = call.arguments.get("monitor_job_id")
+
+        try:
+            from domains.monitoring.service import MonitoringService
+
+            service = MonitoringService(db)
+            job = await service.get_job(user_id, monitor_job_id)
+            if not job:
+                return fail(call, f"Monitor job not found: {monitor_job_id}")
+            await service.pause_job(job)
+            return make_result(call, f"Paused monitor job: {monitor_job_id}")
+        except Exception as e:
+            return fail(call, f"Failed to pause monitor job: {e}")
+
+
+class ResumeMonitorJobTool:
+    definition = ToolDef(
+        name="resume_monitor_job",
+        description="Resume a paused monitor job.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "monitor_job_id": {"type": "string"},
+            },
+            "required": ["monitor_job_id"],
+        },
+    )
+
+    async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
+        db = get_db(ctx)
+        user_id = get_user_id(ctx)
+        monitor_job_id = call.arguments.get("monitor_job_id")
+
+        try:
+            from domains.monitoring.service import MonitoringService
+
+            service = MonitoringService(db)
+            job = await service.get_job(user_id, monitor_job_id)
+            if not job:
+                return fail(call, f"Monitor job not found: {monitor_job_id}")
+            job = await service.resume_job(job)
+            return make_result(call, f"Resumed monitor job: {monitor_job_id} (next_run_at={job.next_run_at})")
+        except Exception as e:
+            return fail(call, f"Failed to resume monitor job: {e}")
+
+
+class TestMonitorJobOnceTool:
+    definition = ToolDef(
+        name="test_monitor_job_once",
+        description="Run one immediate collect/detect cycle for a monitor job.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "monitor_job_id": {"type": "string"},
+            },
+            "required": ["monitor_job_id"],
+        },
+    )
+
+    async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
+        db = get_db(ctx)
+        user_id = get_user_id(ctx)
+        monitor_job_id = call.arguments.get("monitor_job_id")
+
+        try:
+            from domains.monitoring.service import MonitoringService
+
+            service = MonitoringService(db)
+            job = await service.get_job(user_id, monitor_job_id)
+            if not job:
+                return fail(call, f"Monitor job not found: {monitor_job_id}")
+
+            run = await service.test_job_once(user_id, monitor_job_id)
+            return make_result(
+                call,
+                f"Test run completed: run_id={run.id}, status={run.status}, severity={run.severity or 'none'}",
+            )
+        except Exception as e:
+            return fail(call, f"Failed to test monitor job: {e}")
+
+
+class ListMonitorJobRunsTool:
+    definition = ToolDef(
+        name="list_monitor_job_runs",
+        description="List recent run results for a monitor job.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "monitor_job_id": {"type": "string"},
+                "limit": {"type": "integer"},
+            },
+            "required": ["monitor_job_id"],
+        },
+    )
+
+    async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
+        db = get_db(ctx)
+        user_id = get_user_id(ctx)
+        monitor_job_id = call.arguments.get("monitor_job_id")
+        limit = int(call.arguments.get("limit", 20))
+
+        try:
+            from domains.monitoring.service import MonitoringService
+
+            service = MonitoringService(db)
+            job = await service.get_job(user_id, monitor_job_id)
+            if not job:
+                return fail(call, f"Monitor job not found: {monitor_job_id}")
+
+            runs = await service.list_job_runs(user_id, monitor_job_id, limit=max(1, min(limit, 50)))
+            if not runs:
+                return make_result(call, "No monitor runs found.")
+
+            lines = [f"Recent runs for {job.name} ({job.id}):"]
+            for run in runs:
+                lines.append(
+                    f"- {run.started_at} | status={run.status} | severity={run.severity or '-'} | latency_ms={run.latency_ms or '-'} | run_id={run.id}"
+                )
+                if run.error_log:
+                    lines.append(f"  error: {run.error_log}")
+            return make_result(call, "\n".join(lines))
+        except Exception as e:
+            return fail(call, f"Failed to list monitor job runs: {e}")
+
+
+class ListMonitorAlertsTool:
+    definition = ToolDef(
+        name="list_monitor_alerts",
+        description="List recent monitor alerts (optionally filtered by monitor_job_id/severity).",
+        parameters={
+            "type": "object",
+            "properties": {
+                "monitor_job_id": {"type": "string"},
+                "severity": {"type": "string", "description": "warn|critical"},
+                "limit": {"type": "integer"},
+            },
+            "required": [],
+        },
+    )
+
+    async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
+        db = get_db(ctx)
+        user_id = get_user_id(ctx)
+        monitor_job_id = call.arguments.get("monitor_job_id")
+        severity = call.arguments.get("severity")
+        limit = int(call.arguments.get("limit", 20))
+
+        try:
+            from domains.monitoring.service import MonitoringService
+
+            service = MonitoringService(db)
+            alerts = await service.list_alerts(
+                user_id=user_id,
+                monitor_job_id=monitor_job_id,
+                severity=severity,
+                limit=max(1, min(limit, 100)),
+            )
+            if not alerts:
+                return make_result(call, "No monitor alerts found.")
+
+            lines = [f"Recent monitor alerts: {len(alerts)}"]
+            for alert in alerts:
+                lines.append(
+                    f"- {alert.triggered_at} | severity={alert.severity} | status={alert.notification_status} | job_id={alert.monitor_job_id} | alert_id={alert.id}"
+                )
+                lines.append(f"  reason: {alert.reason}")
+            return make_result(call, "\n".join(lines))
+        except Exception as e:
+            return fail(call, f"Failed to list monitor alerts: {e}")
+
+
 class RaiseContinueTool:
     definition = ToolDef(
         name="raise_continue",

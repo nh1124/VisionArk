@@ -105,6 +105,79 @@ class ScheduledTask(Base):
     project = relationship("Project")
 
 
+class MonitorJob(Base):
+    """Monitoring job definition (source/schedule/detector/notify)."""
+    __tablename__ = "monitor_jobs"
+
+    id = Column(String(36), primary_key=True)  # UUID
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(200), nullable=False)
+    source_type = Column(String(50), nullable=False, default="URL")
+    source_config = Column(JSON, default=dict)
+    schedule_cron = Column(String(100), nullable=False)
+    timezone = Column(String(64), nullable=False, default="UTC")
+    detector_type = Column(String(50), nullable=False, default="RULE_BASED")
+    detector_config = Column(JSON, default=dict)
+    notification_config = Column(JSON, default=dict)
+    cooldown_seconds = Column(Integer, nullable=False, default=0)
+    max_retries = Column(Integer, nullable=False, default=2)
+    retry_backoff_seconds = Column(Integer, nullable=False, default=60)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    valid_from = Column(DateTime, nullable=True)
+    valid_until = Column(DateTime, nullable=True)
+    next_run_at = Column(DateTime, nullable=True, index=True)
+    last_run_at = Column(DateTime, nullable=True)
+    last_status = Column(String(20), nullable=True)
+    last_error = Column(Text, nullable=True)
+    consecutive_failures = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User")
+
+
+class MonitorJobRun(Base):
+    """Execution history for each monitor check run."""
+    __tablename__ = "monitor_job_runs"
+
+    id = Column(String(36), primary_key=True)  # UUID
+    monitor_job_id = Column(String(36), ForeignKey("monitor_jobs.id"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default="processing", index=True)
+    severity = Column(String(20), nullable=True)
+    retry_count = Column(Integer, nullable=False, default=0)
+    started_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    finished_at = Column(DateTime, nullable=True)
+    latency_ms = Column(Integer, nullable=True)
+    error_log = Column(Text, nullable=True)
+    result_payload = Column(JSON, default=dict)
+    metadata_payload = Column(JSON, default=dict)
+
+    user = relationship("User")
+    monitor_job = relationship("MonitorJob")
+
+
+class MonitorAlert(Base):
+    """Alert history emitted by monitor runs."""
+    __tablename__ = "monitor_alerts"
+
+    id = Column(String(36), primary_key=True)  # UUID
+    monitor_job_id = Column(String(36), ForeignKey("monitor_jobs.id"), nullable=False, index=True)
+    monitor_job_run_id = Column(String(36), ForeignKey("monitor_job_runs.id"), nullable=True, index=True)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    severity = Column(String(20), nullable=False, index=True)  # warn/critical
+    reason = Column(Text, nullable=False)
+    dedupe_key = Column(String(255), nullable=True, index=True)
+    triggered_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    sent_at = Column(DateTime, nullable=True)
+    notification_status = Column(String(30), nullable=False, default="pending")
+    metadata_payload = Column(JSON, default=dict)
+
+    user = relationship("User")
+    monitor_job = relationship("MonitorJob")
+    monitor_job_run = relationship("MonitorJobRun")
+
+
 class ApprovalRequest(Base):
     """Pending actions requiring Human-in-the-Loop approval"""
     __tablename__ = "approval_requests"
@@ -1529,6 +1602,74 @@ def _run_migrations(engine):
                     ))
                     conn.commit()
                     print("✅ Migration: Widened tool_registry.description to TEXT")
+
+    # Migration: Ensure monitoring schema compatibility and indexes
+    if 'monitor_jobs' in inspector.get_table_names():
+        cols = {c['name'] for c in inspector.get_columns('monitor_jobs')}
+        new_cols = {
+            'cooldown_seconds': "INTEGER NOT NULL DEFAULT 0",
+            'max_retries': "INTEGER NOT NULL DEFAULT 2",
+            'retry_backoff_seconds': "INTEGER NOT NULL DEFAULT 60",
+            'valid_from': "TIMESTAMP",
+            'valid_until': "TIMESTAMP",
+            'next_run_at': "TIMESTAMP",
+            'last_run_at': "TIMESTAMP",
+            'last_status': "VARCHAR(20)",
+            'last_error': "TEXT",
+            'consecutive_failures': "INTEGER NOT NULL DEFAULT 0",
+        }
+        with engine.connect() as conn:
+            for col_name, col_def in new_cols.items():
+                if col_name not in cols:
+                    conn.execute(text(f"ALTER TABLE monitor_jobs ADD COLUMN {col_name} {col_def}"))
+                    print(f"Migration: Added {col_name} to monitor_jobs")
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_monitor_jobs_user_active_next
+                ON monitor_jobs(user_id, is_active, next_run_at)
+            """))
+            conn.commit()
+
+    if 'monitor_job_runs' in inspector.get_table_names():
+        cols = {c['name'] for c in inspector.get_columns('monitor_job_runs')}
+        if 'metadata_payload' not in cols and 'meta_payload' in cols:
+            with engine.connect() as conn:
+                conn.execute(text(
+                    "ALTER TABLE monitor_job_runs RENAME COLUMN meta_payload TO metadata_payload"
+                ))
+                conn.commit()
+                print("Migration: Renamed monitor_job_runs.meta_payload to metadata_payload")
+
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_monitor_job_runs_job_started
+                ON monitor_job_runs(monitor_job_id, started_at DESC)
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_monitor_job_runs_user_status
+                ON monitor_job_runs(user_id, status)
+            """))
+            conn.commit()
+
+    if 'monitor_alerts' in inspector.get_table_names():
+        cols = {c['name'] for c in inspector.get_columns('monitor_alerts')}
+        if 'metadata_payload' not in cols and 'meta_payload' in cols:
+            with engine.connect() as conn:
+                conn.execute(text(
+                    "ALTER TABLE monitor_alerts RENAME COLUMN meta_payload TO metadata_payload"
+                ))
+                conn.commit()
+                print("Migration: Renamed monitor_alerts.meta_payload to metadata_payload")
+
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_monitor_alerts_user_triggered
+                ON monitor_alerts(user_id, triggered_at DESC)
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_monitor_alerts_job_dedupe
+                ON monitor_alerts(monitor_job_id, dedupe_key, triggered_at DESC)
+            """))
+            conn.commit()
 
     # Migration: Add FK agent_runs.id -> orchestration_runs.run_id
     if 'agent_runs' in inspector.get_table_names() and 'orchestration_runs' in inspector.get_table_names():

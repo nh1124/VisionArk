@@ -1,16 +1,19 @@
-
 import asyncio
 from datetime import datetime, timedelta
-from sqlalchemy import select
 
-from shared.database import ScheduledTask, ScheduledTaskStatus
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from infrastructure.queue.manager import QueueManager
+from shared.database import ScheduledTask, ScheduledTaskStatus, TaskType
+
 
 class AESDispatcher:
     """
     Automated Execution System (AES) Dispatcher.
-    Monitors the ScheduledTask table and dispatches tasks to the Redis queue.
+    Dispatches scheduled_tasks to the worker queue.
     """
+
     def __init__(self, session_maker):
         self.session_maker = session_maker
         self.queue_manager = QueueManager()
@@ -23,55 +26,75 @@ class AESDispatcher:
                 await self.dispatch_pending_tasks()
             except Exception as e:
                 print(f"[AES Dispatcher] Error in loop: {e}")
-            
+
             await asyncio.sleep(interval_seconds)
 
     async def dispatch_pending_tasks(self):
-        """Finds due tasks and sends them to the worker queue"""
+        """Find due tasks and send them to the worker queue."""
         now = datetime.utcnow()
-        
+
         async with self.session_maker() as session:
-            # 1. Fetch pending tasks that are due
-            stmt = select(ScheduledTask).filter(
-                ScheduledTask.status == ScheduledTaskStatus.PENDING,
-                ScheduledTask.scheduled_at <= now
+            dispatched = await self._dispatch_due_scheduled_tasks(session, now)
+            if dispatched > 0:
+                await session.commit()
+
+    async def _dispatch_due_scheduled_tasks(self, session, now: datetime) -> int:
+        stmt = select(ScheduledTask).filter(
+            ScheduledTask.status == ScheduledTaskStatus.PENDING,
+            ScheduledTask.scheduled_at <= now,
+        )
+        result = await session.execute(stmt)
+        tasks = result.scalars().all()
+        if not tasks:
+            return 0
+
+        print(f"[AES Dispatcher] Found {len(tasks)} due ScheduledTask records.")
+
+        for task in tasks:
+            task.status = ScheduledTaskStatus.PROCESSING
+            task.last_run_at = now
+
+            context = {
+                "scheduled_task_id": task.id,
+                "project_id": task.project_id,
+                **(task.payload or {}),
+            }
+
+            await self.queue_manager.enqueue(
+                user_id=task.user_id,
+                message=f"AES System Task: {task.task_type}",
+                context=context,
+                task_type=TaskType.AES_SYSTEM_TASK,
             )
-            result = await session.execute(stmt)
-            tasks = result.scalars().all()
-            
-            if not tasks:
-                return
 
-            print(f"[AES Dispatcher] Found {len(tasks)} due tasks. Dispatching...")
-            
-            for task in tasks:
-                # 2. Update status to prevent double-dispatch in a distributed environment
-                task.status = ScheduledTaskStatus.PROCESSING
-                task.last_run_at = now
-                
-                # 3. Enqueue to Redis
-                context = {
-                    "scheduled_task_id": task.id,
-                    "project_id": task.project_id,
-                    **task.payload
-                }
-                
-                from shared.database import TaskType
-                await self.queue_manager.enqueue(
-                    user_id=task.user_id,
-                    message=f"AES System Task: {task.task_type}",
-                    context=context,
-                    task_type=TaskType.AES_SYSTEM_TASK
-                )
-            
-            await session.commit()
+        return len(tasks)
 
-    async def schedule_task(self, user_id: str, task_type: str, scheduled_at: datetime, project_id: str = None, payload: dict = None, recurring_rule: str = None):
+    async def schedule_task(
+        self,
+        user_id: str,
+        task_type: str,
+        scheduled_at: datetime,
+        project_id: str = None,
+        payload: dict = None,
+        recurring_rule: str = None,
+        db_session: AsyncSession | None = None,
+    ):
         """API/Service method to programmatically schedule a task.
-        
+
         Delegates to AESSchedulerService for consistent task creation.
         """
         from domains.automation.aes_scheduler_service import AESSchedulerService
+
+        if db_session is not None:
+            svc = AESSchedulerService(db_session)
+            return await svc.create_task(
+                user_id=user_id,
+                task_type=task_type,
+                scheduled_at=scheduled_at,
+                project_id=project_id,
+                payload=payload,
+                recurring_rule=recurring_rule,
+            )
 
         async with self.session_maker() as session:
             svc = AESSchedulerService(session)
@@ -86,26 +109,21 @@ class AESDispatcher:
 
     @staticmethod
     def calculate_next_run(rule: str, last_run: datetime) -> datetime:
-        """
-        Heuristic for calculating next run time. 
-        In production, this would use 'croniter' for full cron support.
-        """
+        """Heuristic next-run calculator for legacy recurring_rule support."""
         if not rule:
             return None
-            
+
         if rule == "@daily":
             return last_run + timedelta(days=1)
         if rule == "@weekly":
             return last_run + timedelta(weeks=1)
         if rule == "@hourly":
             return last_run + timedelta(hours=1)
-            
-        # Fallback for unknown rules: daily
         return last_run + timedelta(days=1)
 
     async def reschedule_task(self, original_task: ScheduledTask, next_run: datetime):
         """Creates a new task based on an existing recurring task.
-        
+
         Delegates to AESSchedulerService for consistent task creation.
         """
         from domains.automation.aes_scheduler_service import AESSchedulerService

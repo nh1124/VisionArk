@@ -11,6 +11,7 @@ import ChatView from "./components/ChatView"
 import LoginScreen from "./components/LoginScreen"
 import NotesView from "./components/NotesView"
 import CronTasksView from "./components/CronTasksView"
+import MonitoringJobsView from "./components/MonitoringJobsView"
 import WorkspaceView from "./components/WorkspaceView"
 import ProjectsView from "./components/ProjectsView"
 import AgentsView from "./components/AgentsView"
@@ -274,6 +275,7 @@ function MainApp() {
             {view === "run_center" && <RunCenterView />}
             {view === "notes" && <NotesView onOpenProject={(id) => handleNavChange("chat", id)} />}
             {view === "cron" && <CronTasksView />}
+            {view === "monitoring" && <MonitoringJobsView />}
             {view === "tasks" && (
               <TasksView mode="tasks" filter={taskFilter} filterContext={taskFilterContext} />
             )}

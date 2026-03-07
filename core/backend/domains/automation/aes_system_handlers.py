@@ -149,6 +149,30 @@ class TimerHandler(BaseAESHandler):
             link=context.get("link")
         )
 
+
+@register_aes_handler("MONITOR_CHECK")
+class MonitorCheckHandler(BaseAESHandler):
+    """
+    Executes a monitoring pipeline run (collect/detect/notify/persist).
+    """
+    async def run(self, context: Dict[str, Any]):
+        monitor_job_id = context.get("monitor_job_id")
+        monitor_run_id = context.get("monitor_run_id")
+
+        if not monitor_job_id:
+            raise ValueError("monitor_job_id is required for MONITOR_CHECK")
+
+        print(f"[AES] Executing MONITOR_CHECK for job {monitor_job_id}")
+
+        from domains.monitoring.service import MonitoringService
+
+        svc = MonitoringService(self.db)
+        await svc.execute_monitor_check(
+            user_id=self.user_id,
+            monitor_job_id=monitor_job_id,
+            monitor_run_id=monitor_run_id,
+        )
+
 class AESSystemHandlers:
     """
     Dispatcher for AES handlers.

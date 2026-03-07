@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from "react"
 import {
     AlarmClock,
     CalendarClock,
+    CircleHelp,
     Trash2,
     Edit2,
     RefreshCw,
@@ -13,7 +14,7 @@ import {
     Plus,
     X,
 } from "lucide-react"
-import { apiFetch, listProjects, Project } from "../lib/api"
+import { apiFetch, listProjects, listSessions, Project } from "../lib/api"
 
 interface ScheduledTask {
     id: string
@@ -36,6 +37,41 @@ interface SessionMinimal {
 }
 
 type TabType = "upcoming" | "history"
+type RecurrenceMode = "none" | "hourly" | "daily" | "weekly" | "custom"
+
+const RECURRENCE_OPTIONS: Array<{ value: RecurrenceMode; label: string; rule: string | null }> = [
+    { value: "none", label: "No recurrence", rule: null },
+    { value: "hourly", label: "Hourly", rule: "@hourly" },
+    { value: "daily", label: "Daily", rule: "@daily" },
+    { value: "weekly", label: "Weekly", rule: "@weekly" },
+    { value: "custom", label: "Custom", rule: null },
+]
+
+function parseRecurrence(rule: string | null | undefined): { mode: RecurrenceMode; custom: string } {
+    const value = (rule || "").trim()
+    if (!value) return { mode: "none", custom: "" }
+    const matched = RECURRENCE_OPTIONS.find((option) => option.rule === value)
+    if (matched) return { mode: matched.value, custom: "" }
+    return { mode: "custom", custom: value }
+}
+
+function resolveRecurrence(mode: RecurrenceMode, custom: string): string | null {
+    const matched = RECURRENCE_OPTIONS.find((option) => option.value === mode)
+    if (!matched) return null
+    if (matched.rule !== null) return matched.rule
+    return custom.trim() || null
+}
+
+function createInitialForm(projectId: string) {
+    return {
+        project_id: projectId,
+        session_id: "",
+        message: "",
+        scheduled_at: "",
+        recurrence_mode: "none" as RecurrenceMode,
+        recurrence_custom: "",
+    }
+}
 
 export default function CronTasksView() {
     const [tasks, setTasks] = useState<ScheduledTask[]>([])
@@ -44,17 +80,12 @@ export default function CronTasksView() {
     const [sessions, setSessions] = useState<SessionMinimal[]>([])
     const [sessionsLoading, setSessionsLoading] = useState(false)
     const [activeTab, setActiveTab] = useState<TabType>("upcoming")
+    const [showRecurrenceHelp, setShowRecurrenceHelp] = useState(false)
 
     // Modal State
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [editingTask, setEditingTask] = useState<ScheduledTask | null>(null)
-    const [formData, setFormData] = useState({
-        project_id: "",
-        session_id: "",
-        message: "",
-        scheduled_at: "",
-        recurring_rule: "",
-    })
+    const [formData, setFormData] = useState(createInitialForm(""))
 
     const loadTasks = async () => {
         setLoading(true)
@@ -87,11 +118,17 @@ export default function CronTasksView() {
         }
         setSessionsLoading(true)
         try {
-            const response = await apiFetch(`/api/agents/project/${projectId}/sessions`)
-            if (response.ok) {
-                const data = await response.json()
-                setSessions(data.sessions || [])
-            }
+            const items = await listSessions(projectId)
+            setSessions(items)
+            setFormData((prev) => {
+                if (prev.project_id !== projectId) return prev
+                if (prev.session_id && items.some((s) => s.id === prev.session_id)) return prev
+
+                const lastSessionId = localStorage.getItem(`va_last_session_${projectId}`)
+                const nextSession =
+                    (lastSessionId && items.find((s) => s.id === lastSessionId)?.id) || ""
+                return { ...prev, session_id: nextSession }
+            })
         } catch (e) {
             console.error("Failed to load sessions", e)
             setSessions([])
@@ -145,13 +182,15 @@ export default function CronTasksView() {
 
         setEditingTask(task)
         const dateStr = new Date(task.scheduled_at).toISOString().slice(0, 16)
+        const recurrence = parseRecurrence(task.recurring_rule)
 
         setFormData({
             project_id: task.project_id || "",
             session_id: task.payload?.session_id || "",
             message: task.payload?.message || "",
             scheduled_at: dateStr,
-            recurring_rule: task.recurring_rule || "",
+            recurrence_mode: recurrence.mode,
+            recurrence_custom: recurrence.custom,
         })
         setIsModalOpen(true)
     }
@@ -166,11 +205,8 @@ export default function CronTasksView() {
         const dateStr = localNow.toISOString().slice(0, 16)
 
         setFormData({
-            project_id: projects[0]?.id || "",
-            session_id: "",
-            message: "",
+            ...createInitialForm(projects[0]?.id || ""),
             scheduled_at: dateStr,
-            recurring_rule: "",
         })
         setIsModalOpen(true)
     }
@@ -180,6 +216,12 @@ export default function CronTasksView() {
             alert("Please fill in all required fields.")
             return
         }
+        if (formData.recurrence_mode === "custom" && !formData.recurrence_custom.trim()) {
+            alert("Custom recurrence is empty.")
+            return
+        }
+
+        const recurringRule = resolveRecurrence(formData.recurrence_mode, formData.recurrence_custom)
 
         const taskPayload: Record<string, string> = { message: formData.message }
         if (formData.session_id) {
@@ -190,7 +232,7 @@ export default function CronTasksView() {
             project_id: formData.project_id,
             task_type: "POST_MESSAGE",
             scheduled_at: new Date(formData.scheduled_at).toISOString(),
-            recurring_rule: formData.recurring_rule || null,
+            recurring_rule: recurringRule,
             payload: taskPayload,
         }
 
@@ -396,7 +438,7 @@ export default function CronTasksView() {
                                                     </span>
                                                     {task.recurring_rule && (
                                                         <span className="text-[10px] text-purple-400 font-bold uppercase tracking-tighter mt-0.5">
-                                                            ♻️ {task.recurring_rule}
+                                                            {task.recurring_rule}
                                                         </span>
                                                     )}
                                                 </div>
@@ -490,6 +532,7 @@ export default function CronTasksView() {
                                     </select>
                                 </div>
 
+
                                 <div>
                                     <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
                                         Target Session
@@ -501,11 +544,10 @@ export default function CronTasksView() {
                                         onChange={(e) => setFormData({ ...formData, session_id: e.target.value })}
                                         disabled={!formData.project_id || sessionsLoading}
                                     >
-                                        <option value="">— Auto (fallback to default session) —</option>
+                                        <option value="">No session (auto route)</option>
                                         {sessions.map((s) => (
                                             <option key={s.id} value={s.id}>
                                                 {s.title || "Untitled"}
-                                                {s.is_default ? " ★" : ""}
                                             </option>
                                         ))}
                                     </select>
@@ -538,20 +580,57 @@ export default function CronTasksView() {
                                             onChange={(e) => setFormData({ ...formData, scheduled_at: e.target.value })}
                                         />
                                     </div>
+
                                     <div>
-                                        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
-                                            Recurrence (Optional)
-                                        </label>
-                                        <input
-                                            type="text"
+                                        <div className="flex items-center gap-1 mb-2">
+                                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                                Recurrence (Optional)
+                                            </label>
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowRecurrenceHelp((prev) => !prev)}
+                                                className="text-gray-500 hover:text-cyan-300"
+                                                title="Recurrence help"
+                                            >
+                                                <CircleHelp size={13} />
+                                            </button>
+                                        </div>
+                                        <select
                                             className="w-full bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-cyan-500"
-                                            placeholder="@daily, @weekly"
-                                            value={formData.recurring_rule}
+                                            value={formData.recurrence_mode}
                                             onChange={(e) =>
-                                                setFormData({ ...formData, recurring_rule: e.target.value })
+                                                setFormData({
+                                                    ...formData,
+                                                    recurrence_mode: e.target.value as RecurrenceMode,
+                                                })
                                             }
-                                        />
-                                        <p className="text-[10px] text-gray-600 mt-1">Format: @daily, @hourly, or cron</p>
+                                        >
+                                            {RECURRENCE_OPTIONS.map((option) => (
+                                                <option key={option.value} value={option.value}>
+                                                    {option.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        {formData.recurrence_mode === "custom" && (
+                                            <input
+                                                type="text"
+                                                className="mt-2 w-full bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-cyan-500 font-mono"
+                                                placeholder="*/15 * * * *"
+                                                value={formData.recurrence_custom}
+                                                onChange={(e) =>
+                                                    setFormData({
+                                                        ...formData,
+                                                        recurrence_custom: e.target.value,
+                                                    })
+                                                }
+                                            />
+                                        )}
+                                        {showRecurrenceHelp && (
+                                            <div className="mt-2 rounded-lg border border-cyan-900/50 bg-cyan-950/20 px-2.5 py-2 text-[11px] text-cyan-100">
+                                                Presets set common schedules. Custom accepts @hourly/@daily or 5-field
+                                                cron like <span className="font-mono">0 9 * * 1-5</span>.
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -577,3 +656,5 @@ export default function CronTasksView() {
         </div>
     )
 }
+
+

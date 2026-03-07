@@ -225,30 +225,38 @@ class Worker:
         st_id = context.get("scheduled_task_id")
         user_id = context.get("user_id")
         task_id = context.get("task_id")
+        task_record = None
+        aes_task_type = context.get("aes_task_type")
 
-        stmt = select(ScheduledTask).filter(ScheduledTask.id == st_id)
-        res = await db_session.execute(stmt)
-        task_record = res.scalars().first()
+        if st_id:
+            stmt = select(ScheduledTask).filter(ScheduledTask.id == st_id)
+            res = await db_session.execute(stmt)
+            task_record = res.scalars().first()
+            if not task_record:
+                print(f"[Worker] AES Task {st_id} record not found in DB.")
+                return
+            aes_task_type = task_record.task_type
 
-        if not task_record:
-            print(f"[Worker] AES Task {st_id} record not found in DB.")
-            return
+        if not aes_task_type:
+            raise ValueError("aes_task_type is required for AES system tasks without scheduled_task_id")
 
-        print(f"[Worker] Running AES system task: {task_record.task_type}")
+        print(f"[Worker] Running AES system task: {aes_task_type}")
         handler = AESSystemHandlers(db_session, user_id)
-        await handler.execute(task_record.task_type, context)
-
-        # Update DB status
-        task_record.status = ScheduledTaskStatus.COMPLETED
+        await handler.execute(aes_task_type, context)
 
         # Handle recurring_rule: calculate next run and create new task record
-        if task_record.recurring_rule:
-            next_run = self.dispatcher.calculate_next_run(task_record.recurring_rule, task_record.last_run_at or datetime.utcnow())
-            if next_run:
-                await self.dispatcher.reschedule_task(task_record, next_run)
+        if task_record:
+            task_record.status = ScheduledTaskStatus.COMPLETED
+            if task_record.recurring_rule:
+                next_run = self.dispatcher.calculate_next_run(
+                    task_record.recurring_rule,
+                    task_record.last_run_at or datetime.utcnow(),
+                )
+                if next_run:
+                    await self.dispatcher.reschedule_task(task_record, next_run)
 
         await db_session.commit()
-        await self.manager.update_status(task_id, "completed", f"AES Task {task_record.task_type} done.")
+        await self.manager.update_status(task_id, "completed", f"AES Task {aes_task_type} done.")
 
     async def _handle_user_message(self, message: str, context: dict, db_session):
         """Default logic for user chat and commands (orchestration2)"""

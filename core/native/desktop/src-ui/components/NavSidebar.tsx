@@ -28,6 +28,7 @@ import {
   Monitor,
   Clock3,
   CheckSquare,
+  ShieldCheck,
   FileText,
   HardDrive,
   Menu,
@@ -53,6 +54,7 @@ export type NavView =
   | "calendar"
   | "run_center"
   | "cron"
+  | "monitoring"
   | "notes"
   | "workspace"
   | "chat"
@@ -101,7 +103,7 @@ function mapViewToPrimary(view: NavView): PrimaryNavId {
   if (view === "projects" || view === "chat") return "projects"
   if (view === "tasks" || view === "calendar") return "tasks"
   if (view === "notes" || view === "workspace") return "knowledge"
-  if (view === "agents" || view === "run_center" || view === "cron") return "automation"
+  if (view === "agents" || view === "run_center" || view === "cron" || view === "monitoring") return "automation"
   if (view === "devices") return "devices"
   return "home"
 }
@@ -690,6 +692,10 @@ export default function NavSidebar({
       <button onClick={() => onChange("cron")} className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${active === "cron" ? "bg-cyan-500/12 text-cyan-300" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}>
         <Clock3 size={15} />
         <span>Cron</span>
+      </button>
+      <button onClick={() => onChange("monitoring")} className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${active === "monitoring" ? "bg-cyan-500/12 text-cyan-300" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}>
+        <ShieldCheck size={15} />
+        <span>Monitoring</span>
       </button>
     </div>
   )

@@ -27,7 +27,11 @@ from ...tools.library.workspace import (
 from ...tools.library.system import (
     ListAgentsTool, GetAgentProfileTool,
     ListUserProjectsTool, UpdateProjectTool,
-    GetProjectHealthTool, SetTimerTool, RaiseContinueTool,
+    GetProjectHealthTool, SetTimerTool,
+    ScheduleMonitorJobTool, ListMonitorJobsTool, UpdateMonitorJobTool,
+    PauseMonitorJobTool, ResumeMonitorJobTool, TestMonitorJobOnceTool,
+    ListMonitorJobRunsTool, ListMonitorAlertsTool,
+    RaiseContinueTool,
 )
 from ...tools.library.delegation import ListMembersTool
 from ...tools.library.writer import RecursiveWriterTool
@@ -91,7 +95,11 @@ def get_core_tools() -> list[tuple[ToolDef, Any]]:
         # System
         ListAgentsTool, GetAgentProfileTool,
         ListUserProjectsTool, UpdateProjectTool,
-        GetProjectHealthTool, SetTimerTool, RaiseContinueTool,
+        GetProjectHealthTool, SetTimerTool,
+        ScheduleMonitorJobTool, ListMonitorJobsTool, UpdateMonitorJobTool,
+        PauseMonitorJobTool, ResumeMonitorJobTool, TestMonitorJobOnceTool,
+        ListMonitorJobRunsTool, ListMonitorAlertsTool,
+        RaiseContinueTool,
         # Members (delegation)
         ListMembersTool,
         # Writer
