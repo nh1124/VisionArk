@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.queue.manager import QueueManager
+from domains.automation.schedule import next_run_at_utc
 from shared.database import ScheduledTask, ScheduledTaskStatus, TaskType
 
 
@@ -108,18 +109,21 @@ class AESDispatcher:
             )
 
     @staticmethod
-    def calculate_next_run(rule: str, last_run: datetime) -> datetime:
-        """Heuristic next-run calculator for legacy recurring_rule support."""
+    def calculate_next_run(rule: str, last_run: datetime, timezone_name: str = "UTC") -> datetime:
+        """Calculate next-run timestamp from recurring_rule in UTC."""
         if not rule:
             return None
 
-        if rule == "@daily":
+        try:
+            return next_run_at_utc(rule, timezone_name, after_utc=last_run)
+        except Exception:
+            if rule == "@daily":
+                return last_run + timedelta(days=1)
+            if rule == "@weekly":
+                return last_run + timedelta(weeks=1)
+            if rule == "@hourly":
+                return last_run + timedelta(hours=1)
             return last_run + timedelta(days=1)
-        if rule == "@weekly":
-            return last_run + timedelta(weeks=1)
-        if rule == "@hourly":
-            return last_run + timedelta(hours=1)
-        return last_run + timedelta(days=1)
 
     async def reschedule_task(self, original_task: ScheduledTask, next_run: datetime):
         """Creates a new task based on an existing recurring task.

@@ -22,6 +22,7 @@ import DaemonConsole from "./components/DaemonConsole"
 import FileViewerWindow from "./components/FileViewerWindow"
 import { isLoggedIn, logout, listProjects, initApiBase, getApiBase, getToken, handleRefresh, getMe, type Project } from "./lib/api"
 import { listRuns, configure as configureBridge } from "../../bridge/api"
+import * as bridgeWs from "../../bridge/ws"
 
 export default function App() {
   const [windowLabel] = useState(() => isTauri() ? getCurrentWindow().label : "main")
@@ -36,6 +37,7 @@ function MainApp() {
   const [loggedIn, setLoggedIn] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
   const [username, setUsername] = useState("")
+  const [userId, setUserId] = useState("")
   const [view, setView] = useState<NavView>("dashboard")
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
@@ -60,6 +62,7 @@ function MainApp() {
         try {
           const profile = await getMe()
           setUsername(profile.username)
+          setUserId(profile.user_id)
         } catch (e) {
           console.warn("Failed to fetch user profile, clearing auth state", e)
           status = false
@@ -128,10 +131,49 @@ function MainApp() {
   }, [])
 
   const handleLogout = useCallback(async () => {
+    bridgeWs.disconnect()
     await logout()
     setLoggedIn(false)
     setUsername("")
+    setUserId("")
   }, [])
+
+  // Real-time sync via backend notification WebSocket (job.* events).
+  useEffect(() => {
+    if (!loggedIn || !userId) return
+    let offCreated: (() => void) | null = null
+    let offUpdated: (() => void) | null = null
+    let offNotification: (() => void) | null = null
+    let disposed = false
+
+    const setup = async () => {
+      const token = await getToken()
+      if (!token || disposed) return
+
+      const apiBase = getApiBase()
+      const wsBase = apiBase.replace("http://", "ws://").replace("https://", "wss://")
+      const wsUrl = `${wsBase}/api/notifications/ws/${userId}`
+
+      bridgeWs.connect(wsUrl, token)
+
+      const dispatch = (data: unknown) => {
+        window.dispatchEvent(new CustomEvent("va-realtime-job", { detail: data }))
+      }
+      offCreated = bridgeWs.on("job.created", dispatch)
+      offUpdated = bridgeWs.on("job.updated", dispatch)
+      offNotification = bridgeWs.on("notification", dispatch)
+    }
+
+    setup()
+
+    return () => {
+      disposed = true
+      offCreated?.()
+      offUpdated?.()
+      offNotification?.()
+      bridgeWs.disconnect()
+    }
+  }, [loggedIn, userId])
 
   // Poll for pending approvals count (from run_approvals) to show badge in NavSidebar
   useEffect(() => {
@@ -230,9 +272,15 @@ function MainApp() {
   if (!loggedIn) {
     return (
       <LoginScreen
-        onLogin={(user) => {
+        onLogin={async (user) => {
           setLoggedIn(true)
           setUsername(user)
+          try {
+            const profile = await getMe()
+            setUserId(profile.user_id)
+          } catch {
+            // best-effort: WS sync may start after next bootstrap if this fails
+          }
         }}
       />
     )

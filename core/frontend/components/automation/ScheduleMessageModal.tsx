@@ -11,13 +11,18 @@ interface ScheduleMessageModalProps {
     onScheduled: () => void;
 }
 
+type RecurrenceMode = "once" | "hourly" | "daily" | "weekly" | "custom";
+
 export default function ScheduleMessageModal({ projectId, onClose, onScheduled }: ScheduleMessageModalProps) {
     const [message, setMessage] = useState("");
     const [scheduledAt, setScheduledAt] = useState("");
-    const [recurringRule, setRecurringRule] = useState("");
+    const [recurrenceMode, setRecurrenceMode] = useState<RecurrenceMode>("once");
+    const [customCron, setCustomCron] = useState("");
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     const { showToast } = useNotification();
+
+    const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -25,6 +30,16 @@ export default function ScheduleMessageModal({ projectId, onClose, onScheduled }
             showToast("Message and date are required.", "warning");
             return;
         }
+        if (recurrenceMode === "custom" && !customCron.trim()) {
+            showToast("Custom cron is required when recurrence is Custom.", "warning");
+            return;
+        }
+
+        let recurringRule: string | null = null;
+        if (recurrenceMode === "hourly") recurringRule = "@hourly";
+        if (recurrenceMode === "daily") recurringRule = "@daily";
+        if (recurrenceMode === "weekly") recurringRule = "@weekly";
+        if (recurrenceMode === "custom") recurringRule = customCron.trim();
 
         setIsSubmitting(true);
         try {
@@ -36,7 +51,8 @@ export default function ScheduleMessageModal({ projectId, onClose, onScheduled }
                     task_type: "POST_MESSAGE",
                     scheduled_at: new Date(scheduledAt).toISOString(),
                     payload: { message },
-                    recurring_rule: recurringRule || null
+                    recurring_rule: recurringRule,
+                    recurrence_timezone: browserTimezone,
                 }),
             });
 
@@ -94,21 +110,29 @@ export default function ScheduleMessageModal({ projectId, onClose, onScheduled }
 
                         <div>
                             <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-1.5">
-                                Recurrence (Optional)
+                                Recurrence
                             </label>
                             <select
-                                value={recurringRule}
-                                onChange={(e) => setRecurringRule(e.target.value)}
+                                value={recurrenceMode}
+                                onChange={(e) => setRecurrenceMode(e.target.value as RecurrenceMode)}
                                 className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500 transition-colors"
                             >
-                                <option value="">Once</option>
-                                <option value="@hourly">Hourly</option>
-                                <option value="@daily">Daily</option>
-                                <option value="@weekly">Weekly</option>
+                                <option value="once">Once</option>
+                                <option value="hourly">Hourly</option>
+                                <option value="daily">Daily</option>
+                                <option value="weekly">Weekly</option>
+                                <option value="custom">Custom Cron</option>
                             </select>
-                            <p className="mt-1.5 text-[10px] text-gray-600 italic">
-                                Note: Recurring tasks spawn a new instance after each execution.
-                            </p>
+                            {recurrenceMode === "custom" && (
+                                <input
+                                    type="text"
+                                    value={customCron}
+                                    onChange={(e) => setCustomCron(e.target.value)}
+                                    className="mt-2 w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500 transition-colors"
+                                    placeholder="e.g. 30 9 * * 1-5"
+                                />
+                            )}
+                            <p className="mt-1.5 text-[10px] text-gray-600 italic">Timezone: {browserTimezone}</p>
                         </div>
 
                         <div className="flex items-center justify-end gap-3 mt-6 pt-6 border-t border-gray-800">

@@ -248,9 +248,11 @@ class Worker:
         if task_record:
             task_record.status = ScheduledTaskStatus.COMPLETED
             if task_record.recurring_rule:
+                recurrence_timezone = ((task_record.payload or {}).get("recurrence_timezone") or "UTC")
                 next_run = self.dispatcher.calculate_next_run(
                     task_record.recurring_rule,
                     task_record.last_run_at or datetime.utcnow(),
+                    recurrence_timezone,
                 )
                 if next_run:
                     await self.dispatcher.reschedule_task(task_record, next_run)

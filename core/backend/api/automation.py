@@ -10,6 +10,7 @@ from sqlalchemy import select, delete as sql_delete
 from sqlalchemy.orm import joinedload
 
 from domains.identity.auth import resolve_identity, Identity
+from domains.automation.schedule import next_run_at_utc, validate_recurring_rule
 from domains.automation.aes_scheduler_service import AESSchedulerService
 from shared.database import get_async_db, ScheduledTask, ScheduledTaskStatus
 
@@ -21,6 +22,7 @@ class ScheduleTaskRequest(BaseModel):
     scheduled_at: datetime
     payload: Dict[str, Any] = Field(default_factory=dict)
     recurring_rule: Optional[str] = None
+    recurrence_timezone: Optional[str] = None
 
 class ScheduledTaskSchema(BaseModel):
     id: str
@@ -101,6 +103,29 @@ async def _validate_post_message_session(request: "ScheduleTaskRequest", db: Asy
         )
 
 
+def _resolve_recurrence_timezone(request: "ScheduleTaskRequest") -> str:
+    payload_tz = (request.payload or {}).get("recurrence_timezone")
+    return request.recurrence_timezone or payload_tz or "UTC"
+
+
+def _normalize_schedule_request(request: "ScheduleTaskRequest") -> tuple[datetime, Optional[str], Dict[str, Any]]:
+    scheduled_at = request.scheduled_at
+    recurring_rule = request.recurring_rule
+    payload = dict(request.payload or {})
+
+    if not recurring_rule:
+        return scheduled_at, None, payload
+
+    try:
+        timezone_name = _resolve_recurrence_timezone(request)
+        normalized_rule, timezone_name = validate_recurring_rule(recurring_rule, timezone_name)
+        first_run = next_run_at_utc(normalized_rule, timezone_name, after_utc=scheduled_at)
+        payload["recurrence_timezone"] = timezone_name
+        return first_run, normalized_rule, payload
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/schedule")
 async def schedule_task(
     request: ScheduleTaskRequest,
@@ -117,15 +142,16 @@ async def schedule_task(
             raise HTTPException(status_code=400, detail=f"Project {request.project_id} not found")
 
     await _validate_post_message_session(request, db)
+    normalized_scheduled_at, normalized_rule, normalized_payload = _normalize_schedule_request(request)
 
     svc = AESSchedulerService(db)
     task_id = await svc.create_task(
         user_id=identity.user_id,
         task_type=request.task_type,
-        scheduled_at=request.scheduled_at,
+        scheduled_at=normalized_scheduled_at,
         project_id=request.project_id,
-        payload=request.payload,
-        recurring_rule=request.recurring_rule,
+        payload=normalized_payload,
+        recurring_rule=normalized_rule,
     )
     
     return {"status": "success", "task_id": task_id}
@@ -155,15 +181,16 @@ async def update_task(
             raise HTTPException(status_code=400, detail=f"Project {request.project_id} not found")
 
     await _validate_post_message_session(request, db)
+    normalized_scheduled_at, normalized_rule, normalized_payload = _normalize_schedule_request(request)
 
     svc = AESSchedulerService(db)
     await svc.update_task(
         task=task,
         task_type=request.task_type,
-        scheduled_at=request.scheduled_at,
+        scheduled_at=normalized_scheduled_at,
         project_id=request.project_id,
-        payload=request.payload,
-        recurring_rule=request.recurring_rule,
+        payload=normalized_payload,
+        recurring_rule=normalized_rule,
     )
     
     return {"status": "success", "message": "Task updated"}

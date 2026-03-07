@@ -21,6 +21,12 @@ interface Props {
     setSidebarMode?: (mode: ProjectSidebarMode) => void
 }
 
+interface RealtimeTaskState {
+    taskId: string
+    message: string
+    statusText: string
+}
+
 export default function ChatView({ projectId, sessionId, projectName, sidebarMode, setSidebarMode }: Props) {
     const [messages, setMessages] = useState<ChatMessageType[]>([])
     const [loading, setLoading] = useState(false)
@@ -36,6 +42,8 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
     const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
     const isInitialLoad = useRef(true)
+    const injectedTaskIdsRef = useRef<Set<string>>(new Set())
+    const [realtimeTasks, setRealtimeTasks] = useState<RealtimeTaskState[]>([])
 
     // effectiveSessionId: session confirmed by backend (may differ from prop when
     // the provided session was not found and backend fell back to default)
@@ -54,6 +62,8 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
     useEffect(() => {
         isInitialLoad.current = true
         effectiveSessionRef.current = sessionId
+        injectedTaskIdsRef.current.clear()
+        setRealtimeTasks([])
         // Stop any in-progress polling from the previous session
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
@@ -91,6 +101,64 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
             messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
         }
     }, [messages])
+
+    useEffect(() => {
+        const onRealtime = (evt: Event) => {
+            const detail = (evt as CustomEvent<any>).detail || {}
+            const sameProject = !detail.project_id || detail.project_id === projectId
+            const sameSession =
+                !detail.session_id ||
+                !effectiveSessionRef.current ||
+                detail.session_id === effectiveSessionRef.current
+            const sameTaskAsCurrent = currentTaskIdRef.current && detail.task_id === currentTaskIdRef.current
+            if (!sameProject || !sameSession || sameTaskAsCurrent) {
+                return
+            }
+
+            if (detail.task_type === "user_message" && detail.task_id) {
+                const taskId = String(detail.task_id)
+                const status = String(detail.status || "").toLowerCase()
+                const msg = String(detail.message || "")
+                const step = detail.step ? ` - ${detail.step}` : ""
+                const phase = detail.phase ? `${detail.phase}${step}` : (status || "processing")
+
+                if (status === "queued" || status === "processing") {
+                    setRealtimeTasks((prev) => {
+                        const existing = prev.find((t) => t.taskId === taskId)
+                        if (existing) {
+                            return prev.map((t) => (t.taskId === taskId ? { ...t, statusText: phase } : t))
+                        }
+                        return [...prev, { taskId, message: msg || "Scheduled message", statusText: phase }]
+                    })
+
+                    if (!injectedTaskIdsRef.current.has(taskId)) {
+                        injectedTaskIdsRef.current.add(taskId)
+                        setMessages((prev) => [
+                            ...prev,
+                            {
+                                role: "user",
+                                content: msg || "Scheduled message",
+                                meta_payload: { transient: true, realtime_task_id: taskId },
+                            },
+                        ])
+                    }
+                    return
+                }
+
+                if (status === "completed" || status === "failed" || status === "cancelled") {
+                    setRealtimeTasks((prev) => prev.filter((t) => t.taskId !== taskId))
+                    loadHistory()
+                }
+                return
+            }
+
+            if (!loading) {
+                loadHistory()
+            }
+        }
+        window.addEventListener("va-realtime-job", onRealtime as EventListener)
+        return () => window.removeEventListener("va-realtime-job", onRealtime as EventListener)
+    }, [loadHistory, loading])
 
     const stopPolling = () => {
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
@@ -217,9 +285,22 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                             messages.map((msg, i) => {
                                 // Hide the empty placeholder message when loading, because the loading indicator draws its own avatar
                                 if (loading && i === messages.length - 1 && msg.role === "assistant" && !msg.content) return null;
+                                if (msg.meta_payload?.transient && msg.role === "assistant" && !msg.content) return null;
                                 return <ChatMessage key={i} message={msg} projectId={projectId} />
                             })
                         )}
+
+                        {realtimeTasks.map((rt) => (
+                            <div key={rt.taskId} className="flex gap-3 py-4">
+                                <div className="w-8 h-8 rounded-lg bg-cyan-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                    <div className="w-4 h-4 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin" />
+                                </div>
+                                <div className="flex-1">
+                                    <div className="text-xs font-semibold text-gray-500 mb-1">Assistant</div>
+                                    <div className="text-xs text-gray-400">{rt.statusText}</div>
+                                </div>
+                            </div>
+                        ))}
 
                         {/* Loading indicator */}
                         {loading && messages[messages.length - 1]?.role === "assistant" && !messages[messages.length - 1]?.content && (
@@ -300,7 +381,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                             <ActivitySidebar projectId={projectId} />
                         )}
                         {sidebarMode === "automation" && (
-                            <AutomationTab projectId={projectId} onScheduleClick={() => console.log('Schedule clicked')} />
+                            <AutomationTab projectId={projectId} />
                         )}
                         {sidebarMode === "settings" && (
                             <ProjectSettingsPanel projectId={projectId} />

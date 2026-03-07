@@ -37,10 +37,10 @@ interface SessionMinimal {
 }
 
 type TabType = "upcoming" | "history"
-type RecurrenceMode = "none" | "hourly" | "daily" | "weekly" | "custom"
+type RecurrenceMode = "once" | "hourly" | "daily" | "weekly" | "custom"
 
 const RECURRENCE_OPTIONS: Array<{ value: RecurrenceMode; label: string; rule: string | null }> = [
-    { value: "none", label: "No recurrence", rule: null },
+    { value: "once", label: "One-time", rule: null },
     { value: "hourly", label: "Hourly", rule: "@hourly" },
     { value: "daily", label: "Daily", rule: "@daily" },
     { value: "weekly", label: "Weekly", rule: "@weekly" },
@@ -49,7 +49,7 @@ const RECURRENCE_OPTIONS: Array<{ value: RecurrenceMode; label: string; rule: st
 
 function parseRecurrence(rule: string | null | undefined): { mode: RecurrenceMode; custom: string } {
     const value = (rule || "").trim()
-    if (!value) return { mode: "none", custom: "" }
+    if (!value) return { mode: "once", custom: "" }
     const matched = RECURRENCE_OPTIONS.find((option) => option.rule === value)
     if (matched) return { mode: matched.value, custom: "" }
     return { mode: "custom", custom: value }
@@ -62,14 +62,84 @@ function resolveRecurrence(mode: RecurrenceMode, custom: string): string | null 
     return custom.trim() || null
 }
 
+function getTimezoneOptions(): string[] {
+    try {
+        if (typeof Intl.supportedValuesOf === "function") {
+            return Intl.supportedValuesOf("timeZone")
+        }
+    } catch {
+        // no-op
+    }
+    return ["UTC"]
+}
+
+function formatInTimezone(date: Date, timezone: string): { year: number; month: number; day: number; hour: number; minute: number } {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+        timeZone: timezone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    })
+    const parts = formatter.formatToParts(date)
+    const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? "0")
+    return {
+        year: get("year"),
+        month: get("month"),
+        day: get("day"),
+        hour: get("hour"),
+        minute: get("minute"),
+    }
+}
+
+function zonedDateTimeLocalToUtcIso(localDateTime: string, timezone: string): string {
+    const m = localDateTime.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/)
+    if (!m) return new Date(localDateTime).toISOString()
+
+    const year = Number(m[1])
+    const month = Number(m[2])
+    const day = Number(m[3])
+    const hour = Number(m[4])
+    const minute = Number(m[5])
+
+    let guess = Date.UTC(year, month - 1, day, hour, minute)
+    const target = Date.UTC(year, month - 1, day, hour, minute)
+
+    for (let i = 0; i < 5; i++) {
+        const parts = formatInTimezone(new Date(guess), timezone)
+        const asUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute)
+        const diff = target - asUtc
+        if (diff === 0) break
+        guess += diff
+    }
+
+    return new Date(guess).toISOString()
+}
+
+function utcIsoToZonedLocalInput(utcIso: string, timezone: string): string {
+    const parts = formatInTimezone(new Date(utcIso), timezone)
+    const pad = (n: number) => String(n).padStart(2, "0")
+    return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}T${pad(parts.hour)}:${pad(parts.minute)}`
+}
+
+function formatStoredLocalDateTime(localDateTime: string): string | null {
+    const m = localDateTime.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/)
+    if (!m) return null
+    return `${m[2]}/${m[3]} ${m[4]}:${m[5]}`
+}
+
 function createInitialForm(projectId: string) {
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
     return {
         project_id: projectId,
         session_id: "",
         message: "",
         scheduled_at: "",
-        recurrence_mode: "none" as RecurrenceMode,
+        recurrence_mode: "once" as RecurrenceMode,
         recurrence_custom: "",
+        recurrence_timezone: timezone,
     }
 }
 
@@ -81,6 +151,7 @@ export default function CronTasksView() {
     const [sessionsLoading, setSessionsLoading] = useState(false)
     const [activeTab, setActiveTab] = useState<TabType>("upcoming")
     const [showRecurrenceHelp, setShowRecurrenceHelp] = useState(false)
+    const timezoneOptions = useMemo(() => getTimezoneOptions(), [])
 
     // Modal State
     const [isModalOpen, setIsModalOpen] = useState(false)
@@ -143,6 +214,14 @@ export default function CronTasksView() {
     }, [])
 
     useEffect(() => {
+        const onRealtime = () => {
+            loadTasks()
+        }
+        window.addEventListener("va-realtime-job", onRealtime)
+        return () => window.removeEventListener("va-realtime-job", onRealtime)
+    }, [])
+
+    useEffect(() => {
         if (isModalOpen && formData.project_id) {
             loadSessions(formData.project_id)
         } else {
@@ -181,7 +260,8 @@ export default function CronTasksView() {
         }
 
         setEditingTask(task)
-        const dateStr = new Date(task.scheduled_at).toISOString().slice(0, 16)
+        const timezone = task.payload?.recurrence_timezone || "UTC"
+        const dateStr = task.payload?.scheduled_local_time || utcIsoToZonedLocalInput(task.scheduled_at, timezone)
         const recurrence = parseRecurrence(task.recurring_rule)
 
         setFormData({
@@ -191,6 +271,7 @@ export default function CronTasksView() {
             scheduled_at: dateStr,
             recurrence_mode: recurrence.mode,
             recurrence_custom: recurrence.custom,
+            recurrence_timezone: timezone,
         })
         setIsModalOpen(true)
     }
@@ -200,13 +281,14 @@ export default function CronTasksView() {
         const now = new Date()
         now.setHours(now.getHours() + 1)
 
-        // Account for local timezone offset when slicing ISO string for datetime-local
-        const localNow = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
-        const dateStr = localNow.toISOString().slice(0, 16)
+        // Default to one hour later in the selected timezone's wall-clock.
+        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
+        const dateStr = utcIsoToZonedLocalInput(now.toISOString(), timezone)
 
         setFormData({
             ...createInitialForm(projects[0]?.id || ""),
             scheduled_at: dateStr,
+            recurrence_timezone: timezone,
         })
         setIsModalOpen(true)
     }
@@ -223,7 +305,11 @@ export default function CronTasksView() {
 
         const recurringRule = resolveRecurrence(formData.recurrence_mode, formData.recurrence_custom)
 
-        const taskPayload: Record<string, string> = { message: formData.message }
+        const taskPayload: Record<string, string> = {
+            message: formData.message,
+            recurrence_timezone: formData.recurrence_timezone,
+            scheduled_local_time: formData.scheduled_at,
+        }
         if (formData.session_id) {
             taskPayload.session_id = formData.session_id
         }
@@ -231,8 +317,9 @@ export default function CronTasksView() {
         const payload = {
             project_id: formData.project_id,
             task_type: "POST_MESSAGE",
-            scheduled_at: new Date(formData.scheduled_at).toISOString(),
+            scheduled_at: zonedDateTimeLocalToUtcIso(formData.scheduled_at, formData.recurrence_timezone),
             recurring_rule: recurringRule,
+            recurrence_timezone: formData.recurrence_timezone,
             payload: taskPayload,
         }
 
@@ -286,8 +373,9 @@ export default function CronTasksView() {
         }
     }
 
-    const formatDate = (dateStr: string) => {
-        return new Date(dateStr).toLocaleString("en-US", {
+    const formatDate = (dateStr: string, timezone: string) => {
+        return new Date(dateStr).toLocaleString(undefined, {
+            timeZone: timezone,
             month: "short",
             day: "numeric",
             hour: "2-digit",
@@ -434,7 +522,11 @@ export default function CronTasksView() {
                                             <td className="px-6 py-4">
                                                 <div className="flex flex-col">
                                                     <span className="text-xs text-gray-300">
-                                                        {formatDate(task.scheduled_at)}
+                                                        {formatStoredLocalDateTime(task.payload?.scheduled_local_time || "")
+                                                            || formatDate(task.scheduled_at, task.payload?.recurrence_timezone || "UTC")}
+                                                    </span>
+                                                    <span className="text-[10px] text-gray-600">
+                                                        ({task.payload?.recurrence_timezone || "UTC"})
                                                     </span>
                                                     {task.recurring_rule && (
                                                         <span className="text-[10px] text-purple-400 font-bold uppercase tracking-tighter mt-0.5">
@@ -463,7 +555,7 @@ export default function CronTasksView() {
                                             <td className="px-6 py-4 text-right">
                                                 <div className="flex items-center justify-end gap-2">
                                                     {task.task_type === "POST_MESSAGE" &&
-                                                        task.status.toLowerCase() === "pending" && (
+                                                        ["pending", "processing"].includes(task.status.toLowerCase()) && (
                                                             <button
                                                                 onClick={() => handleEdit(task)}
                                                                 className="p-2 text-gray-500 hover:text-cyan-400 hover:bg-cyan-500/10 rounded-xl transition-all"
@@ -632,6 +724,22 @@ export default function CronTasksView() {
                                             </div>
                                         )}
                                     </div>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                                        Timezone
+                                    </label>
+                                    <select
+                                        className="w-full bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-cyan-500"
+                                        value={formData.recurrence_timezone}
+                                        onChange={(e) => setFormData({ ...formData, recurrence_timezone: e.target.value })}
+                                    >
+                                        {timezoneOptions.map((tz) => (
+                                            <option key={tz} value={tz}>
+                                                {tz}
+                                            </option>
+                                        ))}
+                                    </select>
                                 </div>
                             </div>
 

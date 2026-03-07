@@ -62,10 +62,25 @@ class QueueManager:
             json.dumps({
                 "status": "queued",
                 "result": None,
+                "message": message,
                 "task_type": task_type,
+                "user_id": user_id,
                 "project_id": project_id,
                 "session_id": session_id,
             }, cls=CustomEncoder)
+        )
+
+        await self._publish_job_event(
+            user_id=user_id,
+            event_type="job.created",
+            data={
+                "task_id": task_id,
+                "status": "queued",
+                "message": message,
+                "task_type": task_type,
+                "project_id": project_id,
+                "session_id": session_id,
+            },
         )
 
         # Track active task for project recovery if project_id is present
@@ -90,9 +105,11 @@ class QueueManager:
         """Update task status"""
         # Fetch current status to preserve metadata like project_id
         current_data = await self.get_status(task_id)
+        user_id = current_data.get("user_id") if current_data else None
         project_id = current_data.get("project_id") if current_data else None
         session_id = current_data.get("session_id") if current_data else None
         task_type = current_data.get("task_type") if current_data else "user_message"
+        message = current_data.get("message") if current_data else None
 
         # Preserve phase and step if not updated
         if phase is None and current_data:
@@ -103,7 +120,9 @@ class QueueManager:
         payload = {
             "status": status,
             "result": result,
+            "message": message,
             "task_type": task_type,
+            "user_id": user_id,
             "project_id": project_id,
             "session_id": session_id,
             "phase": phase,
@@ -123,6 +142,22 @@ class QueueManager:
                 await self.clear_active_task(project_id)
             if session_id:
                 await self.clear_active_task_for_session(session_id)
+
+        if user_id:
+            await self._publish_job_event(
+                user_id=user_id,
+                event_type="job.updated",
+                data={
+                    "task_id": task_id,
+                    "status": status,
+                    "message": message,
+                    "phase": phase,
+                    "step": step,
+                    "task_type": task_type,
+                    "project_id": project_id,
+                    "session_id": session_id,
+                },
+            )
 
     async def get_status(self, task_id: str) -> Optional[Dict]:
         """Get task status"""
@@ -154,6 +189,7 @@ class QueueManager:
             return
 
         current_data["status"] = "cancelled"
+        user_id = current_data.get("user_id")
         project_id = current_data.get("project_id")
         session_id = current_data.get("session_id")
 
@@ -174,6 +210,19 @@ class QueueManager:
             active_task_id_sess = await self.get_active_task_for_session(session_id)
             if active_task_id_sess == task_id:
                 await self.clear_active_task_for_session(session_id)
+
+        if user_id:
+            await self._publish_job_event(
+                user_id=user_id,
+                event_type="job.updated",
+                data={
+                    "task_id": task_id,
+                    "status": "cancelled",
+                    "task_type": current_data.get("task_type"),
+                    "project_id": project_id,
+                    "session_id": session_id,
+                },
+            )
 
     async def get_all_active_tasks(self) -> list:
         """Get all active task IDs currently tracked"""
@@ -203,3 +252,11 @@ class QueueManager:
             "ts": datetime.utcnow().isoformat()
         }
         await self.client.publish(f"progress:{task_id}", json.dumps(event, cls=CustomEncoder))
+
+    async def _publish_job_event(self, user_id: str, event_type: str, data: Dict[str, Any]):
+        """Publish job lifecycle event to user notification channel for WS clients."""
+        payload = {
+            "type": event_type,
+            "data": data,
+        }
+        await self.client.publish(f"notifications:{user_id}", json.dumps(payload, cls=CustomEncoder))

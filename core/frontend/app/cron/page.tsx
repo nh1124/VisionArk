@@ -23,7 +23,7 @@ interface ScheduledTask {
     project_id: string | null;
     project_name: string | null;
     task_type: string;
-    payload: any;
+    payload: Record<string, unknown>;
     scheduled_at: string;
     recurring_rule: string | null;
     status: string;
@@ -44,6 +44,28 @@ interface SessionMinimal {
 }
 
 type TabType = "upcoming" | "history";
+type RecurrenceMode = "once" | "hourly" | "daily" | "weekly" | "custom";
+
+function recurrenceModeFromRule(rule: string | null): RecurrenceMode {
+    if (!rule) return "once";
+    if (rule === "@hourly" || rule === "0 * * * *") return "hourly";
+    if (rule === "@daily" || rule === "0 0 * * *") return "daily";
+    if (rule === "@weekly" || rule === "0 0 * * 0") return "weekly";
+    return "custom";
+}
+
+function payloadString(payload: Record<string, unknown>, key: string): string {
+    const value = payload[key];
+    return typeof value === "string" ? value : "";
+}
+
+interface ProjectListResponse {
+    projects?: Array<{ id: string; display_name?: string; name?: string }>;
+}
+
+interface SessionListResponse {
+    sessions?: Array<{ id: string; title?: string | null; is_default?: boolean; last_message_at?: string | null }>;
+}
 
 export default function CronTasksPage() {
     const [tasks, setTasks] = useState<ScheduledTask[]>([]);
@@ -62,8 +84,10 @@ export default function CronTasksPage() {
         session_id: "",
         message: "",
         scheduled_at: "",
-        recurring_rule: ""
+        recurring_mode: "once" as RecurrenceMode,
+        custom_cron: "",
     });
+    const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
     const loadTasks = async () => {
         setLoading(true);
@@ -85,9 +109,9 @@ export default function CronTasksPage() {
         try {
             const response = await apiFetch("/api/agents/project/list");
             if (response.ok) {
-                const data = await response.json();
+                const data: ProjectListResponse = await response.json();
                 if (data.projects && Array.isArray(data.projects)) {
-                    setProjects(data.projects.map((p: any) => ({
+                    setProjects(data.projects.map((p) => ({
                         id: p.id,
                         name: p.display_name || p.name
                     })));
@@ -107,12 +131,12 @@ export default function CronTasksPage() {
         try {
             const response = await apiFetch(`/api/agents/project/${projectId}/sessions`);
             if (response.ok) {
-                const data = await response.json();
-                setSessions((data.sessions || []).map((s: any) => ({
+                const data: SessionListResponse = await response.json();
+                setSessions((data.sessions || []).map((s) => ({
                     id: s.id,
-                    title: s.title,
-                    is_default: s.is_default,
-                    last_message_at: s.last_message_at,
+                    title: s.title || null,
+                    is_default: Boolean(s.is_default),
+                    last_message_at: s.last_message_at || null,
                 })));
             }
         } catch (e) {
@@ -173,10 +197,11 @@ export default function CronTasksPage() {
 
         setFormData({
             project_id: task.project_id || "",
-            session_id: task.payload?.session_id || "",
-            message: task.payload?.message || "",
+            session_id: payloadString(task.payload, "session_id"),
+            message: payloadString(task.payload, "message"),
             scheduled_at: dateStr,
-            recurring_rule: task.recurring_rule || ""
+            recurring_mode: recurrenceModeFromRule(task.recurring_rule),
+            custom_cron: recurrenceModeFromRule(task.recurring_rule) === "custom" ? (task.recurring_rule || "") : "",
         });
         setIsModalOpen(true);
     };
@@ -192,7 +217,8 @@ export default function CronTasksPage() {
             session_id: "",
             message: "",
             scheduled_at: dateStr,
-            recurring_rule: ""
+            recurring_mode: "once",
+            custom_cron: "",
         });
         setIsModalOpen(true);
     };
@@ -202,6 +228,16 @@ export default function CronTasksPage() {
             showToast("Please fill in all required fields.", "error");
             return;
         }
+        if (formData.recurring_mode === "custom" && !formData.custom_cron.trim()) {
+            showToast("Custom cron is required when recurrence is Custom.", "error");
+            return;
+        }
+
+        let recurringRule: string | null = null;
+        if (formData.recurring_mode === "hourly") recurringRule = "@hourly";
+        if (formData.recurring_mode === "daily") recurringRule = "@daily";
+        if (formData.recurring_mode === "weekly") recurringRule = "@weekly";
+        if (formData.recurring_mode === "custom") recurringRule = formData.custom_cron.trim();
 
         const taskPayload: Record<string, string> = { message: formData.message };
         if (formData.session_id) {
@@ -212,7 +248,8 @@ export default function CronTasksPage() {
             project_id: formData.project_id,
             task_type: "POST_MESSAGE",
             scheduled_at: new Date(formData.scheduled_at).toISOString(),
-            recurring_rule: formData.recurring_rule || null,
+            recurring_rule: recurringRule,
+            recurrence_timezone: browserTimezone,
             payload: taskPayload,
         };
 
@@ -354,14 +391,14 @@ export default function CronTasksPage() {
                                         <td className="px-6 py-4">
                                             {task.task_type === 'POST_MESSAGE' ? (
                                                 <div className="flex flex-col gap-0.5">
-                                                    {task.payload?.message && (
+                                                    {payloadString(task.payload, "message") && (
                                                         <div className="max-w-[200px] truncate text-xs text-gray-300 italic">
-                                                            "{task.payload.message}"
+                                                            &quot;{payloadString(task.payload, "message")}&quot;
                                                         </div>
                                                     )}
-                                                    {task.payload?.session_id ? (
+                                                    {payloadString(task.payload, "session_id") ? (
                                                         <span className="text-[10px] text-cyan-700 font-mono">
-                                                            Session: ...{task.payload.session_id.slice(-8)}
+                                                            Session: ...{payloadString(task.payload, "session_id").slice(-8)}
                                                         </span>
                                                     ) : (
                                                         <span className="text-[10px] text-yellow-700">Auto session</span>
@@ -504,15 +541,28 @@ export default function CronTasksPage() {
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Recurrence (Optional)</label>
-                                    <input
-                                        type="text"
+                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Recurrence</label>
+                                    <select
                                         className="w-full bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-cyan-500"
-                                        placeholder="@daily, @weekly"
-                                        value={formData.recurring_rule}
-                                        onChange={e => setFormData({ ...formData, recurring_rule: e.target.value })}
-                                    />
-                                    <p className="text-[10px] text-gray-600 mt-1">Format: @daily, @hourly, or cron</p>
+                                        value={formData.recurring_mode}
+                                        onChange={e => setFormData({ ...formData, recurring_mode: e.target.value as RecurrenceMode })}
+                                    >
+                                        <option value="once">Once</option>
+                                        <option value="hourly">Hourly</option>
+                                        <option value="daily">Daily</option>
+                                        <option value="weekly">Weekly</option>
+                                        <option value="custom">Custom Cron</option>
+                                    </select>
+                                    {formData.recurring_mode === "custom" && (
+                                        <input
+                                            type="text"
+                                            className="mt-2 w-full bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-cyan-500"
+                                            placeholder="e.g. 30 9 * * 1-5"
+                                            value={formData.custom_cron}
+                                            onChange={e => setFormData({ ...formData, custom_cron: e.target.value })}
+                                        />
+                                    )}
+                                    <p className="text-[10px] text-gray-600 mt-1">Timezone: {browserTimezone}</p>
                                 </div>
                             </div>
                         </div>
