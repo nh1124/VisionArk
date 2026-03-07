@@ -2093,11 +2093,12 @@ async def list_available_skills(
     # description, tools, or instructions is immediately reflected without needing
     # a manual migration or server restart.
     try:
-        from domains.orchestration2.bootstrap.definition_refresh_service import refresh_core_sync
+        from domains.orchestration2.bootstrap.definition_refresh_service import refresh_core_sync, refresh_integrations
         from shared.database import get_engine
         import asyncio
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, refresh_core_sync, get_engine(), identity.user_id)
+        await refresh_integrations(identity.user_id, db)
     except Exception as exc:
         import logging
         logging.getLogger(__name__).warning(

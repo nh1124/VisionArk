@@ -1,0 +1,60 @@
+{
+    "id": "antigravity",
+    "name": "Antigravity CLI",
+    "description": "Run Antigravity CLI operations on connected native devices.",
+    "icon": "🚀",
+    "color": "bg-purple-600/10 text-purple-400",
+    "category": "developer",
+    "authType": "api_key",
+    "config_fields": [
+        {
+            "key": "default_device_id",
+            "label": "Default Device ID",
+            "type": "text",
+            "description": "Device to use by default (leave blank for auto-selection)"
+        },
+        {
+            "key": "default_timeout_sec",
+            "label": "Default Timeout (seconds)",
+            "type": "number",
+            "description": "Maximum time to wait for an Antigravity command to complete",
+            "default": 60
+        },
+        {
+            "key": "allowed_workdirs",
+            "label": "Allowed Working Directories",
+            "type": "text",
+            "description": "Comma-separated list of directories Antigravity is permitted to operate in"
+        },
+        {
+            "key": "profile",
+            "label": "Execution Profile",
+            "type": "select",
+            "options": ["safe", "standard", "power"],
+            "description": "Controls default risk tolerance for Antigravity operations",
+            "default": "standard"
+        }
+    ],
+    "setup_instructions": [
+        {
+            "step": 1,
+            "title": "Install the Antigravity CLI",
+            "content": "Install the Antigravity CLI on each device. Verify with 'antigravity --version'."
+        },
+        {
+            "step": 2,
+            "title": "Configure Authentication",
+            "content": "If Antigravity requires an API key or token, enter it above. It will be stored encrypted."
+        },
+        {
+            "step": 3,
+            "title": "Connect a Native Device",
+            "content": "Ensure at least one native device is registered and online in the Devices panel."
+        },
+        {
+            "step": 4,
+            "title": "Test the Connection",
+            "content": "Ask an agent to run 'antigravity_check_runtime' to confirm the CLI is reachable."
+        }
+    ]
+}

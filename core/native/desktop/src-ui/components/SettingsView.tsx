@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from "react"
 import { invoke, isTauri } from "@tauri-apps/api/core"
 import { apiFetch, apiJson, getApiBase, setApiBase, initApiBase } from "../lib/api"
-import { User, Cpu, Server, Globe, Link, Database, Key, FileText, FolderOpen } from "lucide-react"
+import { User, Cpu, Server, Globe, Link, Database, Key, FileText, ChevronDown, ChevronRight, Puzzle } from "lucide-react"
 
 const IS_TAURI = isTauri()
 
-type Tab = "general" | "ai" | "services" | "account"
+type Tab = "general" | "ai" | "services" | "integrations" | "account"
 
 interface GeneralSettings {
   language: string
@@ -32,8 +32,29 @@ const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "general", label: "General", icon: Globe },
   { id: "ai", label: "AI", icon: Cpu },
   { id: "services", label: "Services", icon: Server },
+  { id: "integrations", label: "Integrations", icon: Puzzle },
   { id: "account", label: "Account", icon: User },
 ]
+
+// Manifest shape returned by GET /api/settings/integrations/hub
+interface ManifestItem {
+  id: string
+  name: string
+  description: string
+  icon: string
+  color?: string
+  category?: string
+  authType?: string
+  config_fields?: Array<{
+    key: string
+    label: string
+    type: string
+    description?: string
+    default?: any
+    options?: string[]
+  }>
+  setup_instructions?: Array<{ step: number; title: string; content: string }>
+}
 
 const IANA_TIMEZONES = typeof Intl !== "undefined"
   ? ["UTC", ...Intl.supportedValuesOf("timeZone")]
@@ -62,6 +83,17 @@ export default function SettingsView() {
   // Services
   const [services, setServices] = useState<Service[]>([])
   const [lbsForm, setLbsForm] = useState({ base_url: "", api_key: "" })
+
+  // Integrations hub (dynamic, manifest-driven)
+  const [hubCatalog, setHubCatalog] = useState<ManifestItem[]>([])
+  const [serviceMap, setServiceMap] = useState<Record<string, Service>>({})
+  const [integrationExpanded, setIntegrationExpanded] = useState<Record<string, boolean>>({})
+  const [integrationSaving, setIntegrationSaving] = useState<Record<string, boolean>>({})
+  // formValues[service_id][field_key] = value
+  const [formValues, setFormValues] = useState<Record<string, Record<string, any>>>({})
+  // api key inputs kept separate (never pre-filled)
+  const [apiKeyInputs, setApiKeyInputs] = useState<Record<string, string>>({})
+  const [categoryFilter, setCategoryFilter] = useState<string>("all")
 
   // Connection (server URL)
   const [serverUrl, setServerUrl] = useState("")
@@ -94,6 +126,12 @@ export default function SettingsView() {
   }, [])
 
   useEffect(() => {
+    apiJson<ManifestItem[]>("/api/settings/integrations/hub")
+      .then((catalog) => setHubCatalog(catalog || []))
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
     apiJson<any>("/api/settings")
       .then((data) => {
         const g = data.general_settings || {}
@@ -109,10 +147,26 @@ export default function SettingsView() {
           anthropic_api_key: a.anthropic_api_key ? "********" : "",
           default_model: a.default_model || "",
         })
-        setServices(data.services || [])
-        const lbs = (data.services || []).find((s: Service) => s.service_name === "lbs")
+        const svcList: Service[] = data.services || []
+        setServices(svcList)
+        const lbs = svcList.find((s: Service) => s.service_name === "lbs")
         if (lbs) setLbsForm((f) => ({ ...f, base_url: lbs.base_url }))
         if (data.profile) setProfile({ username: data.profile.username, email: data.profile.email || "" })
+
+        // Build a map for quick lookup in the integrations tab
+        const map: Record<string, Service> = {}
+        for (const s of svcList) map[s.service_name] = s
+        setServiceMap(map)
+
+        // Pre-populate form values from existing service configs
+        setFormValues((prev) => {
+          const next = { ...prev }
+          for (const s of svcList) {
+            const cfg: Record<string, any> = (s as any).config || {}
+            next[s.service_name] = { ...cfg }
+          }
+          return next
+        })
       })
       .catch(() => { })
   }, [])
@@ -222,6 +276,64 @@ export default function SettingsView() {
       showMsg("error", e.message || "Failed to change password")
     } finally {
       setSaving(false)
+    }
+  }
+
+  // ── Integration helpers (manifest-driven) ────────────────────────────────
+
+  function setFormField(id: string, key: string, value: any) {
+    setFormValues((prev) => ({ ...prev, [id]: { ...prev[id], [key]: value } }))
+  }
+
+  async function toggleIntegrationActive(manifest: ManifestItem) {
+    const current = serviceMap[manifest.id]
+    const next_active = !(current?.is_active ?? false)
+    // Optimistic update
+    setServiceMap((prev) => ({
+      ...prev,
+      [manifest.id]: { ...(prev[manifest.id] ?? { id: 0, service_name: manifest.id, base_url: "local", is_active: false }), is_active: next_active },
+    }))
+    try {
+      const updated = await apiJson<Service>("/api/settings/services", {
+        method: "POST",
+        body: JSON.stringify({ service_name: manifest.id, base_url: "local", is_active: next_active }),
+      })
+      setServiceMap((prev) => ({ ...prev, [manifest.id]: updated }))
+    } catch (e: any) {
+      // Revert
+      setServiceMap((prev) => ({ ...prev, [manifest.id]: current }))
+      showMsg("error", e.message || "Failed to update")
+    }
+  }
+
+  async function saveIntegration(manifest: ManifestItem) {
+    setIntegrationSaving((p) => ({ ...p, [manifest.id]: true }))
+    try {
+      const fields = formValues[manifest.id] || {}
+      const config: Record<string, any> = {}
+      for (const field of manifest.config_fields ?? []) {
+        const val = fields[field.key]
+        if (val !== undefined && val !== "") config[field.key] = val
+      }
+      const body: Record<string, any> = {
+        service_name: manifest.id,
+        base_url: fields._base_url || "local",
+        config,
+        is_active: serviceMap[manifest.id]?.is_active ?? false,
+      }
+      const apiKey = apiKeyInputs[manifest.id]
+      if (apiKey) body.api_key = apiKey
+      const updated = await apiJson<Service>("/api/settings/services", {
+        method: "POST",
+        body: JSON.stringify(body),
+      })
+      setServiceMap((prev) => ({ ...prev, [manifest.id]: updated }))
+      setApiKeyInputs((p) => ({ ...p, [manifest.id]: "" }))
+      showMsg("success", `${manifest.name} saved`)
+    } catch (e: any) {
+      showMsg("error", e.message || "Failed to save")
+    } finally {
+      setIntegrationSaving((p) => ({ ...p, [manifest.id]: false }))
     }
   }
 
@@ -571,6 +683,217 @@ export default function SettingsView() {
                 {saving ? "Saving…" : "Save LBS"}
               </button>
             </div>
+          </div>
+        )}
+
+        {/* ── Integrations Tab ─────────────────────────────────────────────── */}
+        {tab === "integrations" && (
+          <div className="space-y-4 max-w-lg">
+            <div>
+              <h2 className="text-lg font-bold mb-1">Integrations</h2>
+              <p className="text-xs text-gray-500">
+                Connect external tools and services. Toggle to enable, then expand to configure.
+              </p>
+            </div>
+
+            {/* Category filter */}
+            {hubCatalog.length > 0 && (
+              <div className="flex gap-1.5 flex-wrap">
+                {["all", ...Array.from(new Set(hubCatalog.map((h) => h.category).filter(Boolean)))].map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => setCategoryFilter(cat as string)}
+                    className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
+                      categoryFilter === cat
+                        ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30"
+                        : "bg-gray-800 text-gray-500 hover:text-gray-300 border border-transparent"
+                    }`}
+                  >
+                    {String(cat).charAt(0).toUpperCase() + String(cat).slice(1)}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {hubCatalog.length === 0 && (
+              <p className="text-xs text-gray-600 italic">Loading integrations…</p>
+            )}
+
+            {hubCatalog
+              .filter((item) => categoryFilter === "all" || item.category === categoryFilter)
+              .map((manifest) => {
+                const svc = serviceMap[manifest.id]
+                const isActive = svc?.is_active ?? false
+                const expanded = integrationExpanded[manifest.id] ?? false
+                const isSaving = integrationSaving[manifest.id] ?? false
+                const fields = formValues[manifest.id] || {}
+
+                return (
+                  <div
+                    key={manifest.id}
+                    className={`border rounded-2xl overflow-hidden transition-colors ${
+                      isActive
+                        ? "border-cyan-500/30 bg-cyan-500/5"
+                        : "border-gray-800 bg-gray-900"
+                    }`}
+                  >
+                    {/* Card header */}
+                    <div className="flex items-center gap-3 px-5 py-4">
+                      <span className="text-2xl select-none">{manifest.icon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-bold text-gray-100">{manifest.name}</p>
+                          {svc && (
+                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 uppercase tracking-wider">
+                              {isActive ? "active" : "inactive"}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-gray-500 mt-0.5 line-clamp-1">{manifest.description}</p>
+                      </div>
+
+                      {/* Active toggle */}
+                      <button
+                        onClick={() => toggleIntegrationActive(manifest)}
+                        title={isActive ? "Disable" : "Enable"}
+                        className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
+                          isActive ? "bg-cyan-500" : "bg-gray-700"
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                            isActive ? "translate-x-6" : "translate-x-1"
+                          }`}
+                        />
+                      </button>
+
+                      {/* Expand / collapse */}
+                      <button
+                        onClick={() =>
+                          setIntegrationExpanded((p) => ({ ...p, [manifest.id]: !p[manifest.id] }))
+                        }
+                        className="p-1.5 text-gray-500 hover:text-gray-300 transition-colors rounded-lg hover:bg-gray-800"
+                      >
+                        {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                      </button>
+                    </div>
+
+                    {/* Expanded config */}
+                    {expanded && (
+                      <div className="border-t border-gray-800/60 px-5 py-4 space-y-4">
+                        {/* Setup instructions (collapsed by default) */}
+                        {manifest.setup_instructions && manifest.setup_instructions.length > 0 && (
+                          <details className="group">
+                            <summary className="cursor-pointer text-[11px] font-semibold text-gray-500 hover:text-gray-300 uppercase tracking-wider select-none list-none flex items-center gap-1">
+                              <ChevronRight size={12} className="group-open:rotate-90 transition-transform" />
+                              Setup Instructions
+                            </summary>
+                            <ol className="mt-2 space-y-2 pl-4">
+                              {manifest.setup_instructions.map((s) => (
+                                <li key={s.step} className="text-[11px] text-gray-500">
+                                  <span className="font-semibold text-gray-400">{s.step}. {s.title}</span>
+                                  <p className="mt-0.5 text-gray-600">{s.content}</p>
+                                </li>
+                              ))}
+                            </ol>
+                          </details>
+                        )}
+
+                        {/* API Key field (when authType === "api_key") */}
+                        {manifest.authType === "api_key" && (
+                          <div>
+                            <label className="block text-[11px] font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
+                              API Key
+                            </label>
+                            <input
+                              type="password"
+                              value={apiKeyInputs[manifest.id] ?? ""}
+                              onChange={(e) =>
+                                setApiKeyInputs((p) => ({ ...p, [manifest.id]: e.target.value }))
+                              }
+                              placeholder={svc ? "Leave blank to keep existing key" : "Enter API key…"}
+                              className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-cyan-500 font-mono"
+                            />
+                          </div>
+                        )}
+
+                        {/* Base URL field (when authType requires it) */}
+                        {manifest.authType === "shared" && (
+                          <div>
+                            <label className="block text-[11px] font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
+                              Base URL
+                            </label>
+                            <input
+                              value={fields._base_url ?? svc?.base_url ?? ""}
+                              onChange={(e) => setFormField(manifest.id, "_base_url", e.target.value)}
+                              placeholder="https://…"
+                              className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-cyan-500 font-mono"
+                            />
+                          </div>
+                        )}
+
+                        {/* Dynamic config fields from manifest */}
+                        {manifest.config_fields?.map((field) => (
+                          <div key={field.key}>
+                            <label className="block text-[11px] font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
+                              {field.label}
+                            </label>
+
+                            {field.type === "select" ? (
+                              <select
+                                value={fields[field.key] ?? field.default ?? ""}
+                                onChange={(e) => setFormField(manifest.id, field.key, e.target.value)}
+                                className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-gray-200 focus:outline-none focus:border-cyan-500"
+                              >
+                                {field.options?.map((opt) => (
+                                  <option key={opt} value={opt}>{opt}</option>
+                                ))}
+                              </select>
+                            ) : field.type === "checkbox" ? (
+                              <label className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={!!(fields[field.key] ?? field.default ?? false)}
+                                  onChange={(e) => setFormField(manifest.id, field.key, e.target.checked)}
+                                  className="rounded border-gray-700 bg-gray-800 text-cyan-500"
+                                />
+                                <span className="text-sm text-gray-300">{field.description}</span>
+                              </label>
+                            ) : field.type === "number" ? (
+                              <input
+                                type="number"
+                                value={fields[field.key] ?? field.default ?? ""}
+                                onChange={(e) => setFormField(manifest.id, field.key, e.target.value)}
+                                className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-gray-200 focus:outline-none focus:border-cyan-500"
+                              />
+                            ) : (
+                              <input
+                                type="text"
+                                value={fields[field.key] ?? field.default ?? ""}
+                                onChange={(e) => setFormField(manifest.id, field.key, e.target.value)}
+                                placeholder={field.description}
+                                className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-cyan-500"
+                              />
+                            )}
+
+                            {field.type !== "checkbox" && field.description && (
+                              <p className="text-[10px] text-gray-600 mt-1">{field.description}</p>
+                            )}
+                          </div>
+                        ))}
+
+                        <button
+                          onClick={() => saveIntegration(manifest)}
+                          disabled={isSaving}
+                          className="px-6 py-2.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white text-sm font-semibold rounded-xl transition-colors"
+                        >
+                          {isSaving ? "Saving…" : "Save"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
           </div>
         )}
 

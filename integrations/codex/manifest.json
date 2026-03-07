@@ -1,0 +1,60 @@
+{
+    "id": "codex",
+    "name": "Codex CLI",
+    "description": "Run AI-powered coding tasks on your local machine via the Codex CLI.",
+    "icon": "💻",
+    "color": "bg-green-600/10 text-green-400",
+    "category": "developer",
+    "authType": "api_key",
+    "config_fields": [
+        {
+            "key": "default_device_id",
+            "label": "Default Device ID",
+            "type": "text",
+            "description": "Device to use by default (leave blank for auto-selection)"
+        },
+        {
+            "key": "default_timeout_sec",
+            "label": "Default Timeout (seconds)",
+            "type": "number",
+            "description": "Maximum time to wait for a Codex task to complete",
+            "default": 120
+        },
+        {
+            "key": "allowed_workdirs",
+            "label": "Allowed Working Directories",
+            "type": "text",
+            "description": "Comma-separated list of directories Codex is permitted to operate in"
+        },
+        {
+            "key": "profile",
+            "label": "Execution Profile",
+            "type": "select",
+            "options": ["safe", "standard", "power"],
+            "description": "Controls default risk tolerance for Codex operations",
+            "default": "standard"
+        }
+    ],
+    "setup_instructions": [
+        {
+            "step": 1,
+            "title": "Install the Codex CLI",
+            "content": "Run 'npm install -g @openai/codex' on each device where you want to use Codex. Verify with 'codex --version'."
+        },
+        {
+            "step": 2,
+            "title": "Enter your OpenAI API Key",
+            "content": "Paste your OpenAI API key in the field above. It will be stored encrypted and used to authenticate Codex CLI calls."
+        },
+        {
+            "step": 3,
+            "title": "Connect a Native Device",
+            "content": "Ensure at least one native device (desktop or server) is registered and online in the Devices panel."
+        },
+        {
+            "step": 4,
+            "title": "Test the Connection",
+            "content": "Ask an agent to run 'codex_check_runtime' to confirm the CLI is reachable on your device."
+        }
+    ]
+}

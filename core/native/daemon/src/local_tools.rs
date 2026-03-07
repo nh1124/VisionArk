@@ -168,40 +168,79 @@ fn window_info_to_json(w: &activity::WindowInfo) -> Value {
 // ════════════════════════════════════════════════════════════════════════════════
 
 async fn run_shell(args: &Value) -> ToolResult {
-    let cmd = match args["cmd"].as_str() {
-        Some(c) => c.to_string(),
-        None => return ToolResult::Err("run_shell: missing 'cmd'".into()),
-    };
     let timeout_secs = args["timeout"].as_u64().unwrap_or(30);
     let cwd = args["cwd"].as_str().map(|s| s.to_string());
 
-    info!("run_shell: {}", cmd);
-
-    #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut c = tokio::process::Command::new("cmd");
-        c.args(["/C", &cmd]);
-        c
-    };
-    #[cfg(not(target_os = "windows"))]
-    let mut command = {
-        let mut c = tokio::process::Command::new("sh");
-        c.args(["-c", &cmd]);
-        c
+    // When `argv` is provided, spawn directly without a shell to avoid all
+    // platform-specific quoting issues (cmd.exe on Windows mangles quoted args).
+    let mut command = if let Some(argv_arr) = args["argv"].as_array() {
+        let tokens: Vec<&str> = argv_arr.iter().filter_map(|v| v.as_str()).collect();
+        if tokens.is_empty() {
+            return ToolResult::Err("run_shell: argv array is empty".into());
+        }
+        info!("run_shell (argv): {:?}", tokens);
+        // On Windows, .cmd wrapper scripts (e.g. npm-installed CLIs like codex, claude)
+        // cannot be spawned directly — they require cmd.exe.
+        // We pass each argv token as a separate .arg() so Rust encodes them individually
+        // for CreateProcess, avoiding any shell metacharacter injection from the caller.
+        #[cfg(target_os = "windows")]
+        {
+            let mut c = tokio::process::Command::new("cmd");
+            c.arg("/C");
+            c.args(&tokens);
+            c
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let mut c = tokio::process::Command::new(tokens[0]);
+            c.args(&tokens[1..]);
+            c
+        }
+    } else {
+        let cmd = match args["cmd"].as_str() {
+            Some(c) => c.to_string(),
+            None => return ToolResult::Err("run_shell: missing 'cmd' or 'argv'".into()),
+        };
+        info!("run_shell (cmd): {}", cmd);
+        #[cfg(target_os = "windows")]
+        {
+            let mut c = tokio::process::Command::new("cmd");
+            c.args(["/C", &cmd]);
+            c
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let mut c = tokio::process::Command::new("sh");
+            c.args(["-c", &cmd]);
+            c
+        }
     };
 
     if let Some(dir) = cwd {
         command.current_dir(&dir);
     }
 
-    match tokio::time::timeout(Duration::from_secs(timeout_secs), command.output()).await {
+    // kill_on_drop ensures the process is terminated if this future is cancelled
+    // (e.g. by tokio::time::timeout), preventing orphaned grandchild processes
+    // (e.g. node.exe spawned by cmd.exe) from holding stdout/stderr pipes open.
+    command.kill_on_drop(true);
+
+    let mut child = match command.spawn() {
+        Ok(c) => c,
+        Err(e) => return ToolResult::Err(format!("run_shell error: {}", e)),
+    };
+
+    match tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output()).await {
         Ok(Ok(output)) => ToolResult::Ok(json!({
             "stdout": String::from_utf8_lossy(&output.stdout).to_string(),
             "stderr": String::from_utf8_lossy(&output.stderr).to_string(),
             "exit_code": output.status.code().unwrap_or(-1),
         })),
         Ok(Err(e)) => ToolResult::Err(format!("run_shell error: {}", e)),
-        Err(_) => ToolResult::Err(format!("run_shell timed out after {}s", timeout_secs)),
+        Err(_) => {
+            // kill_on_drop(true) kills the process when the future is dropped here
+            ToolResult::Err(format!("run_shell timed out after {}s", timeout_secs))
+        }
     }
 }
 

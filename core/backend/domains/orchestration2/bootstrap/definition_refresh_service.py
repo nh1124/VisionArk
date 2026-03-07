@@ -207,7 +207,15 @@ async def refresh_integrations(user_id: str, db: AsyncSession) -> dict:
     # --- Integration skills ---
     try:
         skill_entries = await load_integration_skills(user_id, db)
-        skills_count = await _upsert_skills_async(db, user_id, skill_entries, origin_type="integration")
+        all_registered, active_registered = await _get_service_registry_status(db, user_id)
+        # Ungated integrations (no ServiceRegistry row at all) are always treated as active.
+        skill_origin_ids = {origin_id for _, origin_id in skill_entries}
+        ungated = skill_origin_ids - all_registered
+        active_services = active_registered | ungated
+        skills_count = await _upsert_skills_async(
+            db, user_id, skill_entries, origin_type="integration",
+            active_services=active_services,
+        )
     except Exception as exc:
         msg = f"Integration skill refresh failed: {exc}"
         logger.warning(msg)
@@ -275,6 +283,24 @@ async def _update_external_comms_skill(
     )
 
 
+async def _get_service_registry_status(
+    db: AsyncSession, user_id: str
+) -> tuple[set[str], set[str]]:
+    """Return (all_registered, active_registered) service name sets for this user.
+
+    all_registered  — every service_name with any row in service_registry
+    active_registered — service names where is_active=True
+    """
+    rows = await db.execute(
+        text("SELECT service_name, is_active FROM service_registry WHERE user_id = :user_id"),
+        {"user_id": user_id},
+    )
+    all_rows = rows.fetchall()
+    all_registered = {r[0] for r in all_rows}
+    active_registered = {r[0] for r in all_rows if r[1]}
+    return all_registered, active_registered
+
+
 async def _upsert_tools_async(
     db: AsyncSession,
     user_id: str,
@@ -329,10 +355,30 @@ async def _upsert_skills_async(
     user_id: str,
     skill_entries: list,  # list of (SkillDef, origin_id_str)
     origin_type: str = "core",
+    active_services: set[str] | None = None,
 ) -> int:
+    """Upsert skills into skill_registry.
+
+    When active_services is provided (for integration skills), is_active is set to:
+      - True  if origin_id is NOT in any ServiceRegistry row (integration is ungated)
+      - True  if origin_id IS in active_services (service is active)
+      - False if a ServiceRegistry row exists for origin_id but it is NOT active
+    Core skills always get is_active=True (active_services=None).
+    """
     now = datetime.utcnow()
     count = 0
     for skill_def, origin_id in skill_entries:
+        # Determine active state for this skill
+        if active_services is None:
+            # Core skills: always active
+            is_active = True
+        elif origin_id not in active_services:
+            # Not in active_services means the service exists in ServiceRegistry
+            # with is_active=False (ungated packages are pre-added to active_services by caller).
+            is_active = False
+        else:
+            is_active = True
+
         vh = _version_hash({"name": skill_def.name, "tools": skill_def.tools, "instructions": getattr(skill_def, "instructions", None)})
         await db.execute(
             text("""
@@ -343,7 +389,7 @@ async def _upsert_skills_async(
                 VALUES
                     (:id, :user_id, :name, :description,
                      CAST(:tools AS JSON), :instructions, FALSE,
-                     :origin_type, :origin_id, 'active', TRUE,
+                     :origin_type, :origin_id, 'active', :is_active,
                      :vh, :now, :now, :now)
                 ON CONFLICT (user_id, name) DO UPDATE SET
                     description  = EXCLUDED.description,
@@ -352,7 +398,7 @@ async def _upsert_skills_async(
                     origin_type  = EXCLUDED.origin_type,
                     origin_id    = EXCLUDED.origin_id,
                     status       = 'active',
-                    is_active    = TRUE,
+                    is_active    = EXCLUDED.is_active,
                     version_hash = EXCLUDED.version_hash,
                     updated_at   = EXCLUDED.updated_at
             """),
@@ -365,6 +411,7 @@ async def _upsert_skills_async(
                 "instructions": getattr(skill_def, "instructions", None),
                 "origin_type": origin_type,
                 "origin_id": origin_id,
+                "is_active": is_active,
                 "vh": vh,
                 "now": now,
             },

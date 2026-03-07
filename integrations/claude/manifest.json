@@ -1,0 +1,67 @@
+{
+    "id": "claude",
+    "name": "Claude CLI",
+    "description": "Delegate AI tasks to the Anthropic Claude CLI running on your local machine.",
+    "icon": "🤖",
+    "color": "bg-orange-600/10 text-orange-400",
+    "category": "developer",
+    "authType": "api_key",
+    "config_fields": [
+        {
+            "key": "default_device_id",
+            "label": "Default Device ID",
+            "type": "text",
+            "description": "Device to use by default (leave blank for auto-selection)"
+        },
+        {
+            "key": "default_timeout_sec",
+            "label": "Default Timeout (seconds)",
+            "type": "number",
+            "description": "Maximum time to wait for a Claude response (AI responses may be slow)",
+            "default": 300
+        },
+        {
+            "key": "default_model",
+            "label": "Default Model",
+            "type": "text",
+            "description": "Default Claude model to pass to the CLI (e.g. claude-sonnet-4-6). Leave blank to use CLI default.",
+            "default": ""
+        },
+        {
+            "key": "allowed_workdirs",
+            "label": "Allowed Working Directories",
+            "type": "text",
+            "description": "Comma-separated list of directories Claude CLI is permitted to access"
+        },
+        {
+            "key": "profile",
+            "label": "Execution Profile",
+            "type": "select",
+            "options": ["safe", "standard", "power"],
+            "description": "Controls default risk tolerance for Claude CLI operations",
+            "default": "standard"
+        }
+    ],
+    "setup_instructions": [
+        {
+            "step": 1,
+            "title": "Install the Claude CLI",
+            "content": "Run 'npm install -g @anthropic-ai/claude-code' on each device. Verify with 'claude --version'."
+        },
+        {
+            "step": 2,
+            "title": "Enter your Anthropic API Key",
+            "content": "Paste your Anthropic API key above. It will be stored encrypted and used to authenticate Claude CLI calls."
+        },
+        {
+            "step": 3,
+            "title": "Connect a Native Device",
+            "content": "Ensure at least one native device is registered and online in the Devices panel."
+        },
+        {
+            "step": 4,
+            "title": "Test the Connection",
+            "content": "Ask an agent to run 'claude_check_runtime' to confirm the CLI is reachable on your device."
+        }
+    ]
+}

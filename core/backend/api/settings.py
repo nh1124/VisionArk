@@ -7,6 +7,7 @@ import httpx
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 from shared.database import User, UserSettings, ServiceRegistry, ExternalIdentity, get_async_db
 from domains.identity.auth import resolve_identity, Identity
 from shared.password import hash_password, verify_password
@@ -37,9 +38,10 @@ class GeneralSettingsUpdate(BaseModel):
 
 class ServiceRegister(BaseModel):
     service_name: str
-    base_url: str
+    base_url: str = ""
     api_key: Optional[str] = None
-    config: Optional[Dict] = Field(default_factory=dict)
+    config: Optional[Dict] = None   # None = leave existing config untouched
+    is_active: Optional[bool] = None
 
 class ConnectionTest(BaseModel):
     base_url: str
@@ -243,22 +245,36 @@ async def register_service(
     encrypted_key = encrypt_string(reg.api_key) if reg.api_key else None
     
     if service:
-        service.base_url = reg.base_url
+        if reg.base_url:
+            service.base_url = reg.base_url
         if encrypted_key:
             service.api_key_encrypted = encrypted_key
-        service.config = reg.config
+        if reg.config is not None:
+            service.config = reg.config
+            flag_modified(service, "config")
+        if reg.is_active is not None:
+            service.is_active = reg.is_active
     else:
         service = ServiceRegistry(
             user_id=identity.user_id,
             service_name=reg.service_name,
-            base_url=reg.base_url,
+            base_url=reg.base_url or "local",
             api_key_encrypted=encrypted_key,
-            config=reg.config
+            config=reg.config or {},
+            is_active=reg.is_active if reg.is_active is not None else True,
         )
         db.add(service)
     
     await db.commit()
     await db.refresh(service)
+
+    # Auto-refresh integration skills into skill_registry so they appear in Agents page
+    try:
+        from domains.orchestration2.bootstrap.definition_refresh_service import refresh_integrations
+        await refresh_integrations(identity.user_id, db)
+    except Exception as _exc:
+        logger.warning("Integration skill refresh after service register failed: %s", _exc)
+
     return service
 
 @router.post("/test-connection")

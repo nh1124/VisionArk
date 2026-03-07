@@ -65,7 +65,8 @@ class IntegrationToolAdapter:
                 session_id=ctx.metadata.get("session_id"),
                 api_key=ctx.metadata.get("api_key"),
                 user_settings=ctx.metadata.get("user_settings", {}),
-                metadata=ctx.metadata,
+                # Merge ctx.metadata and inject run_id so CLI tools can create RunExecutions.
+                metadata={**ctx.metadata, "run_id": ctx.run_id},
             )
         except KeyError as e:
             return orch_fail(call, f"Missing required context for integration tool: {e}")
