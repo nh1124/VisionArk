@@ -14,6 +14,18 @@ const QuickNoteApp = () => {
     const textRef = useRef<HTMLTextAreaElement>(null);
     const appWindow = getCurrentWindow();
 
+    const focusEditor = () => {
+        const el = textRef.current;
+        if (!el) return;
+        try {
+            el.focus({ preventScroll: true });
+        } catch {
+            el.focus();
+        }
+        const pos = el.value.length;
+        el.setSelectionRange(pos, pos);
+    };
+
     // Initialize API bridge and auto-focus
     useEffect(() => {
         const init = async () => {
@@ -26,12 +38,22 @@ const QuickNoteApp = () => {
                 setSelectedProjectId(activeProjectId);
             }
             setIsReady(true);
-            setTimeout(() => {
-                textRef.current?.focus();
-            }, 10);
         };
         init();
     }, []);
+
+    useEffect(() => {
+        // Ensure immediate typing without extra click when Quick Note opens.
+        appWindow.setFocus().catch(() => {});
+        const t1 = window.setTimeout(focusEditor, 0);
+        const t2 = window.setTimeout(focusEditor, 80);
+        const t3 = window.setTimeout(focusEditor, 180);
+        return () => {
+            window.clearTimeout(t1);
+            window.clearTimeout(t2);
+            window.clearTimeout(t3);
+        };
+    }, [appWindow]);
 
     const handleClose = () => {
         appWindow.destroy();
@@ -110,7 +132,7 @@ const QuickNoteApp = () => {
                     onKeyDown={handleKeyDown}
                     placeholder="Type here... (Ctrl+Enter to save, Esc to close)"
                     className="flex-1 bg-black/30 text-white p-3 rounded-lg border border-gray-800 focus:outline-none focus:border-cyan-500/50 resize-none font-sans text-sm"
-                    disabled={isSaving || !isReady}
+                    disabled={isSaving}
                 />
 
                 {/* Footer */}

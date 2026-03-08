@@ -204,7 +204,10 @@ fn spawn_quick_note(app: &tauri::AppHandle) {
         .focused(true)
         .build()
     {
-        Ok(_) => {}
+        Ok(win) => {
+            let _ = win.show();
+            let _ = win.set_focus();
+        }
         Err(e) => eprintln!("Failed to create quick-note window: {e}"),
     }
 }
