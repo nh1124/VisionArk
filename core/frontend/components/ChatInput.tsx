@@ -4,7 +4,7 @@ import { useState, useRef, DragEvent, useEffect, memo } from "react";
 import { createPortal } from "react-dom";
 import { useNotification } from "@/lib/NotificationContext";
 import { useIsMobile } from "@/hooks/useIsMobile";
-import { Copy, Calendar } from "lucide-react";
+import { Calendar, Copy, FileAudio2, FileImage, FileText, FileVideo, Paperclip, X } from "lucide-react";
 
 interface ChatInputProps {
     value?: string;
@@ -216,6 +216,14 @@ function ChatInputComponent({
         return (bytes / (1024 * 1024)).toFixed(1) + " MB";
     };
 
+    const renderFileIcon = (file: File) => {
+        if (file.type.startsWith("image/")) return <FileImage size={16} />;
+        if (file.type === "application/pdf") return <FileText size={16} />;
+        if (file.type.startsWith("video/")) return <FileVideo size={16} />;
+        if (file.type.startsWith("audio/")) return <FileAudio2 size={16} />;
+        return <FileText size={16} />;
+    };
+
     const handleModelSelect = (model: string) => {
         onModelChange?.(model);
         setShowModelMenu(false);
@@ -290,11 +298,8 @@ function ChatInputComponent({
                     className="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-2 border border-gray-700"
                 >
                     <div className="flex items-center gap-2 flex-1">
-                        <div className="w-8 h-8 rounded bg-purple-500/20 flex items-center justify-center text-purple-400">
-                            {file.type.startsWith("image/") ? "🖼️" :
-                                file.type === "application/pdf" ? "📄" :
-                                    file.type.startsWith("video/") ? "🎥" :
-                                        file.type.startsWith("audio/") ? "🎵" : "📎"}
+                        <div className="w-8 h-8 rounded bg-cyan-500/20 flex items-center justify-center text-cyan-400">
+                            {renderFileIcon(file)}
                         </div>
                         <div className="flex-1 min-w-0">
                             <div className="text-sm font-medium text-gray-200 truncate">
@@ -310,7 +315,7 @@ function ChatInputComponent({
                         className="text-gray-400 hover:text-red-400 transition-colors p-1"
                         title="Remove file"
                     >
-                        ✕
+                        <X size={14} />
                     </button>
                 </div>
             ))}
@@ -332,7 +337,7 @@ function ChatInputComponent({
             className={`flex flex-col shadow-2xl transition-[inset,transform,background-color,border-color,border-radius] duration-500 ease-in-out
                 ${isExpanded
                     ? "fixed inset-4 md:inset-x-20 md:inset-y-10 z-[1000] bg-gray-900 border border-gray-700 rounded-3xl overflow-visible"
-                    : `relative ${compact ? "rounded-2xl" : "rounded-3xl"} border overflow-visible ${isDragging ? "border-purple-500 bg-purple-500/10" : "border-gray-700 bg-gray-900"}`
+                    : `relative ${compact ? "rounded-2xl" : "rounded-3xl"} border overflow-visible ${isDragging ? "border-cyan-500 bg-cyan-500/10" : "border-gray-700 bg-gray-900"}`
                 }`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -419,7 +424,7 @@ function ChatInputComponent({
                                 title="Tools"
                                 disabled={disabled}
                             >
-                                <svg className="w-5 h-5 text-gray-500 group-hover:text-purple-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <svg className="w-5 h-5 text-gray-500 group-hover:text-cyan-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                                 </svg>
@@ -451,7 +456,7 @@ function ChatInputComponent({
                                         }}
                                         className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-white/5 transition-all flex items-center gap-3"
                                     >
-                                        <Copy size={16} className="text-purple-400" /> Clone
+                                        <Copy size={16} className="text-cyan-400" /> Clone
                                     </button>
                                     <button
                                         onClick={() => {
@@ -522,11 +527,11 @@ function ChatInputComponent({
                                                 <button
                                                     key={model.id}
                                                     onClick={() => handleModelSelect(model.id)}
-                                                    className={`w-full text-left px-4 py-2.5 text-sm hover:bg-white/5 transition-all flex items-center justify-between ${selectedModel === model.id ? "text-purple-400 bg-purple-500/5" : "text-gray-300"
+                                                    className={`w-full text-left px-4 py-2.5 text-sm hover:bg-white/5 transition-all flex items-center justify-between ${selectedModel === model.id ? "text-cyan-400 bg-cyan-500/5" : "text-gray-300"
                                                         }`}
                                                 >
                                                     <span>{model.name}</span>
-                                                    {selectedModel === model.id && <div className="w-1.5 h-1.5 rounded-full bg-purple-400 shadow-[0_0_8px_rgba(168,85,247,0.5)]"></div>}
+                                                    {selectedModel === model.id && <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.5)]"></div>}
                                                 </button>
                                             ))}
                                         </div>
@@ -566,7 +571,7 @@ function ChatInputComponent({
                         <button
                             onClick={handleSend}
                             disabled={disabled || (!internalValue.trim() && attachedFiles.length === 0)}
-                            className="p-3 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-800 disabled:text-gray-600 rounded-full shadow-lg transition-all ml-1 min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0"
+                            className="p-3 bg-cyan-500 hover:bg-cyan-400 disabled:bg-gray-800 disabled:text-gray-600 rounded-full shadow-lg transition-all ml-1 min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0"
                             title="Send message"
                         >
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -580,8 +585,9 @@ function ChatInputComponent({
     );
 
     const dragOverlay = isDragging && (
-        <div className="absolute inset-0 pointer-events-none flex items-center justify-center bg-purple-500/10 rounded-3xl">
-            <div className="text-purple-400 text-lg font-semibold">
+        <div className="absolute inset-0 pointer-events-none flex items-center justify-center bg-cyan-500/10 rounded-3xl">
+            <div className="text-cyan-400 text-lg font-semibold flex items-center gap-2">
+                <Paperclip size={18} />
                 Drop files to attach
             </div>
         </div>
@@ -620,3 +626,4 @@ function ChatInputComponent({
 // Memoize the component to prevent unnecessary re-renders from parent
 const ChatInput = memo(ChatInputComponent);
 export default ChatInput;
+

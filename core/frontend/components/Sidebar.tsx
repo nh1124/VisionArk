@@ -369,14 +369,8 @@ export default function Sidebar() {
     const renderHomeSecondary = () => (
         <div className="space-y-5">
             <SecondarySection title="Overview">
-                <SecondaryLink href="/dashboard" active={pathname === "/dashboard"} icon={<Home size={15} />} label="Overview" />
+                <SecondaryLink href="/dashboard" active={pathname === "/dashboard"} icon={<Home size={15} />} label="Dashboard" />
                 <SecondaryLink href="/tasks" active={pathname.startsWith("/tasks")} icon={<CheckSquare size={15} />} label="Today" />
-                <SecondaryLink href="/projects" active={pathname.startsWith("/projects")} icon={<Folder size={15} />} label="Active Projects" />
-                <SecondaryLink href="/workspace" active={pathname.startsWith("/workspace") || pathname.startsWith("/notes")} icon={<Library size={15} />} label="Recent Work" />
-            </SecondarySection>
-            <SecondarySection title="Quick Links">
-                <SecondaryLink href="/cron" active={pathname.startsWith("/cron")} icon={<Clock3 size={15} />} label="Automation Health" />
-                <SecondaryLink href="/settings/devices" active={pathname.startsWith("/settings/devices")} icon={<Monitor size={15} />} label="Devices" />
             </SecondarySection>
         </div>
     );
@@ -634,15 +628,17 @@ export default function Sidebar() {
                     </div>
                 </aside>
 
-                <aside className="w-72 flex flex-col bg-gray-950/80">
-                    <div className="px-4 py-3 border-b border-gray-800/50">
-                        <h2 className="text-sm font-semibold text-gray-200">{secondaryTitles[currentPrimaryNav]}</h2>
-                        <p className="text-[11px] text-gray-500 mt-1">Page navigation and filters</p>
-                    </div>
-                    <div className="flex-1 overflow-y-auto p-3">
-                        {renderSecondaryContent()}
-                    </div>
-                </aside>
+                {currentPrimaryNav !== "home" && (
+                    <aside className="w-72 flex flex-col bg-gray-950/80">
+                        <div className="px-4 py-3 border-b border-gray-800/50">
+                            <h2 className="text-sm font-semibold text-gray-200">{secondaryTitles[currentPrimaryNav]}</h2>
+                            <p className="text-[11px] text-gray-500 mt-1">Page navigation and filters</p>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-3">
+                            {renderSecondaryContent()}
+                        </div>
+                    </aside>
+                )}
             </div>
 
             {menuOpen && menuPos && openMenuProject && (

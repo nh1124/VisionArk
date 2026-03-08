@@ -69,6 +69,11 @@ class BranchChat(BaseModel):
     session_id: Optional[str] = None
 
 
+class CopySessionRequest(BaseModel):
+    message_index: int
+    source_session_id: Optional[str] = None
+
+
 class WorkspaceStats(BaseModel):
     active_agents: int
     tasks_completed: int
@@ -1435,6 +1440,102 @@ async def create_project_session(
     db.add(new_session)
     await db.commit()
     return _session_to_dict(new_session)
+
+
+@router.post("/project/{project_id}/sessions/copy")
+async def copy_project_session(
+    project_id: str,
+    body: CopySessionRequest,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Copy a session up to message_index into a new session in the same project."""
+    proj_res = await db.execute(select(Project).filter(
+        Project.user_id == identity.user_id,
+        Project.id == project_id,
+    ))
+    if not proj_res.scalars().first():
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+
+    # Resolve source session: explicit source_session_id or current default session.
+    source_session: Optional[ChatSession] = None
+    if body.source_session_id:
+        src_res = await db.execute(
+            select(ChatSession).filter(
+                ChatSession.id == body.source_session_id,
+                ChatSession.project_id == project_id,
+                ChatSession.is_archived == False,
+            ).limit(1)
+        )
+        source_session = src_res.scalars().first()
+        if not source_session:
+            raise HTTPException(status_code=404, detail=f"Session '{body.source_session_id}' not found")
+    else:
+        src_res = await db.execute(
+            select(ChatSession).filter(
+                ChatSession.project_id == project_id,
+                ChatSession.is_archived == False,
+                ChatSession.is_default == True,
+            ).limit(1)
+        )
+        source_session = src_res.scalars().first()
+        if not source_session:
+            src_res = await db.execute(
+                select(ChatSession).filter(
+                    ChatSession.project_id == project_id,
+                    ChatSession.is_archived == False,
+                ).order_by(ChatSession.created_at.desc()).limit(1)
+            )
+            source_session = src_res.scalars().first()
+
+    if not source_session:
+        raise HTTPException(status_code=404, detail="No active session to copy")
+
+    msg_res = await db.execute(
+        select(ChatMessage)
+        .filter(ChatMessage.session_id == source_session.id)
+        .order_by(ChatMessage.created_at.asc())
+    )
+    messages = msg_res.scalars().all()
+
+    if body.message_index < 0 or body.message_index >= len(messages):
+        raise HTTPException(status_code=400, detail="Invalid message index")
+
+    copied_messages = messages[: body.message_index + 1]
+    base_title = source_session.title or "Untitled Chat"
+    copied_title = f"{base_title}_copy"
+
+    new_session = ChatSession(
+        id=str(uuid4()),
+        project_id=project_id,
+        title=copied_title,
+        is_archived=False,
+        is_default=False,
+    )
+    db.add(new_session)
+
+    for msg in copied_messages:
+        db.add(ChatMessage(
+            id=str(uuid4()),
+            session_id=new_session.id,
+            role=msg.role,
+            content=msg.content,
+            meta_payload=msg.meta_payload,
+            is_excluded=msg.is_excluded,
+            created_at=msg.created_at,
+        ))
+
+    if copied_messages:
+        new_session.last_message_at = copied_messages[-1].created_at
+
+    await db.commit()
+    await db.refresh(new_session)
+    return {
+        "success": True,
+        "session": _session_to_dict(new_session),
+        "copied_count": len(copied_messages),
+        "source_session_id": source_session.id,
+    }
 
 
 @router.patch("/sessions/{session_id}")

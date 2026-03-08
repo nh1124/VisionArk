@@ -1,17 +1,50 @@
-import React, { useState } from "react"
-import { User, Bot, ChevronDown, ChevronUp, ChevronRight, Sparkles, Copy, Check, ThumbsUp, ThumbsDown, RotateCcw, Trash2, MoreHorizontal } from "lucide-react"
+import React, { useEffect, useRef, useState } from "react"
+import { User, Bot, ChevronDown, ChevronUp, Sparkles, Copy, Check, ThumbsUp, ThumbsDown, RotateCcw, Trash2, MoreHorizontal, MessageSquarePlus, Pencil } from "lucide-react"
 import type { ChatMessage as ChatMessageType } from "../lib/api"
 import MarkdownRenderer from "./MarkdownRenderer"
+
+export type MessageVote = "up" | "down" | null
 
 interface Props {
     message: ChatMessageType
     projectId: string
+    canRegenerate?: boolean
+    canEdit?: boolean
+    onRegenerate?: () => void
+    onDelete?: () => void
+    onEdit?: () => void
+    onBranch?: () => void
+    onVote?: (vote: MessageVote) => void
+    vote?: MessageVote
+    isEditing?: boolean
+    editValue?: string
+    onEditValueChange?: (value: string) => void
+    onEditSubmit?: () => void
+    onEditCancel?: () => void
 }
 
-export default function ChatMessage({ message, projectId }: Props) {
+export default function ChatMessage({
+    message,
+    projectId,
+    canRegenerate = false,
+    canEdit = false,
+    onRegenerate,
+    onDelete,
+    onEdit,
+    onBranch,
+    onVote,
+    vote = null,
+    isEditing = false,
+    editValue = "",
+    onEditValueChange,
+    onEditSubmit,
+    onEditCancel,
+}: Props) {
     const [thinkingOpen, setThinkingOpen] = useState(false)
     const [isCopied, setIsCopied] = useState(false)
     const [isExpanded, setIsExpanded] = useState(false)
+    const [showMoreMenu, setShowMoreMenu] = useState(false)
+    const menuRef = useRef<HTMLDivElement>(null)
 
     const isUser = message.role === "user"
     const contentStr = message.content || ""
@@ -25,6 +58,21 @@ export default function ChatMessage({ message, projectId }: Props) {
         setIsCopied(true)
         setTimeout(() => setIsCopied(false), 2000)
     }
+
+    const handleVote = (nextVote: Exclude<MessageVote, null>) => {
+        if (!onVote) return
+        onVote(vote === nextVote ? null : nextVote)
+    }
+
+    useEffect(() => {
+        const handler = (e: MouseEvent) => {
+            if (!menuRef.current || menuRef.current.contains(e.target as Node)) return
+            setShowMoreMenu(false)
+        }
+
+        document.addEventListener("mousedown", handler)
+        return () => document.removeEventListener("mousedown", handler)
+    }, [])
 
     return (
         <div className={`flex gap-3 py-4 group ${isUser ? "" : ""}`}>
@@ -40,23 +88,51 @@ export default function ChatMessage({ message, projectId }: Props) {
                     {isUser ? "You" : "Assistant"}
                 </div>
                 <div className="text-sm relative">
-                    <div className={`transition-all duration-300 ${isLongMessage && !isExpanded ? "max-h-[300px] overflow-hidden relative" : ""}`}>
-                        <MarkdownRenderer content={contentStr} nodeType="project" nodeName={projectId} projectId={projectId} />
-                        {isLongMessage && !isExpanded && (
-                            <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-gray-950 to-transparent pointer-events-none" />
-                        )}
-                    </div>
-                    {isLongMessage && (
-                        <button
-                            onClick={() => setIsExpanded(!isExpanded)}
-                            className="mt-2 text-xs font-semibold text-cyan-500 hover:text-cyan-400 flex items-center gap-1"
-                        >
-                            {isExpanded ? (
-                                <>Show Less <ChevronUp size={14} /></>
-                            ) : (
-                                <>Read More <ChevronDown size={14} /></>
+                    {isUser && isEditing ? (
+                        <div className="rounded-xl border border-cyan-500/40 bg-gray-900/60 p-3">
+                            <textarea
+                                value={editValue}
+                                onChange={(e) => onEditValueChange?.(e.target.value)}
+                                className="w-full min-h-[72px] bg-transparent text-sm text-gray-100 resize-none outline-none"
+                                placeholder="Edit message..."
+                            />
+                            <div className="mt-2 flex items-center justify-end gap-2">
+                                <button
+                                    onClick={onEditCancel}
+                                    className="px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={onEditSubmit}
+                                    disabled={!editValue.trim()}
+                                    className="px-3 py-1.5 rounded-lg text-xs bg-cyan-600 hover:bg-cyan-500 text-white disabled:opacity-40 disabled:hover:bg-cyan-600 transition-colors"
+                                >
+                                    Update
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <>
+                            <div className={`transition-all duration-300 ${isLongMessage && !isExpanded ? "max-h-[300px] overflow-hidden relative" : ""}`}>
+                                <MarkdownRenderer content={contentStr} nodeType="project" nodeName={projectId} projectId={projectId} />
+                                {isLongMessage && !isExpanded && (
+                                    <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-gray-950 to-transparent pointer-events-none" />
+                                )}
+                            </div>
+                            {isLongMessage && (
+                                <button
+                                    onClick={() => setIsExpanded(!isExpanded)}
+                                    className="mt-2 text-xs font-semibold text-cyan-500 hover:text-cyan-400 flex items-center gap-1"
+                                >
+                                    {isExpanded ? (
+                                        <>Show Less <ChevronUp size={14} /></>
+                                    ) : (
+                                        <>Read More <ChevronDown size={14} /></>
+                                    )}
+                                </button>
                             )}
-                        </button>
+                        </>
                     )}
                 </div>
 
@@ -124,23 +200,96 @@ export default function ChatMessage({ message, projectId }: Props) {
                     </button>
                     {!isUser && (
                         <>
-                            <button className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-500 hover:text-gray-300 transition-all">
+                            <button
+                                onClick={onRegenerate}
+                                disabled={!canRegenerate || !onRegenerate}
+                                className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-500 hover:text-gray-300 transition-all disabled:opacity-40 disabled:hover:bg-transparent"
+                                title="Regenerate"
+                            >
                                 <RotateCcw size={14} />
                             </button>
-                            <button className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-500 hover:text-gray-300 transition-all">
+                            <button
+                                onClick={() => handleVote("up")}
+                                className={`p-1.5 rounded-lg transition-all ${vote === "up"
+                                    ? "bg-green-500/20 text-green-400 hover:bg-green-500/30"
+                                    : "hover:bg-gray-800 text-gray-500 hover:text-gray-300"
+                                    }`}
+                                title="Helpful"
+                            >
                                 <ThumbsUp size={14} />
                             </button>
-                            <button className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-500 hover:text-gray-300 transition-all">
+                            <button
+                                onClick={() => handleVote("down")}
+                                className={`p-1.5 rounded-lg transition-all ${vote === "down"
+                                    ? "bg-red-500/20 text-red-400 hover:bg-red-500/30"
+                                    : "hover:bg-gray-800 text-gray-500 hover:text-gray-300"
+                                    }`}
+                                title="Not helpful"
+                            >
                                 <ThumbsDown size={14} />
                             </button>
                         </>
                     )}
-                    <button className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-500 hover:text-gray-300 transition-all">
+                    <button
+                        onClick={onDelete}
+                        disabled={!onDelete}
+                        className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-500 hover:text-red-400 transition-all disabled:opacity-40 disabled:hover:bg-transparent"
+                        title="Delete from here"
+                    >
                         <Trash2 size={14} />
                     </button>
-                    <button className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-500 hover:text-gray-300 transition-all">
-                        <MoreHorizontal size={14} />
-                    </button>
+                    <div className="relative" ref={menuRef}>
+                        <button
+                            onClick={() => setShowMoreMenu((prev) => !prev)}
+                            className={`p-1.5 rounded-lg transition-all ${showMoreMenu
+                                ? "bg-gray-800 text-gray-300"
+                                : "hover:bg-gray-800 text-gray-500 hover:text-gray-300"
+                                }`}
+                            title="More actions"
+                        >
+                            <MoreHorizontal size={14} />
+                        </button>
+                        {showMoreMenu && (
+                            <div className={`absolute bottom-full mb-2 w-52 max-w-[calc(100vw-1rem)] bg-gray-900 border border-gray-800 rounded-xl shadow-xl py-1 z-30 ${isUser ? "right-0" : "left-0"}`}>
+                                {canEdit && onEdit && (
+                                    <button
+                                        onClick={() => {
+                                            onEdit()
+                                            setShowMoreMenu(false)
+                                        }}
+                                        className="w-full text-left px-3 py-2 text-xs text-gray-300 hover:bg-gray-800 flex items-center gap-2"
+                                    >
+                                        <Pencil size={12} className="text-cyan-400" />
+                                        Edit message
+                                    </button>
+                                )}
+                                {!isUser && onBranch && (
+                                    <button
+                                        onClick={() => {
+                                            onBranch()
+                                            setShowMoreMenu(false)
+                                        }}
+                                        className="w-full text-left px-3 py-2 text-xs text-gray-300 hover:bg-gray-800 flex items-center gap-2"
+                                    >
+                                        <MessageSquarePlus size={12} className="text-purple-400" />
+                                        Copy to new session
+                                    </button>
+                                )}
+                                {onDelete && (
+                                    <button
+                                        onClick={() => {
+                                            onDelete()
+                                            setShowMoreMenu(false)
+                                        }}
+                                        className="w-full text-left px-3 py-2 text-xs text-red-300 hover:bg-red-500/10 flex items-center gap-2"
+                                    >
+                                        <Trash2 size={12} />
+                                        Delete from here
+                                    </button>
+                                )}
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
         </div>

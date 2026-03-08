@@ -271,6 +271,39 @@ export async function getSettings(): Promise<any> {
     return _apiJson<any>("/api/settings")
 }
 
+export interface NotificationItem {
+    id: string
+    user_id: string
+    project_id: string | null
+    type: "info" | "success" | "warning" | "error"
+    title: string
+    content: string
+    link?: string | null
+    is_read: boolean
+    created_at: string
+}
+
+export interface NotificationListResponse {
+    notifications: NotificationItem[]
+    unread_count: number
+}
+
+export async function listNotifications(limit = 30, offset = 0): Promise<NotificationListResponse> {
+    return _apiJson<NotificationListResponse>(`/api/notifications?limit=${limit}&offset=${offset}`)
+}
+
+export async function markNotificationAsRead(notificationId: string): Promise<{ success: boolean }> {
+    return _apiJson<{ success: boolean }>(`/api/notifications/${notificationId}/read`, {
+        method: "POST",
+    })
+}
+
+export async function markAllNotificationsAsRead(): Promise<{ success: boolean }> {
+    return _apiJson<{ success: boolean }>("/api/notifications/read-all", {
+        method: "POST",
+    })
+}
+
 // ─── Projects ──────────────────────────────────────────────────────────────────
 
 export interface Project {
@@ -399,6 +432,57 @@ export async function sendChat(
         throw new Error(`Chat API ${res.status}: ${text}`)
     }
     return res.json() as Promise<{ task_id: string; session_id?: string }>
+}
+
+export async function truncateProjectMessages(
+    projectId: string,
+    messageIndex: number,
+    sessionId?: string | null
+): Promise<{ status: string; deleted_count: number }> {
+    return _apiJson<{ status: string; deleted_count: number }>(
+        `/api/agents/project/${projectId}/messages/truncate`,
+        {
+            method: "DELETE",
+            body: JSON.stringify({
+                message_index: messageIndex,
+                session_id: sessionId ?? undefined,
+            }),
+        }
+    )
+}
+
+export async function branchProjectChat(
+    projectId: string,
+    messageIndex: number,
+    sessionId?: string | null
+): Promise<{ success: boolean; new_project_id: string; new_name?: string }> {
+    return _apiJson<{ success: boolean; new_project_id: string; new_name?: string }>(
+        `/api/agents/project/${projectId}/branch`,
+        {
+            method: "POST",
+            body: JSON.stringify({
+                message_index: messageIndex,
+                session_id: sessionId ?? undefined,
+            }),
+        }
+    )
+}
+
+export async function copyProjectSession(
+    projectId: string,
+    messageIndex: number,
+    sourceSessionId?: string | null
+): Promise<{ success: boolean; copied_count: number; source_session_id: string; session: Session }> {
+    return _apiJson<{ success: boolean; copied_count: number; source_session_id: string; session: Session }>(
+        `/api/agents/project/${projectId}/sessions/copy`,
+        {
+            method: "POST",
+            body: JSON.stringify({
+                message_index: messageIndex,
+                source_session_id: sourceSessionId ?? undefined,
+            }),
+        }
+    )
 }
 
 export { listRuns } from "../../../bridge/api"

@@ -104,24 +104,24 @@ export function NotificationBell() {
         <div className="relative" ref={dropdownRef}>
             <button
                 onClick={() => setIsOpen(!isOpen)}
-                className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors relative"
+                className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors relative"
             >
-                <Bell size={20} />
+                <Bell size={18} />
                 {unreadCount > 0 && (
-                    <span className="absolute top-1 right-1 w-4 h-4 bg-rose-500 text-white text-[10px] flex items-center justify-center rounded-full animate-pulse">
+                    <span className="absolute top-1 right-1 w-4 h-4 bg-cyan-500 text-white text-[10px] flex items-center justify-center rounded-full">
                         {unreadCount > 9 ? "9+" : unreadCount}
                     </span>
                 )}
             </button>
 
             {isOpen && (
-                <div className="absolute right-0 mt-2 w-80 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden flex flex-col max-h-[480px]">
-                    <div className="p-4 border-b border-slate-700 flex items-center justify-between bg-slate-900/50 backdrop-blur-sm sticky top-0">
+                <div className="absolute right-0 mt-2 w-80 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 overflow-hidden flex flex-col max-h-[480px]">
+                    <div className="p-4 border-b border-gray-700 flex items-center justify-between bg-gray-900/50 backdrop-blur-sm sticky top-0">
                         <h3 className="text-sm font-semibold text-white">Notifications</h3>
                         {unreadCount > 0 && (
                             <button
                                 onClick={markAllAsRead}
-                                className="text-xs text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1"
+                                className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors flex items-center gap-1"
                             >
                                 <Check size={12} />
                                 Mark all read
@@ -131,7 +131,7 @@ export function NotificationBell() {
 
                     <div className="overflow-y-auto flex-1">
                         {isLoading ? (
-                            <div className="p-8 text-center text-slate-500 text-sm">
+                            <div className="p-8 text-center text-gray-500 text-sm">
                                 Loading notifications...
                             </div>
                         ) : error ? (
@@ -139,15 +139,15 @@ export function NotificationBell() {
                                 {error}
                             </div>
                         ) : notifications.length === 0 ? (
-                            <div className="p-8 text-center text-slate-500 text-sm">
+                            <div className="p-8 text-center text-gray-500 text-sm">
                                 No notifications yet.
                             </div>
                         ) : (
-                            <div className="divide-y divide-slate-800">
+                            <div className="divide-y divide-gray-800">
                                 {notifications.map((notif) => (
                                     <div
                                         key={notif.id}
-                                        className={`p-4 hover:bg-slate-800/50 transition-colors group relative ${!notif.is_read ? 'bg-blue-500/5' : ''}`}
+                                        className={`p-4 hover:bg-gray-800/50 transition-colors group relative ${!notif.is_read ? 'bg-cyan-500/5' : ''}`}
                                     >
                                         <div className="flex gap-3">
                                             <div className="mt-1.5 flex-shrink-0">
@@ -158,17 +158,17 @@ export function NotificationBell() {
                                                     <span className="text-xs font-medium text-white block truncate pr-4">
                                                         {notif.title}
                                                     </span>
-                                                    <span className="text-[10px] text-slate-500 whitespace-nowrap">
+                                                    <span className="text-[10px] text-gray-500 whitespace-nowrap">
                                                         {formatDistanceToNow(new Date(notif.created_at), { addSuffix: true })}
                                                     </span>
                                                 </div>
-                                                <p className="text-xs text-slate-400 line-clamp-2 mb-2 leading-relaxed">
+                                                <p className="text-xs text-gray-400 line-clamp-2 mb-2 leading-relaxed">
                                                     {notif.content}
                                                 </p>
                                                 {notif.link && (
                                                     <a
                                                         href={notif.link}
-                                                        className="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-1 inline-flex"
+                                                        className="text-[10px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1 inline-flex"
                                                     >
                                                         <ExternalLink size={10} />
                                                         View Details
@@ -179,7 +179,7 @@ export function NotificationBell() {
                                         {!notif.is_read && (
                                             <button
                                                 onClick={() => markAsRead(notif.id)}
-                                                className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 p-1 bg-slate-700 rounded hover:bg-slate-600 transition-all"
+                                                className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 p-1 bg-gray-700 rounded hover:bg-gray-600 transition-all"
                                                 title="Mark as read"
                                             >
                                                 <Check size={10} className="text-white" />
@@ -191,8 +191,8 @@ export function NotificationBell() {
                         )}
                     </div>
 
-                    <div className="p-3 border-t border-slate-700 bg-slate-900/50 text-center sticky bottom-0">
-                        <button className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors uppercase tracking-wider font-semibold">
+                    <div className="p-3 border-t border-gray-700 bg-gray-900/50 text-center sticky bottom-0">
+                        <button className="text-[10px] text-gray-500 hover:text-gray-300 transition-colors uppercase tracking-wider font-semibold">
                             See all history
                         </button>
                     </div>

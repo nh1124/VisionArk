@@ -113,7 +113,7 @@ export default function CronTasksPage() {
                 if (data.projects && Array.isArray(data.projects)) {
                     setProjects(data.projects.map((p) => ({
                         id: p.id,
-                        name: p.display_name || p.name
+                        name: p.display_name || p.name || "Untitled Project"
                     })));
                 }
             }

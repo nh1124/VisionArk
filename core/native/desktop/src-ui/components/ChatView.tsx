@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
 import type { ModelGroup } from "./ChatInput"
-import { fetchHistory, sendChat, getTaskStatus, cancelTask, apiJson, type ChatMessage as ChatMessageType } from "../lib/api"
-import ChatMessage from "./ChatMessage"
+import { fetchHistory, sendChat, getTaskStatus, cancelTask, apiJson, truncateProjectMessages, copyProjectSession, type ChatMessage as ChatMessageType } from "../lib/api"
+import ChatMessage, { type MessageVote } from "./ChatMessage"
 import ChatInput from "./ChatInput"
 import FileViewer from "./FileViewer"
 import ImagePreviewModal from "./ImagePreviewModal"
@@ -19,6 +19,7 @@ interface Props {
     projectName: string
     sidebarMode?: ProjectSidebarMode
     setSidebarMode?: (mode: ProjectSidebarMode) => void
+    onSessionChange?: (sessionId: string | null) => void
 }
 
 interface RealtimeTaskState {
@@ -37,7 +38,7 @@ const LOCAL_SEND_DEDUP_WINDOW_MS = 15_000
 const normalizeMessageContent = (content: string): string =>
     (content || "").trim().replace(/\s+/g, " ")
 
-export default function ChatView({ projectId, sessionId, projectName, sidebarMode, setSidebarMode }: Props) {
+export default function ChatView({ projectId, sessionId, projectName, sidebarMode, setSidebarMode, onSessionChange }: Props) {
     const [messages, setMessages] = useState<ChatMessageType[]>([])
     const [loading, setLoading] = useState(false)
     const [statusText, setStatusText] = useState("")
@@ -55,6 +56,9 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
     const injectedTaskIdsRef = useRef<Set<string>>(new Set())
     const pendingLocalSendsRef = useRef<PendingLocalSend[]>([])
     const [realtimeTasks, setRealtimeTasks] = useState<RealtimeTaskState[]>([])
+    const [messageVotes, setMessageVotes] = useState<Record<number, MessageVote>>({})
+    const [editingMessageIndex, setEditingMessageIndex] = useState<number | null>(null)
+    const [editingMessageText, setEditingMessageText] = useState("")
 
     // effectiveSessionId: session confirmed by backend (may differ from prop when
     // the provided session was not found and backend fell back to default)
@@ -68,6 +72,16 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
             console.error("Failed to load history:", e)
         }
     }, [projectId])
+
+    const upsertRealtimeTask = useCallback((taskId: string, message: string, phase: string) => {
+        setRealtimeTasks((prev) => {
+            const existing = prev.find((t) => t.taskId === taskId)
+            if (existing) {
+                return prev.map((t) => (t.taskId === taskId ? { ...t, statusText: phase, message: t.message || message } : t))
+            }
+            return [...prev, { taskId, message: message || "Scheduled message", statusText: phase }]
+        })
+    }, [])
 
     // Reload history whenever session or project changes
     useEffect(() => {
@@ -83,6 +97,8 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
         setElapsedTime(0)
         currentTaskIdRef.current = null
         setMessages([])
+        setEditingMessageIndex(null)
+        setEditingMessageText("")
         loadHistory()
     }, [sessionId, loadHistory])
 
@@ -121,8 +137,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                 !detail.session_id ||
                 !effectiveSessionRef.current ||
                 detail.session_id === effectiveSessionRef.current
-            const sameTaskAsCurrent = currentTaskIdRef.current && detail.task_id === currentTaskIdRef.current
-            if (!sameProject || !sameSession || sameTaskAsCurrent) {
+            if (!sameProject || !sameSession) {
                 return
             }
 
@@ -143,23 +158,15 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                     const pendingIdx = normalizedMsg
                         ? pendingLocalSendsRef.current.findIndex((s) => normalizeMessageContent(s.content) === normalizedMsg)
                         : -1
+                    const isCurrentTask = !!currentTaskIdRef.current && taskId === currentTaskIdRef.current
+                    upsertRealtimeTask(taskId, msg, phase)
                     if (pendingIdx >= 0) {
                         pendingLocalSendsRef.current.splice(pendingIdx, 1)
                         if (!currentTaskIdRef.current) {
                             currentTaskIdRef.current = taskId
                         }
-                        return
                     }
-
-                    setRealtimeTasks((prev) => {
-                        const existing = prev.find((t) => t.taskId === taskId)
-                        if (existing) {
-                            return prev.map((t) => (t.taskId === taskId ? { ...t, statusText: phase } : t))
-                        }
-                        return [...prev, { taskId, message: msg || "Scheduled message", statusText: phase }]
-                    })
-
-                    if (!injectedTaskIdsRef.current.has(taskId)) {
+                    if (!isCurrentTask && pendingIdx < 0 && !injectedTaskIdsRef.current.has(taskId)) {
                         injectedTaskIdsRef.current.add(taskId)
                         setMessages((prev) => [
                             ...prev,
@@ -186,7 +193,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
         }
         window.addEventListener("va-realtime-job", onRealtime as EventListener)
         return () => window.removeEventListener("va-realtime-job", onRealtime as EventListener)
-    }, [loadHistory, loading])
+    }, [loadHistory, loading, upsertRealtimeTask])
 
     const stopPolling = () => {
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
@@ -200,16 +207,114 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
         setStatusText("")
         setElapsedTime(0)
         if (taskId) {
+            setRealtimeTasks((prev) => prev.filter((t) => t.taskId !== taskId))
             try { await cancelTask(taskId) } catch { /* best-effort */ }
         }
-        setMessages((prev) => {
-            const last = prev[prev.length - 1]
-            if (last?.role === "assistant" && !last.content) {
-                return [...prev.slice(0, -1), { role: "assistant", content: "Generation stopped." }]
-            }
-            return prev
-        })
+        currentTaskIdRef.current = null
     }
+
+    const handleDelete = useCallback(async (index: number) => {
+        if (loading) return
+        try {
+            await truncateProjectMessages(projectId, index, effectiveSessionRef.current ?? null)
+            setMessages((prev) => prev.slice(0, index))
+            if (editingMessageIndex !== null && editingMessageIndex >= index) {
+                setEditingMessageIndex(null)
+                setEditingMessageText("")
+            }
+            setMessageVotes((prev) => {
+                const next: Record<number, MessageVote> = {}
+                Object.entries(prev).forEach(([k, v]) => {
+                    const idx = Number(k)
+                    if (idx < index) next[idx] = v
+                })
+                return next
+            })
+        } catch (e) {
+            console.error("Failed to delete messages:", e)
+            alert("Failed to delete messages.")
+        }
+    }, [loading, projectId, editingMessageIndex])
+
+    const handleEdit = useCallback(async (index: number) => {
+        if (loading) return
+        const msg = messages[index]
+        if (!msg || msg.role !== "user") return
+        setEditingMessageIndex(index)
+        setEditingMessageText(msg.content || "")
+    }, [loading, messages])
+
+    const handleSubmitEditedMessage = useCallback(async () => {
+        if (editingMessageIndex === null || loading) return
+        const nextContent = editingMessageText.trim()
+        if (!nextContent) return
+
+        try {
+            await truncateProjectMessages(projectId, editingMessageIndex, effectiveSessionRef.current ?? null)
+            setMessages((prev) => prev.slice(0, editingMessageIndex))
+            setMessageVotes((prev) => {
+                const next: Record<number, MessageVote> = {}
+                Object.entries(prev).forEach(([k, v]) => {
+                    const idx = Number(k)
+                    if (idx < editingMessageIndex) next[idx] = v
+                })
+                return next
+            })
+            setEditingMessageIndex(null)
+            setEditingMessageText("")
+            await handleSend(nextContent)
+        } catch (e) {
+            console.error("Failed to submit edited message:", e)
+            alert("Failed to update this message.")
+        }
+    }, [editingMessageIndex, editingMessageText, loading, projectId])
+
+    const handleRegenerate = useCallback(async (assistantIndex: number) => {
+        if (loading) return
+        let userMsgIndex = -1
+        for (let i = assistantIndex - 1; i >= 0; i--) {
+            if (messages[i].role === "user") {
+                userMsgIndex = i
+                break
+            }
+        }
+        if (userMsgIndex === -1) return
+
+        const userMsg = messages[userMsgIndex]
+        try {
+            await truncateProjectMessages(projectId, userMsgIndex + 1, effectiveSessionRef.current ?? null)
+            setMessages((prev) => prev.slice(0, userMsgIndex + 1))
+            await handleSend(userMsg.content)
+        } catch (e) {
+            console.error("Failed to regenerate:", e)
+            alert("Failed to regenerate this response.")
+        }
+    }, [loading, messages, projectId])
+
+    const handleBranch = useCallback(async (index: number) => {
+        if (loading) return
+        try {
+            const result = await copyProjectSession(projectId, index, effectiveSessionRef.current ?? null)
+            if (result.session?.id) {
+                effectiveSessionRef.current = result.session.id
+                onSessionChange?.(result.session.id)
+                localStorage.setItem(`va_last_session_${projectId}`, result.session.id)
+                window.dispatchEvent(new CustomEvent("va-sessions-updated", {
+                    detail: {
+                        project_id: projectId,
+                        session_id: result.session.id,
+                    },
+                }))
+                setMessages([])
+                setRealtimeTasks([])
+                setEditingMessageIndex(null)
+                setEditingMessageText("")
+                await loadHistory()
+            }
+        } catch (e) {
+            console.error("Failed to copy session:", e)
+        }
+    }, [loading, projectId, loadHistory, onSessionChange])
 
     const handleSend = async (content: string, files?: File[]) => {
         if ((!content.trim() && (!files || files.length === 0)) || loading) return
@@ -238,8 +343,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                 effectiveSessionRef.current = usedSessionId
             }
 
-            // Add placeholder for assistant
-            setMessages((prev) => [...prev, { role: "assistant", content: "" }])
+            upsertRealtimeTask(task_id, content, "Queued...")
 
             // Elapsed time counter
             const startTime = Date.now()
@@ -257,6 +361,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                         setStatusText("")
                         setElapsedTime(0)
                         currentTaskIdRef.current = null
+                        setRealtimeTasks((prev) => prev.filter((t) => t.taskId !== task_id))
                         await loadHistory()
                     } else if (taskData.status === "failed" || taskData.status === "cancelled") {
                         stopPolling()
@@ -264,26 +369,27 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                         setStatusText("")
                         setElapsedTime(0)
                         currentTaskIdRef.current = null
-                        setMessages((prev) => {
-                            const last = prev[prev.length - 1]
-                            if (last?.role === "assistant" && !last.content) {
-                                return [
-                                    ...prev.slice(0, -1),
-                                    { role: "assistant", content: taskData.status === "failed" ? `❌ ${taskData.result || "Task failed"}` : "Generation stopped." },
-                                ]
-                            }
-                            return prev
-                        })
+                        setRealtimeTasks((prev) => prev.filter((t) => t.taskId !== task_id))
+                        if (taskData.status === "failed") {
+                            setMessages((prev) => [
+                                ...prev,
+                                { role: "assistant", content: `Failed: ${taskData.result || "Task failed"}` },
+                            ])
+                        }
                     } else {
                         // Show detailed status using phase/step if available
                         if (taskData.status === "queued") {
                             setStatusText("Queued...")
+                            upsertRealtimeTask(task_id, content, "Queued...")
                         } else if (taskData.step) {
                             setStatusText(`Running: ${taskData.step}`)
+                            upsertRealtimeTask(task_id, content, `Running: ${taskData.step}`)
                         } else if (taskData.phase) {
                             setStatusText(`${taskData.phase}...`)
+                            upsertRealtimeTask(task_id, content, `${taskData.phase}...`)
                         } else {
                             setStatusText("Processing...")
+                            upsertRealtimeTask(task_id, content, "Processing...")
                         }
                     }
                 } catch {
@@ -301,9 +407,14 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
             setLoading(false)
             setStatusText("")
             setElapsedTime(0)
+            const failedTaskId = currentTaskIdRef.current
+            currentTaskIdRef.current = null
+            if (failedTaskId) {
+                setRealtimeTasks((prev) => prev.filter((t) => t.taskId !== failedTaskId))
+            }
             setMessages((prev) => [
                 ...prev,
-                { role: "assistant", content: "❌ Failed to send message. Please try again." },
+                { role: "assistant", content: "Failed to send message. Please try again." },
             ])
         }
     }
@@ -325,10 +436,30 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                             </div>
                         ) : (
                             messages.map((msg, i) => {
-                                // Hide the empty placeholder message when loading, because the loading indicator draws its own avatar
-                                if (loading && i === messages.length - 1 && msg.role === "assistant" && !msg.content) return null;
                                 if (msg.meta_payload?.transient && msg.role === "assistant" && !msg.content) return null;
-                                return <ChatMessage key={i} message={msg} projectId={projectId} />
+                                return (
+                                    <ChatMessage
+                                        key={i}
+                                        message={msg}
+                                        projectId={projectId}
+                                        canRegenerate={msg.role === "assistant"}
+                                        canEdit={msg.role === "user"}
+                                        onRegenerate={msg.role === "assistant" ? () => handleRegenerate(i) : undefined}
+                                        onDelete={() => handleDelete(i)}
+                                        onEdit={msg.role === "user" ? () => handleEdit(i) : undefined}
+                                        onBranch={msg.role === "assistant" ? () => handleBranch(i) : undefined}
+                                        vote={messageVotes[i] ?? null}
+                                        onVote={msg.role === "assistant" ? (vote) => setMessageVotes((prev) => ({ ...prev, [i]: vote })) : undefined}
+                                        isEditing={msg.role === "user" && editingMessageIndex === i}
+                                        editValue={msg.role === "user" && editingMessageIndex === i ? editingMessageText : ""}
+                                        onEditValueChange={msg.role === "user" && editingMessageIndex === i ? setEditingMessageText : undefined}
+                                        onEditSubmit={msg.role === "user" && editingMessageIndex === i ? handleSubmitEditedMessage : undefined}
+                                        onEditCancel={msg.role === "user" && editingMessageIndex === i ? () => {
+                                            setEditingMessageIndex(null)
+                                            setEditingMessageText("")
+                                        } : undefined}
+                                    />
+                                )
                             })
                         )}
 
@@ -339,27 +470,11 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                                 </div>
                                 <div className="flex-1">
                                     <div className="text-xs font-semibold text-gray-500 mb-1">Assistant</div>
+                                    <div className="text-xs text-gray-500 mb-1 truncate max-w-[520px]">{rt.message}</div>
                                     <div className="text-xs text-gray-400">{rt.statusText}</div>
                                 </div>
                             </div>
                         ))}
-
-                        {/* Loading indicator */}
-                        {loading && messages[messages.length - 1]?.role === "assistant" && !messages[messages.length - 1]?.content && (
-                            <div className="flex gap-3 py-4">
-                                <div className="w-8 h-8 rounded-lg bg-cyan-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-                                    <div className="w-4 h-4 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin" />
-                                </div>
-                                <div className="flex-1">
-                                    <div className="text-xs font-semibold text-gray-500 mb-1">Assistant</div>
-                                    <div className="flex gap-1 mt-2">
-                                        <span className="w-2 h-2 bg-gray-600 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                                        <span className="w-2 h-2 bg-gray-600 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                                        <span className="w-2 h-2 bg-gray-600 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
-                                    </div>
-                                </div>
-                            </div>
-                        )}
 
                         <div ref={messagesEndRef} />
                     </div>
@@ -432,7 +547,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                 </div>
             )}
 
-            {/* ── Inline FileViewer — rendered as flex sibling so chat shrinks ── */}
+            {/* Inline FileViewer rendered as flex sibling so chat shrinks */}
             {fileViewer && fileViewer.mode === "inline" && (
                 <FileViewer
                     content={fileViewer.content}

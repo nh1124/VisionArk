@@ -192,6 +192,31 @@ export default function ChatInput({ onSend, onStop, loading, statusText, model, 
         }
     }
 
+    const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+        const items = e.clipboardData?.items
+        if (!items) return
+
+        const imageFiles: File[] = []
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i]
+            if (!item.type.startsWith("image/")) continue
+            const file = item.getAsFile()
+            if (!file) continue
+
+            const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
+            const extension = item.type.split("/")[1] || "png"
+            imageFiles.push(
+                new File([file], `pasted-image-${timestamp}.${extension}`, {
+                    type: file.type,
+                })
+            )
+        }
+
+        if (imageFiles.length > 0) {
+            setAttachedFiles((prev) => [...prev, ...imageFiles])
+        }
+    }
+
     // ── Auto resize ─────────────────────────────────────────────────────
     useEffect(() => {
         const ta = textareaRef.current
@@ -289,6 +314,7 @@ export default function ChatInput({ onSend, onStop, loading, statusText, model, 
                     value={value}
                     onChange={handleInputChange}
                     onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
                     placeholder="Type a message... (Ctrl+Enter to send)"
                     disabled={loading}
                     rows={1}

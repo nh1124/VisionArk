@@ -1,410 +1,449 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+    Activity,
+    ArrowUpRight,
+    Calendar,
+    CheckSquare,
+    ChevronRight,
+    Cloud,
+    History,
+    Layout,
+    ListTodo,
+    Target,
+    Zap,
+} from "lucide-react";
 import { apiFetch } from "@/lib/api";
-import HeatMapCalendar from "@/components/HeatMapCalendar";
-import HubSuggestionBanner from "@/components/HubSuggestionBanner";
-import ScheduleView from "@/components/ScheduleView";
-import { suggestSchedule, ScheduleResult } from "@/lib/schedule";
-import { useIsMobile } from "@/hooks/useIsMobile";
 
-interface DashboardData {
-    today: {
-        adjusted_load: number;
-        level: string;
-        task_count: number;
-        unique_contexts: number;
-        cap: number;
-        tasks: Array<{
-            task_id: string;
-            task_name: string;
-            context: string;
-            load: number;
-            status?: string;
-        }>;
-    };
-    weekly: {
-        average_load: number;
-        over_days: number;
-        recovery_rate: number;
+type WeatherData = { temp: number; code: number; description: string };
+
+interface MeResponse {
+    username?: string;
+}
+
+interface SettingsResponse {
+    general_settings?: {
+        location?: string;
     };
 }
 
-export default function DashboardPage() {
-    const isMobile = useIsMobile();
-    const [data, setData] = useState<DashboardData | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [currentMonth, setCurrentMonth] = useState(new Date());
-    const [refreshKey, setRefreshKey] = useState(0);
-    const [selectedDate, setSelectedDate] = useState<string | null>(null);
-    const [dayDetails, setDayDetails] = useState<any>(null);
-    const [scheduleData, setScheduleData] = useState<ScheduleResult | null>(null);
-    const [scheduleLoading, setScheduleLoading] = useState(false);
+interface LBSTask {
+    task_id: string;
+    task_name: string;
+    context: string;
+    status?: string | null;
+    start_time?: string | null;
+    end_time?: string | null;
+}
 
-    useEffect(() => {
-        const loadAllData = async () => {
-            setLoading(true);
-            setScheduleLoading(true);
-            try {
-                const dashRes = await apiFetch("/api/lbs/dashboard");
-                const dashData = await dashRes.json();
-                setData(dashData);
+interface ScheduleDay {
+    date: string;
+    tasks: Array<{
+        task_id: string;
+        task_name: string;
+        context: string;
+        start_time: string | null;
+        end_time: string | null;
+    }>;
+}
 
-                // Fetch schedule suggestion
-                try {
-                    const schedule = await suggestSchedule({ fatigue: 0 });
-                    setScheduleData(schedule);
-                } catch (schedErr) {
-                    console.error("Error loading schedule:", schedErr);
-                }
-            } catch (error) {
-                console.error("Error loading dashboard data:", error);
-            } finally {
-                setLoading(false);
-                setScheduleLoading(false);
-            }
+interface Project {
+    id: string;
+    name: string;
+    display_name?: string | null;
+}
+
+interface RunItem {
+    id: string;
+    created_at: string;
+    summary?: string;
+}
+
+interface MemoryItem {
+    id: string;
+    created_at: string;
+    content: string;
+}
+
+interface ActivityItem {
+    type: "run" | "memory";
+    timestamp: number;
+    summary: string;
+}
+
+interface ProjectWithProgress extends Project {
+    completed_tasks: number;
+    total_tasks: number;
+    progress: number;
+}
+
+function getWeatherDescription(code: number): string {
+    if (code === 0) return "Clear sky";
+    if (code <= 3) return "Partly cloudy";
+    if (code <= 48) return "Foggy";
+    if (code <= 57) return "Drizzle";
+    if (code <= 67) return "Rainy";
+    if (code <= 77) return "Snowy";
+    if (code <= 82) return "Showers";
+    if (code <= 99) return "Thunderstorm";
+    return "Unknown";
+}
+
+async function fetchWeather(location: string): Promise<WeatherData | null> {
+    try {
+        const geoRes = await fetch(
+            `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`
+        );
+        const geoData = await geoRes.json();
+        if (!geoData.results?.length) return null;
+
+        const { latitude, longitude } = geoData.results[0];
+        const weatherRes = await fetch(
+            `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`
+        );
+        const weatherData = await weatherRes.json();
+        const cw = weatherData.current_weather;
+        return {
+            temp: Math.round(cw.temperature),
+            code: cw.weathercode,
+            description: getWeatherDescription(cw.weathercode),
         };
-        loadAllData();
-    }, [refreshKey]);
+    } catch {
+        return null;
+    }
+}
+
+export default function DashboardPage() {
+    const router = useRouter();
+    const [loading, setLoading] = useState(true);
+    const [currentTime, setCurrentTime] = useState(new Date());
+    const [username, setUsername] = useState("Commander");
+    const [location, setLocation] = useState("Tokyo");
+    const [weather, setWeather] = useState<WeatherData | null>(null);
+    const [tasks, setTasks] = useState<LBSTask[]>([]);
+    const [schedule, setSchedule] = useState<ScheduleDay[]>([]);
+    const [projects, setProjects] = useState<ProjectWithProgress[]>([]);
+    const [activities, setActivities] = useState<ActivityItem[]>([]);
 
     useEffect(() => {
-        if (selectedDate) {
-            fetchDayDetails(selectedDate);
+        const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+        return () => clearInterval(timer);
+    }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        async function load() {
+            try {
+                const todayStr = new Date().toISOString().split("T")[0];
+                const [
+                    meRes,
+                    settingsRes,
+                    tasksRes,
+                    scheduleRes,
+                    projectsRes,
+                    activeTasksRes,
+                    overdueRes,
+                    memoriesRes,
+                    runsRes,
+                ] = await Promise.all([
+                    apiFetch("/api/auth/me").catch(() => null),
+                    apiFetch("/api/settings").catch(() => null),
+                    apiFetch(`/api/lbs/tasks?target_date=${todayStr}`).catch(() => null),
+                    apiFetch(`/api/lbs/schedule?start_date=${todayStr}&end_date=${todayStr}`).catch(() => null),
+                    apiFetch("/api/agents/project/list").catch(() => null),
+                    apiFetch("/api/lbs/tasks?active=true").catch(() => null),
+                    apiFetch("/api/lbs/overdue").catch(() => null),
+                    apiFetch("/api/lbs/memories?limit=10").catch(() => null),
+                    apiFetch("/api/runs?limit=10").catch(() => null),
+                ]);
+
+                const me = meRes?.ok ? ((await meRes.json()) as MeResponse) : null;
+                const settings = settingsRes?.ok ? ((await settingsRes.json()) as SettingsResponse) : null;
+                const todayTasks = tasksRes?.ok ? ((await tasksRes.json()) as LBSTask[]) : [];
+                const todaySchedule = scheduleRes?.ok ? ((await scheduleRes.json()) as ScheduleDay[]) : [];
+                const projectList = projectsRes?.ok
+                    ? ((((await projectsRes.json()) as { projects?: Project[] }).projects) ?? [])
+                    : [];
+                const activeTasks = activeTasksRes?.ok ? ((await activeTasksRes.json()) as LBSTask[]) : [];
+                const overdueTasks = overdueRes?.ok ? ((await overdueRes.json()) as LBSTask[]) : [];
+                const memories = memoriesRes?.ok
+                    ? ((((await memoriesRes.json()) as { memories?: MemoryItem[] }).memories) ?? [])
+                    : [];
+                const runsRaw = runsRes?.ok
+                    ? ((await runsRes.json()) as { runs?: RunItem[] } | RunItem[])
+                    : [];
+                const runs = Array.isArray(runsRaw) ? runsRaw : runsRaw.runs ?? [];
+
+                if (cancelled) return;
+
+                if (me?.username) setUsername(me.username);
+                const locationRaw = settings?.general_settings?.location ?? "Tokyo, Japan";
+                setLocation(locationRaw.split(",")[0] || "Tokyo");
+                setTasks(todayTasks ?? []);
+                setSchedule(todaySchedule ?? []);
+
+                const statMap = new Map<string, { done: number; total: number }>();
+                for (const task of [...activeTasks, ...overdueTasks]) {
+                    const context = task.context || "inbox";
+                    if (!statMap.has(context)) statMap.set(context, { done: 0, total: 0 });
+                    const stat = statMap.get(context)!;
+                    stat.total += 1;
+                    if (task.status === "done") stat.done += 1;
+                }
+
+                const withProgress: ProjectWithProgress[] = projectList.map((p) => {
+                    const stat = statMap.get(p.name) ?? { done: 0, total: 0 };
+                    return {
+                        ...p,
+                        completed_tasks: stat.done,
+                        total_tasks: stat.total,
+                        progress: stat.total > 0 ? (stat.done / stat.total) * 100 : 0,
+                    };
+                });
+                withProgress.sort((a, b) => b.total_tasks - a.total_tasks);
+                setProjects(withProgress);
+
+                const merged: ActivityItem[] = [
+                    ...runs.map((r) => ({
+                        type: "run" as const,
+                        timestamp: new Date(r.created_at).getTime(),
+                        summary: r.summary || `Execution Run ${r.id.slice(0, 8)}`,
+                    })),
+                    ...memories.map((m) => ({
+                        type: "memory" as const,
+                        timestamp: new Date(m.created_at).getTime(),
+                        summary: m.content,
+                    })),
+                ].sort((a, b) => b.timestamp - a.timestamp);
+                setActivities(merged);
+
+                const weatherData = await fetchWeather(locationRaw);
+                if (!cancelled) setWeather(weatherData);
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
         }
-    }, [selectedDate]);
 
-    const fetchDayDetails = async (dateStr: string) => {
-        try {
-            const res = await apiFetch(`/api/lbs/calculate/${dateStr}`);
-            const detailJson = await res.json();
+        load();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
-            // Fetch tasks for that day to show in list
-            const taskRes = await apiFetch(`/api/lbs/tasks?target_date=${dateStr}`);
-            const taskJson = await taskRes.json();
+    const greeting = useMemo(() => {
+        const hour = currentTime.getHours();
+        if (hour < 12) return "Good morning";
+        if (hour < 18) return "Good afternoon";
+        return "Good evening";
+    }, [currentTime]);
 
-            setDayDetails({
-                ...detailJson,
-                tasks: taskJson
-            });
-        } catch (error) {
-            console.error("Error fetching day details:", error);
-        }
-    };
-
-    const changeMonth = (delta: number) => {
-        setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + delta, 1));
-    };
-
-    const getLoadStatus = (pct: number) => {
-        if (pct <= 60) return { label: "Focus", color: "text-emerald-400", bg: "bg-emerald-500", border: "border-emerald-500/30" };
-        if (pct <= 90) return { label: "Flow", color: "text-blue-400", bg: "bg-blue-500", border: "border-blue-500/30" };
-        if (pct <= 110) return { label: "Peak", color: "text-orange-400", bg: "bg-orange-500", border: "border-orange-500/30" };
-        return { label: "Overload", color: "text-red-400", bg: "bg-red-500", border: "border-red-500/30" };
-    };
-
-    const getRecoveryStatus = (score: number) => {
-        if (score <= 30) return { label: "Low", color: "text-red-400" };
-        if (score <= 70) return { label: "Recovering", color: "text-orange-400" };
-        return { label: "Ready", color: "text-emerald-400" };
-    };
-
-    if (loading) return (
-        <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-            <div className="text-gray-500 animate-pulse">Loading dashboard...</div>
-        </div>
-    );
-
-    if (!data) return (
-        <div className="min-h-screen bg-gray-950 p-8">
-            <div className="p-6 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400">
-                Failed to load dashboard data. Please check your connection.
+    if (loading) {
+        return (
+            <div className="h-full w-full flex items-center justify-center bg-gray-950">
+                <div className="flex flex-col items-center gap-4">
+                    <div className="w-12 h-12 border-4 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin" />
+                    <p className="text-gray-500 font-medium text-xs tracking-widest uppercase animate-pulse">
+                        Initializing Dashboard
+                    </p>
+                </div>
             </div>
-        </div>
-    );
-
-    const loadPercentageActual = data.today ? (data.today.adjusted_load / data.today.cap) * 100 : 0;
-    const loadStatus = getLoadStatus(loadPercentageActual);
-    const recoveryStatus = getRecoveryStatus(data.weekly?.recovery_rate || 0);
+        );
+    }
 
     return (
-        <div className={`min-h-screen bg-gray-950 text-white ${isMobile ? "p-4 pb-24" : "p-6 lg:p-8"}`}>
-            <div className="max-w-7xl mx-auto">
-                {/* Header */}
-                {!isMobile && (
-                    <div className="flex justify-between items-center mb-8">
-                        <h1 className="text-3xl font-bold text-white tracking-tight">Dashboard</h1>
-                    </div>
-                )}
-
-                {/* Hub Proactive Suggestions */}
-                <HubSuggestionBanner onRefresh={() => setRefreshKey(k => k + 1)} />
-
-                {/* Primary Metrics */}
-                <div className={`grid grid-cols-1 ${isMobile ? "gap-4" : "md:grid-cols-2 lg:grid-cols-4 gap-6"} mb-8 animate-in fade-in slide-in-from-bottom-4 duration-700`}>
-                    {/* Load Capacity - Main Card */}
-                    <div className={`${isMobile ? "" : "md:col-span-2"} bg-gray-900/40 border-2 ${loadStatus.border} rounded-2xl ${isMobile ? "p-5" : "p-8"} relative overflow-hidden backdrop-blur-sm shadow-xl`}>
-                        <div className="relative z-10">
-                            <div className="flex items-center justify-between mb-4">
-                                <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Efficiency</span>
-                                <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-widest ${loadStatus.bg}/20 ${loadStatus.color} border border-current/20`}>
-                                    Dynamic Target
-                                </span>
-                            </div>
-                            <div className="flex items-baseline gap-2 mb-4">
-                                <span className={`${isMobile ? "text-4xl" : "text-6xl"} font-bold tracking-tight ${loadStatus.color}`}>{loadStatus.label}</span>
-                                <span className="text-[10px] font-medium text-gray-500 tabular-nums">({loadPercentageActual.toFixed(0)}%)</span>
-                            </div>
-                            <div className="h-2 bg-gray-800/50 rounded-full overflow-hidden mb-3">
-                                <div
-                                    className={`h-full rounded-full transition-all duration-1000 ease-out ${loadStatus.bg} shadow-[0_0_15px_-3px_rgba(37,99,235,0.4)]`}
-                                    style={{ width: `${Math.min(100, loadPercentageActual)}%` }}
-                                />
-                            </div>
-                            <div className="flex justify-between text-[9px] font-black text-gray-600 uppercase tracking-wider">
-                                <span>{data.today?.adjusted_load.toFixed(1)} <span className="text-[8px] opacity-50">Score</span></span>
-                                <span>{data.today?.cap} <span className="text-[8px] opacity-50">Limit</span></span>
+        <div className="flex-1 h-full flex flex-col overflow-y-auto bg-gray-950 p-5 lg:p-8">
+            <div className="max-w-7xl mx-auto w-full space-y-4 lg:space-y-6">
+                <div className="relative overflow-hidden rounded-[32px] bg-gradient-to-br from-indigo-700 via-purple-700 to-pink-600 p-6 lg:p-7 shadow-2xl border border-white/5">
+                    <div className="relative z-10 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+                        <div className="space-y-1">
+                            <h1 className="text-3xl lg:text-5xl font-bold text-white tracking-tight leading-[1.05]">
+                                {greeting},
+                                <br />
+                                <span className="text-white/70 font-semibold">{username}</span>
+                            </h1>
+                            <div className="flex items-center gap-2 text-white/40 text-[10px] font-bold uppercase tracking-[0.2em] pt-1">
+                                <Target size={11} className="text-cyan-300" />
+                                {tasks.filter((t) => t.status !== "done").length} tasks remaining
                             </div>
                         </div>
-                        {/* Decorative background glow */}
-                        <div className={`absolute -right-20 -bottom-20 w-64 h-64 rounded-full blur-[100px] opacity-10 ${loadStatus.bg}`} />
-                    </div>
 
-                    {/* Weekly Recovery */}
-                    <div className={`${isMobile ? "" : "md:col-span-2"} bg-gray-900/40 border-2 border-gray-800 rounded-2xl ${isMobile ? "p-5" : "p-8"} backdrop-blur-sm shadow-xl relative overflow-hidden`}>
-                        <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Sustainability</span>
-                        <div className={`${isMobile ? "mt-4" : "mt-8"} flex items-baseline gap-2`}>
-                            <span className={`text-4xl font-bold tracking-tight ${recoveryStatus.color}`}>{recoveryStatus.label}</span>
-                            <span className="text-[10px] font-medium text-gray-600 tabular-nums">{data.weekly?.recovery_rate.toFixed(0)}%</span>
+                        <div className="flex items-center gap-6 bg-black/20 backdrop-blur-3xl rounded-[24px] p-4 lg:p-5 border border-white/5 shadow-2xl">
+                            <div className="text-right">
+                                <p className="text-3xl lg:text-5xl font-mono font-bold tracking-tighter tabular-nums text-white leading-none">
+                                    {currentTime.toLocaleTimeString("en-US", {
+                                        hour12: false,
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                        second: "2-digit",
+                                    })}
+                                </p>
+                                <p className="text-[9px] font-bold text-purple-200/40 uppercase tracking-[0.35em] mt-2">
+                                    {currentTime
+                                        .toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })
+                                        .replace(",", " /")}
+                                </p>
+                            </div>
+                            <div className="h-10 w-px bg-white/10" />
+                            <div className="flex items-center gap-3">
+                                <div className="p-3 bg-white/5 rounded-xl">
+                                    <Cloud size={20} className="text-blue-200" />
+                                </div>
+                                <div>
+                                    <p className="text-2xl lg:text-4xl font-bold text-white leading-none">{weather?.temp ?? "--"}°C</p>
+                                    <p className="text-[8px] font-bold text-blue-200/60 uppercase tracking-widest mt-1">
+                                        {location} / {weather?.description || "Syncing"}
+                                    </p>
+                                </div>
+                            </div>
                         </div>
-
-                        <div className={`${isMobile ? "mt-6" : "mt-8"} flex gap-1.5`}>
-                            {[1, 2, 3, 4, 5, 6, 7].map(i => (
-                                <div
-                                    key={i}
-                                    className={`h-1.5 flex-1 rounded-full ${i <= (data.weekly?.over_days || 0) ? 'bg-red-500/50' : 'bg-emerald-500/30'}`}
-                                />
-                            ))}
-                        </div>
-                        <p className="text-[8px] font-black text-gray-700 mt-2.5 uppercase tracking-widest flex justify-between">
-                            <span>Weekly Load Strain</span>
-                            <span className="text-red-500/80">{data.weekly?.over_days || 0} Critical Days</span>
-                        </p>
                     </div>
+                    <div className="absolute top-[-20%] right-[-10%] w-96 h-96 bg-white/5 rounded-full blur-3xl opacity-50" />
                 </div>
 
-                {/* Dynamic Schedule */}
-                <div className="mb-8">
-                    {scheduleLoading ? (
-                        <div className="bg-gray-900/40 border-2 border-gray-800 rounded-2xl p-8 text-center">
-                            <div className="text-gray-500 animate-pulse">Loading schedule...</div>
-                        </div>
-                    ) : scheduleData ? (
-                        <ScheduleView
-                            schedule={scheduleData.schedule}
-                            overflow={scheduleData.overflow}
-                            shutdownTime={scheduleData.shutdown_time}
-                            fatigueLevel={scheduleData.fatigue_level}
-                            className="border-2 border-gray-800"
-                        />
-                    ) : (
-                        <div className="bg-gray-900/40 border-2 border-gray-800 rounded-2xl p-8 text-center text-gray-500">
-                            Could not load schedule
-                        </div>
-                    )}
-                </div>
-
-                {/* LBS Calendar */}
-                <div className="bg-gray-900/40 border-2 border-gray-800 rounded-2xl p-6 backdrop-blur-sm shadow-xl relative">
-                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
-                        <div>
-                            <h2 className="text-lg font-medium tracking-tight text-gray-200">LBS Calendar</h2>
-                        </div>
-
-                        <div className="flex items-center gap-4">
-                            {/* Month Selector */}
-                            <div className="flex items-center gap-1 bg-gray-900 border border-gray-800 rounded-xl p-1 shadow-inner">
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 lg:gap-5 pb-2">
+                    <GlassCard title="Project Progress" icon={<Layout size={16} />} action="Project Page" onAction={() => router.push("/projects")}>
+                        <div className="space-y-4">
+                            {projects.length > 0 ? projects.slice(0, 3).map((project) => (
                                 <button
-                                    onClick={() => changeMonth(-1)}
-                                    className="p-2 hover:bg-gray-800 rounded-lg transition-colors text-gray-500 font-bold"
+                                    key={project.id}
+                                    onClick={() => router.push(`/projects/${project.id}`)}
+                                    className="w-full text-left space-y-1.5 group"
                                 >
-                                    ◀
+                                    <div className="flex justify-between items-end">
+                                        <div className="flex items-center gap-2.5">
+                                            <div className="w-1 h-1 rounded-full bg-cyan-500 shadow-[0_0_6px_rgba(6,182,212,0.4)]" />
+                                            <span className="text-[13px] font-semibold text-gray-200 group-hover:text-white truncate">
+                                                {project.display_name || project.name}
+                                            </span>
+                                        </div>
+                                        <span className="text-[9px] font-bold text-gray-600 tracking-widest uppercase">
+                                            {project.completed_tasks}/{project.total_tasks}
+                                            <span className="text-cyan-500/60 ml-1">{Math.round(project.progress)}%</span>
+                                        </span>
+                                    </div>
+                                    <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden border border-white/5">
+                                        <div
+                                            className="h-full bg-gradient-to-r from-indigo-500 via-cyan-500 to-emerald-400 opacity-80"
+                                            style={{ width: `${project.progress}%` }}
+                                        />
+                                    </div>
                                 </button>
-                                <span className="px-6 py-1.5 text-xs font-bold min-w-[160px] text-center uppercase tracking-widest text-gray-200">
-                                    {currentMonth.toLocaleString('en-US', { month: 'long', year: 'numeric' })}
-                                </span>
-                                <button
-                                    onClick={() => changeMonth(1)}
-                                    className="p-2 hover:bg-gray-800 rounded-lg transition-colors text-gray-500 font-bold"
-                                >
-                                    ▶
-                                </button>
-                            </div>
+                            )) : <EmptyState message="No trackable projects" />}
                         </div>
-                    </div>
+                    </GlassCard>
 
-                    <HeatMapCalendar
-                        month={currentMonth}
-                        refreshKey={refreshKey}
-                        includeCompleted={true}
-                        activeProject={null}
-                        onDayClick={(date) => setSelectedDate(date)}
-                    />
+                    <GlassCard title="Recent Activity" icon={<Activity size={16} />} action="Run Center" onAction={() => router.push("/jobs")}>
+                        <div className="space-y-5">
+                            {activities.length > 0 ? activities.slice(0, 3).map((item, idx) => (
+                                <button key={`${item.type}-${idx}`} onClick={() => router.push("/jobs")} className="w-full text-left relative pl-5">
+                                    <div className={`absolute left-0 top-1.5 w-1 h-1 rounded-full ${item.type === "run" ? "bg-orange-500" : "bg-purple-500"}`} />
+                                    <div className="flex flex-col gap-0.5">
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="text-[8px] font-bold text-gray-600 uppercase tracking-[0.2em]">
+                                                {item.type === "run" ? "Agent Run" : "Core Memory"}
+                                            </span>
+                                            <span className="text-[8px] font-medium text-gray-700 font-mono">
+                                                {new Date(item.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                                            </span>
+                                        </div>
+                                        <p className="text-[12px] font-medium text-gray-400 leading-tight line-clamp-1">{item.summary}</p>
+                                    </div>
+                                </button>
+                            )) : <EmptyState message="Quiet for now" />}
+                        </div>
+                    </GlassCard>
+
+                    <GlassCard title="Today's Tasks" icon={<ListTodo size={16} />} action="Tasks Page" onAction={() => router.push("/tasks")}>
+                        <div className="space-y-3">
+                            {tasks.length > 0 ? tasks.slice(0, 3).map((task) => (
+                                <button
+                                    key={task.task_id}
+                                    onClick={() => router.push("/tasks")}
+                                    className="w-full flex items-center gap-3 p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-all group"
+                                >
+                                    <div className={`flex-shrink-0 w-2 h-2 rounded-full border ${task.status === "done" ? "bg-cyan-500 border-cyan-400/50" : "bg-transparent border-gray-700"}`} />
+                                    <div className="flex-1 min-w-0 text-left">
+                                        <p className={`text-[14px] font-bold truncate ${task.status === "done" ? "text-gray-600 line-through" : "text-gray-200"}`}>
+                                            {task.task_name}
+                                        </p>
+                                        <p className="text-[9px] font-bold text-gray-600 uppercase tracking-widest mt-0.5">{task.context}</p>
+                                    </div>
+                                    <ArrowUpRight size={11} className="text-gray-700 group-hover:text-cyan-500" />
+                                </button>
+                            )) : <EmptyState message="All tasks clear" />}
+                        </div>
+                    </GlassCard>
+
+                    <GlassCard title="Today's Schedule" icon={<Calendar size={16} />} action="Calendar Page" onAction={() => router.push("/tasks")}>
+                        <div className="space-y-3">
+                            {(schedule[0]?.tasks.length || 0) > 0 ? schedule[0].tasks.slice(0, 3).map((item) => (
+                                <button
+                                    key={item.task_id}
+                                    onClick={() => router.push("/tasks")}
+                                    className="w-full flex items-center gap-4 p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-all group"
+                                >
+                                    <div className="min-w-[58px] flex flex-col items-center">
+                                        <p className="text-[10px] font-bold text-indigo-400 font-mono tracking-tighter">{item.start_time || "00:00"}</p>
+                                        <div className="h-2 w-px bg-white/10 my-0.5" />
+                                        <p className="text-[8px] text-gray-700 font-bold font-mono tracking-tighter">{item.end_time || "N/A"}</p>
+                                    </div>
+                                    <div className="flex-1 min-w-0 text-left">
+                                        <p className="text-[14px] font-bold text-gray-200 truncate group-hover:text-white">{item.task_name}</p>
+                                        <p className="text-[9px] text-gray-600 font-bold uppercase tracking-[0.2em] mt-0.5">{item.context}</p>
+                                    </div>
+                                    <History size={11} className="text-gray-700 group-hover:text-indigo-400" />
+                                </button>
+                            )) : <EmptyState message="Free schedule" />}
+                        </div>
+                    </GlassCard>
                 </div>
             </div>
+        </div>
+    );
+}
 
-            {/* Detailed Log Modal */}
-            {selectedDate && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                    <div
-                        className="absolute inset-0 bg-black/80 backdrop-blur-md"
-                        onClick={() => setSelectedDate(null)}
-                    />
-                    <div className={`relative bg-gray-900 border-2 border-gray-800 shadow-2xl overflow-hidden flex flex-col ${isMobile ? "w-full h-[95vh] rounded-t-3xl mt-auto" : "w-full max-w-2xl max-h-[90vh] rounded-3xl"}`}>
-                        {/* Modal Header */}
-                        <div className={`${isMobile ? "p-6" : "p-8"} border-b border-gray-800 flex justify-between items-start font-display bg-gray-950/50`}>
-                            <div>
-                                <p className="text-[10px] font-black text-gray-500 uppercase tracking-[0.3em] mb-2">Detailed Analytics</p>
-                                <h3 className={`${isMobile ? "text-xl" : "text-3xl"} font-bold tracking-tight text-white`}>
-                                    {new Date(selectedDate).toLocaleDateString('en-US', { weekday: isMobile ? 'short' : 'long', month: isMobile ? 'short' : 'long', day: 'numeric', year: 'numeric' })}
-                                </h3>
-                            </div>
-                            <button
-                                onClick={() => setSelectedDate(null)}
-                                className="p-2 hover:bg-gray-800 rounded-xl text-gray-500 transition-colors"
-                            >
-                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                </svg>
-                            </button>
-                        </div>
-
-                        {/* Modal Content */}
-                        <div className={`${isMobile ? "p-6" : "p-8"} overflow-y-auto custom-scrollbar flex-1`}>
-                            {dayDetails ? (
-                                <div className="space-y-8">
-                                    <div className={`grid ${isMobile ? "grid-cols-1" : "grid-cols-3"} gap-4 font-display`}>
-                                        <div className="bg-gray-800/10 border border-gray-800/50 rounded-2xl p-4 flex flex-col items-center justify-center">
-                                            <span className="text-[9px] font-black text-gray-600 uppercase tracking-widest mb-1">Total Adjusted Load</span>
-                                            <span className="text-3xl font-bold text-emerald-400 tabular-nums">
-                                                {dayDetails.adjusted_load.toFixed(2)}
-                                            </span>
-                                        </div>
-                                        <div className="bg-gray-800/10 border border-gray-800/50 rounded-2xl p-4 flex flex-col items-center justify-center">
-                                            <span className="text-[9px] font-black text-gray-600 uppercase tracking-widest mb-1">Active Tasks</span>
-                                            <span className="text-3xl font-bold text-white tabular-nums">
-                                                {dayDetails.tasks_count || dayDetails.tasks?.length || 0}
-                                            </span>
-                                        </div>
-                                        <div className="bg-gray-800/10 border border-gray-800/50 rounded-2xl p-4 flex flex-col items-center justify-center">
-                                            <span className="text-[9px] font-black text-gray-600 uppercase tracking-widest mb-1">Unique Hubs</span>
-                                            <span className="text-3xl font-bold text-blue-400 tabular-nums">
-                                                {dayDetails.contexts_count || new Set(dayDetails.tasks?.map((t: any) => t.context)).size}
-                                            </span>
-                                        </div>
-                                    </div>
-
-                                    {/* Load Breakdown */}
-                                    <div>
-                                        <div className="flex items-center gap-2 mb-4">
-                                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                            <h4 className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em]">Efficiency Breakdown</h4>
-                                        </div>
-                                        <div className="bg-gray-950 border border-gray-800 rounded-2xl p-6 space-y-4">
-                                            <div className="flex justify-between items-center text-xs">
-                                                <span className="text-gray-500 font-medium">Base Task Complexity (Sum)</span>
-                                                <span className="font-bold tabular-nums text-gray-300">{(dayDetails.raw_load || 0).toFixed(2)}</span>
-                                            </div>
-                                            <div className="flex justify-between items-center text-xs">
-                                                <span className="text-gray-500 font-medium">Cognitive Context Switches</span>
-                                                <span className="font-bold tabular-nums text-gray-300">{(dayDetails.context_switch_penalty || 0).toFixed(2)}</span>
-                                            </div>
-                                            <div className="flex justify-between items-center text-xs italic">
-                                                <span className="text-gray-600 font-medium">Parallel Load Adjustment</span>
-                                                <span className="font-bold tabular-nums text-gray-500">{(dayDetails.multiplier_penalty || (dayDetails.adjusted_load - (dayDetails.raw_load || 0) - (dayDetails.context_switch_penalty || 0))).toFixed(2)}</span>
-                                            </div>
-                                            <div className="pt-4 border-t border-gray-800 flex justify-between items-center">
-                                                <span className="text-sm font-black uppercase text-gray-400">Net Computational Score</span>
-                                                <span className="text-2xl font-bold text-emerald-400 tabular-nums">{dayDetails.adjusted_load.toFixed(2)}</span>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* Scheduled Tasks */}
-                                    <div>
-                                        <h4 className="text-[10px] font-bold text-gray-500 uppercase tracking-[0.2em] mb-4">Scheduled Tasks</h4>
-                                        <div className="space-y-3">
-                                            {dayDetails.tasks && dayDetails.tasks.length > 0 ? (
-                                                dayDetails.tasks.map((task: any) => (
-                                                    <div
-                                                        key={task.task_id}
-                                                        className="group bg-gray-800/20 border border-gray-800 hover:border-emerald-500/30 rounded-2xl p-5 flex items-center justify-between transition-all"
-                                                    >
-                                                        <div className="flex flex-col gap-1">
-                                                            <span className={`font-bold tracking-tight ${task.status === 'done' ? 'text-gray-600 line-through' : 'text-gray-200'}`}>
-                                                                {task.task_name}
-                                                            </span>
-                                                            <div className="flex items-center gap-2">
-                                                                <span className="text-[8px] font-black uppercase tracking-widest text-gray-600">
-                                                                    {task.context}
-                                                                </span>
-                                                                {task.status === 'done' && (
-                                                                    <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400">Done</span>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                        <div className="flex items-center gap-6">
-                                                            <span className="text-sm font-bold text-gray-500 bg-gray-900/50 px-3 py-1.5 rounded-lg tabular-nums">
-                                                                {task.load?.toFixed(1) || task.base_load_score?.toFixed(1)}
-                                                            </span>
-                                                            <div className="flex items-center gap-2 opacity-50 group-hover:opacity-100 transition-opacity">
-                                                                <button className={`p-2 rounded-lg border transition-all ${task.status === 'done' ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : 'bg-gray-800 border-gray-700 hover:border-emerald-500/50 text-gray-500'}`}>
-                                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                                                    </svg>
-                                                                </button>
-                                                                <button className="p-2 bg-gray-800 border border-gray-700 rounded-lg hover:border-red-500/50 text-gray-500 transition-all">
-                                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                                                    </svg>
-                                                                </button>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                ))
-                                            ) : (
-                                                <div className="text-center py-12 bg-gray-800/10 border border-dashed border-gray-800 rounded-3xl">
-                                                    <p className="text-sm font-bold text-gray-600 uppercase tracking-widest">No tasks scheduled for this day</p>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                            ) : (
-                                <div className="flex flex-col items-center justify-center py-20 space-y-4">
-                                    <div className="w-12 h-12 border-4 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
-                                    <p className="text-xs font-black text-gray-600 uppercase tracking-widest">Processing Data...</p>
-                                </div>
-                            )}
-                        </div>
-                    </div>
+function GlassCard({
+    title,
+    icon,
+    action,
+    onAction,
+    children,
+}: {
+    title: string;
+    icon: React.ReactNode;
+    action: string;
+    onAction?: () => void;
+    children: React.ReactNode;
+}) {
+    return (
+        <div className="flex flex-col bg-white/[0.03] border border-white/5 backdrop-blur-3xl rounded-[24px] lg:rounded-[32px] overflow-hidden shadow-2xl">
+            <div className="flex items-center justify-between px-5 lg:px-7 py-4 border-b border-white/5 bg-white/[0.015]">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-indigo-500/10 rounded-xl text-indigo-400 shadow-inner">{icon}</div>
+                    <h3 className="text-[10px] font-bold text-white/80 uppercase tracking-[0.25em]">{title}</h3>
                 </div>
-            )}
+                <button
+                    onClick={onAction}
+                    className="text-[9px] font-bold text-gray-600 hover:text-white uppercase tracking-widest flex items-center gap-1.5 transition-all hover:translate-x-1"
+                >
+                    {action} <ChevronRight size={8} className="text-indigo-500/80" />
+                </button>
+            </div>
+            <div className="px-6 lg:px-8 py-5">{children}</div>
+        </div>
+    );
+}
 
-            <style jsx global>{`
-                .custom-scrollbar::-webkit-scrollbar {
-                    width: 6px;
-                }
-                .custom-scrollbar::-webkit-scrollbar-track {
-                    background: transparent;
-                }
-                .custom-scrollbar::-webkit-scrollbar-thumb {
-                    background: #1f2937;
-                    border-radius: 10px;
-                }
-                .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-                    background: #374151;
-                }
-            `}</style>
+function EmptyState({ message }: { message: string }) {
+    return (
+        <div className="flex flex-col items-center justify-center text-gray-800 py-8">
+            <div className="p-3 bg-white/5 rounded-[16px] mb-2">
+                <Zap size={20} className="opacity-20" />
+            </div>
+            <p className="text-[9px] font-bold uppercase tracking-[0.2em] opacity-50">{message}</p>
         </div>
     );
 }

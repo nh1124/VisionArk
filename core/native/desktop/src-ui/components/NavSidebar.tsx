@@ -181,6 +181,16 @@ export default function NavSidebar({
       return
     }
     listSessions(selectedProjectId).then(setSessions).catch(() => {})
+  }, [selectedProjectId, selectedSessionId])
+
+  useEffect(() => {
+    const onSessionsUpdated = (evt: Event) => {
+      const detail = (evt as CustomEvent<any>).detail || {}
+      if (!selectedProjectId || detail.project_id !== selectedProjectId) return
+      listSessions(selectedProjectId).then(setSessions).catch(() => {})
+    }
+    window.addEventListener("va-sessions-updated", onSessionsUpdated as EventListener)
+    return () => window.removeEventListener("va-sessions-updated", onSessionsUpdated as EventListener)
   }, [selectedProjectId])
 
   useEffect(() => {

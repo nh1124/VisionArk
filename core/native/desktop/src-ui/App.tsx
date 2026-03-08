@@ -125,6 +125,28 @@ function MainApp() {
     [projects]
   )
 
+  useEffect(() => {
+    const onNotificationOpen = (evt: Event) => {
+      const detail = (evt as CustomEvent<any>).detail || {}
+      const view = String(detail.view || "")
+
+      if (view === "monitoring") {
+        setView("monitoring")
+        return
+      }
+      if (view === "run_center") {
+        setView("run_center")
+        return
+      }
+      if (view === "chat" && detail.project_id) {
+        handleNavChange("chat", String(detail.project_id), detail.session_id ? String(detail.session_id) : undefined)
+      }
+    }
+
+    window.addEventListener("va-open-notification", onNotificationOpen as EventListener)
+    return () => window.removeEventListener("va-open-notification", onNotificationOpen as EventListener)
+  }, [handleNavChange])
+
   const handleTaskFilterChange = useCallback((filter: TaskFilter, context?: string) => {
     setTaskFilter(filter)
     setTaskFilterContext(context)
@@ -342,6 +364,7 @@ function MainApp() {
                 projectName={selectedProjectName}
                 sidebarMode={projectSidebarMode}
                 setSidebarMode={setProjectSidebarMode}
+                onSessionChange={setSelectedSessionId}
               />
             )}
             {view === "workspace" && <WorkspaceView />}
