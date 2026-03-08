@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -702,3 +703,32 @@ class RaiseContinueTool:
 
     async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
         return make_result(call, "Continue signal acknowledged.")
+
+
+class WaitTool:
+    definition = ToolDef(
+        name="wait",
+        description=(
+            "Pause agent execution for a short duration. "
+            "Useful for polling intervals or intentional pacing between operations."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "seconds": {
+                    "type": "integer",
+                    "description": "Number of seconds to wait (1-300).",
+                    "default": 1,
+                },
+            },
+            "required": [],
+        },
+    )
+
+    async def invoke(self, call: ToolCallRef, ctx: ExecutionContext) -> ToolResult:
+        seconds = int(call.arguments.get("seconds", 1) or 1)
+        if seconds < 1 or seconds > 300:
+            return fail(call, "seconds must be between 1 and 300.")
+
+        await asyncio.sleep(seconds)
+        return make_result(call, f"Waited {seconds} second(s).")

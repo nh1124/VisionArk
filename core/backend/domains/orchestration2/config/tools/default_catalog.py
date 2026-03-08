@@ -31,7 +31,7 @@ from ...tools.library.system import (
     ScheduleMonitorJobTool, ListMonitorJobsTool, UpdateMonitorJobTool,
     PauseMonitorJobTool, ResumeMonitorJobTool, TestMonitorJobOnceTool,
     ListMonitorJobRunsTool, ListMonitorAlertsTool,
-    RaiseContinueTool,
+    RaiseContinueTool, WaitTool,
 )
 from ...tools.library.delegation import ListMembersTool
 from ...tools.library.writer import RecursiveWriterTool
@@ -99,7 +99,7 @@ def get_core_tools() -> list[tuple[ToolDef, Any]]:
         ScheduleMonitorJobTool, ListMonitorJobsTool, UpdateMonitorJobTool,
         PauseMonitorJobTool, ResumeMonitorJobTool, TestMonitorJobOnceTool,
         ListMonitorJobRunsTool, ListMonitorAlertsTool,
-        RaiseContinueTool,
+        RaiseContinueTool, WaitTool,
         # Members (delegation)
         ListMembersTool,
         # Writer

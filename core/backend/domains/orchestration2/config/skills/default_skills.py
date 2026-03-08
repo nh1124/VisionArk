@@ -103,7 +103,7 @@ SKILL_DEFS: list[SkillDef] = [
         name="runtime_ops",
         description="Browser automation, shell execution & timers",
         tools=[
-            "set_timer", "schedule_recurring_prompt", "raise_continue", "run_safe_shell",
+            "set_timer", "schedule_recurring_prompt", "raise_continue", "wait", "run_safe_shell",
             "browser_open", "browser_click", "browser_fill", "browser_screenshot",
         ],
         instructions=(
