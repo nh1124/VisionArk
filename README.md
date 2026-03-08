@@ -120,6 +120,36 @@ Removes containers/volumes and clears local data.
 
 These scripts now load `.env.core`.
 
+### Auto update on Git changes (Linux/macOS server)
+
+Use `infra/auto_update.sh` to detect remote branch updates and auto-deploy.
+
+One-shot check:
+
+```bash
+./infra/auto_update.sh once
+```
+
+Watch mode (every 60s by default):
+
+```bash
+./infra/auto_update.sh watch
+```
+
+Useful env vars:
+
+- `TARGET_BRANCH` (default: current branch)
+- `CHECK_INTERVAL_SECONDS` (default: `60`)
+- `DEPLOY_PROFILES` (default: `core ui`)
+- `RESTART_AFTER_PULL` (`1` to run compose up after pull, default `1`)
+- `ALLOW_DIRTY` (`0` by default; set `1` to ignore dirty worktree)
+
+Example:
+
+```bash
+TARGET_BRANCH=main CHECK_INTERVAL_SECONDS=30 DEPLOY_PROFILES="core ui edge" ./infra/auto_update.sh watch
+```
+
 ## Native Development
 
 Native scripts moved to `infra/start_native.sh` and `infra/start_native.bat`.
