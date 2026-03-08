@@ -10,7 +10,7 @@ import FilesSidebar from "@/components/FilesSidebar";
 import { startWS, stopWS, onWS } from "@/lib/wsManager";
 import CommandAutocomplete, { CommandAutocompleteHandle } from "../../components/CommandAutocomplete";
 import { apiFetch } from "@/lib/api";
-import { Settings, Files, RotateCcw, X, AlarmClock } from "lucide-react";
+import { Settings, Files, X, AlarmClock } from "lucide-react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useModel } from "@/lib/ModelContext";
 import { Panel, Group, Separator } from "react-resizable-panels";
@@ -20,7 +20,7 @@ import { useNotification } from "@/lib/NotificationContext";
 import ScheduleMessageModal from "@/components/automation/ScheduleMessageModal";
 import AutomationTab from "@/components/automation/AutomationTab";
 import ProjectNotes from "@/components/ProjectNotes";
-import { StickyNote, Activity as ActivityIcon } from "lucide-react";
+import { StickyNote } from "lucide-react";
 import { NotificationBell } from "@/components/NotificationBell";
 import ActivitySidebar from "@/components/ActivitySidebar";
 
@@ -1126,78 +1126,64 @@ export default function ProjectChatPage({
 
     const chatView = (
         <div className="flex-1 flex flex-col h-full overflow-hidden relative bg-gray-950 min-w-0">
-            {/* Header - Minimal Gemini-style - Hide on mobile since the global header handles it */}
+            {/* Top navigation (desktop) */}
             {!isMobile && (
-                <div className="bg-gray-900/50 border-b border-gray-800/50 px-4 py-2.5 flex items-center justify-between flex-shrink-0">
+                <div className="bg-gray-950 border-b border-gray-800 px-6 py-2.5 flex items-center justify-between flex-shrink-0">
                     <h1 className="text-lg font-semibold text-cyan-400 truncate pr-4" title={displayName}>
                         {displayName}
                     </h1>
-                    <div className="flex gap-2 items-center">
+                    <div className="flex items-center space-x-2">
+                        <div className="flex items-center space-x-1 border-r border-gray-800 pr-4 mr-2">
+                            <button
+                                onClick={() => {
+                                    if (showSidebar && sidebarMode === "notes") {
+                                        setShowSidebar(false);
+                                    } else {
+                                        setSidebarMode("notes");
+                                        setShowSidebar(true);
+                                    }
+                                }}
+                                className={`p-2 rounded-lg transition-colors ${showSidebar && sidebarMode === "notes" ? "bg-cyan-500/20 text-cyan-400" : "text-gray-400 hover:text-white hover:bg-gray-800"}`}
+                                title="Notes"
+                            >
+                                <StickyNote size={18} />
+                            </button>
+                            <button
+                                onClick={() => {
+                                    if (showSidebar && sidebarMode === "automation") {
+                                        setShowSidebar(false);
+                                    } else {
+                                        setSidebarMode("automation");
+                                        setShowSidebar(true);
+                                    }
+                                }}
+                                className={`p-2 rounded-lg transition-colors ${showSidebar && sidebarMode === "automation" ? "bg-cyan-500/20 text-cyan-400" : "text-gray-400 hover:text-white hover:bg-gray-800"}`}
+                                title="Automation"
+                            >
+                                <AlarmClock size={18} />
+                            </button>
+                            <button
+                                onClick={() => {
+                                    if (showSidebar && sidebarMode === "files") {
+                                        setShowSidebar(false);
+                                    } else {
+                                        setSidebarMode("files");
+                                        setShowSidebar(true);
+                                    }
+                                }}
+                                className={`p-2 rounded-lg transition-colors ${showSidebar && sidebarMode === "files" ? "bg-cyan-500/20 text-cyan-400" : "text-gray-400 hover:text-white hover:bg-gray-800"}`}
+                                title="Files"
+                            >
+                                <Files size={18} />
+                            </button>
+                        </div>
                         <NotificationBell />
                         <Link href={`/projects/${projectId}/settings`}
-                            className="p-2 text-gray-500 hover:text-white transition-colors"
+                            className="p-2 rounded-lg transition-colors text-gray-400 hover:text-white hover:bg-gray-800"
                             title="Project Settings"
                         >
-                            <Settings size={20} />
+                            <Settings size={18} />
                         </Link>
-                        <button
-                            onClick={() => {
-                                setShowSidebar(true);
-                                setSidebarMode("notes");
-                            }}
-                            className={`p-2 transition-colors ${showSidebar && sidebarMode === "notes" ? "text-cyan-400" : "text-gray-500 hover:text-white"}`}
-                            title="Project Notes"
-                        >
-                            <StickyNote size={20} />
-                        </button>
-                        <button
-                            onClick={() => {
-                                if (showSidebar && sidebarMode === "automation") {
-                                    setShowSidebar(false);
-                                } else {
-                                    setSidebarMode("automation");
-                                    setShowSidebar(true);
-                                }
-                            }}
-                            className={`p-2 rounded-lg transition-all ${showSidebar && sidebarMode === "automation"
-                                ? "bg-cyan-500/20 text-cyan-400"
-                                : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
-                            title={showSidebar && sidebarMode === "automation" ? "Hide Automation" : "Show Automation"}
-                        >
-                            <AlarmClock size={18} />
-                        </button>
-                        <button
-                            onClick={() => {
-                                if (showSidebar && sidebarMode === "activity") {
-                                    setShowSidebar(false);
-                                } else {
-                                    setSidebarMode("activity");
-                                    setShowSidebar(true);
-                                }
-                            }}
-                            className={`p-2 rounded-lg transition-all ${showSidebar && sidebarMode === "activity"
-                                ? "bg-cyan-500/20 text-cyan-400"
-                                : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
-                            title={showSidebar && sidebarMode === "activity" ? "Hide Activity" : "Show Activity"}
-                        >
-                            <ActivityIcon size={18} />
-                        </button>
-                        <button
-                            onClick={() => {
-                                if (showSidebar && sidebarMode === "files") {
-                                    setShowSidebar(false);
-                                } else {
-                                    setSidebarMode("files");
-                                    setShowSidebar(true);
-                                }
-                            }}
-                            className={`p-2 rounded-lg transition-all ${showSidebar && sidebarMode === "files"
-                                ? "bg-cyan-500/20 text-cyan-400"
-                                : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
-                            title={showSidebar && sidebarMode === "files" ? "Hide Files" : "Show Files"}
-                        >
-                            <Files size={18} />
-                        </button>
                     </div>
                 </div>
             )}
@@ -1208,7 +1194,7 @@ export default function ProjectChatPage({
                 onScroll={handleScroll}
                 className={`flex-1 overflow-y-auto px-4 ${isMobile ? 'pt-[72px] pb-[72px]' : 'py-8'} min-w-0 flex flex-col relative`}
             >
-                <div className="max-w-4xl mx-auto space-y-6 min-w-0 w-full" key={`messages-${messages.length}`}>
+                <div className="max-w-none mx-auto space-y-6 min-w-0 w-full px-4" key={`messages-${messages.length}`}>
                     {/* Top sentinel: triggers loadOlderMessages when scrolled into view */}
                     <div ref={topSentinelRef} style={{ height: 1 }} />
                     {hasMoreHistory && (
@@ -1302,28 +1288,11 @@ export default function ProjectChatPage({
             )}
 
             {/* Input - Fixed at bottom */}
-            <div className={`px-4 pt-4 z-50 grid overflow-visible transition-all duration-300 ease-in-out ${isUIHidden && isMobile ? "grid-rows-[0fr] opacity-0 translate-y-4 pointer-events-none pb-0" : "grid-rows-[1fr] opacity-100 translate-y-0 pb-[80px] sm:pb-6"}`}>
-                <div className="max-w-4xl mx-auto flex flex-col min-h-0 min-w-0 overflow-visible w-full relative">
+            <div className={`px-4 pt-4 z-50 grid overflow-visible transition-all duration-300 ease-in-out ${isUIHidden && isMobile ? "grid-rows-[0fr] opacity-0 translate-y-4 pointer-events-none pb-0" : "grid-rows-[1fr] opacity-100 translate-y-0 pb-[80px] sm:pb-4"}`}>
+                <div className="max-w-none mx-auto flex flex-col min-h-0 min-w-0 overflow-visible w-full relative">
                     {/* Fixed floating gradient fade above chat container to hide text abruptly scrolling past input */}
                     <div className="absolute -top-10 left-0 right-0 h-10 bg-gradient-to-t from-gray-950 to-transparent pointer-events-none z-10" />
 
-                    {!isMobile && (
-                        <div className="flex justify-between items-center mb-2 px-4">
-                            <div className="text-[10px] text-gray-500 font-mono uppercase tracking-widest">
-                                Ready for input
-                            </div>
-                            {messages.length > 0 && (
-                                <button
-                                    onClick={handleUndo}
-                                    disabled={loading}
-                                    className="flex items-center gap-1.5 text-[10px] font-bold text-gray-500 hover:text-cyan-400 uppercase tracking-wider transition-colors disabled:opacity-50"
-                                >
-                                    <RotateCcw size={12} />
-                                    Undo Last
-                                </button>
-                            )}
-                        </div>
-                    )}
                     <ChatInput
                         value={commandInputValue}
                         onChange={(val) => {
@@ -1344,7 +1313,7 @@ export default function ProjectChatPage({
                             }
                         }}
                         onSend={sendMessage}
-                        placeholder="Work on tasks, upload files, or type / for commands..."
+                        placeholder="Type a message... (Ctrl+Enter to send)"
                         disabled={loading}
                         allowFileAttach={true}
                         selectedModel={selectedModel}
@@ -1355,22 +1324,8 @@ export default function ProjectChatPage({
                         loading={loading}
                         onStop={handleStop}
                         onScheduleMessage={() => setIsScheduleModalOpen(true)}
+                        nativeMode={!isMobile}
                     />
-                    <div className="mt-2 flex items-center justify-center gap-4">
-                        {!isMobile && (
-                            <div className="text-[10px] text-gray-600">
-                                Press <kbd className="bg-gray-800 px-1 rounded text-gray-400">/</kbd> to see available commands
-                            </div>
-                        )}
-                        {canvasContent && !showCanvas && (
-                            <button
-                                onClick={() => setShowCanvas(true)}
-                                className="text-[10px] text-cyan-500 font-bold hover:underline uppercase tracking-wider"
-                            >
-                                Open Canvas
-                            </button>
-                        )}
-                    </div>
                 </div>
             </div>
 

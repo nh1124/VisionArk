@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useState, useEffect, useRef, ReactNode } from "react";
+import { useState, useEffect, useRef, ReactNode, useMemo } from "react";
 import { apiFetch, getFileToken } from "@/lib/api";
 import { useProjects } from "@/hooks/useProjects";
 import { useNotification } from "@/lib/NotificationContext";
@@ -16,6 +16,7 @@ import {
     Settings as SettingsIcon,
     MessageSquare,
     Plus,
+    ChevronLeft,
     Copy,
     ExternalLink,
     Download,
@@ -24,7 +25,6 @@ import {
     Pencil,
     Archive,
     CheckSquare,
-    Clock3,
     StickyNote,
     FileText,
     Workflow,
@@ -137,6 +137,8 @@ export default function Sidebar() {
     const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
     const [editSessionTitle, setEditSessionTitle] = useState("");
     const sessionEditRef = useRef<HTMLInputElement>(null);
+    const [projectSearchQuery, setProjectSearchQuery] = useState("");
+    const [chatSearchQuery, setChatSearchQuery] = useState("");
 
     const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
     const [editProjectTitle, setEditProjectTitle] = useState("");
@@ -147,6 +149,23 @@ export default function Sidebar() {
     const projectMatch = pathname.match(/^\/projects\/([^\/]+)/);
     const currentProjectId = projectMatch ? projectMatch[1] : null;
     const activeSessionId = searchParams.get("session_id");
+    const isAllProjectsMode = pathname === "/projects";
+
+    const filteredProjects = useMemo(() => {
+        const query = projectSearchQuery.trim().toLowerCase();
+        if (!query) return projects;
+        return projects.filter((project) =>
+            (project.display_name || project.name || "").toLowerCase().includes(query)
+        );
+    }, [projects, projectSearchQuery]);
+
+    const filteredSessions = useMemo(() => {
+        const query = chatSearchQuery.trim().toLowerCase();
+        if (!query) return sessions;
+        return sessions.filter((session) =>
+            (session.title || "untitled chat").toLowerCase().includes(query)
+        );
+    }, [sessions, chatSearchQuery]);
 
     useEffect(() => {
         if (!currentProjectId) {
@@ -375,93 +394,127 @@ export default function Sidebar() {
         </div>
     );
 
-    const renderProjectsSecondary = () => (
-        <div className="space-y-5">
-            <SecondarySection title="Projects">
+    const renderProjectsSecondary = () =>
+        isAllProjectsMode ? (
+            <div className="space-y-4">
+                <div className="flex items-center gap-2 px-1 py-1 text-gray-300">
+                    <Folder size={16} />
+                    <span className="text-[2rem] leading-none font-semibold">All Projects</span>
+                </div>
+
+                <div className="px-1">
+                    <input
+                        type="text"
+                        placeholder="Search projects..."
+                        value={projectSearchQuery}
+                        onChange={(e) => setProjectSearchQuery(e.target.value)}
+                        className="w-full h-11 rounded-xl bg-gray-900/80 border border-gray-800 px-4 text-gray-200 placeholder:text-gray-500 outline-none focus:border-cyan-500/40"
+                    />
+                </div>
+
                 <Link
                     href="/new"
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-cyan-400 hover:bg-cyan-500/10 transition-colors"
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-cyan-400 hover:bg-cyan-500/10 transition-colors"
                 >
                     <Plus size={15} />
                     <span>New Project</span>
                 </Link>
-                <SecondaryLink
-                    href="/projects"
-                    active={pathname === "/projects"}
-                    icon={<Folder size={15} />}
-                    label="All Projects"
-                />
 
-                <div className="max-h-48 overflow-y-auto space-y-1 pr-1">
-                    {projects.length === 0 && (
-                        <div className="px-3 py-2 text-xs text-gray-600 italic">No projects yet</div>
-                    )}
-                    {projects.map((project) => {
-                        const projectPath = project.path;
-                        const isActive = pathname === projectPath || pathname.startsWith(`${projectPath}/`);
-                        const isHovered = hoveredProject === project.id;
-                        return (
-                            <div
-                                key={project.id}
-                                className="relative"
-                                onMouseEnter={() => setHoveredProject(project.id)}
-                                onMouseLeave={() => {
-                                    if (menuOpen !== project.id) setHoveredProject(null);
-                                }}
-                            >
-                                {editingProjectId === project.id ? (
-                                    <input
-                                        ref={projectEditRef}
-                                        value={editProjectTitle}
-                                        onChange={(e) => setEditProjectTitle(e.target.value)}
-                                        onBlur={() => handleRenameProject(project.id, editProjectTitle)}
-                                        onKeyDown={(e) => {
-                                            if (e.key === "Enter") handleRenameProject(project.id, editProjectTitle);
-                                            if (e.key === "Escape") setEditingProjectId(null);
-                                        }}
-                                        className="w-full px-3 py-2 text-sm bg-gray-800 text-white rounded-lg border border-cyan-500/50 outline-none"
-                                    />
-                                ) : (
-                                    <Link
-                                        href={projectPath}
-                                        className={`flex items-center px-3 py-2 rounded-lg text-sm transition-colors ${
-                                            isActive
-                                                ? "bg-gray-800 text-white"
-                                                : "text-gray-400 hover:bg-gray-800/70 hover:text-white"
-                                        }`}
-                                    >
-                                        <span className="truncate flex-1">{project.display_name || project.name}</span>
-                                    </Link>
-                                )}
+                <div className="border-t border-gray-800/60 pt-2">
+                    <div className="space-y-1 max-h-[calc(100vh-320px)] overflow-y-auto pr-1">
+                        <SecondaryLink
+                            href="/projects"
+                            active={pathname === "/projects"}
+                            icon={<Folder size={15} />}
+                            label="All Projects"
+                        />
+                        {filteredProjects.length === 0 ? (
+                            <div className="px-3 py-2 text-xs text-gray-600 italic">No matching projects</div>
+                        ) : filteredProjects.map((project) => {
+                            const projectPath = project.path;
+                            const isActive = pathname === projectPath || pathname.startsWith(`${projectPath}/`);
+                            const isHovered = hoveredProject === project.id;
+                            return (
+                                <div
+                                    key={project.id}
+                                    className="relative"
+                                    onMouseEnter={() => setHoveredProject(project.id)}
+                                    onMouseLeave={() => {
+                                        if (menuOpen !== project.id) setHoveredProject(null);
+                                    }}
+                                >
+                                    {editingProjectId === project.id ? (
+                                        <input
+                                            ref={projectEditRef}
+                                            value={editProjectTitle}
+                                            onChange={(e) => setEditProjectTitle(e.target.value)}
+                                            onBlur={() => handleRenameProject(project.id, editProjectTitle)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === "Enter") handleRenameProject(project.id, editProjectTitle);
+                                                if (e.key === "Escape") setEditingProjectId(null);
+                                            }}
+                                            className="w-full px-3 py-2 text-sm bg-gray-800 text-white rounded-lg border border-cyan-500/50 outline-none"
+                                        />
+                                    ) : (
+                                        <Link
+                                            href={projectPath}
+                                            className={`flex items-center px-3 py-2 rounded-lg text-sm transition-colors ${
+                                                isActive
+                                                    ? "bg-gray-800 text-white"
+                                                    : "text-gray-400 hover:bg-gray-800/70 hover:text-white"
+                                            }`}
+                                        >
+                                            <span className="truncate flex-1">{project.display_name || project.name}</span>
+                                        </Link>
+                                    )}
 
-                                {(isHovered || menuOpen === project.id) && editingProjectId !== project.id && (
-                                    <button
-                                        onClick={(e) => openProjectMenu(e, project.id)}
-                                        className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 text-gray-500 hover:text-white hover:bg-gray-700 rounded transition-colors"
-                                    >
-                                        <MoreVertical size={14} />
-                                    </button>
-                                )}
-                            </div>
-                        );
-                    })}
+                                    {(isHovered || menuOpen === project.id) && editingProjectId !== project.id && (
+                                        <button
+                                            onClick={(e) => openProjectMenu(e, project.id)}
+                                            className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 text-gray-500 hover:text-white hover:bg-gray-700 rounded transition-colors"
+                                        >
+                                            <MoreVertical size={14} />
+                                        </button>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
                 </div>
-            </SecondarySection>
+            </div>
+        ) : (
+            <div className="space-y-4">
+                <Link
+                    href="/projects"
+                    className="w-full flex items-center gap-2 px-1 py-1 text-gray-300 hover:text-white"
+                >
+                    <ChevronLeft size={16} />
+                    <span className="text-[2rem] leading-none font-semibold">Projects</span>
+                </Link>
 
-            {currentProjectId && (
-                <SecondarySection title="Sessions">
-                    <button
-                        onClick={handleNewChat}
-                        className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-cyan-400 hover:bg-cyan-500/10 transition-colors"
-                    >
-                        <Plus size={15} />
-                        <span>New Chat</span>
-                    </button>
-                    <div className="max-h-48 overflow-y-auto space-y-1 pr-1">
-                        {sessions.length === 0 && (
-                            <div className="px-3 py-2 text-xs text-gray-600 italic">No chats yet</div>
-                        )}
-                        {sessions.map((session) => {
+                <div className="px-1">
+                    <input
+                        type="text"
+                        placeholder="Search chats..."
+                        value={chatSearchQuery}
+                        onChange={(e) => setChatSearchQuery(e.target.value)}
+                        className="w-full h-11 rounded-xl bg-gray-900/80 border border-gray-800 px-4 text-gray-200 placeholder:text-gray-500 outline-none focus:border-cyan-500/40"
+                    />
+                </div>
+
+                <button
+                    onClick={handleNewChat}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-cyan-400 hover:bg-cyan-500/10 transition-colors"
+                >
+                    <Plus size={15} />
+                    <span>New Chat</span>
+                </button>
+
+                <div className="border-t border-gray-800/60 pt-2">
+                    <div className="space-y-1 max-h-[calc(100vh-320px)] overflow-y-auto pr-1">
+                        {filteredSessions.length === 0 ? (
+                            <div className="px-3 py-2 text-xs text-gray-600 italic">No matching chats</div>
+                        ) : filteredSessions.map((session) => {
                             const isActive = activeSessionId === session.id;
                             const isHovered = hoveredSession === session.id;
                             return (
@@ -483,18 +536,18 @@ export default function Sidebar() {
                                                 if (e.key === "Enter") handleRenameSession(session.id, editSessionTitle);
                                                 if (e.key === "Escape") setEditingSessionId(null);
                                             }}
-                                            className="w-full px-3 py-2 text-xs bg-gray-800 text-white rounded-lg border border-cyan-500/50 outline-none"
+                                            className="w-full px-3 py-2 text-sm bg-gray-800 text-white rounded-lg border border-cyan-500/50 outline-none"
                                         />
                                     ) : (
                                         <Link
                                             href={`/projects/${currentProjectId}?session_id=${session.id}`}
-                                            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs transition-colors ${
+                                            className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm text-left ${
                                                 isActive
                                                     ? "bg-cyan-500/15 text-white"
-                                                    : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"
+                                                    : "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200"
                                             }`}
                                         >
-                                            <MessageSquare size={12} className="flex-shrink-0 opacity-50" />
+                                            <MessageSquare size={11} className="flex-shrink-0 opacity-40" />
                                             <span className="truncate flex-1">{session.title || "Untitled Chat"}</span>
                                         </Link>
                                     )}
@@ -511,10 +564,9 @@ export default function Sidebar() {
                             );
                         })}
                     </div>
-                </SecondarySection>
-            )}
-        </div>
-    );
+                </div>
+            </div>
+        );
 
     const renderTasksSecondary = () => (
         <div className="space-y-3">
@@ -630,11 +682,13 @@ export default function Sidebar() {
 
                 {currentPrimaryNav !== "home" && (
                     <aside className="w-72 flex flex-col bg-gray-950/80">
-                        <div className="px-4 py-3 border-b border-gray-800/50">
-                            <h2 className="text-sm font-semibold text-gray-200">{secondaryTitles[currentPrimaryNav]}</h2>
-                            <p className="text-[11px] text-gray-500 mt-1">Page navigation and filters</p>
-                        </div>
-                        <div className="flex-1 overflow-y-auto p-3">
+                        {currentPrimaryNav !== "projects" && (
+                            <div className="px-4 py-3 border-b border-gray-800/50">
+                                <h2 className="text-sm font-semibold text-gray-200">{secondaryTitles[currentPrimaryNav]}</h2>
+                                <p className="text-[11px] text-gray-500 mt-1">Page navigation and filters</p>
+                            </div>
+                        )}
+                        <div className={`flex-1 overflow-y-auto p-3 ${currentPrimaryNav === "projects" ? "pt-6" : ""}`}>
                             {renderSecondaryContent()}
                         </div>
                     </aside>

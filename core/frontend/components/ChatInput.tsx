@@ -25,6 +25,7 @@ interface ChatInputProps {
     loading?: boolean;
     onStop?: () => void;
     compact?: boolean;
+    nativeMode?: boolean;
 }
 
 import { useModel, getModelDisplayName } from "@/lib/ModelContext";
@@ -47,7 +48,8 @@ function ChatInputComponent({
     loading = false,
     onStop,
     onKeyDown,
-    compact = false
+    compact = false,
+    nativeMode = false
 }: ChatInputProps) {
     // Internal state for the input value - prevents parent re-renders on each keystroke
     const [internalValue, setInternalValue] = useState(initialValue);
@@ -71,6 +73,19 @@ function ChatInputComponent({
     const { modelGroups } = useModel();
     const [mounted, setMounted] = useState(false);
 
+    // Auto-resize logic
+    function adjustTextareaHeight(overrideExpanded?: boolean) {
+        const textarea = textareaRef.current;
+        if (textarea) {
+            textarea.style.height = "auto";
+            const effectiveExpanded = overrideExpanded !== undefined ? overrideExpanded : isExpanded;
+            const minHeight = isMobile ? 40 : (effectiveExpanded ? 200 : 40);
+            const maxHeight = effectiveExpanded ? 800 : (isMobile ? 150 : 300); // 300px is the limit for normal mode
+            const newHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight);
+            textarea.style.height = `${newHeight}px`;
+        }
+    }
+
     useEffect(() => {
         setMounted(true);
     }, []);
@@ -93,19 +108,6 @@ function ChatInputComponent({
             setTimeout(adjustTextareaHeight, 0);
         }
     }, [value]);
-
-    // Auto-resize logic
-    const adjustTextareaHeight = (overrideExpanded?: boolean) => {
-        const textarea = textareaRef.current;
-        if (textarea) {
-            textarea.style.height = "auto";
-            const effectiveExpanded = overrideExpanded !== undefined ? overrideExpanded : isExpanded;
-            const minHeight = isMobile ? 40 : (effectiveExpanded ? 200 : 40);
-            const maxHeight = effectiveExpanded ? 800 : (isMobile ? 150 : 300); // 300px is the limit for normal mode
-            const newHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight);
-            textarea.style.height = `${newHeight}px`;
-        }
-    };
 
     const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         const newValue = e.target.value;
@@ -322,7 +324,7 @@ function ChatInputComponent({
         </div>
     );
 
-    const backdrop = isExpanded && (
+    const backdrop = isExpanded && !nativeMode && (
         <div
             className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[990]"
             onClick={() => {
@@ -335,9 +337,9 @@ function ChatInputComponent({
     const inputContainer = (
         <div
             className={`flex flex-col shadow-2xl transition-[inset,transform,background-color,border-color,border-radius] duration-500 ease-in-out
-                ${isExpanded
+                ${isExpanded && !nativeMode
                     ? "fixed inset-4 md:inset-x-20 md:inset-y-10 z-[1000] bg-gray-900 border border-gray-700 rounded-3xl overflow-visible"
-                    : `relative ${compact ? "rounded-2xl" : "rounded-3xl"} border overflow-visible ${isDragging ? "border-cyan-500 bg-cyan-500/10" : "border-gray-700 bg-gray-900"}`
+                    : `relative ${compact ? "rounded-2xl" : "rounded-3xl"} border overflow-visible ${isDragging ? "border-cyan-500 bg-cyan-500/10" : nativeMode ? "border-gray-800 bg-gray-900/90" : "border-gray-700 bg-gray-900"}`
                 }`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -365,30 +367,30 @@ function ChatInputComponent({
                     }}
                 />
 
-                {/* Expansion Toggle Button */}
-                <button
-                    onClick={() => {
-                        const willExpand = !isExpanded;
-                        setIsExpanded(willExpand);
-                        // Adjust height immediately with the target state
-                        requestAnimationFrame(() => adjustTextareaHeight(willExpand));
-                    }}
-                    className={`absolute top-2 right-4 p-2 text-gray-500 hover:text-white hover:bg-gray-800 rounded-xl transition-all group scale-90 hover:scale-100 ${isExpanded ? "bg-gray-800/50" : ""}`}
-                    title={isExpanded ? "Exit Focus Mode" : "Enter Focus Mode"}
-                >
-                    {isExpanded ? (
-                        <svg className="w-5 h-5 transition-transform group-hover:scale-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                    ) : (
-                        <svg className="w-5 h-5 transition-transform group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
-                        </svg>
-                    )}
-                </button>
+                {!nativeMode && (
+                    <button
+                        onClick={() => {
+                            const willExpand = !isExpanded;
+                            setIsExpanded(willExpand);
+                            requestAnimationFrame(() => adjustTextareaHeight(willExpand));
+                        }}
+                        className={`absolute top-2 right-4 p-2 text-gray-500 hover:text-white hover:bg-gray-800 rounded-xl transition-all group scale-90 hover:scale-100 ${isExpanded ? "bg-gray-800/50" : ""}`}
+                        title={isExpanded ? "Exit Focus Mode" : "Enter Focus Mode"}
+                    >
+                        {isExpanded ? (
+                            <svg className="w-5 h-5 transition-transform group-hover:scale-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        ) : (
+                            <svg className="w-5 h-5 transition-transform group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
+                            </svg>
+                        )}
+                    </button>
+                )}
 
                 {/* Character/Word Count in Expanded Mode */}
-                {isExpanded && (
+                {isExpanded && !nativeMode && (
                     <div className="absolute bottom-4 right-6 text-xs text-gray-500 font-mono pointer-events-none">
                         {internalValue.length} chars | {internalValue.split(/\s+/).filter(w => w.length > 0).length} words
                     </div>
@@ -404,7 +406,7 @@ function ChatInputComponent({
                     {allowFileAttach && !compact && (
                         <button
                             onClick={() => fileInputRef.current?.click()}
-                            className="p-3 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-all min-w-[44px] min-h-[44px] flex items-center justify-center"
+                            className={`p-3 text-gray-400 hover:text-white hover:bg-gray-800 transition-all min-w-[44px] min-h-[44px] flex items-center justify-center ${nativeMode ? "rounded-lg" : "rounded-full"}`}
                             title="Attach files"
                             disabled={disabled}
                         >
@@ -415,7 +417,7 @@ function ChatInputComponent({
                     )}
 
                     {/* Tools Button */}
-                    {!compact && (
+                    {!compact && !nativeMode && (
                         <div className="relative" ref={toolsMenuRef}>
                             <button
                                 ref={toolsButtonRef}
@@ -492,7 +494,7 @@ function ChatInputComponent({
                             <button
                                 ref={modelButtonRef}
                                 onClick={() => setShowModelMenu(!showModelMenu)}
-                                className="px-3 sm:px-4 py-2 text-gray-300 hover:text-white hover:bg-gray-800 rounded-full transition-all text-xs sm:text-sm flex items-center gap-1.5 sm:gap-2 border border-gray-700/50 whitespace-nowrap min-h-[44px] flex-shrink-0"
+                                className={`px-3 sm:px-4 py-2 text-gray-300 hover:text-white hover:bg-gray-800 transition-all text-xs sm:text-sm flex items-center gap-1.5 sm:gap-2 border border-gray-700/50 whitespace-nowrap min-h-[44px] flex-shrink-0 ${nativeMode ? "rounded-xl bg-gray-800/80" : "rounded-full"}`}
                                 title="Select model"
                             >
                                 <span className="font-medium text-[10px] uppercase tracking-wider text-gray-500 hidden xs:inline">Model:</span>
@@ -542,27 +544,28 @@ function ChatInputComponent({
                         </div>
                     )}
 
-                    {/* Voice Button */}
-                    <button
-                        onClick={toggleRecording}
-                        className={`p-3 rounded-full transition-all min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0 ${isRecording
-                            ? "text-red-500 bg-red-500/10 animate-pulse border border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.4)]"
-                            : "text-gray-500 hover:text-gray-300 hover:bg-gray-800"
-                            }`}
-                        title={isRecording ? "Stop recording" : "Voice input"}
-                        disabled={disabled}
-                        type="button"
-                    >
-                        <svg className="w-5 h-5" fill={isRecording ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                        </svg>
-                    </button>
+                    {!nativeMode && (
+                        <button
+                            onClick={toggleRecording}
+                            className={`p-3 rounded-full transition-all min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0 ${isRecording
+                                ? "text-red-500 bg-red-500/10 animate-pulse border border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.4)]"
+                                : "text-gray-500 hover:text-gray-300 hover:bg-gray-800"
+                                }`}
+                            title={isRecording ? "Stop recording" : "Voice input"}
+                            disabled={disabled}
+                            type="button"
+                        >
+                            <svg className="w-5 h-5" fill={isRecording ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                            </svg>
+                        </button>
+                    )}
 
                     {/* Stop/Send Button */}
                     {loading && onStop ? (
                         <button
                             onClick={onStop}
-                            className="p-3 bg-white/10 hover:bg-white/20 rounded-full transition-all ml-1 min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0 group"
+                            className={`p-3 bg-white/10 hover:bg-white/20 transition-all ml-1 min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0 group ${nativeMode ? "rounded-xl" : "rounded-full"}`}
                             title="Stop Agent"
                         >
                             <div className="w-4 h-4 bg-red-500 rounded-sm group-hover:bg-red-400 transition-colors" />
@@ -571,7 +574,7 @@ function ChatInputComponent({
                         <button
                             onClick={handleSend}
                             disabled={disabled || (!internalValue.trim() && attachedFiles.length === 0)}
-                            className="p-3 bg-cyan-500 hover:bg-cyan-400 disabled:bg-gray-800 disabled:text-gray-600 rounded-full shadow-lg transition-all ml-1 min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0"
+                            className={`p-3 bg-cyan-500 hover:bg-cyan-400 disabled:bg-gray-800 disabled:text-gray-600 shadow-lg transition-all ml-1 min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0 ${nativeMode ? "rounded-xl" : "rounded-full"}`}
                             title="Send message"
                         >
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -593,7 +596,7 @@ function ChatInputComponent({
         </div>
     );
 
-    if (isExpanded && mounted) {
+    if (isExpanded && !nativeMode && mounted) {
         return (
             <>
                 <div className={`sticky bottom-0 bg-transparent ${compact ? "p-0" : (isMobile ? "p-2" : "p-4")}`}>
