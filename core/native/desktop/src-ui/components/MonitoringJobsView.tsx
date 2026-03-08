@@ -3,6 +3,7 @@ import {
     Activity,
     Bell,
     CircleHelp,
+    Pencil,
     PauseCircle,
     PlayCircle,
     Plus,
@@ -93,6 +94,13 @@ function resolveCron(mode: CronMode, custom: string): string {
     return custom.trim()
 }
 
+function detectCronMode(cron: string): { mode: CronMode; custom: string } {
+    const normalized = (cron || "").trim()
+    const matched = CRON_MODE_OPTIONS.find((opt) => opt.cron === normalized)
+    if (matched) return { mode: matched.value, custom: "" }
+    return { mode: "custom", custom: normalized }
+}
+
 function createInitialForm() {
     return {
         name: "",
@@ -120,6 +128,7 @@ export default function MonitoringJobsView() {
     const [tab, setTab] = useState<Tab>("jobs")
 
     const [isCreateOpen, setIsCreateOpen] = useState(false)
+    const [editingJobId, setEditingJobId] = useState<string | null>(null)
     const [showCronHelp, setShowCronHelp] = useState(false)
     const [projects, setProjects] = useState<Project[]>([])
     const [sessions, setSessions] = useState<Array<{ id: string; title: string | null; last_message_at: string | null }>>([])
@@ -236,7 +245,7 @@ export default function MonitoringJobsView() {
         setSelectedJobId(job.id)
     }
 
-    const handleCreate = async () => {
+    const handleSubmit = async () => {
         const scheduleCron = resolveCron(form.cron_mode, form.cron_custom)
 
         if (!form.name || !form.url || !scheduleCron) {
@@ -285,27 +294,61 @@ export default function MonitoringJobsView() {
             is_active: true,
         }
 
-        const res = await apiFetch("/api/monitor/jobs", {
-            method: "POST",
+        const endpoint = editingJobId ? `/api/monitor/jobs/${editingJobId}` : "/api/monitor/jobs"
+        const method = editingJobId ? "PUT" : "POST"
+        const res = await apiFetch(endpoint, {
+            method,
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
         })
         if (!res.ok) {
             const msg = await res.text()
-            throw new Error(msg || "Create failed")
+            throw new Error(msg || (editingJobId ? "Update failed" : "Create failed"))
         }
 
         setIsCreateOpen(false)
+        setEditingJobId(null)
         setSessions([])
         setShowCronHelp(false)
         setForm(createInitialForm())
         await reloadAll()
     }
 
+    const openCreateModal = () => {
+        setEditingJobId(null)
+        setShowCronHelp(false)
+        setSessions([])
+        setForm(createInitialForm())
+        setIsCreateOpen(true)
+    }
+
+    const openEditModal = (job: MonitorJob) => {
+        const cron = detectCronMode(job.schedule_cron)
+        const detector = job.detector_config || {}
+        const notify = (job.notification_config?.agent_delivery || {}) as Record<string, any>
+        setEditingJobId(job.id)
+        setShowCronHelp(false)
+        setForm({
+            name: job.name || "",
+            url: job.source_config?.url || "",
+            cron_mode: cron.mode,
+            cron_custom: cron.custom,
+            timezone: job.timezone || "UTC",
+            expected_status: String(detector.expected_status ?? 200),
+            max_latency_ms: detector.max_latency_ms != null ? String(detector.max_latency_ms) : "",
+            cooldown_seconds: String(job.cooldown_seconds ?? 300),
+            agent_delivery_enabled: Boolean(notify.enabled),
+            agent_project_id: (notify.project_id as string) || "",
+            agent_session_id: (notify.session_id as string) || "",
+            agent_min_severity: (notify.min_severity as string) || "warn",
+        })
+        setIsCreateOpen(true)
+    }
+
     return (
-        <div className="flex-1 overflow-y-auto px-10 py-8 bg-[#030712] custom-scrollbar">
-            <div className="max-w-7xl mx-auto">
-                <header className="mb-8 flex items-center justify-between gap-3">
+        <div className="flex-1 h-full overflow-y-auto px-6 py-5 lg:px-8 lg:py-6 bg-[#030712] custom-scrollbar">
+            <div className="max-w-7xl mx-auto h-full flex flex-col">
+                <header className="mb-5 flex items-center justify-between gap-3">
                     <div>
                         <h1 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">
                             <ShieldCheck className="text-emerald-400" size={30} />
@@ -317,7 +360,7 @@ export default function MonitoringJobsView() {
                     </div>
                     <div className="flex gap-2">
                         <button
-                            onClick={() => setIsCreateOpen(true)}
+                            onClick={openCreateModal}
                             className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl font-bold text-sm"
                         >
                             <Plus size={16} /> New Monitor
@@ -332,7 +375,7 @@ export default function MonitoringJobsView() {
                     </div>
                 </header>
 
-                <div className="flex gap-1 mb-5 p-1 bg-gray-900/50 rounded-2xl w-fit border border-gray-800/50">
+                <div className="flex gap-1 mb-4 p-1 bg-gray-900/50 rounded-2xl w-fit border border-gray-800/50">
                     <button
                         onClick={() => setTab("jobs")}
                         className={`px-5 py-2 rounded-xl text-xs font-bold ${tab === "jobs" ? "bg-gray-800 text-emerald-300" : "text-gray-500"}`}
@@ -348,8 +391,9 @@ export default function MonitoringJobsView() {
                 </div>
 
                 {tab === "jobs" ? (
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-                        <div className="lg:col-span-2 bg-gray-900/40 border border-gray-800 rounded-2xl overflow-hidden">
+                    <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-3 gap-4">
+                        <div className="lg:col-span-2 bg-gray-900/40 border border-gray-800 rounded-2xl overflow-hidden min-h-[360px] lg:min-h-0 lg:h-full">
+                            <div className="h-full overflow-auto custom-scrollbar">
                             <table className="w-full text-left">
                                 <thead className="bg-gray-800/50">
                                     <tr>
@@ -394,6 +438,16 @@ export default function MonitoringJobsView() {
                                                     <button
                                                         onClick={(e) => {
                                                             e.stopPropagation()
+                                                            openEditModal(job)
+                                                        }}
+                                                        className="p-2 rounded-lg text-cyan-300 hover:bg-cyan-500/10"
+                                                        title="Edit monitor"
+                                                    >
+                                                        <Pencil size={15} />
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
                                                             handleTest(job).catch((err) => alert(String(err)))
                                                         }}
                                                         className="p-2 rounded-lg text-cyan-300 hover:bg-cyan-500/10"
@@ -424,9 +478,10 @@ export default function MonitoringJobsView() {
                                     )}
                                 </tbody>
                             </table>
+                            </div>
                         </div>
 
-                        <div className="bg-gray-900/40 border border-gray-800 rounded-2xl p-4">
+                        <div className="bg-gray-900/40 border border-gray-800 rounded-2xl p-4 min-h-[260px] lg:min-h-0 lg:h-full flex flex-col">
                             <h3 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
                                 <Activity size={14} className="text-cyan-400" />
                                 Latest Runs
@@ -435,7 +490,7 @@ export default function MonitoringJobsView() {
                             {selectedJob && (
                                 <>
                                     <div className="text-xs text-gray-400 mb-2">{selectedJob.name}</div>
-                                    <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1 custom-scrollbar">
+                                    <div className="space-y-2 flex-1 min-h-0 overflow-y-auto pr-1 custom-scrollbar">
                                         {runsLoading ? (
                                             <div className="text-xs text-gray-500">Loading runs...</div>
                                         ) : runs.length === 0 ? (
@@ -460,7 +515,8 @@ export default function MonitoringJobsView() {
                         </div>
                     </div>
                 ) : (
-                    <div className="bg-gray-900/40 border border-gray-800 rounded-2xl overflow-hidden">
+                    <div className="flex-1 min-h-0 bg-gray-900/40 border border-gray-800 rounded-2xl overflow-hidden">
+                        <div className="h-full overflow-auto custom-scrollbar">
                         <table className="w-full text-left">
                             <thead className="bg-gray-800/50">
                                 <tr>
@@ -494,13 +550,14 @@ export default function MonitoringJobsView() {
                                 )}
                             </tbody>
                         </table>
+                        </div>
                     </div>
                 )}
             </div>
 
             {isCreateOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-                    <div className="bg-[#0A0A0A] border border-gray-800 rounded-3xl w-full max-w-xl p-6 relative">
+                    <div className="bg-[#0A0A0A] border border-gray-800 rounded-3xl w-full max-w-xl max-h-[90vh] overflow-hidden p-6 relative">
                         <button
                             onClick={() => setIsCreateOpen(false)}
                             className="absolute top-4 right-4 text-gray-500 hover:text-white"
@@ -510,10 +567,10 @@ export default function MonitoringJobsView() {
 
                         <h2 className="text-xl font-bold text-white mb-5 flex items-center gap-2">
                             <Bell size={18} className="text-emerald-400" />
-                            Create Monitor Job
+                            {editingJobId ? "Edit Monitor Job" : "Create Monitor Job"}
                         </h2>
 
-                        <div className="space-y-3">
+                        <div className="space-y-3 overflow-y-auto pr-1 max-h-[calc(90vh-210px)] custom-scrollbar">
                             <div>
                                 <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Name</label>
                                 <input
@@ -532,6 +589,9 @@ export default function MonitoringJobsView() {
                                     className="mt-1 w-full bg-gray-900 border border-gray-800 rounded-xl px-3 py-2 text-sm text-white"
                                     placeholder="https://example.com/health"
                                 />
+                                <p className="mt-1 text-[11px] text-gray-500">
+                                    When backend runs in Docker, localhost targets are resolved to host.docker.internal.
+                                </p>
                             </div>
 
                             <div className="grid grid-cols-2 gap-3">
@@ -704,16 +764,19 @@ export default function MonitoringJobsView() {
 
                         <div className="flex justify-end gap-2 mt-6">
                             <button
-                                onClick={() => setIsCreateOpen(false)}
+                                onClick={() => {
+                                    setIsCreateOpen(false)
+                                    setEditingJobId(null)
+                                }}
                                 className="px-4 py-2 rounded-xl border border-gray-800 text-gray-400 hover:text-white"
                             >
                                 Cancel
                             </button>
                             <button
-                                onClick={() => handleCreate().catch((e) => alert(String(e)))}
+                                onClick={() => handleSubmit().catch((e) => alert(String(e)))}
                                 className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold"
                             >
-                                Create
+                                {editingJobId ? "Save Changes" : "Create"}
                             </button>
                         </div>
                     </div>
