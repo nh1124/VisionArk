@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react"
 import { ChevronDown, ChevronUp } from "lucide-react"
 import { login, getApiBase, setApiBase } from "../lib/api"
+import appIcon from "../../icons/icon.png"
 
 interface Props {
     onLogin: (username: string) => void
@@ -42,17 +43,21 @@ export default function LoginScreen({ onLogin }: Props) {
     }
 
     return (
-        <div className="h-screen flex items-center justify-center bg-gray-950">
+        <div className="h-screen flex items-center justify-center bg-gray-950 p-6">
             <div className="w-full max-w-sm">
                 <div className="flex flex-col items-center mb-8">
-                    <div className="w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center font-bold text-white text-xl mb-3">
-                        V
+                    <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-lg shadow-blue-500/30 mb-3 border border-blue-500/20">
+                        <img
+                            src={appIcon}
+                            alt="VisionArk logo"
+                            className="w-full h-full object-cover"
+                        />
                     </div>
-                    <h1 className="text-xl font-bold text-white">Vision Ark</h1>
-                    <p className="text-xs text-gray-500 mt-1">AI TaskManagement OS</p>
+                    <h1 className="text-2xl font-bold text-white tracking-tight">VisionArk</h1>
+                    <p className="text-sm text-gray-400 mt-1">Sign in to continue</p>
                 </div>
 
-                <form onSubmit={handleSubmit} className="bg-gray-900/40 border border-gray-800 rounded-2xl p-6 space-y-4">
+                <form onSubmit={handleSubmit} className="bg-gray-900/50 border border-gray-800 rounded-2xl p-6 space-y-4 shadow-xl">
                     <div>
                         <label className="block text-xs font-medium text-gray-400 mb-1.5">Username</label>
                         <input
@@ -114,9 +119,7 @@ export default function LoginScreen({ onLogin }: Props) {
                         )}
                     </div>
 
-                    {error && (
-                        <p className="text-xs text-red-400">{error}</p>
-                    )}
+                    {error && <p className="text-xs text-red-400">{error}</p>}
 
                     <button
                         type="submit"
@@ -126,6 +129,10 @@ export default function LoginScreen({ onLogin }: Props) {
                         {loading ? "Signing in..." : "Sign In"}
                     </button>
                 </form>
+
+                <p className="text-[11px] text-gray-500 text-center mt-4">
+                    Create account on web first, then sign in here.
+                </p>
             </div>
         </div>
     )
