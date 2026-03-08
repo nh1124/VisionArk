@@ -1181,25 +1181,23 @@ def _run_migrations(engine):
     
     inspector = inspect(engine)
     
-    # Migration: Add remote_user_id to service_registry if missing
+    # Migration: Ensure service_registry has all credential/config columns used by ORM
     if 'service_registry' in inspector.get_table_names():
-        columns = [col['name'] for col in inspector.get_columns('service_registry')]
-        if 'remote_user_id' not in columns:
-            with engine.connect() as conn:
-                conn.execute(text(
-                    "ALTER TABLE service_registry ADD COLUMN remote_user_id VARCHAR(100)"
-                ))
-                conn.commit()
-                print("✅ Migration: Added remote_user_id column to service_registry")
-    
-    # Migration: Add config column to service_registry if missing
-    if 'service_registry' in inspector.get_table_names():
-        columns = [col['name'] for col in inspector.get_columns('service_registry')]
-        if 'config' not in columns:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE service_registry ADD COLUMN config JSON"))
-                conn.commit()
-                print("✅ Migration: Added config column to service_registry")
+        columns = {col['name'] for col in inspector.get_columns('service_registry')}
+        service_registry_missing_columns = [
+            ("access_token_encrypted", "TEXT"),
+            ("refresh_token_encrypted", "TEXT"),
+            ("remote_user_id", "VARCHAR(100)"),
+            ("config", "JSON"),
+        ]
+        for col_name, col_type in service_registry_missing_columns:
+            if col_name not in columns:
+                with engine.connect() as conn:
+                    conn.execute(
+                        text(f"ALTER TABLE service_registry ADD COLUMN {col_name} {col_type}")
+                    )
+                    conn.commit()
+                print(f"[INFO] Migration: Added {col_name} column to service_registry")
     
     # Migration: Add directory and is_directory columns to uploaded_files if missing
     if 'uploaded_files' in inspector.get_table_names():
