@@ -316,11 +316,11 @@ export default function NotesView({ onOpenProject }: { onOpenProject: (projectId
     }
 
     return (
-        <div className="flex flex-col h-full bg-[#030712] text-white">
-            <div className="flex-1 overflow-y-auto px-12 py-10 custom-scrollbar">
-                <div className="max-w-6xl mx-auto min-h-full">
+        <div className="flex flex-col h-full min-h-0 bg-[#030712] text-white">
+            <div className="flex-1 min-h-0 overflow-y-auto px-6 lg:px-10 py-6 lg:py-8 custom-scrollbar">
+                <div className="max-w-6xl mx-auto h-full flex flex-col">
                     {/* Header */}
-                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-5 mb-8">
                         <h1 className="text-4xl font-black text-white tracking-tighter flex items-center gap-3">
                             <StickyNote size={32} className="text-cyan-500" />
                             Notes
@@ -373,7 +373,7 @@ export default function NotesView({ onOpenProject }: { onOpenProject: (projectId
                     </div>
 
                     {/* Filters & Search */}
-                    <div className="bg-gray-900/40 border border-gray-800 p-4 rounded-2xl mb-8 flex flex-col md:flex-row gap-4 backdrop-blur-md">
+                    <div className="bg-gray-900/40 border border-gray-800 p-4 rounded-2xl mb-6 flex flex-col md:flex-row gap-4 backdrop-blur-md">
                         <div className="relative flex-1">
                             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
                             <input
@@ -405,37 +405,37 @@ export default function NotesView({ onOpenProject }: { onOpenProject: (projectId
 
                     {/* Notes Grid */}
                     {loading ? (
-                        <div className="flex flex-col items-center justify-center py-32 gap-4">
+                        <div className="flex-1 min-h-[280px] flex flex-col items-center justify-center py-16 gap-4">
                             <Loader2 className="w-10 h-10 text-cyan-500 animate-spin" />
                             <p className="text-gray-500 animate-pulse italic">Retrieving notes...</p>
                         </div>
                     ) : filteredNotes.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-24 bg-gray-900/10 border border-dashed border-gray-800/50 rounded-3xl space-y-8">
-                            <div className="text-center mb-8">
-                                <div className="w-20 h-20 bg-gray-800/40 rounded-full flex items-center justify-center mx-auto mb-4 opacity-50">
+                        <div className="flex-1 min-h-[340px] flex flex-col items-center justify-center py-10 bg-gray-900/10 border border-dashed border-gray-800/50 rounded-3xl space-y-6">
+                            <div className="text-center mb-4">
+                                <div className="w-16 h-16 bg-gray-800/40 rounded-full flex items-center justify-center mx-auto mb-3 opacity-50">
                                     <StickyNote size={40} className="text-gray-500" />
                                 </div>
                                 <p className="text-xl font-medium text-gray-400">No notes found</p>
                                 <p className="text-sm text-gray-600 mt-1 italic">Start by creating your first insight.</p>
                             </div>
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-md">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full max-w-xl px-4">
                                 <button
                                     onClick={() => setIsCreating(true)}
-                                    className="flex flex-col items-center gap-4 p-8 bg-cyan-500/5 hover:bg-cyan-500/10 border border-cyan-500/20 rounded-3xl transition-all group"
+                                    className="flex flex-col items-center gap-3 p-5 bg-cyan-500/5 hover:bg-cyan-500/10 border border-cyan-500/20 rounded-3xl transition-all group"
                                 >
-                                    <div className="p-4 bg-cyan-500/10 rounded-2xl group-hover:scale-110 transition-transform">
-                                        <Pencil size={32} className="text-cyan-400" />
+                                    <div className="p-3 bg-cyan-500/10 rounded-2xl group-hover:scale-110 transition-transform">
+                                        <Pencil size={24} className="text-cyan-400" />
                                     </div>
                                     <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Create Text Note</span>
                                 </button>
                                 <button
                                     onClick={() => setIsCreatingAudio(true)}
-                                    className="flex flex-col items-center gap-4 p-8 bg-red-500/5 hover:bg-red-500/10 border border-red-500/20 rounded-3xl transition-all group"
+                                    className="flex flex-col items-center gap-3 p-5 bg-red-500/5 hover:bg-red-500/10 border border-red-500/20 rounded-3xl transition-all group"
                                     title="New Audio Note"
                                 >
-                                    <div className="p-4 bg-red-500/10 rounded-2xl group-hover:scale-110 transition-transform">
-                                        <Mic size={32} className="text-red-400" />
+                                    <div className="p-3 bg-red-500/10 rounded-2xl group-hover:scale-110 transition-transform">
+                                        <Mic size={24} className="text-red-400" />
                                     </div>
                                     <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Audio Recording</span>
                                 </button>
