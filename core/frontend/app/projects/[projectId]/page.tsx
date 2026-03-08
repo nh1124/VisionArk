@@ -776,11 +776,15 @@ export default function ProjectChatPage({
             try {
                 const response = await apiFetch("/api/commands/execute", {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-Preferred-Model": selectedModel || "",
+                    },
                     body: JSON.stringify({
                         text: content,
                         scope: "project",
-                        project_id: projectId
+                        project_id: projectId,
+                        session_id: activeSessionId || null,
                     })
                 });
 
@@ -791,6 +795,19 @@ export default function ProjectChatPage({
                         role: "assistant",
                         content: `✅ ${result.message}`
                     }]);
+
+                    if (result.command_name === "compress" || result.command_name === "archive") {
+                        const nextSessionId = result.data?.new_session_id || result.data?.promoted_session_id || null;
+                        setActiveSessionId(nextSessionId);
+                        activeSessionIdRef.current = nextSessionId;
+                        const nextUrl = nextSessionId
+                            ? `/projects/${projectId}?session_id=${nextSessionId}`
+                            : `/projects/${projectId}`;
+                        router.replace(nextUrl);
+                        window.dispatchEvent(new CustomEvent("va-sessions-updated", {
+                            detail: { project_id: projectId, session_id: nextSessionId },
+                        }));
+                    }
 
                     // If command was /mv, the backend might return data for redirect
                     if (result.command_name === "move" && result.data?.target_id) {

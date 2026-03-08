@@ -31,6 +31,17 @@ const shortcuts: { category: string; items: { keys: string[]; description: strin
         items: [
             { keys: ["Enter"], description: "Send Message" },
             { keys: ["Shift", "Enter"], description: "New Line" },
+            { keys: ["Ctrl", "Up / Down"], description: "Switch Chat Session" },
+        ],
+    },
+    {
+        category: "Navigation",
+        items: [
+            { keys: ["Ctrl", "Shift", "S"], description: "Open Last Command Session" },
+            { keys: ["Ctrl", "Shift", "H"], description: "Open Home" },
+            { keys: ["Ctrl", "Shift", "T"], description: "Open Tasks" },
+            { keys: ["Ctrl", "Shift", "P"], description: "Open Projects" },
+            { keys: ["Ctrl", "Shift", "N"], description: "Open Notes" },
         ],
     },
     {

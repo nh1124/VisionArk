@@ -341,6 +341,10 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
             if (usedSessionId) {
                 effectiveSessionRef.current = usedSessionId
             }
+            localStorage.setItem("va_last_command_session", JSON.stringify({
+                project_id: projectId,
+                session_id: usedSessionId || effectiveSessionRef.current || sessionId || null,
+            }))
 
             upsertRealtimeTask(task_id, content, "Queued...")
 

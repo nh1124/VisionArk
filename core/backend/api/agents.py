@@ -1679,7 +1679,6 @@ async def chat_with_session(
         select(ChatSession).join(Project).filter(
             ChatSession.id == session_id,
             Project.user_id == identity.user_id,
-            ChatSession.is_archived == False,
         )
     )
     session = sess_res.scalars().first()
@@ -1687,6 +1686,40 @@ async def chat_with_session(
         raise HTTPException(status_code=404, detail="Session not found")
 
     project_id = session.project_id
+    effective_session_id = session.id
+
+    # If the requested session is archived, fall back to project default/latest active
+    # so commands like /archive or /compress can continue seamlessly.
+    if session.is_archived:
+        fallback_res = await db.execute(
+            select(ChatSession).filter(
+                ChatSession.project_id == project_id,
+                ChatSession.is_archived == False,
+                ChatSession.is_default == True,
+            ).order_by(ChatSession.created_at.desc()).limit(1)
+        )
+        fallback = fallback_res.scalars().first()
+        if not fallback:
+            fallback_res = await db.execute(
+                select(ChatSession).filter(
+                    ChatSession.project_id == project_id,
+                    ChatSession.is_archived == False,
+                ).order_by(ChatSession.last_message_at.desc().nullslast(), ChatSession.created_at.desc()).limit(1)
+            )
+            fallback = fallback_res.scalars().first()
+
+        if not fallback:
+            fallback = ChatSession(
+                id=str(uuid4()),
+                project_id=project_id,
+                title="New Chat",
+                is_archived=False,
+                is_default=True,
+            )
+            db.add(fallback)
+            await db.commit()
+
+        effective_session_id = fallback.id
 
     # Handle file uploads
     uploaded_file_ids = []
@@ -1714,12 +1747,12 @@ async def chat_with_session(
         "preferred_model": x_preferred_model,
         "env": "v4",
         "project_id": project_id,
-        "session_id": session_id,
+        "session_id": effective_session_id,
         "files": uploaded_file_ids,
     }
 
     task_id = await manager.enqueue(identity.user_id, message, context, task_type=TaskType.USER_MESSAGE)
-    print(f"[Session Chat] Enqueued task {task_id} for session {session_id}")
+    print(f"[Session Chat] Enqueued task {task_id} for session {effective_session_id}")
 
     return ChatResponse(
         response=f"Task enqueued. Track ID: {task_id}",
@@ -1728,6 +1761,7 @@ async def chat_with_session(
         attached_files=[],
         tool_calls=[],
         task_id=task_id,
+        session_id=effective_session_id,
     )
 
 

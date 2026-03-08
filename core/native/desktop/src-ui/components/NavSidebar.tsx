@@ -275,6 +275,37 @@ export default function NavSidebar({
   }, [])
 
   useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (active !== "chat" || !selectedProjectId || sessions.length === 0) return
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return
+
+      const tag = ((e.target as HTMLElement | null)?.tagName || "").toLowerCase()
+      const isTypingTarget =
+        tag === "input" ||
+        tag === "textarea" ||
+        tag === "select" ||
+        !!(e.target as HTMLElement | null)?.isContentEditable
+      if (isTypingTarget) return
+
+      e.preventDefault()
+      e.stopPropagation()
+
+      const currentIndex = Math.max(0, sessions.findIndex((s) => s.id === selectedSessionId))
+      const offset = e.key === "ArrowUp" ? -1 : 1
+      const nextIndex = (currentIndex + offset + sessions.length) % sessions.length
+      const next = sessions[nextIndex]
+      if (!next) return
+
+      localStorage.setItem(`va_last_session_${selectedProjectId}`, next.id)
+      onChange("chat", selectedProjectId, next.id)
+    }
+
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [active, onChange, selectedProjectId, selectedSessionId, sessions])
+
+  useEffect(() => {
     const onDragState = (evt: Event) => {
       const detail = (evt as CustomEvent<{ active?: boolean }>).detail
       const active = !!detail?.active

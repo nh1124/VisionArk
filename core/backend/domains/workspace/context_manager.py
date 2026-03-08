@@ -12,7 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from infrastructure.llm.provider_registry import resolve_provider
-from infrastructure.llm.model_router import get_configured_providers, get_api_key_for_provider
+from infrastructure.llm.model_router import (
+    get_configured_providers,
+    get_api_key_for_provider,
+    parse_model_spec,
+)
 from domains.orchestration2.engine.models.message import Message
 from domains.orchestration2.engine.models.common import MessageRole
 from shared.paths import get_project_dir, get_prompts_dir
@@ -96,9 +100,12 @@ class ContextManager:
         if not self.chat_log_path.exists():
             return []
     
-    async def _get_llm(self):
-        """Lazy load LLM with user context"""
-        if self._llm:
+    async def _get_llm(self, preferred_model: Optional[str] = None):
+        """Lazy load LLM with user context.
+
+        If preferred_model is provided, resolve provider/model from it.
+        """
+        if self._llm and not preferred_model:
             return self._llm
             
         from shared.database import UserSettings
@@ -108,6 +115,19 @@ class ContextManager:
         settings = result.scalars().first()
 
         configured = get_configured_providers(settings) if settings else []
+
+        if preferred_model:
+            provider_id, model_id = parse_model_spec(preferred_model)
+            api_key = get_api_key_for_provider(settings, provider_id)
+            # Fallback to first configured provider when the preferred provider key is missing
+            if not api_key and configured:
+                provider_id = configured[0]
+                model_id = None
+                api_key = get_api_key_for_provider(settings, provider_id)
+            if not api_key:
+                return None
+            return resolve_provider(provider_id, api_key, model_id)
+
         if configured:
             provider_id = configured[0]
             api_key = get_api_key_for_provider(settings, provider_id)
@@ -118,7 +138,7 @@ class ContextManager:
             self._llm = resolve_provider('gemini', api_key)
         return self._llm
 
-    async def generate_summary(self, conversation: List[Dict[str, str]]) -> str:
+    async def generate_summary(self, conversation: List[Dict[str, str]], preferred_model: Optional[str] = None) -> str:
         """
         Generate AI summary of conversation asynchronously
         """
@@ -146,7 +166,9 @@ class ContextManager:
             summary_prompt = self._get_default_summary_prompt(conversation)
         
         try:
-            llm = await self._get_llm()
+            llm = await self._get_llm(preferred_model=preferred_model)
+            if not llm:
+                return "Summary generation failed: no API key configured for the preferred model provider."
             messages = [Message(role=MessageRole.USER, content=summary_prompt)]
             response = await llm.complete(messages)
             return response.content
@@ -183,7 +205,12 @@ Conversation to summarize:
             lines.append("")
         return "\n".join(lines)
     
-    async def archive_context(self, force: bool = False, overlap_count: int = 10) -> Dict:
+    async def archive_context(
+        self,
+        force: bool = False,
+        overlap_count: int = 10,
+        preferred_model: Optional[str] = None,
+    ) -> Dict:
         """
         Archive current context asynchronously. 
         
@@ -208,7 +235,7 @@ Conversation to summarize:
         await asyncio.to_thread(archived_log_path.write_text, history_md, encoding='utf-8')
 
         # 2. Generate summary
-        summary = await self.generate_summary(conversation)
+        summary = await self.generate_summary(conversation, preferred_model=preferred_model)
         summary_path = self.logs_archive_dir / f"archived_summary_{timestamp}.md"
         await asyncio.to_thread(summary_path.write_text, summary, encoding='utf-8')
         

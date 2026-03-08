@@ -152,6 +152,54 @@ function MainApp() {
     setTaskFilterContext(context)
   }, [])
 
+  useEffect(() => {
+    const onGlobalNavShortcut = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.altKey) return
+      const key = e.key.toLowerCase()
+
+      if (key === "h") {
+        e.preventDefault()
+        e.stopPropagation()
+        setView("dashboard")
+        return
+      }
+      if (key === "t") {
+        e.preventDefault()
+        e.stopPropagation()
+        setView("tasks")
+        return
+      }
+      if (key === "p") {
+        e.preventDefault()
+        e.stopPropagation()
+        setView("projects")
+        return
+      }
+      if (key === "n") {
+        e.preventDefault()
+        e.stopPropagation()
+        setView("notes")
+        return
+      }
+      if (key === "s") {
+        e.preventDefault()
+        e.stopPropagation()
+        const raw = localStorage.getItem("va_last_command_session")
+        if (!raw) return
+        try {
+          const parsed = JSON.parse(raw) as { project_id?: string; session_id?: string | null }
+          if (!parsed.project_id) return
+          handleNavChange("chat", parsed.project_id, parsed.session_id || undefined)
+        } catch {
+          // ignore malformed cache
+        }
+      }
+    }
+
+    window.addEventListener("keydown", onGlobalNavShortcut, { capture: true })
+    return () => window.removeEventListener("keydown", onGlobalNavShortcut, { capture: true })
+  }, [handleNavChange])
+
   const handleLogout = useCallback(async () => {
     bridgeWs.disconnect()
     await logout()

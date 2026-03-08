@@ -42,7 +42,7 @@ def _get_command_map() -> Dict[str, Type[BaseCommand]]:
     """Central mapping of slash commands to BaseCommand classes"""
     # Import here to avoid circular dependencies
     from domains.automation.commands.library import (
-        ArchiveCommand, MoveCommand, CreateProjectCommand, DeleteProjectCommand, CloneProjectCommand,
+        CompressCommand, ArchiveCommand, MoveCommand, CreateProjectCommand, DeleteProjectCommand, CloneProjectCommand,
         SendMessageCommand, ResendCommand, UndoCommand, TimerCommand, NoteCommand, HelpCommand,
         TaskCommand
     )
@@ -50,6 +50,7 @@ def _get_command_map() -> Dict[str, Type[BaseCommand]]:
     return {
         # Primary commands
         "new": CreateProjectCommand,        # primary (replaces create_project)
+        "compress": CompressCommand,
         "archive": ArchiveCommand,
         "move": MoveCommand,
         "delete_project": DeleteProjectCommand,

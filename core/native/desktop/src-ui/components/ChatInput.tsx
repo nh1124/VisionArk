@@ -31,6 +31,8 @@ interface SlashCommand {
 }
 
 const SLASH_COMMANDS: SlashCommand[] = [
+    { command: "/compress", label: "Compress", description: "Compress and archive current chat, then continue in a child session" },
+    { command: "/archive", label: "Archive", description: "Archive current chat session" },
     { command: "/clear", label: "Clear", description: "Clear conversation history" },
     { command: "/model", label: "Model", description: "Switch AI model" },
     { command: "/help", label: "Help", description: "Show available commands" },

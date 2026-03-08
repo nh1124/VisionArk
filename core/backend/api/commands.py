@@ -2,7 +2,7 @@
 Commands API Endpoint
 Executes slash commands from frontend
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel
 from typing import Optional
 
@@ -20,6 +20,7 @@ class CommandRequest(BaseModel):
     text: str
     scope: str = "project"  # project or main
     project_id: Optional[str] = None
+    session_id: Optional[str] = None
 
 
 class CommandResponse(BaseModel):
@@ -32,7 +33,8 @@ class CommandResponse(BaseModel):
 async def execute_command_endpoint(
     req: CommandRequest,
     identity: Identity = Depends(resolve_identity),
-    db: AsyncSession = Depends(get_async_db)
+    db: AsyncSession = Depends(get_async_db),
+    x_preferred_model: Optional[str] = Header(None, alias="X-Preferred-Model"),
 ):
     """
     Execute a slash command
@@ -60,7 +62,9 @@ async def execute_command_endpoint(
         scope=req.scope,
         db_session=db,
         user_id=identity.user_id,
-        project_id=req.project_id
+        project_id=req.project_id,
+        session_id=req.session_id,
+        preferred_model=x_preferred_model,
     )
     
     return CommandResponse(

@@ -11,9 +11,148 @@ from domains.workspace.context_manager import ContextManager
 from domains.knowledge.note_service import NoteService
 from shared.paths import get_project_dir, validate_name
 
+async def _resolve_active_session_for_command(
+    db_session: AsyncSession,
+    user_id: str,
+    project_id: str,
+    session_id: Optional[str] = None,
+) -> Optional[ChatSession]:
+    proj_res = await db_session.execute(
+        select(Project).filter(Project.user_id == user_id, Project.id == project_id)
+    )
+    if not proj_res.scalars().first():
+        return None
+
+    if session_id:
+        sess_res = await db_session.execute(
+            select(ChatSession).filter(
+                ChatSession.id == session_id,
+                ChatSession.project_id == project_id,
+                ChatSession.is_archived == False,
+            ).limit(1)
+        )
+        target = sess_res.scalars().first()
+        if target:
+            return target
+
+    default_res = await db_session.execute(
+        select(ChatSession).filter(
+            ChatSession.project_id == project_id,
+            ChatSession.is_archived == False,
+            ChatSession.is_default == True,
+        ).order_by(ChatSession.created_at.desc()).limit(1)
+    )
+    target = default_res.scalars().first()
+    if target:
+        return target
+
+    recent_res = await db_session.execute(
+        select(ChatSession).filter(
+            ChatSession.project_id == project_id,
+            ChatSession.is_archived == False,
+        ).order_by(ChatSession.last_message_at.desc().nullslast(), ChatSession.created_at.desc()).limit(1)
+    )
+    return recent_res.scalars().first()
+
+
+class CompressCommand(BaseCommand):
+    name = "compress"
+    description = "Compress the current chat session into a summary, archive it, and continue in a new child session."
+    usage = "/compress"
+    arg_names = []
+
+    async def run(self, raw_args: List[str], **kwargs) -> CommandResult:
+        db_session: AsyncSession = kwargs.get("db_session")
+        user_id: str = kwargs.get("user_id")
+        project_id: str = kwargs.get("project_id")
+        session_id: Optional[str] = kwargs.get("session_id")
+        preferred_model: Optional[str] = kwargs.get("preferred_model")
+
+        if not db_session or not user_id or not project_id:
+            return CommandResult(success=False, message="Missing required IDs")
+
+        try:
+            target_session = await _resolve_active_session_for_command(
+                db_session=db_session,
+                user_id=user_id,
+                project_id=project_id,
+                session_id=session_id,
+            )
+            if not target_session:
+                return CommandResult(success=False, message="No active session found to compress.")
+
+            msg_res = await db_session.execute(
+                select(ChatMessage).filter(
+                    ChatMessage.session_id == target_session.id
+                ).order_by(ChatMessage.created_at.asc())
+            )
+            messages = msg_res.scalars().all()
+            conversation = [{"role": m.role, "content": m.content} for m in messages]
+
+            manager = ContextManager(
+                user_id=user_id,
+                context_type="project",
+                project_id=project_id,
+                db_session=db_session,
+            )
+            summary = await manager.generate_summary(conversation, preferred_model=preferred_model)
+
+            target_session.summary = summary
+            target_session.is_archived = True
+            was_default = bool(target_session.is_default)
+            target_session.is_default = False
+
+            if was_default:
+                await db_session.execute(
+                    update(ChatSession)
+                    .where(
+                        ChatSession.project_id == project_id,
+                        ChatSession.id != target_session.id,
+                    )
+                    .values(is_default=False)
+                )
+
+            new_session_id = str(uuid.uuid4())
+            child_session = ChatSession(
+                id=new_session_id,
+                project_id=project_id,
+                parent_session_id=target_session.id,
+                title=f"Continued from {target_session.title or 'archived session'}",
+                summary=summary,
+                is_archived=False,
+                is_default=True if was_default else False,
+                last_message_at=datetime.utcnow(),
+            )
+            db_session.add(child_session)
+
+            injection_msg = ChatMessage(
+                id=str(uuid.uuid4()),
+                session_id=new_session_id,
+                role="system",
+                content=f"### Compressed Session Context\n\n{summary}\n\n*Compressed from session {target_session.id}.*",
+            )
+            db_session.add(injection_msg)
+
+            await db_session.commit()
+            return CommandResult(
+                success=True,
+                message="Session compressed and archived. Continued in a new child session.",
+                data={
+                    "project_id": project_id,
+                    "archived_session_id": target_session.id,
+                    "new_session_id": new_session_id,
+                    "summary": summary,
+                },
+            )
+        except Exception as e:
+            if db_session:
+                await db_session.rollback()
+            return CommandResult(success=False, message=f"Failed to compress session: {str(e)}")
+
+
 class ArchiveCommand(BaseCommand):
     name = "archive"
-    description = "Archive the current chat session and start a fresh one for the project."
+    description = "Archive the current chat session."
     usage = "/archive"
     arg_names = []
 
@@ -21,45 +160,48 @@ class ArchiveCommand(BaseCommand):
         db_session: AsyncSession = kwargs.get("db_session")
         user_id: str = kwargs.get("user_id")
         project_id: str = kwargs.get("project_id")
-        
-        if not db_session or not user_id:
+        session_id: Optional[str] = kwargs.get("session_id")
+
+        if not db_session or not user_id or not project_id:
             return CommandResult(success=False, message="Missing required IDs")
 
         try:
-            result = await db_session.execute(select(Project).filter(Project.user_id == user_id, Project.id == project_id))
-            proj = result.scalars().first()
-            if not proj:
-                return CommandResult(success=False, message=f"Project '{project_id}' not found")
-
-            manager = ContextManager(user_id=user_id, context_type="project", project_id=project_id, db_session=db_session)
-            archive_result = await manager.archive_context(force=True)
-            summary = archive_result.get("summary", "No summary available.")
-
-            new_session_id = str(uuid.uuid4())
-            new_session = ChatSession(
-                id=new_session_id,
-                project_id=proj.id,
-                title=f"Session started {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-                is_archived=False
+            target_session = await _resolve_active_session_for_command(
+                db_session=db_session,
+                user_id=user_id,
+                project_id=project_id,
+                session_id=session_id,
             )
-            db_session.add(new_session)
-            
-            injection_msg = ChatMessage(
-                id=str(uuid.uuid4()),
-                session_id=new_session_id,
-                role="system",
-                content=f"### Previous Conversation Summary\n\n{summary}\n\n*This summary has been injected to provide context for the new session.*"
-            )
-            db_session.add(injection_msg)
+            if not target_session:
+                return CommandResult(success=False, message="No active session found to archive.")
+
+            was_default = bool(target_session.is_default)
+            target_session.is_archived = True
+            target_session.is_default = False
+
+            promoted_session_id = None
+            if was_default:
+                next_res = await db_session.execute(
+                    select(ChatSession).filter(
+                        ChatSession.project_id == project_id,
+                        ChatSession.is_archived == False,
+                        ChatSession.id != target_session.id,
+                    ).order_by(ChatSession.last_message_at.desc().nullslast(), ChatSession.created_at.desc()).limit(1)
+                )
+                next_session = next_res.scalars().first()
+                if next_session:
+                    next_session.is_default = True
+                    promoted_session_id = next_session.id
+
             await db_session.commit()
-            
+
             return CommandResult(
-                success=True, 
-                message=f"📦 Archived current session for {project_id}. New session started.",
+                success=True,
+                message="Current session archived.",
                 data={
-                    "project_id": proj.id, 
-                    "new_session_id": new_session_id,
-                    "summary_path": archive_result.get("summary_path")
+                    "project_id": project_id,
+                    "archived_session_id": target_session.id,
+                    "promoted_session_id": promoted_session_id,
                 }
             )
         except Exception as e:
