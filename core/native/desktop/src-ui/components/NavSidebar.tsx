@@ -41,6 +41,7 @@ import {
   listSessions,
   getFileToken,
   listLBSTasks,
+  getOverdueTasks,
   BASE_URL,
   type Project,
   type Session,
@@ -131,6 +132,14 @@ export default function NavSidebar({
   const [projects, setProjects] = useState<Project[]>([])
   const [sessions, setSessions] = useState<Session[]>([])
   const [taskContexts, setTaskContexts] = useState<string[]>([])
+  const [taskFilterCounts, setTaskFilterCounts] = useState<Record<TaskFilter, number>>({
+    today: 0,
+    "my-day": 0,
+    planned: 0,
+    overdue: 0,
+    inbox: 0,
+    project: 0,
+  })
 
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
@@ -155,8 +164,41 @@ export default function NavSidebar({
   const sessionEditRef = useRef<HTMLInputElement>(null)
   const [projectSearchQuery, setProjectSearchQuery] = useState("")
   const [chatSearchQuery, setChatSearchQuery] = useState("")
+  const [dragOverContext, setDragOverContext] = useState<string | null>(null)
 
   const primaryActive = useMemo(() => mapViewToPrimary(active), [active])
+  const todayIso = useMemo(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+  }, [])
+  const refreshTaskContexts = React.useCallback(() => {
+    listLBSTasks({ active: true })
+      .then((tasks) => {
+        const contexts = Array.from(new Set(tasks.map((t) => t.context).filter(Boolean))).sort() as string[]
+        setTaskContexts(contexts)
+      })
+      .catch(() => {})
+  }, [])
+  const refreshTaskFilterCounts = React.useCallback(async () => {
+    try {
+      const [todayTasks, activeTasks, overdueTasks] = await Promise.all([
+        listLBSTasks({ targetDate: todayIso }),
+        listLBSTasks({ active: true }),
+        getOverdueTasks(),
+      ])
+      const byContext = (t: { context?: string | null }) => !taskFilterContext || t.context === taskFilterContext
+      setTaskFilterCounts({
+        today: todayTasks.filter(byContext).length,
+        "my-day": activeTasks.filter((t) => byContext(t) && !!(t.meta_payload as any)?.is_my_day).length,
+        planned: activeTasks.filter((t) => byContext(t) && !!t.due_date && t.due_date > todayIso).length,
+        overdue: overdueTasks.filter(byContext).length,
+        inbox: activeTasks.filter((t) => byContext(t) && (t.context || "inbox") === "inbox").length,
+        project: 0,
+      })
+    } catch {
+      // ignore
+    }
+  }, [taskFilterContext, todayIso])
   const filteredProjects = useMemo(() => {
     const query = projectSearchQuery.trim().toLowerCase()
     if (!query) return projects
@@ -195,13 +237,24 @@ export default function NavSidebar({
 
   useEffect(() => {
     if (primaryActive !== "tasks") return
-    listLBSTasks({ active: true })
-      .then((tasks) => {
-        const contexts = Array.from(new Set(tasks.map((t) => t.context).filter(Boolean))).sort() as string[]
-        setTaskContexts(contexts)
-      })
-      .catch(() => {})
-  }, [primaryActive])
+    refreshTaskContexts()
+    void refreshTaskFilterCounts()
+  }, [primaryActive, refreshTaskContexts, refreshTaskFilterCounts])
+
+  useEffect(() => {
+    const onRefresh = () => {
+      refreshTaskContexts()
+      void refreshTaskFilterCounts()
+    }
+    window.addEventListener("va-task-contexts-refresh", onRefresh as EventListener)
+    return () => window.removeEventListener("va-task-contexts-refresh", onRefresh as EventListener)
+  }, [refreshTaskContexts, refreshTaskFilterCounts])
+
+  useEffect(() => {
+    const onRefresh = () => { void refreshTaskFilterCounts() }
+    window.addEventListener("va-tasks-refresh", onRefresh as EventListener)
+    return () => window.removeEventListener("va-tasks-refresh", onRefresh as EventListener)
+  }, [refreshTaskFilterCounts])
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -220,6 +273,47 @@ export default function NavSidebar({
     document.addEventListener("mousedown", handler)
     return () => document.removeEventListener("mousedown", handler)
   }, [])
+
+  useEffect(() => {
+    const onDragState = (evt: Event) => {
+      const detail = (evt as CustomEvent<{ active?: boolean }>).detail
+      const active = !!detail?.active
+      if (!active) setDragOverContext(null)
+    }
+    window.addEventListener("va-task-drag-active", onDragState as EventListener)
+    return () => window.removeEventListener("va-task-drag-active", onDragState as EventListener)
+  }, [])
+
+  async function handleTaskDropToContext(context: string, e: React.DragEvent<HTMLButtonElement>) {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragOverContext(null)
+
+    const raw = e.dataTransfer.getData("application/x-visionark-task")
+    if (!raw) return
+
+    try {
+      const parsed = JSON.parse(raw) as { task_id?: string }
+      const taskId = parsed.task_id
+      if (!taskId) return
+
+      await apiFetch(`/api/lbs/tasks/${taskId}?force_override=true`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ context }),
+      })
+
+      const tasks = await listLBSTasks({ active: true })
+      const contexts = Array.from(new Set(tasks.map((t) => t.context).filter(Boolean))).sort() as string[]
+      setTaskContexts(contexts)
+      window.dispatchEvent(new Event("va-tasks-refresh"))
+      window.dispatchEvent(new Event("va-task-contexts-refresh"))
+    } catch (err) {
+      console.error("Task drop move failed:", err)
+    } finally {
+      window.dispatchEvent(new CustomEvent("va-task-drag-active", { detail: { active: false } }))
+    }
+  }
 
   function openProjectMenu(e: React.MouseEvent, projectId: string) {
     e.preventDefault()
@@ -294,8 +388,6 @@ export default function NavSidebar({
   }
 
   async function handleDeleteProject(project: Project) {
-    const name = project.display_name || project.name
-    if (!window.confirm(`Delete project '${name}'? This cannot be undone.`)) return
     try {
       await apiFetch(`/api/agents/project/${project.id}`, { method: "DELETE" })
       setProjects((prev) => prev.filter((p) => p.id !== project.id))
@@ -657,6 +749,11 @@ export default function NavSidebar({
               >
                 <Icon size={15} />
                 <span className="flex-1 text-left">{label}</span>
+                <span className={`text-[11px] px-1.5 py-0.5 rounded-md ${
+                  taskFilter === id ? "bg-blue-500/20 text-blue-300" : "bg-gray-800 text-gray-500"
+                }`}>
+                  {taskFilterCounts[id]}
+                </span>
               </button>
             ))}
           </section>
@@ -687,6 +784,19 @@ export default function NavSidebar({
           <SectionTitle title="Projects" />
           <button
             onClick={() => onTaskFilterChange?.(taskFilter, undefined)}
+            onDragEnter={(e) => {
+              if (!Array.from(e.dataTransfer.types).includes("application/x-visionark-task")) return
+              e.preventDefault()
+            }}
+            onDragOver={(e) => {
+              if (!Array.from(e.dataTransfer.types).includes("application/x-visionark-task")) return
+              e.preventDefault()
+              e.dataTransfer.dropEffect = "move"
+            }}
+            onDrop={(e) => {
+              if (!Array.from(e.dataTransfer.types).includes("application/x-visionark-task")) return
+              void handleTaskDropToContext("inbox", e)
+            }}
             className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${!taskFilterContext ? "bg-gray-800 text-white" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}
           >
             <InboxIcon size={15} />
@@ -696,7 +806,28 @@ export default function NavSidebar({
             <button
               key={ctx}
               onClick={() => onTaskFilterChange?.(taskFilter, ctx)}
-              className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${taskFilterContext === ctx ? "bg-gray-800 text-cyan-400" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}
+              onDragEnter={(e) => {
+                if (!Array.from(e.dataTransfer.types).includes("application/x-visionark-task")) return
+                e.preventDefault()
+                setDragOverContext(ctx)
+              }}
+              onDragOver={(e) => {
+                if (!Array.from(e.dataTransfer.types).includes("application/x-visionark-task")) return
+                e.preventDefault()
+                e.dataTransfer.dropEffect = "move"
+                if (dragOverContext !== ctx) setDragOverContext(ctx)
+              }}
+              onDragLeave={() => {
+                if (dragOverContext === ctx) setDragOverContext(null)
+              }}
+              onDrop={(e) => { void handleTaskDropToContext(ctx, e) }}
+              className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all ${
+                dragOverContext === ctx
+                  ? "bg-cyan-600/20 text-cyan-300 ring-1 ring-cyan-500/40"
+                  : taskFilterContext === ctx
+                    ? "bg-gray-800 text-cyan-400"
+                    : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"
+              }`}
             >
               <Folder size={15} />
               <span className="truncate">{ctx}</span>

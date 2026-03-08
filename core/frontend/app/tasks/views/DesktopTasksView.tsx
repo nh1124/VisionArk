@@ -4,12 +4,10 @@ import React from "react";
 import {
     Plus,
     RefreshCw,
-    CalendarDays,
     Calendar,
     ChevronDown,
     ChevronRight,
     ChevronLeft,
-    List,
     Archive,
     Hash,
     X,
@@ -19,7 +17,6 @@ import {
     Upload
 } from "lucide-react";
 import GridCalendar from "@/components/GridCalendar";
-import TimelineCalendar from "@/components/TimelineCalendar";
 import TaskRow from "../components/TaskRow";
 import { useTasksLogic } from "../hooks/useTasksLogic";
 import { getSpokeColor } from "@/lib/colors";
@@ -30,7 +27,7 @@ export default function DesktopTasksView({ logic }: { logic: TasksLogic }) {
     const {
         loading,
         targetDate,
-        viewMode,
+        isCalendarPage,
         activeFilter,
         calendarTasks,
         todayStr,
@@ -53,7 +50,6 @@ export default function DesktopTasksView({ logic }: { logic: TasksLogic }) {
         qaDueDate,
         quickAddRef,
         qaDateRef,
-        setViewMode,
         setIsCompletedCollapsed,
         setTargetDate,
         setDayDetailsDate,
@@ -82,24 +78,22 @@ export default function DesktopTasksView({ logic }: { logic: TasksLogic }) {
     };
 
     return (
-        <div className="w-full px-10 py-12 flex-1 flex flex-col min-h-0 overflow-hidden transition-all duration-500">
-            {/* Background Style */}
-            <div className={`fixed inset-0 ${viewMode === 'list' ? 'bg-gradient-to-b from-blue-900/20 to-gray-950' : 'bg-gray-950'} -z-10`} />
+        <div className="w-full px-8 py-8 flex-1 flex flex-col min-h-0 overflow-hidden">
 
             {/* Header */}
-            <div className="flex justify-between items-center mb-10">
+            <div className="flex justify-between items-center mb-8">
                 <div className="flex items-center gap-3">
                     <div className="flex flex-col items-start gap-2">
                         <div className="flex items-center gap-3">
-                            {viewMode !== 'list' && (
+                            {isCalendarPage && (
                                 <div className="flex items-center gap-1 bg-gray-900/60 border border-gray-800 rounded-xl p-1 shadow-lg">
                                     <button onClick={handlePrev} className="p-1.5 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-white transition-all"><ChevronLeft className="w-4 h-4" /></button>
                                     <button onClick={handleToday} className="px-3 py-1 text-[10px] font-black uppercase text-gray-500 hover:text-white transition-all border-x border-gray-800">Today</button>
                                     <button onClick={handleNext} className="p-1.5 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-white transition-all"><ChevronRight className="w-4 h-4" /></button>
                                 </div>
                             )}
-                            <h1 className="text-lg font-medium text-white whitespace-nowrap min-w-[300px]">
-                                {viewMode === 'calendar'
+                            <h1 className="text-lg font-semibold text-white whitespace-nowrap min-w-[300px]">
+                                {isCalendarPage
                                     ? currentMonth.toLocaleString('en-US', { month: 'long', year: 'numeric' })
                                     : activeFilter === 'today' ? formatDateHeader(targetDate) : ""
                                 }
@@ -109,24 +103,18 @@ export default function DesktopTasksView({ logic }: { logic: TasksLogic }) {
                 </div>
 
                 <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-0.5 bg-gray-900/80 border border-gray-800 rounded-xl p-1 shadow-lg">
-                        <button onClick={() => setViewMode("list")} className={`p-2 rounded-lg transition-all ${viewMode === "list" ? 'bg-blue-600 text-white shadow-inner' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}><List className="w-4 h-4" /></button>
-                        <button onClick={() => setViewMode("calendar")} className={`p-2 rounded-lg transition-all ${viewMode === "calendar" ? 'bg-blue-600 text-white shadow-inner' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}><CalendarDays className="w-4 h-4" /></button>
-                        <button onClick={() => setViewMode("timeline")} className={`p-2 rounded-lg transition-all ${viewMode === "timeline" ? 'bg-blue-600 text-white shadow-inner' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}><Calendar className="w-4 h-4" /></button>
-                    </div>
-
                     <div className="flex items-center gap-2">
-                        <button onClick={() => setImportModalOpen(true)} className="p-2.5 bg-gray-900/80 border border-gray-800 rounded-xl hover:bg-gray-800 transition-all text-gray-400 hover:text-white shadow-lg"><Upload className="w-5 h-5" /></button>
-                        <button onClick={handleExportCSV} className="p-2.5 bg-gray-900/80 border border-gray-800 rounded-xl hover:bg-gray-800 transition-all text-gray-400 hover:text-white shadow-lg"><Download className="w-5 h-5" /></button>
-                        <button onClick={handleRefresh} className="p-2.5 bg-gray-900/80 border border-gray-800 rounded-xl hover:bg-gray-800 transition-all text-gray-400 hover:text-white shadow-lg"><RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} /></button>
+                        {!isCalendarPage && <button onClick={() => setImportModalOpen(true)} className="p-2.5 bg-gray-900/80 border border-gray-800 rounded-xl hover:bg-gray-800 transition-all text-gray-400 hover:text-white"><Upload className="w-5 h-5" /></button>}
+                        {!isCalendarPage && <button onClick={handleExportCSV} className="p-2.5 bg-gray-900/80 border border-gray-800 rounded-xl hover:bg-gray-800 transition-all text-gray-400 hover:text-white"><Download className="w-5 h-5" /></button>}
+                        <button onClick={handleRefresh} className="p-2.5 bg-gray-900/80 border border-gray-800 rounded-xl hover:bg-gray-800 transition-all text-gray-400 hover:text-white"><RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} /></button>
                     </div>
                 </div>
             </div>
 
             {/* Main Content Area */}
-            <div className={`flex-1 overflow-hidden relative ${viewMode === "list" ? 'max-w-5xl mx-auto w-full' : 'w-full'}`}>
-                <div className={`absolute inset-0 ${(viewMode === 'list' || viewMode === 'calendar') ? 'overflow-y-auto' : 'overflow-hidden'} custom-scrollbar px-1 pb-40`}>
-                    {viewMode === "list" ? (
+            <div className={`flex-1 overflow-hidden relative ${!isCalendarPage ? 'max-w-5xl mx-auto w-full' : 'w-full'}`}>
+                <div className={`absolute inset-0 ${isCalendarPage ? 'overflow-y-auto' : 'overflow-y-auto'} custom-scrollbar px-1 pb-40`}>
+                    {!isCalendarPage ? (
                         <div className="space-y-6">
                             {loading && displayTasks.length === 0 ? (
                                 <div className="text-center py-20 text-gray-600 font-bold animate-pulse uppercase tracking-widest text-sm">Synchronizing Tasks...</div>
@@ -214,7 +202,7 @@ export default function DesktopTasksView({ logic }: { logic: TasksLogic }) {
                                 </div>
                             </div>
                         </div>
-                    ) : viewMode === "calendar" ? (
+                    ) : (
                         <div className="h-full relative">
                             <GridCalendar
                                 month={currentMonth}
@@ -265,8 +253,6 @@ export default function DesktopTasksView({ logic }: { logic: TasksLogic }) {
                                 </>
                             )}
                         </div>
-                    ) : (
-                        <TimelineCalendar targetDate={targetDate} onTaskClick={handleRowClick} refreshKey={refreshKey} />
                     )}
                 </div>
             </div>

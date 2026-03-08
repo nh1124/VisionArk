@@ -121,18 +121,23 @@ interface TaskRowProps {
   onToggle?: (task: LBSTask) => void
   onClick: (task: LBSTask, e: React.MouseEvent) => void
   onContextMenu: (task: LBSTask, e: React.MouseEvent) => void
+  onDragStart?: (task: LBSTask, e: React.DragEvent) => void
+  onDragEnd?: () => void
 }
 
-function TaskRow({ task, showStatus, selected, selectionMode, onToggle, onClick, onContextMenu }: TaskRowProps) {
+function TaskRow({ task, showStatus, selected, selectionMode, onToggle, onClick, onContextMenu, onDragStart, onDragEnd }: TaskRowProps) {
   const isDone = task.status === "done"
   const isSkipped = task.status === "skipped"
   const load = loadLabel(task.base_load_score)
 
   return (
     <div
+      draggable
+      onDragStart={e => onDragStart?.(task, e)}
+      onDragEnd={onDragEnd}
       onClick={e => onClick(task, e)}
       onContextMenu={e => onContextMenu(task, e)}
-      className={`flex items-start gap-3 px-4 py-3 rounded-xl transition-colors group cursor-pointer select-none ${selected ? "bg-blue-900/25 ring-1 ring-blue-700/40"
+      className={`flex items-start gap-3 px-4 py-3 rounded-xl transition-colors group cursor-pointer active:cursor-grabbing select-none ${selected ? "bg-blue-900/25 ring-1 ring-blue-700/40"
           : isDone ? "opacity-50 hover:opacity-70"
             : "hover:bg-gray-800/50"
         }`}
@@ -199,9 +204,11 @@ interface ContextGroupProps {
   onToggle?: (task: LBSTask) => void
   onRowClick: (task: LBSTask, e: React.MouseEvent) => void
   onContextMenu: (task: LBSTask, e: React.MouseEvent) => void
+  onTaskDragStart: (task: LBSTask, e: React.DragEvent) => void
+  onTaskDragEnd: () => void
 }
 
-function ContextGroup({ context, tasks, showStatus, selectionMode, selectedIds, onToggle, onRowClick, onContextMenu }: ContextGroupProps) {
+function ContextGroup({ context, tasks, showStatus, selectionMode, selectedIds, onToggle, onRowClick, onContextMenu, onTaskDragStart, onTaskDragEnd }: ContextGroupProps) {
   const [expanded, setExpanded] = useState(true)
   const doneCount = tasks.filter(t => t.status === "done").length
   return (
@@ -226,6 +233,8 @@ function ContextGroup({ context, tasks, showStatus, selectionMode, selectedIds, 
           onToggle={onToggle}
           onClick={onRowClick}
           onContextMenu={onContextMenu}
+          onDragStart={onTaskDragStart}
+          onDragEnd={onTaskDragEnd}
         />
       ))}
     </div>
@@ -238,6 +247,19 @@ const RULE_TYPES = [
   { value: "ONCE", label: "Once" }, { value: "WEEKLY", label: "Weekly" },
   { value: "EVERY_N_DAYS", label: "Daily-N" }, { value: "MONTHLY_DAY", label: "Monthly" },
 ]
+const WEEKDAYS: Array<{ key: "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun"; label: string }> = [
+  { key: "mon", label: "Mo" },
+  { key: "tue", label: "Tu" },
+  { key: "wed", label: "We" },
+  { key: "thu", label: "Th" },
+  { key: "fri", label: "Fr" },
+  { key: "sat", label: "Sa" },
+  { key: "sun", label: "Su" },
+]
+
+function SelectOption({ value, label }: { value: string | number; label: string }) {
+  return <option value={value} style={{ color: "#E5E7EB", backgroundColor: "#1F2937" }}>{label}</option>
+}
 
 function AddTaskForm({ onAdd, onCancel, defaultContext, availableProjects = [] }: {
   onAdd: (t: LBSTaskCreate) => Promise<void>
@@ -251,10 +273,22 @@ function AddTaskForm({ onAdd, onCancel, defaultContext, availableProjects = [] }
   const [ruleType, setRuleType] = useState("ONCE")
   const [dueDate, setDueDate] = useState(TODAY)
   const [notes, setNotes] = useState("")
+  const [weeklyDays, setWeeklyDays] = useState<Record<"mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun", boolean>>({
+    mon: false, tue: false, wed: false, thu: false, fri: false, sat: false, sun: false,
+  })
+  const [intervalDays, setIntervalDays] = useState("1")
+  const [anchorDate, setAnchorDate] = useState(TODAY)
+  const [monthDay, setMonthDay] = useState(String(new Date().getDate()))
   const [saving, setSaving] = useState(false)
   const [showMore, setShowMore] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
   const dateRef = useRef<HTMLInputElement>(null)
+  const contextOptions = useMemo(() => {
+    const set = new Set<string>(["inbox", ...availableProjects.filter(Boolean)])
+    if (defaultContext) set.add(defaultContext)
+    if (context) set.add(context)
+    return Array.from(set)
+  }, [availableProjects, context, defaultContext])
   useEffect(() => { nameRef.current?.focus() }, [])
 
   async function handleSubmit(e: React.FormEvent) {
@@ -262,12 +296,29 @@ function AddTaskForm({ onAdd, onCancel, defaultContext, availableProjects = [] }
     if (!name.trim()) return
     setSaving(true)
     try {
-      await onAdd({
+      const payload: LBSTaskCreate = {
         task_name: name.trim(), context: context.trim() || "inbox",
         base_load_score: parseFloat(load) || 1, rule_type: ruleType,
-        due_date: dueDate || null, notes: notes.trim() || null,
+        due_date: ruleType === "ONCE" ? (dueDate || null) : null,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-      })
+        notes: notes.trim() || null,
+      }
+
+      if (ruleType === "WEEKLY") {
+        const hasAnyDay = Object.values(weeklyDays).some(Boolean)
+        const normalized = hasAnyDay ? weeklyDays : {
+          ...weeklyDays,
+          [WEEKDAYS[new Date().getDay() === 0 ? 6 : new Date().getDay() - 1].key]: true,
+        }
+        Object.assign(payload, normalized)
+      } else if (ruleType === "EVERY_N_DAYS") {
+        payload.interval_days = Math.max(1, parseInt(intervalDays, 10) || 1)
+        payload.anchor_date = anchorDate || null
+      } else if (ruleType === "MONTHLY_DAY") {
+        payload.month_day = Math.min(31, Math.max(1, parseInt(monthDay, 10) || 1))
+      }
+
+      await onAdd(payload)
     } finally { setSaving(false) }
   }
 
@@ -278,22 +329,28 @@ function AddTaskForm({ onAdd, onCancel, defaultContext, availableProjects = [] }
         className="w-full bg-gray-800 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-600 border border-gray-700 focus:outline-none focus:border-cyan-500" />
       <div className="flex gap-2 items-center">
         <div className="relative flex-1">
-          {availableProjects.length > 0 && (
-            <select value={context} onChange={e => setContext(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer z-10 w-full">
-              {availableProjects.map(p => <option key={p} value={p}>{p}</option>)}
-            </select>
-          )}
-          <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-800 rounded-xl border border-gray-700 text-[10px] font-bold text-gray-400">
-            <Archive size={10} /><span className="truncate">{context}</span>
-          </div>
-        </div>
-        <div className="relative w-20">
-          <select value={load} onChange={e => setLoad(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer z-10 w-full">
-            {["0.5", "1", "2", "3", "5", "8"].map(n => <option key={n} value={n}>{n}</option>)}
+          <Archive size={10} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+          <select
+            value={context}
+            onChange={e => setContext(e.target.value)}
+            className="w-full appearance-none bg-gray-800 rounded-xl pl-7 pr-7 py-1.5 text-[10px] font-bold text-gray-300 border border-gray-700 focus:outline-none focus:border-cyan-500"
+            style={{ colorScheme: "dark" }}
+          >
+            {contextOptions.map(p => <SelectOption key={p} value={p} label={p} />)}
           </select>
-          <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-800 rounded-xl border border-gray-700 text-[10px] font-bold text-gray-400">
-            <Hash size={10} /><span>{load}</span>
-          </div>
+          <ChevronDown size={11} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+        </div>
+        <div className="relative w-24">
+          <Hash size={10} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+          <select
+            value={load}
+            onChange={e => setLoad(e.target.value)}
+            className="w-full appearance-none bg-gray-800 rounded-xl pl-7 pr-7 py-1.5 text-[10px] font-bold text-gray-300 border border-gray-700 focus:outline-none focus:border-cyan-500"
+            style={{ colorScheme: "dark" }}
+          >
+            {["0.5", "1", "2", "3", "5", "8"].map(n => <SelectOption key={n} value={n} label={n} />)}
+          </select>
+          <ChevronDown size={11} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
         </div>
         <div className="relative flex-1">
           <input ref={dateRef} type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="absolute inset-0 opacity-0 pointer-events-none" />
@@ -310,9 +367,71 @@ function AddTaskForm({ onAdd, onCancel, defaultContext, availableProjects = [] }
       {showMore && (
         <div className="space-y-2">
           <select value={ruleType} onChange={e => setRuleType(e.target.value)}
-            className="w-full bg-gray-800 rounded-xl px-3 py-2 text-sm text-white border border-gray-700 focus:outline-none focus:border-cyan-500">
-            {RULE_TYPES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+            className="w-full bg-gray-800 rounded-xl px-3 py-2 text-sm text-white border border-gray-700 focus:outline-none focus:border-cyan-500"
+            style={{ colorScheme: "dark" }}>
+            {RULE_TYPES.map(r => <SelectOption key={r.value} value={r.value} label={r.label} />)}
           </select>
+
+          {ruleType === "WEEKLY" && (
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-1.5">Days</p>
+              <div className="grid grid-cols-7 gap-1.5">
+                {WEEKDAYS.map(({ key, label }) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setWeeklyDays(prev => ({ ...prev, [key]: !prev[key] }))}
+                    className={`py-1.5 rounded-lg text-[10px] font-bold transition-all border ${
+                      weeklyDays[key]
+                        ? "bg-cyan-600 border-cyan-500 text-white"
+                        : "bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {ruleType === "EVERY_N_DAYS" && (
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-1.5">Every N Days</p>
+                <input
+                  type="number"
+                  min="1"
+                  value={intervalDays}
+                  onChange={e => setIntervalDays(e.target.value)}
+                  className="w-full bg-gray-800 rounded-xl px-3 py-2 text-sm text-white border border-gray-700 focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-1.5">Anchor Date</p>
+                <input
+                  type="date"
+                  value={anchorDate}
+                  onChange={e => setAnchorDate(e.target.value)}
+                  className="w-full bg-gray-800 rounded-xl px-3 py-2 text-sm text-white border border-gray-700 focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+            </div>
+          )}
+
+          {ruleType === "MONTHLY_DAY" && (
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-1.5">Day Of Month</p>
+              <input
+                type="number"
+                min="1"
+                max="31"
+                value={monthDay}
+                onChange={e => setMonthDay(e.target.value)}
+                className="w-full bg-gray-800 rounded-xl px-3 py-2 text-sm text-white border border-gray-700 focus:outline-none focus:border-cyan-500"
+              />
+            </div>
+          )}
+
           <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Notes (optional)"
             className="w-full bg-gray-800 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-600 border border-gray-700 focus:outline-none focus:border-cyan-500" />
         </div>
@@ -656,6 +775,11 @@ export default function TasksView({
   }, [filter, filterContext, isTasksPage])
 
   useEffect(() => { fetchTasks() }, [fetchTasks])
+  useEffect(() => {
+    const onRefresh = () => { if (isTasksPage) fetchTasks() }
+    window.addEventListener("va-tasks-refresh", onRefresh as EventListener)
+    return () => window.removeEventListener("va-tasks-refresh", onRefresh as EventListener)
+  }, [fetchTasks, isTasksPage])
 
   // ── ESC clears selection / context menu ─────────────────────────────────────
   useEffect(() => {
@@ -739,10 +863,10 @@ export default function TasksView({
   async function handleCtxDelete() {
     if (!ctxMenu) return
     const { task } = ctxMenu
-    if (!window.confirm(`Delete "${task.task_name}"?`)) return
     await apiFetch(`/api/lbs/tasks/${task.task_id}?force_override=true`, { method: "DELETE" }).catch(() => { })
     setTasks(prev => prev.filter(t => t.task_id !== task.task_id))
     setCtxMenu(null)
+    window.dispatchEvent(new Event("va-task-contexts-refresh"))
   }
 
   async function handleCtxMoveDate(date: string) {
@@ -765,13 +889,29 @@ export default function TasksView({
   }
 
   async function handleBulkDelete() {
-    if (!window.confirm(`Delete ${selectedIds.size} tasks?`)) return
     const ids = Array.from(selectedIds)
     await Promise.all(ids.map(id =>
       apiFetch(`/api/lbs/tasks/${id}?force_override=true`, { method: "DELETE" }).catch(() => { })
     ))
     setTasks(prev => prev.filter(t => !selectedIds.has(t.task_id)))
     setSelectedIds(new Set()); setLastSelectedId(null)
+    window.dispatchEvent(new Event("va-task-contexts-refresh"))
+  }
+
+  function handleTaskDragStart(task: LBSTask, e: React.DragEvent) {
+    const payload = {
+      task_id: task.task_id,
+      task_name: task.task_name,
+      context: task.context || "inbox",
+    }
+    e.dataTransfer.effectAllowed = "move"
+    e.dataTransfer.setData("application/x-visionark-task", JSON.stringify(payload))
+    e.dataTransfer.setData("text/plain", task.task_name || task.task_id)
+    window.dispatchEvent(new CustomEvent("va-task-drag-active", { detail: { active: true } }))
+  }
+
+  function handleTaskDragEnd() {
+    window.dispatchEvent(new CustomEvent("va-task-drag-active", { detail: { active: false } }))
   }
 
   async function handleBulkMoveDate(date: string) {
@@ -816,7 +956,10 @@ export default function TasksView({
 
   // ── Other ────────────────────────────────────────────────────────────────────
   async function handleAddTask(taskData: LBSTaskCreate) {
-    await createLBSTask(taskData); setShowAddForm(false); await fetchTasks()
+    await createLBSTask(taskData)
+    setShowAddForm(false)
+    await fetchTasks()
+    window.dispatchEvent(new Event("va-task-contexts-refresh"))
   }
 
   function openEdit(task: LBSTask & { due_date?: string | null }) {
@@ -858,7 +1001,7 @@ export default function TasksView({
       onClick={() => ctxMenu && setCtxMenu(null)}
     >
       <div className="flex flex-col flex-1 min-w-0 min-h-0">
-        <div className="flex-shrink-0 px-6 pt-6 pb-4 border-b border-gray-800/50">
+        <div className="flex-shrink-0 px-6 pt-6 pb-4">
           <div className="flex items-center justify-between mb-3">
             <div>
               {!isCalendarPage && (
@@ -965,7 +1108,7 @@ export default function TasksView({
               <div className="mx-4 p-4 bg-red-900/20 border border-red-800/40 rounded-2xl text-sm text-red-400">{error}</div>
             ) : loading && tasks.length === 0 ? (
               <div className="flex items-center justify-center h-40 text-gray-600 text-sm">Loading...</div>
-            ) : tasks.length === 0 ? (
+            ) : tasks.length === 0 && !showAddForm ? (
               <div className="flex flex-col items-center justify-center h-40 gap-3">
                 <CheckCircle2 size={32} className="text-gray-800" />
                 <p className="text-sm text-gray-600">No tasks found</p>
@@ -981,6 +1124,8 @@ export default function TasksView({
                   onToggle={showStatus ? handleToggle : undefined}
                   onRowClick={handleRowClick}
                   onContextMenu={handleContextMenu}
+                  onTaskDragStart={handleTaskDragStart}
+                  onTaskDragEnd={handleTaskDragEnd}
                 />
               ))
             )

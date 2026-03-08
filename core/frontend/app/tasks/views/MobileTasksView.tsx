@@ -8,8 +8,6 @@ import {
     ChevronDown,
     ChevronRight,
     ChevronLeft,
-    List,
-    CalendarDays,
     MoreVertical,
     Download,
     Upload,
@@ -18,15 +16,15 @@ import {
 import TaskRow from "../components/TaskRow";
 import { useTasksLogic } from "../hooks/useTasksLogic";
 import GridCalendar from "@/components/GridCalendar";
-import TimelineCalendar from "@/components/TimelineCalendar";
 import { getSpokeColor } from "@/lib/colors";
+import type { TaskFilter } from "@/store/useTaskStore";
 
 type TasksLogic = ReturnType<typeof useTasksLogic>;
 
 export default function MobileTasksView({ logic }: { logic: TasksLogic }) {
     const {
         loading,
-        viewMode,
+        isCalendarPage,
         activeFilter,
         targetDate,
         currentMonth,
@@ -39,7 +37,6 @@ export default function MobileTasksView({ logic }: { logic: TasksLogic }) {
         isDayDetailsOpen,
         dayDetailsDate,
         todayStr,
-        setViewMode,
         setIsCompletedCollapsed,
         setTargetDate,
         setDayDetailsDate,
@@ -59,7 +56,7 @@ export default function MobileTasksView({ logic }: { logic: TasksLogic }) {
         calendarTasks
     } = logic;
 
-    const filters = [
+    const filters: { id: TaskFilter; label: string }[] = [
         { id: 'today', label: 'Today' },
         { id: 'my-day', label: 'My Day' },
         { id: 'planned', label: 'Planned' },
@@ -75,28 +72,9 @@ export default function MobileTasksView({ logic }: { logic: TasksLogic }) {
 
     return (
         <div className="flex-1 flex flex-col min-h-0 bg-gray-950">
-            {/* View Switcher Bar */}
+            {/* Header Bar */}
             <div className="flex items-center justify-between px-4 pt-4 pb-2 border-b border-gray-900/50">
-                <div className="flex bg-gray-900/50 rounded-lg p-0.5">
-                    <button
-                        onClick={() => setViewMode("list")}
-                        className={`px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-wider transition-all ${viewMode === "list" ? "bg-blue-600 text-white shadow-lg" : "text-gray-500 hover:text-gray-300"}`}
-                    >
-                        List
-                    </button>
-                    <button
-                        onClick={() => setViewMode("calendar")}
-                        className={`px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-wider transition-all ${viewMode === "calendar" ? "bg-blue-600 text-white shadow-lg" : "text-gray-500 hover:text-gray-300"}`}
-                    >
-                        Calendar
-                    </button>
-                    <button
-                        onClick={() => setViewMode("timeline")}
-                        className={`px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-wider transition-all ${viewMode === "timeline" ? "bg-blue-600 text-white shadow-lg" : "text-gray-500 hover:text-gray-300"}`}
-                    >
-                        Timeline
-                    </button>
-                </div>
+                <h2 className="text-sm font-semibold text-gray-200">{isCalendarPage ? "Calendar" : "Tasks"}</h2>
                 <div className="flex items-center gap-1">
                     <button onClick={handleRefresh} className="p-2 text-gray-500 hover:text-white transition-colors">
                         <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
@@ -121,12 +99,12 @@ export default function MobileTasksView({ logic }: { logic: TasksLogic }) {
             <div className="px-4 py-3 flex items-center justify-between border-b border-gray-900/30">
                 <div className="flex items-center gap-2">
                     <h2 className="text-[13px] font-bold text-white">
-                        {viewMode === "calendar"
+                        {isCalendarPage
                             ? currentMonth.toLocaleString('en-US', { month: 'short', year: 'numeric' })
-                            : viewMode === "list" && activeFilter === 'today' ? formatDateHeader(targetDate) : activeFilter.charAt(0).toUpperCase() + activeFilter.slice(1)
+                            : activeFilter === 'today' ? formatDateHeader(targetDate) : activeFilter.charAt(0).toUpperCase() + activeFilter.slice(1)
                         }
                     </h2>
-                    {viewMode === "list" && activeFilter === 'today' && (
+                    {!isCalendarPage && activeFilter === 'today' && (
                         <span className="text-[10px] font-black text-gray-600 uppercase tracking-widest">{stats.done}/{stats.total}</span>
                     )}
                 </div>
@@ -139,12 +117,12 @@ export default function MobileTasksView({ logic }: { logic: TasksLogic }) {
             </div>
 
             {/* List Mode Filters */}
-            {viewMode === "list" && (
+            {!isCalendarPage && (
                 <div className="flex overflow-x-auto no-scrollbar gap-2 px-4 py-3 bg-gray-950/50 border-b border-gray-900/20">
                     {filters.map(f => (
                         <button
                             key={f.id}
-                            onClick={() => setActiveFilter(f.id as any)}
+                            onClick={() => setActiveFilter(f.id)}
                             className={`whitespace-nowrap px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${activeFilter === f.id ? "bg-blue-600/20 text-blue-400 border border-blue-500/30 shadow-[0_0_10px_rgba(59,130,246,0.2)]" : "text-gray-500 border border-gray-800/50 hover:bg-gray-900"}`}
                         >
                             {f.label}
@@ -155,7 +133,7 @@ export default function MobileTasksView({ logic }: { logic: TasksLogic }) {
 
             {/* Main View Area */}
             <div className="flex-1 overflow-y-auto scrolling-touch relative no-scrollbar">
-                {viewMode === "list" ? (
+                {!isCalendarPage ? (
                     <div className="px-3 py-4 space-y-4 pb-24">
                         {loading && displayTasks.length === 0 ? (
                             <div className="flex items-center justify-center py-20 animate-pulse">
@@ -208,7 +186,7 @@ export default function MobileTasksView({ logic }: { logic: TasksLogic }) {
                             </div>
                         )}
                     </div>
-                ) : viewMode === "calendar" ? (
+                ) : (
                     <div className="h-full">
                         <GridCalendar
                             month={currentMonth}
@@ -277,10 +255,6 @@ export default function MobileTasksView({ logic }: { logic: TasksLogic }) {
                                 </div>
                             </>
                         )}
-                    </div>
-                ) : (
-                    <div className="h-full">
-                        <TimelineCalendar targetDate={targetDate} onTaskClick={handleRowClick} refreshKey={refreshKey} />
                     </div>
                 )}
             </div>

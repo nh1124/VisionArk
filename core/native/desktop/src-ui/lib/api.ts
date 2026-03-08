@@ -579,6 +579,20 @@ export interface LBSTaskCreate {
     due_date?: string | null
     notes?: string | null
     timezone?: string | null
+    mon?: boolean
+    tue?: boolean
+    wed?: boolean
+    thu?: boolean
+    fri?: boolean
+    sat?: boolean
+    sun?: boolean
+    interval_days?: number
+    anchor_date?: string | null
+    month_day?: number
+    nth_in_month?: number
+    weekday_mon1?: number
+    start_date?: string | null
+    end_date?: string | null
 }
 
 export async function createLBSTask(task: LBSTaskCreate): Promise<LBSTask> {

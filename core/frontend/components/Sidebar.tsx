@@ -685,7 +685,9 @@ export default function Sidebar() {
                         {currentPrimaryNav !== "projects" && (
                             <div className="px-4 py-3 border-b border-gray-800/50">
                                 <h2 className="text-sm font-semibold text-gray-200">{secondaryTitles[currentPrimaryNav]}</h2>
-                                <p className="text-[11px] text-gray-500 mt-1">Page navigation and filters</p>
+                                {currentPrimaryNav !== "tasks" && (
+                                    <p className="text-[11px] text-gray-500 mt-1">Page navigation and filters</p>
+                                )}
                             </div>
                         )}
                         <div className={`flex-1 overflow-y-auto p-3 ${currentPrimaryNav === "projects" ? "pt-6" : ""}`}>

@@ -5,9 +5,12 @@ import { apiFetch } from "@/lib/api";
 import { getLocalDateString } from "@/lib/dateUtils";
 import { useTaskStore } from "@/store/useTaskStore";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { usePathname } from "next/navigation";
 import { Task } from "../types";
 
 export function useTasksLogic() {
+    const pathname = usePathname();
+    const isCalendarPage = pathname.startsWith("/tasks/calendar");
     const {
         tasks,
         allTasks,
@@ -58,12 +61,16 @@ export function useTasksLogic() {
     const [qaLoadScore, setQaLoadScore] = useState<number>(3);
     const [qaDueDate, setQaDueDate] = useState<string>(targetDate);
 
+    useEffect(() => {
+        setViewMode(isCalendarPage ? "calendar" : "list");
+    }, [isCalendarPage, setViewMode]);
+
     const loadAllProjects = async () => {
         try {
             const response = await apiFetch("/api/agents/project/list");
             const data = await response.json();
             if (data && data.projects && Array.isArray(data.projects)) {
-                setAllProjects(data.projects.map((s: any) => s.name));
+                setAllProjects(data.projects.map((s: { name?: string }) => s.name || "").filter(Boolean));
             }
         } catch (err) {
             console.error("Failed to load projects:", err);
@@ -189,7 +196,7 @@ export function useTasksLogic() {
     };
 
     const changeDate = (days: number) => {
-        const shift = viewMode === 'timeline' ? days * 7 : days;
+        const shift = days;
         const d = new Date(targetDate);
         d.setDate(d.getDate() + shift);
         const newDate = getLocalDateString(d);
@@ -198,24 +205,24 @@ export function useTasksLogic() {
     };
 
     const handlePrev = () => {
-        if (viewMode === 'calendar') {
+        if (isCalendarPage) {
             setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
-        } else if (viewMode === 'timeline') {
+        } else {
             changeDate(-1);
         }
     };
 
     const handleNext = () => {
-        if (viewMode === 'calendar') {
+        if (isCalendarPage) {
             setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
-        } else if (viewMode === 'timeline') {
+        } else {
             changeDate(1);
         }
     };
 
     const handleToday = () => {
         const today = new Date();
-        if (viewMode === 'calendar') {
+        if (isCalendarPage) {
             setCurrentMonth(new Date(today.getFullYear(), today.getMonth(), 1));
         } else {
             const todayStr = getLocalDateString(today);
@@ -270,6 +277,7 @@ export function useTasksLogic() {
         calendarTasks,
         overdueTasks,
         isMobile,
+        isCalendarPage,
         selectedTask,
         panelOpen,
         createModalOpen,

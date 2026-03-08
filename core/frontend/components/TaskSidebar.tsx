@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Inbox, Star, Calendar, CheckSquare, Sun, Folder, AlarmClock } from "lucide-react";
 import { useTaskStore, TaskFilter } from "../store/useTaskStore";
 import { getLocalDateString } from "../lib/dateUtils";
@@ -11,7 +11,9 @@ interface TaskSidebarProps {
 }
 
 export default function TaskSidebar({ isCollapsed }: TaskSidebarProps) {
-    const { tasks, allTasks, activeFilter, setActiveFilter, activeProject, fetchAllTasks, viewMode, integrations, toggleIntegration } = useTaskStore();
+    const pathname = usePathname();
+    const router = useRouter();
+    const { allTasks, activeFilter, setActiveFilter, activeProject, fetchAllTasks, viewMode } = useTaskStore();
     const todayStr = getLocalDateString();
 
     // Fetch all tasks once on mount to populate counts
@@ -46,6 +48,25 @@ export default function TaskSidebar({ isCollapsed }: TaskSidebarProps) {
 
     return (
         <div className="flex flex-col gap-6 py-4 animate-in fade-in duration-300">
+            {!isCollapsed && (
+                <div className="mx-3 space-y-1">
+                    <button
+                        onClick={() => router.push("/tasks")}
+                        className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-base transition-colors ${pathname === "/tasks" ? "bg-cyan-500/12 text-cyan-300" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}
+                    >
+                        <CheckSquare size={17} />
+                        <span>Task List</span>
+                    </button>
+                    <button
+                        onClick={() => router.push("/tasks/calendar")}
+                        className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-base transition-colors ${pathname.startsWith("/tasks/calendar") ? "bg-cyan-500/12 text-cyan-300" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}
+                    >
+                        <Calendar size={17} />
+                        <span>Calendar</span>
+                    </button>
+                </div>
+            )}
+
             {/* Top Border for Visual Separation */}
             {/* Top Border for Visual Separation - Only show for List View */}
             {viewMode === "list" && (
@@ -55,7 +76,7 @@ export default function TaskSidebar({ isCollapsed }: TaskSidebarProps) {
                             <button
                                 key={cat.id}
                                 onClick={() => setActiveFilter(cat.id)}
-                                className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-bold transition-all ${isCollapsed ? "justify-center" : ""
+                                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-base font-semibold transition-all ${isCollapsed ? "justify-center" : ""
                                     } ${activeFilter === cat.id
                                         ? "bg-blue-600/10 text-blue-400"
                                         : "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200"
@@ -87,7 +108,7 @@ export default function TaskSidebar({ isCollapsed }: TaskSidebarProps) {
                     {/* All Tasks Button */}
                     <button
                         onClick={() => setActiveFilter("inbox")}
-                        className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${!activeProject
+                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-all ${!activeProject
                             ? "bg-gray-800 text-white"
                             : "text-gray-500 hover:text-gray-300 hover:bg-gray-900/40"
                             }`}
@@ -100,7 +121,7 @@ export default function TaskSidebar({ isCollapsed }: TaskSidebarProps) {
                         <button
                             key={ctx}
                             onClick={() => setActiveFilter("project", ctx)}
-                            className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${activeFilter === "project" && activeProject === ctx
+                            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-all ${activeFilter === "project" && activeProject === ctx
                                 ? "bg-gray-800 text-cyan-400"
                                 : "text-gray-500 hover:text-gray-300 hover:bg-gray-900/40"
                                 }`}
@@ -112,27 +133,6 @@ export default function TaskSidebar({ isCollapsed }: TaskSidebarProps) {
                 </div>
             )}
 
-            {/* Integrations Toggle Area */}
-            {!isCollapsed && (
-                <div className="px-3 space-y-4">
-                    <div className="px-3">
-                        <h4 className="text-[10px] font-black text-gray-600 uppercase tracking-widest mb-4">Integrations</h4>
-                        <div className="space-y-3">
-                            {integrations.map((ext) => (
-                                <div key={ext.id} className="flex items-center justify-between group">
-                                    <span className="text-xs font-bold text-gray-500 group-hover:text-gray-400 transition-colors">{ext.label}</span>
-                                    <div
-                                        onClick={() => toggleIntegration(ext.id)}
-                                        className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${ext.active ? 'bg-cyan-500/50' : 'bg-gray-800'}`}
-                                    >
-                                        <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow-sm transition-all ${ext.active ? 'right-0.5' : 'left-0.5'}`} />
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

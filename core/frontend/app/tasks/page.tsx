@@ -7,7 +7,6 @@ import DesktopTasksView from "./views/DesktopTasksView";
 import TaskEditPanel from "../components/TaskEditPanel";
 import TaskCreateModal from "../components/TaskCreateModal";
 import TaskImportModal from "../components/TaskImportModal";
-import { getLocalDateString } from "@/lib/dateUtils";
 
 export default function UnifiedTasksPage() {
     const logic = useTasksLogic();
@@ -18,16 +17,11 @@ export default function UnifiedTasksPage() {
         createModalOpen,
         importModalOpen,
         availableProjects,
-        targetDate,
         viewMode,
-        setSelectedTask,
         setPanelOpen,
         setCreateModalOpen,
         setImportModalOpen,
         setIsDayDetailsOpen,
-        fetchTasks,
-        fetchAllTasks,
-        fetchMonthTasks,
         handleRefresh
     } = logic;
 

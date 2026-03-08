@@ -176,12 +176,12 @@ export default function TaskEditPanel({
 
   async function handleDelete() {
     if (!task) return
-    const ok = window.confirm(`Delete "${task.task_name}"?`)
-    if (!ok) return
     setDeleting(true)
     try {
       await deleteLBSTask(task.task_id)
       setMsg({ type: "ok", text: "Task deleted" })
+      window.dispatchEvent(new Event("va-task-contexts-refresh"))
+      window.dispatchEvent(new Event("va-tasks-refresh"))
       setTimeout(() => {
         onSaved?.()
         onClose()
