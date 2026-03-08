@@ -9,7 +9,6 @@ import ImagePreviewModal from "./ImagePreviewModal"
 import { type ProjectSidebarMode } from "../App"
 import ProjectNotes from "./ProjectNotes"
 import AutomationTab from "./AutomationTab"
-import ActivitySidebar from "./ActivitySidebar"
 import FilesSidebar from "./FilesSidebar"
 import ProjectSettingsPanel from "./ProjectSettingsPanel"
 
@@ -500,9 +499,8 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                         <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">
                             {sidebarMode === "files" ? "Files & Artifacts"
                                 : sidebarMode === "notes" ? "Project Notes"
-                                    : sidebarMode === "activity" ? "Project Activity"
-                                        : sidebarMode === "settings" ? "Project Settings"
-                                            : "Project Automation"}
+                                    : sidebarMode === "settings" ? "Project Settings"
+                                        : "Project Automation"}
                         </h2>
                         {setSidebarMode && (
                             <button
@@ -533,9 +531,6 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                         )}
                         {sidebarMode === "notes" && (
                             <ProjectNotes projectId={projectId} />
-                        )}
-                        {sidebarMode === "activity" && (
-                            <ActivitySidebar projectId={projectId} />
                         )}
                         {sidebarMode === "automation" && (
                             <AutomationTab projectId={projectId} />
