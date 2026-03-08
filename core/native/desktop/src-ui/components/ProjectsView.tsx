@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react"
 import { apiFetch, getFileToken } from "../lib/api"
 import {
     Search, MoreVertical, Edit2, Trash2, X, Check, ExternalLink,
-    Copy, Download, Loader2, Settings, Rocket, Folder, Sparkles,
+    Copy, Download, Settings, Rocket, Folder, Sparkles,
     LayoutGrid, List, Plus, FolderKanban
 } from "lucide-react"
 
@@ -27,8 +27,6 @@ interface Project {
 export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: string) => void }) {
     const [projects, setProjects] = useState<Project[]>([])
     const [loading, setLoading] = useState(true)
-    const [newProjectPrompt, setNewProjectPrompt] = useState("")
-    const [creating, setCreating] = useState(false)
     const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set())
     const [searchQuery, setSearchQuery] = useState("")
     const [activeMenu, setActiveMenu] = useState<string | null>(null)
@@ -66,27 +64,6 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
             console.error("Failed to load projects:", err)
         } finally {
             setLoading(false)
-        }
-    }
-
-    const createProject = async () => {
-        if (!newProjectPrompt.trim() || creating) return
-        setCreating(true)
-        try {
-            const res = await apiFetch("/api/agents/project/create-from-prompt", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ prompt: newProjectPrompt }),
-            })
-            if (!res.ok) throw new Error("Failed to create project")
-            const data = await res.json()
-            setNewProjectPrompt("")
-            await loadProjects()
-            if (onOpenProject) onOpenProject(data.project_id)
-        } catch (err) {
-            console.error("Error creating project:", err)
-        } finally {
-            setCreating(false)
         }
     }
 
@@ -184,7 +161,6 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
                                 <FolderKanban size={36} className="text-purple-500" />
                                 Projects
                             </h1>
-                            <p className="text-gray-500 text-sm">Manage and launch your AI-assisted projects.</p>
                         </div>
 
                         <div className="flex items-center gap-3">
@@ -212,31 +188,6 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
                                     title="List View"
                                 ><List size={16} /></button>
                             </div>
-                        </div>
-                    </div>
-
-                    {/* Create Project */}
-                    <div className="mb-10">
-                        <div className="flex flex-col sm:flex-row gap-4">
-                            <div className="relative flex-1">
-                                <input
-                                    type="text"
-                                    value={newProjectPrompt}
-                                    onChange={e => setNewProjectPrompt(e.target.value)}
-                                    onKeyPress={e => e.key === "Enter" && !creating && createProject()}
-                                    placeholder="What would you like to build today?"
-                                    className="w-full bg-gray-900/50 border border-gray-800 focus:border-cyan-500/50 rounded-2xl px-6 py-4 text-sm focus:outline-none transition-all"
-                                    disabled={creating}
-                                />
-                                {creating && <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-cyan-500" />}
-                            </div>
-                            <button
-                                onClick={createProject}
-                                disabled={creating || !newProjectPrompt.trim()}
-                                className="bg-white text-black hover:bg-gray-200 disabled:bg-gray-800 disabled:text-gray-500 px-8 py-4 rounded-2xl font-bold text-sm transition-all active:scale-95 whitespace-nowrap"
-                            >
-                                Create Project
-                            </button>
                         </div>
                     </div>
 
@@ -283,7 +234,7 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
                                 <p className="text-xl font-medium text-gray-400 mb-2">
                                     {searchQuery ? `No results for "${searchQuery}"` : "Your project list is empty"}
                                 </p>
-                                <p className="text-gray-600 text-sm">Start building something new above.</p>
+                                <p className="text-gray-600 text-sm">Use + New Project from the left panel.</p>
                             </div>
                         ) : (
                             <div className={viewMode === "tile" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 auto-rows-min" : "flex flex-col gap-3"}>

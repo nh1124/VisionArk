@@ -402,6 +402,40 @@ export default function NavSidebar({
     }
   }
 
+  async function handleNewProject() {
+    const existingNames = new Set(
+      projects.map((p) => (p.display_name || p.name || "").trim().toLowerCase()).filter(Boolean),
+    )
+    let candidate = "New Project"
+    let index = 1
+    while (existingNames.has(candidate.toLowerCase())) {
+      index += 1
+      candidate = `New Project ${index}`
+    }
+
+    try {
+      const res = await apiFetch("/api/agents/project/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_name: candidate }),
+      })
+      if (!res.ok) throw new Error(`Create project failed: ${res.status}`)
+      const created = await res.json()
+      const projectId = created?.project_id as string | undefined
+      if (!projectId) throw new Error("Project ID missing in create response")
+
+      const refreshed = await listProjects()
+      setProjects(refreshed)
+      const createdProject = refreshed.find((p) => p.id === projectId)
+      setEditingProjectId(projectId)
+      setEditProjectTitle(createdProject?.display_name || createdProject?.name || candidate)
+      onChange("projects", projectId)
+      setTimeout(() => projectEditRef.current?.focus(), 50)
+    } catch (e) {
+      console.error("New project failed:", e)
+    }
+  }
+
   const openMenuProject = projects.find((p) => p.id === projectMenuOpen)
   const openMenuSession = sessions.find((s) => s.id === sessionMenuOpen)
 
@@ -458,7 +492,7 @@ export default function NavSidebar({
         </div>
 
         <button
-          onClick={() => onChange("projects")}
+          onClick={handleNewProject}
           className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-cyan-400 hover:bg-cyan-500/10"
         >
           <Plus size={15} />
