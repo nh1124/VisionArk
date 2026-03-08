@@ -11,20 +11,24 @@ from infrastructure.queue.manager import QueueManager
 from pydantic import BaseModel
 
 __all__ = [
+    # Registries
     "task_registry",
     "aes_registry",
     "reply_registry",
     "sync_registry",
     "lrj_registry",
-    "IntegrationContext",
-    "TaskType",
-    "ServiceRegistry", 
-    "ExternalIdentity",
-    "User",
-    "AsyncSessionLocal",
+    # Authoring contracts
     "BaseTool",
     "ToolResult",
     "ToolAttachment",
+    "IntegrationContext",
+    "BaseModel",
+    # Shared DB types needed for authoring (identity / task metadata)
+    "TaskType",
+    "ServiceRegistry",
+    "ExternalIdentity",
+    "User",
+    "AsyncSessionLocal",
+    # Infrastructure
     "QueueManager",
-    "BaseModel"
 ]

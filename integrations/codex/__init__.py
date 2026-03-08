@@ -6,7 +6,16 @@ on connected native devices.
 Activation: register service_name='codex' in ServiceRegistry (is_active=True).
 """
 
-from .agent_tools import CodexCheckRuntimeTool, CodexRunTool
+from . import _handler  # noqa: F401  — registers @lrj_registry.register("cli.run_shell")
+from .agent_tools import (
+    CodexCheckRuntimeTool,
+    CodexRunTool,
+    CodexJobWaitTool,
+    CodexJobStatusTool,
+    CodexJobOutputTool,
+    CodexApprovalTool,
+    CodexJobCancelTool,
+)
 
 
 async def get_tools(user_id: str, db):
@@ -24,7 +33,15 @@ async def get_tools(user_id: str, db):
     if not res.scalars().first():
         return []
 
-    return [CodexCheckRuntimeTool(), CodexRunTool()]
+    return [
+        CodexCheckRuntimeTool(),
+        CodexRunTool(),
+        CodexJobWaitTool(),
+        CodexJobStatusTool(),
+        CodexJobOutputTool(),
+        CodexApprovalTool(),
+        CodexJobCancelTool(),
+    ]
 
 
 def get_skill_defs():
@@ -33,4 +50,14 @@ def get_skill_defs():
     return SKILL_DEFS
 
 
-__all__ = ["CodexCheckRuntimeTool", "CodexRunTool", "get_tools", "get_skill_defs"]
+__all__ = [
+    "CodexCheckRuntimeTool",
+    "CodexRunTool",
+    "CodexJobWaitTool",
+    "CodexJobStatusTool",
+    "CodexJobOutputTool",
+    "CodexApprovalTool",
+    "CodexJobCancelTool",
+    "get_tools",
+    "get_skill_defs",
+]

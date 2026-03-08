@@ -156,7 +156,10 @@ class RunNativeJobTool:
                     "type": "object",
                     "description": (
                         "Tool arguments passed to the daemon executor. Schemas per tool:\n"
-                        "  run_shell:   {cmd, cwd?, timeout?}\n"
+                        "  run_shell:   {cmd, cwd?, timeout?} OR {argv: [...], cwd?, timeout?}\n"
+                        "    NOTE: prefer argv (string array) over cmd when arguments contain spaces\n"
+                        "    (e.g. argv: ['codex', 'exec', '--sandbox', 'workspace-write', 'my prompt'])\n"
+                        "    cmd is subject to shell re-parsing on Windows and may split quoted args.\n"
                         "  read_file:   {path}\n"
                         "  write_file:  {path, content}\n"
                         "  list_dir:    {path}\n"

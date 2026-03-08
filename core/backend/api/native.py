@@ -325,6 +325,102 @@ async def pull_executions_for_device(
     return [_exec_to_response(e) for e in execs]
 
 
+class StreamBody(BaseModel):
+    stdout: str = ""
+
+
+class StdinBody(BaseModel):
+    text: str
+
+
+async def _require_device_owns_exec(
+    db: AsyncSession,
+    exec_id: str,
+    device_id: str,
+    user_id: str,
+) -> RunExecution:
+    """Verify the device belongs to the user and has claimed the execution."""
+    res = await db.execute(
+        select(NativeDevice).where(
+            NativeDevice.id == device_id,
+            NativeDevice.user_id == user_id,
+        )
+    )
+    if not res.scalars().first():
+        raise HTTPException(status_code=403, detail="Device not found or not owned by user")
+    res = await db.execute(
+        select(RunExecution).where(
+            RunExecution.id == exec_id,
+            RunExecution.claimed_by_device_id == device_id,
+        )
+    )
+    exc = res.scalars().first()
+    if not exc:
+        raise HTTPException(status_code=403, detail="Execution not found or not claimed by this device")
+    return exc
+
+
+async def _require_user_owns_exec(
+    db: AsyncSession,
+    exec_id: str,
+    user_id: str,
+) -> RunExecution:
+    """Verify the execution's parent AgentRun belongs to the user."""
+    from shared.database import AgentRun
+    res = await db.execute(
+        select(RunExecution)
+        .join(AgentRun, AgentRun.id == RunExecution.run_id)
+        .where(RunExecution.id == exec_id, AgentRun.user_id == user_id)
+    )
+    exc = res.scalars().first()
+    if not exc:
+        raise HTTPException(status_code=403, detail="Execution not found or not owned by user")
+    return exc
+
+
+@runs_router.patch("/executions/{exec_id}/stream")
+async def stream_execution_output(
+    exec_id: str,
+    body: StreamBody,
+    device_id: str = Query(..., description="Device ID performing the stream update"),
+    db: AsyncSession = Depends(get_async_db),
+    identity: Identity = Depends(resolve_identity),
+):
+    """Daemon endpoint: post partial stdout while the process is running."""
+    await _require_device_owns_exec(db, exec_id, device_id, identity.user_id)
+    await RunService.patch_partial_stdout(db, exec_id, body.stdout)
+    return {"ok": True}
+
+
+@runs_router.get("/executions/{exec_id}/stdin")
+async def get_execution_stdin(
+    exec_id: str,
+    device_id: str = Query(..., description="Device ID polling for stdin"),
+    db: AsyncSession = Depends(get_async_db),
+    identity: Identity = Depends(resolve_identity),
+):
+    """Daemon endpoint: dequeue all pending stdin strings (one-shot read)."""
+    await _require_device_owns_exec(db, exec_id, device_id, identity.user_id)
+    queue = await RunService.dequeue_stdin(db, exec_id)
+    return {"pending": queue}
+
+
+@runs_router.post("/executions/{exec_id}/stdin")
+async def enqueue_execution_stdin(
+    exec_id: str,
+    body: StdinBody,
+    db: AsyncSession = Depends(get_async_db),
+    identity: Identity = Depends(resolve_identity),
+):
+    """Agent endpoint: enqueue text to send to the running process's stdin."""
+    await _require_user_owns_exec(db, exec_id, identity.user_id)
+    try:
+        await RunService.enqueue_stdin(db, exec_id, body.text)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"ok": True}
+
+
 @runs_router.post("/executions/{exec_id}/claim", response_model=ExecutionResponse)
 async def claim_execution(
     exec_id: str,

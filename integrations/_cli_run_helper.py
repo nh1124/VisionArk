@@ -251,3 +251,120 @@ async def dispatch_shell_command(
     except Exception as e:
         logger.error("dispatch_shell_command error: %s", e, exc_info=True)
         return _err_result("internal_error", f"Dispatch error: {e}")
+
+
+# ── async dispatch (LongRunningJob) ────────────────────────────────────────────
+
+async def dispatch_shell_command_async(
+    ctx: IntegrationContext,
+    cmd: str | None = None,
+    *,
+    argv: list[str] | None = None,
+    cwd: str | None = None,
+    device_id: str | None = None,
+    risk_level: str = "medium",
+    tool_name: str = "cli_run",
+    timeout: int = 600,
+    completion_markers: list[str] | None = None,
+) -> ToolResult:
+    """Create a RunExecution + LongRunningJob and return immediately with job_id.
+
+    The background handler ``cli.run_shell`` (CliShellHandler) will poll the
+    RunExecution and update the job to completed/failed when the daemon finishes.
+
+    Returns a ToolResult with::
+        job_id:       str  — use with codex_job_status / codex_job_cancel
+        execution_id: str  — RunExecution ID
+        run_id:       str  — AgentRun ID
+        status:       "queued"
+    """
+    if cmd is None and argv is None:
+        return _err_result("internal_error", "dispatch_shell_command_async: either cmd or argv must be provided.")
+
+    run_id = ctx.metadata.get("run_id")
+    if not run_id:
+        return _err_result(
+            "internal_error",
+            "No active agent run context. CLI tools must be invoked within an agent run.",
+        )
+
+    db = ctx.db
+    user_id = ctx.user_id
+
+    try:
+        from sqlalchemy import select
+        from shared.database import AgentRun, RunExecution
+        import uuid as _uuid
+
+        # Resolve device
+        resolved_device_id, device_label = await _resolve_device(db, user_id, device_id)
+        if device_id and resolved_device_id is None:
+            return _err_result(
+                "internal_error",
+                f"Device '{device_id}' not found or is disabled.",
+            )
+
+        # Verify AgentRun exists
+        res = await db.execute(select(AgentRun).where(AgentRun.id == run_id))
+        run = res.scalars().first()
+        if run is None:
+            return _err_result(
+                "internal_error",
+                f"AgentRun '{run_id}' not found.",
+            )
+
+        # Build run_shell payload
+        payload: dict = {"timeout": timeout}
+        if argv is not None:
+            payload["argv"] = argv
+        else:
+            payload["cmd"] = cmd
+        if cwd:
+            payload["cwd"] = cwd
+        if completion_markers:
+            payload["completion_markers"] = completion_markers
+
+        # Create RunExecution (no timeout in payload — handler manages deadline)
+        exc = RunExecution(
+            id=str(_uuid.uuid4()),
+            run_id=run.id,
+            kind="local.run_shell",
+            status="pending",
+            risk_level=risk_level,
+            payload=payload,
+            target_device_id=resolved_device_id,
+        )
+        db.add(exc)
+        await db.commit()
+        await db.refresh(exc)
+
+        _cmd_preview = (cmd or " ".join(argv or []))[:80]
+        logger.info(
+            "cli_dispatch_async: user=%s run=%s exec=%s cmd=%r device=%s",
+            user_id, run.id, exc.id, _cmd_preview, resolved_device_id,
+        )
+
+        # Create LongRunningJob that the background handler will drive
+        from integrations._internal_services import LongRunningJobService
+        job = await LongRunningJobService.create_job(
+            db=db,
+            user_id=user_id,
+            tool_name=tool_name,
+            job_kind="cli.run_shell",
+            input_payload={
+                "execution_id": exc.id,
+                "run_id": run.id,
+            },
+        )
+
+        return _ok_result(
+            f"Task queued for '{device_label}'. Poll job_id to check progress.",
+            job_id=job.id,
+            execution_id=exc.id,
+            run_id=run.id,
+            status="queued",
+        )
+
+    except Exception as e:
+        logger.error("dispatch_shell_command_async error: %s", e, exc_info=True)
+        return _err_result("internal_error", f"Dispatch error: {e}")

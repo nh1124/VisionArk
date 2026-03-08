@@ -54,7 +54,7 @@ pub async fn run(
                         }
 
                         info!("Processing execution {} (run={})", exec_id, run_id);
-                        if let Err(e) = run_execution(&client, &run_id, &exec_id, &exec, &policy).await {
+                        if let Err(e) = run_execution(&client, &run_id, &exec_id, &exec, &policy, did).await {
                             error!("Execution {} failed: {}", exec_id, e);
                             let _ = fail_execution(&client, &run_id, &exec_id, &e.to_string()).await;
                         }
@@ -81,6 +81,7 @@ async fn run_execution(
     exec_id: &str,
     exec: &Value,
     policy: &ExecutionPolicy,
+    device_id: &str,
 ) -> Result<()> {
     let kind = exec["kind"].as_str().unwrap_or("").to_string();
     let risk = exec["risk_level"].as_str().unwrap_or("low");
@@ -118,7 +119,7 @@ async fn run_execution(
 
     // Map kind → local tool + args
     let (tool, args) = kind_to_tool(&kind, &payload);
-    let tool_result = local_tools::dispatch_tool(policy, &tool, &args).await;
+    let tool_result = local_tools::dispatch_tool(policy, &tool, &args, client, run_id, exec_id, device_id).await;
 
     match tool_result {
         local_tools::ToolResult::Ok(data) => {

@@ -215,6 +215,60 @@ class RunService:
         logger.info("execution.updated exec=%s %s->%s", exec_id, prev, status)
         return exc
 
+    # ── Streaming / stdin ─────────────────────────────────────────────────────
+
+    @staticmethod
+    async def patch_partial_stdout(
+        db: AsyncSession,
+        exec_id: str,
+        stdout: str,
+    ) -> None:
+        """Daemon calls this to post partial stdout while the process is running."""
+        await db.execute(
+            update(RunExecution)
+            .where(RunExecution.id == exec_id)
+            .values(partial_stdout=stdout)
+        )
+        await db.commit()
+
+    @staticmethod
+    async def get_partial_stdout(db: AsyncSession, exec_id: str) -> Optional[str]:
+        res = await db.execute(
+            select(RunExecution).where(RunExecution.id == exec_id)
+        )
+        exc = res.scalars().first()
+        return exc.partial_stdout if exc else None
+
+    @staticmethod
+    async def enqueue_stdin(db: AsyncSession, exec_id: str, text: str) -> None:
+        """Agent calls this to send input to the running process."""
+        res = await db.execute(
+            select(RunExecution).where(RunExecution.id == exec_id)
+        )
+        exc = res.scalars().first()
+        if not exc:
+            raise ValueError(f"RunExecution {exec_id} not found")
+        queue = list(exc.stdin_queue or [])
+        queue.append(text)
+        exc.stdin_queue = queue
+        await db.commit()
+        logger.info("execution.stdin_enqueued exec=%s text_len=%d", exec_id, len(text))
+
+    @staticmethod
+    async def dequeue_stdin(db: AsyncSession, exec_id: str) -> list:
+        """Daemon calls this to atomically dequeue all pending stdin strings."""
+        res = await db.execute(
+            select(RunExecution).where(RunExecution.id == exec_id)
+        )
+        exc = res.scalars().first()
+        if not exc:
+            return []
+        queue = list(exc.stdin_queue or [])
+        if queue:
+            exc.stdin_queue = []
+            await db.commit()
+        return queue
+
     # ── Cancel / Retry ────────────────────────────────────────────────────────
 
     @staticmethod

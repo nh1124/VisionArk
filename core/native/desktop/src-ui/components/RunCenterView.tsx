@@ -2,12 +2,12 @@ import React, { useEffect, useState } from "react"
 import {
   RefreshCw, CheckCircle, XCircle, Clock, AlertTriangle, Loader,
   Plus, ShieldCheck, ShieldX, ChevronRight, Activity, X, Monitor,
-  Square, RotateCcw,
+  Square, RotateCcw, Layers,
 } from "lucide-react"
 import type { AgentRun, RunExecution, RunApproval, NativeDevice } from "../../../shared/types"
 import {
   listRuns, createRun, approveExecution, rejectExecution, listDevices,
-  cancelRun, retryExecution,
+  cancelRun, retryExecution, listLRJobs, cancelLRJob, type LRJob,
 } from "../../../bridge/api"
 
 // ── Status styles ──────────────────────────────────────────────────────────────
@@ -192,14 +192,29 @@ function ApprovalCard({ approval, exec, run, onDecided }: ApprovalCardProps) {
 // ── Main: RunCenterView ────────────────────────────────────────────────────────
 
 type RunFilter = "all" | "active" | "done"
+type MainTab = "runs" | "jobs"
+
+const LRJ_STATUS: Record<string, { label: string; cls: string }> = {
+  queued:    { label: "Queued",    cls: "text-gray-400 bg-gray-800" },
+  running:   { label: "Running",   cls: "text-blue-400 bg-blue-400/10" },
+  completed: { label: "Completed", cls: "text-emerald-400 bg-emerald-400/10" },
+  failed:    { label: "Failed",    cls: "text-red-400 bg-red-400/10" },
+  cancelled: { label: "Cancelled", cls: "text-red-300 bg-red-300/10" },
+  expired:   { label: "Expired",   cls: "text-gray-500 bg-gray-800" },
+}
 
 export default function RunCenterView() {
+  const [mainTab, setMainTab] = useState<MainTab>("runs")
   const [runs, setRuns] = useState<AgentRun[]>([])
   const [devices, setDevices] = useState<NativeDevice[]>([])
   const [selectedRun, setSelectedRun] = useState<AgentRun | null>(null)
   const [filter, setFilter] = useState<RunFilter>("all")
   const [loading, setLoading] = useState(false)
   const [showNewRun, setShowNewRun] = useState(false)
+  // Jobs tab
+  const [jobs, setJobs] = useState<LRJob[]>([])
+  const [selectedJob, setSelectedJob] = useState<LRJob | null>(null)
+  const [jobsLoading, setJobsLoading] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -216,10 +231,25 @@ export default function RunCenterView() {
     }
   }
 
+  const loadJobs = async () => {
+    setJobsLoading(true)
+    try {
+      const data = await listLRJobs({ limit: 50 })
+      setJobs(data)
+      if (selectedJob) {
+        const updated = data.find(j => j.job_id === selectedJob.job_id)
+        if (updated) setSelectedJob(updated)
+      }
+    } catch { /* ignore */ } finally {
+      setJobsLoading(false)
+    }
+  }
+
   useEffect(() => {
     load()
+    loadJobs()
     listDevices().then(setDevices).catch(() => { })
-    const timer = setInterval(load, 5_000)
+    const timer = setInterval(() => { load(); loadJobs() }, 5_000)
     return () => clearInterval(timer)
   }, [])
 
@@ -265,88 +295,199 @@ export default function RunCenterView() {
 
   return (
     <div className="flex h-full">
-      {/* ── Left: Run list ─────────────────────────────────────────────────── */}
+      {/* ── Left: Run/Job list ──────────────────────────────────────────────── */}
       <div className="flex flex-col w-64 min-w-64 border-r border-gray-800">
         {/* Toolbar */}
         <div className="flex items-center gap-1.5 px-3 py-2.5 border-b border-gray-800">
           <span className="text-sm font-semibold text-white flex-1">Run Center</span>
-          <div className="flex gap-1">
-            {(["all", "active", "done"] as RunFilter[]).map(f => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`px-2 py-0.5 rounded-md text-[10px] font-medium transition-colors capitalize ${filter === f ? "bg-blue-600 text-white" : "text-gray-500 hover:text-gray-300"
-                  }`}
-              >
-                {f}
-              </button>
-            ))}
+          {/* Main tab toggle */}
+          <div className="flex gap-1 mr-1">
+            <button
+              onClick={() => setMainTab("runs")}
+              title="Agent Runs"
+              className={`p-1 rounded-md transition-colors ${mainTab === "runs" ? "text-blue-400 bg-blue-400/10" : "text-gray-600 hover:text-gray-400"}`}
+            >
+              <Activity size={12} />
+            </button>
+            <button
+              onClick={() => setMainTab("jobs")}
+              title="Background Jobs"
+              className={`p-1 rounded-md transition-colors ${mainTab === "jobs" ? "text-purple-400 bg-purple-400/10" : "text-gray-600 hover:text-gray-400"}`}
+            >
+              <Layers size={12} />
+            </button>
           </div>
+          {mainTab === "runs" && (
+            <>
+              <div className="flex gap-1">
+                {(["all", "active", "done"] as RunFilter[]).map(f => (
+                  <button
+                    key={f}
+                    onClick={() => setFilter(f)}
+                    className={`px-2 py-0.5 rounded-md text-[10px] font-medium transition-colors capitalize ${filter === f ? "bg-blue-600 text-white" : "text-gray-500 hover:text-gray-300"}`}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => setShowNewRun(true)}
+                className="p-1.5 rounded-lg hover:bg-blue-600/20 text-blue-500 hover:text-blue-400 transition-colors"
+                title="New Run"
+              >
+                <Plus size={13} />
+              </button>
+            </>
+          )}
           <button
-            onClick={() => setShowNewRun(true)}
-            className="p-1.5 rounded-lg hover:bg-blue-600/20 text-blue-500 hover:text-blue-400 transition-colors"
-            title="New Run"
-          >
-            <Plus size={13} />
-          </button>
-          <button
-            onClick={load}
-            disabled={loading}
+            onClick={mainTab === "runs" ? load : loadJobs}
+            disabled={mainTab === "runs" ? loading : jobsLoading}
             className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-500 hover:text-gray-300 transition-colors"
           >
-            <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
+            <RefreshCw size={13} className={(mainTab === "runs" ? loading : jobsLoading) ? "animate-spin" : ""} />
           </button>
         </div>
 
-        {/* Run list */}
+        {/* Run list / Job list */}
         <div className="flex-1 overflow-y-auto">
-          {filtered.length === 0 ? (
-            <p className="text-xs text-gray-600 text-center py-8">No runs</p>
-          ) : (
-            filtered.map(run => {
-              const s = RUN_STATUS[run.status] ?? RUN_STATUS.queued
-              const isSelected = selectedRun?.id === run.id
-              const pendingCount = run.executions.reduce(
-                (n, e) => n + e.approvals.filter(a => a.status === "pending").length,
-                0
-              )
-              return (
-                <button
-                  key={run.id}
-                  onClick={() => setSelectedRun(run)}
-                  className={`w-full flex items-center gap-2 px-3 py-2.5 border-b border-gray-800/50 text-left transition-colors ${isSelected ? "bg-blue-600/10" : "hover:bg-gray-900"
-                    }`}
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-gray-200 truncate">
-                      {run.summary || `Run ${run.id.slice(0, 8)}`}
-                    </p>
-                    <p className="text-[10px] text-gray-600 mt-0.5">
-                      {new Date(run.created_at).toLocaleString(undefined, {
-                        month: "numeric", day: "numeric",
-                        hour: "2-digit", minute: "2-digit",
-                      })}
-                    </p>
-                  </div>
-                  {pendingCount > 0 && (
-                    <span className="w-4 h-4 rounded-full bg-yellow-500 text-[9px] text-black font-bold flex items-center justify-center flex-shrink-0">
-                      {pendingCount}
+          {mainTab === "runs" ? (
+            filtered.length === 0 ? (
+              <p className="text-xs text-gray-600 text-center py-8">No runs</p>
+            ) : (
+              filtered.map(run => {
+                const s = RUN_STATUS[run.status] ?? RUN_STATUS.queued
+                const isSelected = selectedRun?.id === run.id
+                const pendingCount = run.executions.reduce(
+                  (n, e) => n + e.approvals.filter(a => a.status === "pending").length,
+                  0
+                )
+                return (
+                  <button
+                    key={run.id}
+                    onClick={() => setSelectedRun(run)}
+                    className={`w-full flex items-center gap-2 px-3 py-2.5 border-b border-gray-800/50 text-left transition-colors ${isSelected ? "bg-blue-600/10" : "hover:bg-gray-900"}`}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-gray-200 truncate">
+                        {run.summary || `Run ${run.id.slice(0, 8)}`}
+                      </p>
+                      <p className="text-[10px] text-gray-600 mt-0.5">
+                        {new Date(run.created_at).toLocaleString(undefined, {
+                          month: "numeric", day: "numeric",
+                          hour: "2-digit", minute: "2-digit",
+                        })}
+                      </p>
+                    </div>
+                    {pendingCount > 0 && (
+                      <span className="w-4 h-4 rounded-full bg-yellow-500 text-[9px] text-black font-bold flex items-center justify-center flex-shrink-0">
+                        {pendingCount}
+                      </span>
+                    )}
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium flex-shrink-0 ${s.cls}`}>
+                      {s.label}
                     </span>
-                  )}
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium flex-shrink-0 ${s.cls}`}>
-                    {s.label}
-                  </span>
-                  <ChevronRight size={11} className="text-gray-700 flex-shrink-0" />
-                </button>
-              )
-            })
+                    <ChevronRight size={11} className="text-gray-700 flex-shrink-0" />
+                  </button>
+                )
+              })
+            )
+          ) : (
+            jobs.length === 0 ? (
+              <p className="text-xs text-gray-600 text-center py-8">No background jobs</p>
+            ) : (
+              jobs.map(job => {
+                const s = LRJ_STATUS[job.status] ?? { label: job.status, cls: "text-gray-400 bg-gray-800" }
+                const isSelected = selectedJob?.job_id === job.job_id
+                return (
+                  <button
+                    key={job.job_id}
+                    onClick={() => setSelectedJob(job)}
+                    className={`w-full flex items-center gap-2 px-3 py-2.5 border-b border-gray-800/50 text-left transition-colors ${isSelected ? "bg-purple-600/10" : "hover:bg-gray-900"}`}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-gray-200 truncate">{job.tool_name}</p>
+                      <p className="text-[10px] text-gray-600 mt-0.5">
+                        {job.created_at ? new Date(job.created_at).toLocaleString(undefined, {
+                          month: "numeric", day: "numeric",
+                          hour: "2-digit", minute: "2-digit",
+                        }) : "—"}
+                      </p>
+                    </div>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium flex-shrink-0 ${s.cls}`}>
+                      {s.label}
+                    </span>
+                    <ChevronRight size={11} className="text-gray-700 flex-shrink-0" />
+                  </button>
+                )
+              })
+            )
           )}
         </div>
       </div>
 
-      {/* ── Center: Execution timeline ─────────────────────────────────────── */}
+      {/* ── Center: Execution timeline / Job detail ────────────────────────── */}
       <div className="flex-1 flex flex-col border-r border-gray-800 min-w-0">
-        {!selectedRun ? (
+        {mainTab === "jobs" ? (
+          !selectedJob ? (
+            <div className="flex flex-col items-center justify-center h-full text-gray-700 gap-2">
+              <Layers size={32} className="text-gray-800" />
+              <p className="text-sm">← Select a background job</p>
+            </div>
+          ) : (
+            <div className="flex flex-col h-full">
+              {/* Job header */}
+              <div className="px-4 py-3 border-b border-gray-800 flex-shrink-0">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <h2 className="text-sm font-semibold text-white">{selectedJob.tool_name}</h2>
+                    <p className="text-[10px] font-mono text-gray-600 mt-0.5">{selectedJob.job_id}</p>
+                    <p className="text-[10px] text-gray-600">{selectedJob.job_kind}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {(() => { const s = LRJ_STATUS[selectedJob.status] ?? { label: selectedJob.status, cls: "text-gray-400 bg-gray-800" }; return <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium ${s.cls}`}>{s.label}</span> })()}
+                    {["queued", "running"].includes(selectedJob.status) && (
+                      <button
+                        onClick={async () => { try { await cancelLRJob(selectedJob.job_id); loadJobs() } catch { } }}
+                        className="p-1 rounded-lg text-red-400 hover:bg-red-950/40 transition-colors"
+                        title="Cancel"
+                      >
+                        <Square size={12} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-4 mt-2 text-[10px] text-gray-600">
+                  {selectedJob.created_at && <span>Created: {new Date(selectedJob.created_at).toLocaleString()}</span>}
+                  {selectedJob.started_at && <span>Started: {new Date(selectedJob.started_at).toLocaleString()}</span>}
+                  {selectedJob.completed_at && <span>Finished: {new Date(selectedJob.completed_at).toLocaleString()}</span>}
+                </div>
+              </div>
+              {/* Job body */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                {selectedJob.progress != null && (
+                  <div className="bg-gray-900 rounded-xl p-3 border border-gray-800">
+                    <p className="text-[10px] text-gray-500 mb-1">Progress</p>
+                    <pre className="text-[11px] text-gray-300 font-mono whitespace-pre-wrap break-all">
+                      {typeof selectedJob.progress === "string" ? selectedJob.progress : JSON.stringify(selectedJob.progress, null, 2)}
+                    </pre>
+                  </div>
+                )}
+                {selectedJob.status === "failed" && (
+                  <div className="bg-red-950/30 rounded-xl p-3 border border-red-900/40">
+                    <p className="text-[10px] text-red-400 mb-1">{selectedJob.error_code ?? "error"}</p>
+                    <p className="text-[11px] text-gray-300">{selectedJob.error_message ?? "Unknown error"}</p>
+                  </div>
+                )}
+                {selectedJob.status === "completed" && selectedJob.result_path && (
+                  <div className="bg-emerald-950/20 rounded-xl p-3 border border-emerald-900/30">
+                    <p className="text-[10px] text-emerald-400 mb-1">Result path</p>
+                    <p className="text-[11px] font-mono text-gray-300 break-all">{selectedJob.result_path}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        ) : !selectedRun ? (
           <div className="flex flex-col items-center justify-center h-full text-gray-700 gap-2">
             <Activity size={32} className="text-gray-800" />
             <p className="text-sm">← Select a run</p>
@@ -468,7 +609,7 @@ export default function RunCenterView() {
       </div>
 
       {/* ── Right: Approval queue ─────────────────────────────────────────── */}
-      <div className="flex flex-col w-64 min-w-64">
+      {mainTab === "runs" && <div className="flex flex-col w-64 min-w-64">
         <div className="px-3 py-2.5 border-b border-gray-800 flex-shrink-0">
           <div className="flex items-center gap-2">
             <ShieldCheck size={13} className="text-yellow-400" />
@@ -502,7 +643,7 @@ export default function RunCenterView() {
             ))
           )}
         </div>
-      </div>
+      </div>}
 
       {/* New Run modal */}
       {showNewRun && (

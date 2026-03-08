@@ -1,9 +1,12 @@
 use crate::activity;
 use crate::config::ExecutionPolicy;
 use base64::Engine;
+use bridge_rs::http::BridgeClient;
 use serde_json::{json, Value};
 use std::time::Duration;
 use sysinfo::System;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 pub enum ToolResult {
@@ -11,7 +14,15 @@ pub enum ToolResult {
     Err(String),
 }
 
-pub async fn dispatch_tool(policy: &ExecutionPolicy, tool: &str, args: &Value) -> ToolResult {
+pub async fn dispatch_tool(
+    policy: &ExecutionPolicy,
+    tool: &str,
+    args: &Value,
+    client: &BridgeClient,
+    run_id: &str,
+    exec_id: &str,
+    device_id: &str,
+) -> ToolResult {
     // Dry-run: log without executing
     if policy.dry_run {
         info!("[dry-run] tool={} args={}", tool, args);
@@ -25,7 +36,7 @@ pub async fn dispatch_tool(policy: &ExecutionPolicy, tool: &str, args: &Value) -
                     "run_shell is disabled by execution policy (shell_enabled = false)".into(),
                 );
             }
-            run_shell(args).await
+            run_shell(args, client, exec_id, device_id).await
         }
         "read_file" => {
             let path = args["path"].as_str().unwrap_or("");
@@ -167,9 +178,21 @@ fn window_info_to_json(w: &activity::WindowInfo) -> Value {
 // Existing tools (unchanged)
 // ════════════════════════════════════════════════════════════════════════════════
 
-async fn run_shell(args: &Value) -> ToolResult {
+async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id: &str) -> ToolResult {
     let timeout_secs = args["timeout"].as_u64().unwrap_or(30);
     let cwd = args["cwd"].as_str().map(|s| s.to_string());
+
+    // completion_markers: when any stdout line CONTAINS one of these strings,
+    // stdin is closed (EOF sent) so the child process can exit cleanly.
+    // Used by codex_run to detect "tokens used" — codex's last output line.
+    let completion_markers: Vec<String> = args["completion_markers"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_lowercase()))
+                .collect()
+        })
+        .unwrap_or_default();
 
     // When `argv` is provided, spawn directly without a shell to avoid all
     // platform-specific quoting issues (cmd.exe on Windows mangles quoted args).
@@ -179,10 +202,6 @@ async fn run_shell(args: &Value) -> ToolResult {
             return ToolResult::Err("run_shell: argv array is empty".into());
         }
         info!("run_shell (argv): {:?}", tokens);
-        // On Windows, .cmd wrapper scripts (e.g. npm-installed CLIs like codex, claude)
-        // cannot be spawned directly — they require cmd.exe.
-        // We pass each argv token as a separate .arg() so Rust encodes them individually
-        // for CreateProcess, avoiding any shell metacharacter injection from the caller.
         #[cfg(target_os = "windows")]
         {
             let mut c = tokio::process::Command::new("cmd");
@@ -216,13 +235,16 @@ async fn run_shell(args: &Value) -> ToolResult {
         }
     };
 
-    if let Some(dir) = cwd {
-        command.current_dir(&dir);
+    if let Some(dir) = &cwd {
+        command.current_dir(dir);
     }
 
-    // kill_on_drop ensures the process is terminated if this future is cancelled
-    // (e.g. by tokio::time::timeout), preventing orphaned grandchild processes
-    // (e.g. node.exe spawned by cmd.exe) from holding stdout/stderr pipes open.
+    // Pipe all stdio.
+    // stdin stays open so the agent can send input via codex_approval.
+    // Piped stdout/stderr allow line-by-line streaming to the API.
+    command.stdin(std::process::Stdio::piped());
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
     command.kill_on_drop(true);
 
     let mut child = match command.spawn() {
@@ -230,18 +252,266 @@ async fn run_shell(args: &Value) -> ToolResult {
         Err(e) => return ToolResult::Err(format!("run_shell error: {}", e)),
     };
 
-    match tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output()).await {
-        Ok(Ok(output)) => ToolResult::Ok(json!({
-            "stdout": String::from_utf8_lossy(&output.stdout).to_string(),
-            "stderr": String::from_utf8_lossy(&output.stderr).to_string(),
-            "exit_code": output.status.code().unwrap_or(-1),
-        })),
-        Ok(Err(e)) => ToolResult::Err(format!("run_shell error: {}", e)),
-        Err(_) => {
-            // kill_on_drop(true) kills the process when the future is dropped here
-            ToolResult::Err(format!("run_shell timed out after {}s", timeout_secs))
+    let child_pid = child.id();
+    let mut stdin_writer = child.stdin.take();
+    let stdout_handle = child.stdout.take().unwrap();
+    let stderr_handle = child.stderr.take().unwrap();
+
+    // ── Background readers ──────────────────────────────────────────────────
+    let (out_tx, mut out_rx) = mpsc::channel::<String>(512);
+    let (err_tx, mut err_rx) = mpsc::channel::<String>(512);
+
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(stdout_handle).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
+            if out_tx.send(line).await.is_err() { break; }
+        }
+    });
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(stderr_handle).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
+            if err_tx.send(line).await.is_err() { break; }
+        }
+    });
+
+    // ── Background child waiter ─────────────────────────────────────────────
+    // We use a channel rather than child.wait() in the select loop so that
+    // orphaned grandchildren (which keep the stdout/stderr pipe handles open
+    // on Windows) do NOT prevent us from finishing once the top-level child exits.
+    let (exit_tx, mut exit_rx) = mpsc::channel::<i32>(1);
+    tokio::spawn(async move {
+        let code = child.wait().await
+            .ok().and_then(|s| s.code()).unwrap_or(-1);
+        let _ = exit_tx.send(code).await;
+    });
+
+    // ── Scheduled kill channel ──────────────────────────────────────────────
+    // Used by completion_markers: after marker fires we close stdin, then
+    // wait 3 s and kill the entire process tree.  Node.js may refuse to exit
+    // even after EOF if it has live child processes (python.exe, git.exe, …)
+    // registered in its event loop.  taskkill /F /T is the only reliable fix.
+    let (kill_tx, mut kill_rx) = mpsc::channel::<()>(1);
+    let mut kill_scheduled = false;
+
+    // ── Streaming loop ──────────────────────────────────────────────────────
+    let mut full_stdout = String::new();
+    let mut full_stderr = String::new();
+    let mut pending_patch = String::new();
+    let mut stdout_closed = false;
+    let mut stderr_closed = false;
+    let mut exit_code_opt: Option<i32> = None;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
+    let mut patch_tick = tokio::time::interval(Duration::from_secs(3));
+    let mut stdin_tick = tokio::time::interval(Duration::from_secs(2));
+    patch_tick.tick().await; // consume first tick immediately
+    stdin_tick.tick().await;
+
+    'main: loop {
+        if stdout_closed && stderr_closed {
+            break;
+        }
+
+        tokio::select! {
+            msg = out_rx.recv(), if !stdout_closed => {
+                match msg {
+                    Some(line) => {
+                        full_stdout.push_str(&line);
+                        full_stdout.push('\n');
+                        pending_patch.push_str(&line);
+                        pending_patch.push('\n');
+
+                        // Completion marker: close stdin and schedule a forced kill.
+                        // Closing stdin sends EOF to codex's readline, but node.js
+                        // may keep running if child processes (python.exe, git.exe …)
+                        // are still alive in its event loop.  We schedule taskkill
+                        // /F /T in 3 s to kill the entire tree after output has flushed.
+                        if !completion_markers.is_empty() && !kill_scheduled {
+                            let line_lc = line.trim().to_lowercase();
+                            if completion_markers.iter().any(|m| line_lc.contains(m.as_str())) {
+                                info!("run_shell: completion marker '{}' — closing stdin, kill tree in 3s (exec={})", line.trim(), exec_id);
+                                drop(stdin_writer.take());
+                                kill_scheduled = true;
+                                let ktx = kill_tx.clone();
+                                tokio::spawn(async move {
+                                    tokio::time::sleep(Duration::from_secs(3)).await;
+                                    let _ = ktx.send(()).await;
+                                });
+                            }
+                        }
+                    }
+                    None => { stdout_closed = true; }
+                }
+            }
+
+            msg = err_rx.recv(), if !stderr_closed => {
+                match msg {
+                    Some(line) => {
+                        full_stderr.push_str(&line);
+                        full_stderr.push('\n');
+
+                        // Also check completion_markers against stderr.
+                        // codex outputs "tokens used" to stderr, not stdout.
+                        if !completion_markers.is_empty() && !kill_scheduled {
+                            let line_lc = line.trim().to_lowercase();
+                            if completion_markers.iter().any(|m| line_lc.contains(m.as_str())) {
+                                info!("run_shell: completion marker '{}' in stderr — closing stdin, kill tree in 3s (exec={})", line.trim(), exec_id);
+                                drop(stdin_writer.take());
+                                kill_scheduled = true;
+                                let ktx = kill_tx.clone();
+                                tokio::spawn(async move {
+                                    tokio::time::sleep(Duration::from_secs(3)).await;
+                                    let _ = ktx.send(()).await;
+                                });
+                            }
+                        }
+                    }
+                    None => { stderr_closed = true; }
+                }
+            }
+
+            _ = patch_tick.tick() => {
+                if !exec_id.is_empty() && !pending_patch.is_empty() {
+                    // Keep last 20 KB in the DB field
+                    let stored = if full_stdout.len() > 20_480 {
+                        full_stdout[full_stdout.len() - 20_480..].to_string()
+                    } else {
+                        full_stdout.clone()
+                    };
+                    let _ = client
+                        .patch_ignore(
+                            &format!("/api/runs/executions/{}/stream?device_id={}", exec_id, device_id),
+                            &serde_json::json!({ "stdout": stored }),
+                        )
+                        .await;
+                    pending_patch.clear();
+                }
+            }
+
+            _ = stdin_tick.tick() => {
+                // Poll for agent-enqueued stdin
+                if !exec_id.is_empty() {
+                    if let Ok(val) = client
+                        .get_value(&format!("/api/runs/executions/{}/stdin?device_id={}", exec_id, device_id))
+                        .await
+                    {
+                        if let Some(pending) = val["pending"].as_array() {
+                            for item in pending {
+                                if let Some(text) = item.as_str() {
+                                    if let Some(ref mut w) = stdin_writer {
+                                        let _ = w.write_all(text.as_bytes()).await;
+                                        info!("run_shell: wrote {} bytes to stdin (exec={})", text.len(), exec_id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Scheduled kill: completion marker fired 3 s ago — force-kill the tree.
+            // node.exe may still be running (child processes keeping event loop alive).
+            _ = kill_rx.recv(), if exit_code_opt.is_none() => {
+                info!("run_shell: killing process tree (exec={})", exec_id);
+                #[cfg(target_os = "windows")]
+                if let Some(pid) = child_pid {
+                    let _ = tokio::process::Command::new("taskkill")
+                        .args(["/F", "/T", "/PID", &pid.to_string()])
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn();
+                }
+                #[cfg(not(target_os = "windows"))]
+                if let Some(pid) = child_pid {
+                    let _ = tokio::process::Command::new("kill")
+                        .args(["-TERM", &pid.to_string()])
+                        .spawn();
+                }
+                // exit_rx fires on the next iteration when child.wait() returns.
+            }
+
+            // Primary exit path: top-level child process has exited.
+            // On Windows, orphaned grandchildren may still hold the stdout/stderr
+            // pipe handles open, so we cannot rely on stdout_closed/stderr_closed
+            // alone. Drain remaining buffered output for up to 1 s then return.
+            code = exit_rx.recv() => {
+                exit_code_opt = Some(code.unwrap_or(-1));
+                drop(stdin_writer.take());
+                info!("run_shell: child exited (code={:?}, exec={})", exit_code_opt, exec_id);
+
+                let drain_until = tokio::time::Instant::now() + Duration::from_millis(1000);
+                loop {
+                    if stdout_closed && stderr_closed { break; }
+                    tokio::select! {
+                        msg = out_rx.recv(), if !stdout_closed => {
+                            match msg {
+                                Some(line) => { full_stdout.push_str(&line); full_stdout.push('\n'); }
+                                None => { stdout_closed = true; }
+                            }
+                        }
+                        msg = err_rx.recv(), if !stderr_closed => {
+                            match msg {
+                                Some(line) => { full_stderr.push_str(&line); full_stderr.push('\n'); }
+                                None => { stderr_closed = true; }
+                            }
+                        }
+                        _ = tokio::time::sleep_until(drain_until) => { break; }
+                    }
+                }
+                break 'main;
+            }
+
+            _ = tokio::time::sleep_until(deadline) => {
+                drop(stdin_writer.take());
+                #[cfg(target_os = "windows")]
+                if let Some(pid) = child_pid {
+                    let _ = tokio::process::Command::new("taskkill")
+                        .args(["/F", "/T", "/PID", &pid.to_string()])
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn();
+                }
+                return ToolResult::Err(format!("run_shell timed out after {}s", timeout_secs));
+            }
         }
     }
+
+    // If we exited via stdout/stderr closing (not via exit_rx), collect exit code.
+    let exit_code = match exit_code_opt {
+        Some(ec) => ec,
+        None => {
+            match tokio::time::timeout(
+                Duration::from_secs(5),
+                exit_rx.recv(),
+            ).await {
+                Ok(Some(ec)) => ec,
+                _ => -1,
+            }
+        }
+    };
+
+    // Final stdout patch
+    if !exec_id.is_empty() {
+        let stored = if full_stdout.len() > 20_480 {
+            full_stdout[full_stdout.len() - 20_480..].to_string()
+        } else {
+            full_stdout.clone()
+        };
+        let _ = client
+            .patch_ignore(
+                &format!("/api/runs/executions/{}/stream?device_id={}", exec_id, device_id),
+                &serde_json::json!({ "stdout": stored }),
+            )
+            .await;
+    }
+
+    ToolResult::Ok(json!({
+        "stdout": full_stdout,
+        "stderr": full_stderr,
+        "exit_code": exit_code,
+    }))
 }
 
 async fn read_file(args: &Value, max_read_kb: u64) -> ToolResult {

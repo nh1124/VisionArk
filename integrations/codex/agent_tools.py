@@ -3,18 +3,27 @@
 Tools
 -----
 CodexCheckRuntimeTool   Verify Codex CLI availability and version on a device.
-CodexRunTool            Run a coding task via the Codex CLI on a native device.
+CodexRunTool            Run a coding task via the Codex CLI (returns a job_id immediately).
+CodexJobStatusTool      Check the status / result of a Codex task.
+CodexJobWaitTool        Block until a Codex task completes (polls every 5s).
+CodexJobOutputTool      Get the current stdout of a running Codex task.
+CodexApprovalTool       Send text input to a running Codex process (e.g. approve a prompt).
+CodexJobCancelTool      Cancel a queued or running Codex task.
 """
 
 from __future__ import annotations
 
-import shlex
 from typing import Optional
 
 from pydantic import Field
 from va_sdk import BaseTool, BaseModel, IntegrationContext, ToolResult
 
-from integrations._cli_run_helper import dispatch_shell_command, _err_result
+from integrations._cli_run_helper import (
+    dispatch_shell_command,
+    dispatch_shell_command_async,
+    _err_result,
+    _ok_result,
+)
 
 
 # ── check_runtime ──────────────────────────────────────────────────────────────
@@ -43,6 +52,7 @@ class CodexCheckRuntimeTool(BaseTool):
         if not ctx:
             return _err_result("internal_error", "Missing integration context.")
 
+        import shlex
         device_id: str | None = kwargs.get("device_id")
         workdir: str | None = kwargs.get("workdir")
 
@@ -65,6 +75,7 @@ class CodexCheckRuntimeTool(BaseTool):
 
         # Optionally check workdir accessibility
         if workdir:
+            # Use codex --version with --cd to verify the dir is accessible and trusted
             wd_result = await dispatch_shell_command(
                 ctx,
                 cmd=f"test -d {shlex.quote(workdir)} && echo ok || echo missing",
@@ -81,11 +92,10 @@ class CodexCheckRuntimeTool(BaseTool):
         else:
             wd_accessible = None
 
-        from integrations._cli_run_helper import _ok_result
         return _ok_result(
             f"Codex CLI available: {version_str}",
             version=version_str,
-            device_id=device_id or data.get("run_id"),  # best-effort
+            device_id=device_id or data.get("run_id"),
             workdir_accessible=wd_accessible,
             run_id=data.get("run_id"),
             execution_id=data.get("execution_id"),
@@ -122,20 +132,15 @@ class CodexRunArgs(BaseModel):
         "medium",
         description="Risk level: low | medium | high | critical. File-editing tasks default to medium.",
     )
-    timeout: Optional[int] = Field(
-        300,
-        description="Maximum seconds to wait for Codex to complete. Codex tasks involve AI reasoning and tool calls; 300s is recommended.",
-        ge=10,
-        le=600,
-    )
 
 
 class CodexRunTool(BaseTool):
     name = "codex_run"
     description = (
         "Execute a coding task using the Codex CLI on a native device. "
-        "Dispatches the task to the device daemon via the Run Center and returns the result. "
-        "High-risk operations (file writes, refactors) may require user approval."
+        "Returns immediately with a job_id — use codex_job_status to check progress "
+        "and retrieve the result when complete. "
+        "High-risk operations (file writes, refactors) may require user approval in the Run Center."
     )
     args_schema = CodexRunArgs
 
@@ -149,7 +154,6 @@ class CodexRunTool(BaseTool):
         workdir: str | None = kwargs.get("workdir")
         device_id: str | None = kwargs.get("device_id")
         risk_level: str = kwargs.get("risk_level") or "medium"
-        timeout: int = int(kwargs.get("timeout") or 120)
 
         if not prompt.strip():
             return _err_result("invalid_args", "prompt is required and must not be empty.")
@@ -159,17 +163,352 @@ class CodexRunTool(BaseTool):
         if sandbox:
             argv += ["--sandbox", sandbox]
         else:
-            argv.append("--full-auto")
+            # workspace-write sandbox + auto-approve all actions
+            argv += ["--sandbox", "workspace-write", "--full-auto"]
         if model:
             argv += ["--model", model]
+        if workdir:
+            argv += ["--cd", workdir]
+        # Required when workdir is not a trusted git repo
+        argv.append("--skip-git-repo-check")
         argv.append(prompt)
 
-        return await dispatch_shell_command(
+        return await dispatch_shell_command_async(
             ctx,
             argv=argv,
             cwd=workdir,
             device_id=device_id,
             risk_level=risk_level,
-            timeout=timeout,
-            sync=True,
+            tool_name="codex_run",
+            timeout=600,  # codex needs time for AI inference; daemon default (30s) is too short
+            # "tokens used" is codex's final output line — daemon closes stdin on match → codex exits
+            completion_markers=["tokens used"],
+        )
+
+
+# ── job_status ─────────────────────────────────────────────────────────────────
+
+class CodexJobStatusArgs(BaseModel):
+    job_id: str = Field(
+        ...,
+        description="Job ID returned by codex_run.",
+    )
+
+
+class CodexJobStatusTool(BaseTool):
+    name = "codex_job_status"
+    description = (
+        "Check the status of an async Codex task started by codex_run. "
+        "Returns status (queued | running | completed | failed | cancelled) and, "
+        "when complete, the stdout output from Codex."
+    )
+    args_schema = CodexJobStatusArgs
+
+    async def run(self, ctx: IntegrationContext = None, **kwargs) -> ToolResult:
+        if not ctx:
+            return _err_result("internal_error", "Missing integration context.")
+
+        job_id: str = kwargs.get("job_id", "")
+        if not job_id:
+            return _err_result("invalid_args", "job_id is required.")
+
+        try:
+            from integrations._internal_services import LongRunningJobService
+            job = await LongRunningJobService.get_job(ctx.db, job_id, ctx.user_id)
+        except Exception as e:
+            return _err_result("internal_error", f"Failed to fetch job: {e}")
+
+        if job is None:
+            return _err_result("not_found", f"Job '{job_id}' not found.")
+
+        status = job.status
+
+        if status == "completed":
+            result = job.result_payload or {}
+            stdout = result.get("stdout", "")
+            return _ok_result(
+                stdout.strip() or "Codex task completed.",
+                job_id=job_id,
+                status=status,
+                stdout=stdout,
+                stderr=result.get("stderr", ""),
+                exit_code=result.get("exit_code", 0),
+                execution_id=result.get("execution_id"),
+            )
+
+        if status == "failed":
+            return _err_result(
+                job.error_code or "failed",
+                job.error_message or "Codex task failed.",
+                job_id=job_id,
+                status=status,
+            )
+
+        # queued / running / cancelled
+        progress = getattr(job, "progress", None) or {}
+        return _ok_result(
+            f"Codex task is {status}.",
+            job_id=job_id,
+            status=status,
+            progress_pct=progress.get("pct") if isinstance(progress, dict) else None,
+            progress_message=progress.get("message") if isinstance(progress, dict) else None,
+        )
+
+
+# ── job_wait ──────────────────────────────────────────────────────────────────
+
+class CodexJobWaitArgs(BaseModel):
+    job_id: str = Field(
+        ...,
+        description="Job ID returned by codex_run.",
+    )
+    timeout: Optional[int] = Field(
+        600,
+        description="Maximum seconds to wait for completion (default 600).",
+        ge=10,
+        le=3600,
+    )
+
+
+class CodexJobWaitTool(BaseTool):
+    name = "codex_job_wait"
+    description = (
+        "Wait for a Codex task to complete and return its result. "
+        "Polls until the job is completed or failed (up to timeout seconds). "
+        "Use this right after codex_run — it blocks until the result is ready, "
+        "so you do not need to manually poll codex_job_status."
+    )
+    args_schema = CodexJobWaitArgs
+
+    async def run(self, ctx: IntegrationContext = None, **kwargs) -> ToolResult:
+        if not ctx:
+            return _err_result("internal_error", "Missing integration context.")
+
+        import asyncio
+        import time
+
+        job_id: str = kwargs.get("job_id", "")
+        timeout: int = int(kwargs.get("timeout") or 600)
+
+        if not job_id:
+            return _err_result("invalid_args", "job_id is required.")
+
+        deadline = time.monotonic() + timeout
+
+        while True:
+            await asyncio.sleep(2)
+
+            try:
+                from integrations._internal_services import LongRunningJobService
+                ctx.db.expire_all()  # force fresh DB read (avoid stale identity map cache)
+                job = await LongRunningJobService.get_job(ctx.db, job_id, ctx.user_id)
+            except Exception as e:
+                return _err_result("internal_error", f"Failed to fetch job: {e}")
+
+            if job is None:
+                return _err_result("not_found", f"Job '{job_id}' not found.")
+
+            status = job.status
+
+            if status == "completed":
+                result = job.result_payload or {}
+                stdout = result.get("stdout", "")
+                return _ok_result(
+                    stdout.strip() or "Codex task completed.",
+                    job_id=job_id,
+                    status=status,
+                    stdout=stdout,
+                    stderr=result.get("stderr", ""),
+                    exit_code=result.get("exit_code", 0),
+                )
+
+            if status in ("failed", "cancelled"):
+                return _err_result(
+                    job.error_code or status,
+                    job.error_message or "Codex task failed.",
+                    job_id=job_id,
+                    status=status,
+                )
+
+            # queued / running — check timeout AFTER poll so we never skip the final check
+            if time.monotonic() >= deadline:
+                break
+
+        return _err_result(
+            "timeout",
+            f"Job '{job_id}' did not complete within {timeout}s. Use codex_job_status to check later.",
+            job_id=job_id,
+        )
+
+
+# ── job_cancel ─────────────────────────────────────────────────────────────────
+
+class CodexJobCancelArgs(BaseModel):
+    job_id: str = Field(
+        ...,
+        description="Job ID returned by codex_run.",
+    )
+
+
+class CodexJobCancelTool(BaseTool):
+    name = "codex_job_cancel"
+    description = (
+        "Cancel a Codex task that was started by codex_run. "
+        "Only jobs in queued or running state can be cancelled."
+    )
+    args_schema = CodexJobCancelArgs
+
+    async def run(self, ctx: IntegrationContext = None, **kwargs) -> ToolResult:
+        if not ctx:
+            return _err_result("internal_error", "Missing integration context.")
+
+        job_id: str = kwargs.get("job_id", "")
+        if not job_id:
+            return _err_result("invalid_args", "job_id is required.")
+
+        try:
+            from integrations._internal_services import LongRunningJobService
+            job = await LongRunningJobService.get_job(ctx.db, job_id, ctx.user_id)
+            if job is None:
+                return _err_result("not_found", f"Job '{job_id}' not found.")
+            if job.status in ("completed", "failed", "cancelled", "expired"):
+                return _err_result(
+                    "invalid_state",
+                    f"Job '{job_id}' is already {job.status} and cannot be cancelled.",
+                )
+            await LongRunningJobService.cancel_job(ctx.db, job_id, ctx.user_id)
+        except Exception as e:
+            return _err_result("internal_error", f"Failed to cancel job: {e}")
+
+        return _ok_result(f"Job '{job_id}' cancelled.", job_id=job_id, status="cancelled")
+
+
+# ── job_output ─────────────────────────────────────────────────────────────────
+
+class CodexJobOutputArgs(BaseModel):
+    job_id: str = Field(..., description="Job ID returned by codex_run.")
+
+
+class CodexJobOutputTool(BaseTool):
+    name = "codex_job_output"
+    description = (
+        "Get the current stdout output of a running Codex task. "
+        "Use this to see what Codex is currently displaying or waiting for. "
+        "Returns the last ~3000 characters of output captured so far. "
+        "If Codex appears stuck, call this to inspect its current state, "
+        "then use codex_approval to send the required input."
+    )
+    args_schema = CodexJobOutputArgs
+
+    async def run(self, ctx: IntegrationContext = None, **kwargs) -> ToolResult:
+        if not ctx:
+            return _err_result("internal_error", "Missing integration context.")
+
+        job_id: str = kwargs.get("job_id", "")
+        if not job_id:
+            return _err_result("invalid_args", "job_id is required.")
+
+        try:
+            from integrations._internal_services import LongRunningJobService, RunService
+            job = await LongRunningJobService.get_job(ctx.db, job_id, ctx.user_id)
+        except Exception as e:
+            return _err_result("internal_error", f"Failed to fetch job: {e}")
+
+        if job is None:
+            return _err_result("not_found", f"Job '{job_id}' not found.")
+
+        # Try partial_stdout from RunExecution first (real-time, streamed by daemon)
+        exec_id: str | None = (job.input_payload or {}).get("execution_id")
+        partial: str | None = None
+        if exec_id:
+            try:
+                from integrations._internal_services import RunService
+                partial = await RunService.get_partial_stdout(ctx.db, exec_id)
+            except Exception:
+                pass
+
+        # Fallback: use LRJ progress message (updated every poll cycle)
+        if not partial:
+            progress = getattr(job, "progress", None) or {}
+            if isinstance(progress, dict):
+                partial = progress.get("message", "")
+
+        if not partial:
+            return _ok_result(
+                "No output yet.",
+                job_id=job_id,
+                status=job.status,
+                output="",
+            )
+
+        return _ok_result(
+            partial[-3000:],
+            job_id=job_id,
+            status=job.status,
+            output=partial[-3000:],
+            total_bytes=len(partial),
+        )
+
+
+# ── approval (stdin injection) ─────────────────────────────────────────────────
+
+class CodexApprovalArgs(BaseModel):
+    job_id: str = Field(..., description="Job ID returned by codex_run.")
+    input_text: str = Field(
+        "\n",
+        description=(
+            "Text to send to Codex's stdin. "
+            "Use '\\n' (default) to press Enter and confirm a prompt. "
+            "Use 'y\\n' or 'yes\\n' to answer yes/no questions. "
+            "Use any other text followed by '\\n' for custom input."
+        ),
+    )
+
+
+class CodexApprovalTool(BaseTool):
+    name = "codex_approval"
+    description = (
+        "Send text input to a running Codex process. "
+        "Use after codex_job_output reveals that Codex is waiting for input. "
+        "Defaults to sending a newline (Enter) to confirm prompts. "
+        "For yes/no questions send 'y\\n'. "
+        "The input is written directly to Codex's stdin on the native device."
+    )
+    args_schema = CodexApprovalArgs
+
+    async def run(self, ctx: IntegrationContext = None, **kwargs) -> ToolResult:
+        if not ctx:
+            return _err_result("internal_error", "Missing integration context.")
+
+        job_id: str = kwargs.get("job_id", "")
+        text: str = kwargs.get("input_text", "\n")
+        if not job_id:
+            return _err_result("invalid_args", "job_id is required.")
+
+        try:
+            from integrations._internal_services import LongRunningJobService, RunService
+            job = await LongRunningJobService.get_job(ctx.db, job_id, ctx.user_id)
+        except Exception as e:
+            return _err_result("internal_error", f"Failed to fetch job: {e}")
+
+        if job is None:
+            return _err_result("not_found", f"Job '{job_id}' not found.")
+
+        exec_id: str | None = (job.input_payload or {}).get("execution_id")
+        if not exec_id:
+            return _err_result("invalid_state", "No execution_id found for this job.")
+
+        try:
+            from integrations._internal_services import RunService
+            await RunService.enqueue_stdin(ctx.db, exec_id, text)
+        except ValueError as e:
+            return _err_result("not_found", str(e))
+        except Exception as e:
+            return _err_result("internal_error", f"Failed to enqueue stdin: {e}")
+
+        return _ok_result(
+            f"Input sent to Codex: {repr(text)}",
+            job_id=job_id,
+            exec_id=exec_id,
+            text_sent=text,
         )

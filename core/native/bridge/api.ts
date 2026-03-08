@@ -377,3 +377,38 @@ export async function claimExecution(exec_id: string, device_id: string): Promis
     { method: "POST" }
   )
 }
+
+// ── Long-Running Jobs ─────────────────────────────────────────────────────────
+
+export interface LRJob {
+  job_id: string
+  status: string
+  tool_name: string
+  job_kind: string
+  provider?: string
+  model?: string
+  progress?: unknown
+  error_code?: string
+  error_message?: string
+  result_path?: string
+  created_at?: string
+  started_at?: string
+  completed_at?: string
+}
+
+export async function listLRJobs(params?: {
+  tool_name?: string
+  status?: string
+  limit?: number
+}): Promise<LRJob[]> {
+  const qs = new URLSearchParams()
+  if (params?.tool_name) qs.set("tool_name", params.tool_name)
+  if (params?.status)    qs.set("status", params.status)
+  if (params?.limit)     qs.set("limit", String(params.limit))
+  const res = await _json<{ jobs: LRJob[] }>(`/api/long-running-jobs?${qs}`)
+  return res.jobs
+}
+
+export async function cancelLRJob(job_id: string): Promise<void> {
+  await _json(`/api/long-running-jobs/${job_id}/cancel`, { method: "POST" })
+}

@@ -1025,6 +1025,9 @@ class RunExecution(Base):
     error_log        = Column(Text, nullable=True)
     target_device_id = Column(String(36), ForeignKey("native_devices.id"), nullable=True, index=True)
     claimed_by_device_id = Column(String(36), nullable=True)
+    # Streaming support: daemon posts partial stdout; agent enqueues stdin text
+    partial_stdout   = Column(Text, nullable=True)
+    stdin_queue      = Column(JSON, default=list)
     started_at       = Column(DateTime, nullable=True)
     finished_at      = Column(DateTime, nullable=True)
     created_at       = Column(DateTime, default=datetime.utcnow)
@@ -1215,8 +1218,19 @@ def _run_migrations(engine):
                 conn.commit()
                 print("✅ Migration: Added is_directory column to uploaded_files")
 
-    # Migration: Create approval_requests table is handled by create_all, but check if we need to manually add it?
-    # No, Base.metadata.create_all handles new tables.
+    # Migration: Add streaming columns to run_executions if missing
+    if 'run_executions' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('run_executions')]
+        if 'partial_stdout' not in columns:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE run_executions ADD COLUMN partial_stdout TEXT"))
+                conn.commit()
+                print("✅ Migration: Added partial_stdout to run_executions")
+        if 'stdin_queue' not in columns:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE run_executions ADD COLUMN stdin_queue JSON"))
+                conn.commit()
+                print("✅ Migration: Added stdin_queue to run_executions")
     pass
 
 
