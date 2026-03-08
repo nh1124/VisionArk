@@ -12,7 +12,7 @@ const QuickNoteApp = () => {
     const [isSaving, setIsSaving] = useState(false);
     const [isReady, setIsReady] = useState(false);
     const textRef = useRef<HTMLTextAreaElement>(null);
-    const appWindow = getCurrentWindow();
+    const appWindowRef = useRef(getCurrentWindow());
 
     const focusEditor = () => {
         const el = textRef.current;
@@ -44,7 +44,7 @@ const QuickNoteApp = () => {
 
     useEffect(() => {
         // Ensure immediate typing without extra click when Quick Note opens.
-        appWindow.setFocus().catch(() => {});
+        appWindowRef.current.setFocus().catch(() => {});
         const t1 = window.setTimeout(focusEditor, 0);
         const t2 = window.setTimeout(focusEditor, 80);
         const t3 = window.setTimeout(focusEditor, 180);
@@ -53,10 +53,10 @@ const QuickNoteApp = () => {
             window.clearTimeout(t2);
             window.clearTimeout(t3);
         };
-    }, [appWindow]);
+    }, []);
 
     const handleClose = () => {
-        appWindow.destroy();
+        appWindowRef.current.destroy();
     };
 
     const handleSave = async () => {
