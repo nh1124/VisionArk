@@ -174,6 +174,19 @@ fn window_info_to_json(w: &activity::WindowInfo) -> Value {
     })
 }
 
+/// Return the tail of `s` capped by bytes while preserving UTF-8 boundaries.
+/// This avoids panics from slicing at non-character boundaries.
+fn utf8_safe_tail(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    let mut start = s.len().saturating_sub(max_bytes);
+    while start < s.len() && !s.is_char_boundary(start) {
+        start += 1;
+    }
+    s[start..].to_string()
+}
+
 // ════════════════════════════════════════════════════════════════════════════════
 // Existing tools (unchanged)
 // ════════════════════════════════════════════════════════════════════════════════
@@ -374,7 +387,7 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
                 if !exec_id.is_empty() && !pending_patch.is_empty() {
                     // Keep last 20 KB in the DB field
                     let stored = if full_stdout.len() > 20_480 {
-                        full_stdout[full_stdout.len() - 20_480..].to_string()
+                        utf8_safe_tail(&full_stdout, 20_480)
                     } else {
                         full_stdout.clone()
                     };
@@ -495,7 +508,7 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
     // Final stdout patch
     if !exec_id.is_empty() {
         let stored = if full_stdout.len() > 20_480 {
-            full_stdout[full_stdout.len() - 20_480..].to_string()
+            utf8_safe_tail(&full_stdout, 20_480)
         } else {
             full_stdout.clone()
         };

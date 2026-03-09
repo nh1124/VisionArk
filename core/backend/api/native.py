@@ -439,24 +439,40 @@ async def claim_execution(
     if not device:
         raise HTTPException(status_code=403, detail="Device not found or not owned by user")
 
-    res = await db.execute(
-        select(RunExecution).where(
+    # Atomic claim: update only if still pending and claimable by this device.
+    claim_result = await db.execute(
+        update(RunExecution)
+        .where(
             RunExecution.id == exec_id,
             RunExecution.status == "pending",
+            ((RunExecution.target_device_id == device_id) | (RunExecution.target_device_id == None)),  # noqa: E711
+            ((RunExecution.claimed_by_device_id == None) | (RunExecution.claimed_by_device_id == device_id)),  # noqa: E711
+        )
+        .values(
+            claimed_by_device_id=device_id,
+            updated_at=datetime.utcnow(),
         )
     )
+    await db.commit()
+
+    if not claim_result.rowcount:
+        # Build a precise error message for callers.
+        res = await db.execute(select(RunExecution).where(RunExecution.id == exec_id))
+        exc = res.scalars().first()
+        if not exc:
+            raise HTTPException(status_code=404, detail="Execution not found")
+        if exc.status != "pending":
+            raise HTTPException(status_code=409, detail=f"Execution is not claimable (status={exc.status})")
+        if exc.target_device_id and exc.target_device_id != device_id:
+            raise HTTPException(status_code=403, detail="Execution is targeted at a different device")
+        if exc.claimed_by_device_id and exc.claimed_by_device_id != device_id:
+            raise HTTPException(status_code=409, detail="Execution already claimed by another device")
+        raise HTTPException(status_code=409, detail="Execution claim conflict")
+
+    res = await db.execute(select(RunExecution).where(RunExecution.id == exec_id))
     exc = res.scalars().first()
     if not exc:
-        raise HTTPException(status_code=404, detail="Execution not found or not in pending state")
-
-    if exc.target_device_id and exc.target_device_id != device_id:
-        raise HTTPException(status_code=403, detail="Execution is targeted at a different device")
-    if exc.claimed_by_device_id and exc.claimed_by_device_id != device_id:
-        raise HTTPException(status_code=409, detail="Execution already claimed by another device")
-
-    exc.claimed_by_device_id = device_id
-    await db.commit()
-    await db.refresh(exc)
+        raise HTTPException(status_code=404, detail="Execution not found after claim")
     logger.info("execution.claimed device=%s exec=%s", device_id, exec_id)
     return _exec_to_response(exc)
 
