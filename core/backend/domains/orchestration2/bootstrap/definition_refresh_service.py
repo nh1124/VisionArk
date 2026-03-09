@@ -207,11 +207,9 @@ async def refresh_integrations(user_id: str, db: AsyncSession) -> dict:
     # --- Integration skills ---
     try:
         skill_entries = await load_integration_skills(user_id, db)
-        all_registered, active_registered = await _get_service_registry_status(db, user_id)
-        # Ungated integrations (no ServiceRegistry row at all) are always treated as active.
-        skill_origin_ids = {origin_id for _, origin_id in skill_entries}
-        ungated = skill_origin_ids - all_registered
-        active_services = active_registered | ungated
+        _, active_registered = await _get_service_registry_status(db, user_id)
+        # Integrations are active only when explicitly enabled in ServiceRegistry.
+        active_services = active_registered
         skills_count = await _upsert_skills_async(
             db, user_id, skill_entries, origin_type="integration",
             active_services=active_services,
@@ -360,9 +358,8 @@ async def _upsert_skills_async(
     """Upsert skills into skill_registry.
 
     When active_services is provided (for integration skills), is_active is set to:
-      - True  if origin_id is NOT in any ServiceRegistry row (integration is ungated)
       - True  if origin_id IS in active_services (service is active)
-      - False if a ServiceRegistry row exists for origin_id but it is NOT active
+      - False otherwise (missing row or explicitly inactive)
     Core skills always get is_active=True (active_services=None).
     """
     now = datetime.utcnow()
@@ -372,12 +369,8 @@ async def _upsert_skills_async(
         if active_services is None:
             # Core skills: always active
             is_active = True
-        elif origin_id not in active_services:
-            # Not in active_services means the service exists in ServiceRegistry
-            # with is_active=False (ungated packages are pre-added to active_services by caller).
-            is_active = False
         else:
-            is_active = True
+            is_active = origin_id in active_services
 
         vh = _version_hash({"name": skill_def.name, "tools": skill_def.tools, "instructions": getattr(skill_def, "instructions", None)})
         await db.execute(
