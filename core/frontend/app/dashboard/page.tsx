@@ -157,7 +157,7 @@ export default function DashboardPage() {
                     apiFetch("/api/lbs/tasks?active=true").catch(() => null),
                     apiFetch("/api/lbs/overdue").catch(() => null),
                     apiFetch("/api/lbs/memories?limit=10").catch(() => null),
-                    apiFetch("/api/runs?limit=10").catch(() => null),
+                    apiFetch("/api/native-runs?limit=10").catch(() => null),
                 ]);
 
                 const me = meRes?.ok ? ((await meRes.json()) as MeResponse) : null;
@@ -447,3 +447,4 @@ function EmptyState({ message }: { message: string }) {
         </div>
     );
 }
+

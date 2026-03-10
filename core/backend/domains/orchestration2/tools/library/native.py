@@ -1,12 +1,10 @@
 """Native device execution tools — internal library.
 
-These tools use the Run Center (AgentRun / RunExecution) to dispatch
+These tools use the Run Center (NativeRun / RunExecution) to dispatch
 jobs to connected native devices via the daemon.
 
-Key design: ctx.run_id is a direct field on ExecutionContext and maps
-1:1 to orchestration_runs.run_id / agent_runs.id, so no session_id
-lookup is needed — the AgentRun created by worker.py is always
-addressable via ctx.run_id.
+Key design: ctx.run_id is orchestration identity. We resolve it to the
+NativeRun projection via `orchestration_run_id` (with legacy fallback to id).
 """
 
 from __future__ import annotations
@@ -238,11 +236,11 @@ class RunNativeJobTool:
 
         db       = get_db(ctx)
         user_id  = get_user_id(ctx)
-        run_id   = ctx.run_id   # directly the orchestration / AgentRun id
+        run_id   = ctx.run_id   # orchestration run identity
 
         try:
-            from sqlalchemy import select
-            from shared.database import NativeDevice, AgentRun, RunExecution
+            from sqlalchemy import or_, select
+            from shared.database import NativeDevice, NativeRun, RunExecution
             import uuid as _uuid
 
             # ── Resolve target device ─────────────────────────────────────────
@@ -267,19 +265,22 @@ class RunNativeJobTool:
                 target_device_id = device.id if device else None
                 device_label = device.display_name if device else "auto"
 
-            # ── Resolve AgentRun via ctx.run_id ───────────────────────────────
-            # worker.py commits the AgentRun (id == run_id) before wait_response(),
-            # so it is always present by the time tools execute.
+            # Resolve NativeRun via orchestration run id (legacy rows may still use id==run_id).
             res = await db.execute(
-                select(AgentRun).where(AgentRun.id == run_id)
+                select(NativeRun).where(
+                    or_(
+                        NativeRun.id == run_id,
+                        NativeRun.orchestration_run_id == run_id,
+                    )
+                )
             )
             run = res.scalars().first()
 
             if run is None:
                 return _err(
                     call,
-                    f"AgentRun {run_id} not found. "
-                    "run_native_job must be called from within an active agent run."
+                    f"NativeRun for orchestration run {run_id} not found. "
+                    "run_native_job must be called from within an active orchestration run."
                 )
 
             # ── Create RunExecution ───────────────────────────────────────────

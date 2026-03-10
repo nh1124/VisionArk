@@ -26,7 +26,14 @@ class MonitoringService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def create_job(self, user_id: str, payload: Dict[str, Any]) -> MonitorJob:
+    async def create_job(
+        self,
+        user_id: str,
+        payload: Dict[str, Any],
+        trace_id: Optional[str] = None,
+        origin_type: Optional[str] = None,
+        origin_id: Optional[str] = None,
+    ) -> MonitorJob:
         schedule_cron = normalize_cron(payload.get("schedule_cron", ""))
         timezone = validate_timezone(payload.get("timezone", "UTC"))
         validate_schedule(schedule_cron, timezone)
@@ -64,14 +71,26 @@ class MonitoringService:
         self.db.add(job)
         await self.db.flush()
 
-        committed = await self._replace_pending_aes_task(job)
+        committed = await self._replace_pending_aes_task(
+            job,
+            trace_id=trace_id,
+            origin_type=origin_type,
+            origin_id=origin_id or job.id,
+        )
         if not committed:
             await self.db.commit()
 
         await self.db.refresh(job)
         return job
 
-    async def update_job(self, job: MonitorJob, payload: Dict[str, Any]) -> MonitorJob:
+    async def update_job(
+        self,
+        job: MonitorJob,
+        payload: Dict[str, Any],
+        trace_id: Optional[str] = None,
+        origin_type: Optional[str] = None,
+        origin_id: Optional[str] = None,
+    ) -> MonitorJob:
         schedule_cron = normalize_cron(payload.get("schedule_cron", job.schedule_cron))
         timezone = validate_timezone(payload.get("timezone", job.timezone))
         validate_schedule(schedule_cron, timezone)
@@ -105,25 +124,47 @@ class MonitoringService:
         else:
             job.next_run_at = None
 
-        committed = await self._replace_pending_aes_task(job)
+        committed = await self._replace_pending_aes_task(
+            job,
+            trace_id=trace_id,
+            origin_type=origin_type,
+            origin_id=origin_id or job.id,
+        )
         if not committed:
             await self.db.commit()
 
         await self.db.refresh(job)
         return job
 
-    async def pause_job(self, job: MonitorJob) -> MonitorJob:
+    async def pause_job(
+        self,
+        job: MonitorJob,
+        trace_id: Optional[str] = None,
+        origin_type: Optional[str] = None,
+        origin_id: Optional[str] = None,
+    ) -> MonitorJob:
         job.is_active = False
         job.next_run_at = None
 
-        committed = await self._replace_pending_aes_task(job)
+        committed = await self._replace_pending_aes_task(
+            job,
+            trace_id=trace_id,
+            origin_type=origin_type,
+            origin_id=origin_id or job.id,
+        )
         if not committed:
             await self.db.commit()
 
         await self.db.refresh(job)
         return job
 
-    async def resume_job(self, job: MonitorJob) -> MonitorJob:
+    async def resume_job(
+        self,
+        job: MonitorJob,
+        trace_id: Optional[str] = None,
+        origin_type: Optional[str] = None,
+        origin_id: Optional[str] = None,
+    ) -> MonitorJob:
         now = datetime.utcnow()
         job.is_active = True
         job.next_run_at = self._compute_next_run(
@@ -134,7 +175,12 @@ class MonitoringService:
             now,
         )
 
-        committed = await self._replace_pending_aes_task(job)
+        committed = await self._replace_pending_aes_task(
+            job,
+            trace_id=trace_id,
+            origin_type=origin_type,
+            origin_id=origin_id or job.id,
+        )
         if not committed:
             await self.db.commit()
 
@@ -206,6 +252,9 @@ class MonitoringService:
         monitor_job_id: str,
         monitor_run_id: Optional[str] = None,
         reschedule: bool = True,
+        trace_id: Optional[str] = None,
+        origin_type: Optional[str] = None,
+        origin_id: Optional[str] = None,
     ) -> MonitorJobRun:
         job = await self.get_job(user_id, monitor_job_id)
         if not job:
@@ -225,9 +274,19 @@ class MonitoringService:
                 status="processing",
                 retry_count=job.consecutive_failures,
                 started_at=datetime.utcnow(),
+                trace_id=trace_id,
+                origin_type=origin_type,
+                origin_id=origin_id or monitor_job_id,
             )
             self.db.add(run)
             await self.db.flush()
+        else:
+            if trace_id and not run.trace_id:
+                run.trace_id = trace_id
+            if origin_type and not run.origin_type:
+                run.origin_type = origin_type
+            if origin_id and not run.origin_id:
+                run.origin_id = origin_id
 
         started = datetime.utcnow()
 
@@ -287,7 +346,12 @@ class MonitoringService:
                 job.next_run_at = None
             elif run.status != "failed":
                 job.next_run_at = self._compute_next_run_from_job(job, finished)
-            committed = await self._replace_pending_aes_task(job)
+            committed = await self._replace_pending_aes_task(
+                job,
+                trace_id=run.trace_id,
+                origin_type="monitor_job",
+                origin_id=job.id,
+            )
 
         if not committed:
             await self.db.commit()
@@ -389,19 +453,35 @@ class MonitoringService:
                 "notify_error": str(exc),
             }
 
-        await self._enqueue_agent_delivery(job=job, alert=alert, detected=detected)
+        await self._enqueue_agent_delivery(job=job, run=run, alert=alert, detected=detected)
 
         return alert
 
-    async def test_job_once(self, user_id: str, monitor_job_id: str) -> MonitorJobRun:
+    async def test_job_once(
+        self,
+        user_id: str,
+        monitor_job_id: str,
+        trace_id: Optional[str] = None,
+        origin_type: Optional[str] = None,
+        origin_id: Optional[str] = None,
+    ) -> MonitorJobRun:
         return await self.execute_monitor_check(
             user_id=user_id,
             monitor_job_id=monitor_job_id,
             monitor_run_id=None,
             reschedule=False,
+            trace_id=trace_id,
+            origin_type=origin_type,
+            origin_id=origin_id,
         )
 
-    async def _replace_pending_aes_task(self, job: MonitorJob) -> bool:
+    async def _replace_pending_aes_task(
+        self,
+        job: MonitorJob,
+        trace_id: Optional[str] = None,
+        origin_type: Optional[str] = None,
+        origin_id: Optional[str] = None,
+    ) -> bool:
         await self._delete_pending_aes_tasks(job.user_id, job.id)
 
         if not job.is_active or not job.next_run_at:
@@ -415,6 +495,9 @@ class MonitoringService:
             project_id=None,
             payload={"monitor_job_id": job.id},
             recurring_rule=None,
+            trace_id=trace_id,
+            origin_type=origin_type or "monitor_job",
+            origin_id=origin_id or job.id,
         )
         return True
 
@@ -440,6 +523,7 @@ class MonitoringService:
         self,
         *,
         job: MonitorJob,
+        run: MonitorJobRun,
         alert: MonitorAlert,
         detected: DetectionResult,
     ) -> None:
@@ -492,6 +576,9 @@ class MonitoringService:
             project_id=project_id,
             payload=payload,
             recurring_rule=None,
+            trace_id=run.trace_id,
+            origin_type="monitor_alert",
+            origin_id=alert.id,
         )
 
     @staticmethod

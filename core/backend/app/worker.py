@@ -1,5 +1,4 @@
-
-import asyncio
+﻿import asyncio
 import json
 import sys
 import os
@@ -38,7 +37,7 @@ class Worker:
         self.manager = QueueManager()
         self.dispatcher = AESDispatcher(AsyncSessionLocal)
         self.semaphore = asyncio.Semaphore(settings.max_worker_concurrency)
-        # Maps task_id → running asyncio.Task for cancel support
+        # Maps task_id -> running asyncio.Task for cancel support
         self._running_tasks: Dict[str, asyncio.Task] = {}
         # Long-running job executor (background polling, handlers self-registered via lrj_registry)
         self.long_running_executor = LongRunningJobExecutor()
@@ -73,7 +72,7 @@ class Worker:
                 try:
                     importlib.import_module(module_name)
                 except Exception as e:
-                    print(f"⚠️ Failed to load integration {module_name}: {e}")
+                    print(f"Failed to load integration {module_name}: {e}")
 
 
 
@@ -83,7 +82,7 @@ class Worker:
         #     await init_skills()
         #     print("Skills: Registered skills synced.")
         # except Exception as se:
-        #     print(f"⚠️ Skill sync failed: {se}")
+        #     print(f"笞・・Skill sync failed: {se}")
 
         print("Worker started. Waiting for tasks...")
 
@@ -115,7 +114,7 @@ class Worker:
                         )
 
             except Exception as e:
-                print(f"⚠️ Worker error: {e}")
+                print(f"Worker error: {e}")
                 await asyncio.sleep(1)
 
     async def _cancel_watcher(self):
@@ -150,7 +149,7 @@ class Worker:
         context["task_id"] = task_id
         context["task_type"] = task_type
 
-        print(f"📦 Processing task {task_id} ({task_id}) from {user_id}")
+        print(f"Processing task {task_id} ({task_id}) from {user_id}")
         await self.manager.update_status(task_id, "processing", phase="Initializing", step="Task picked up")
         if task_id:
             try:
@@ -182,7 +181,7 @@ class Worker:
                 elif task_type == TaskType.USER_MESSAGE:
                     await self._handle_user_message(message, context, db_session)
                 else:
-                    print(f"❌ Unknown task type: {task_type}")
+                    print(f"Unknown task type: {task_type}")
                     await self.manager.update_status(task_id, "failed", f"Unknown task type: {task_type}")
 
         except asyncio.CancelledError:
@@ -195,7 +194,7 @@ class Worker:
             raise  # Re-raise so the asyncio.Task is properly marked cancelled
 
         except Exception as e:
-            print(f"❌ Task {task_id} failed: {e}")
+            print(f"Task {task_id} failed: {e}")
             import traceback
             traceback.print_exc()
             await self.manager.update_status(task_id, "failed", str(e))
@@ -211,7 +210,7 @@ class Worker:
             await handler(task, db_session)
             return True
         except Exception as e:
-            print(f"❌ Registry handler failed for {task.type}: {e}")
+            print(f"Registry handler failed for {task.type}: {e}")
             t = await db_session.get(ScheduledTask, task.id)
             if t:
                 t.status = ScheduledTaskStatus.FAILED
@@ -222,6 +221,7 @@ class Worker:
     async def _handle_aes_task(self, context: dict, db_session):
         """Logic for Automated Execution System (AES) system tasks"""
         from domains.automation.aes_system_handlers import AESSystemHandlers
+        from uuid import uuid4
         st_id = context.get("scheduled_task_id")
         user_id = context.get("user_id")
         task_id = context.get("task_id")
@@ -236,9 +236,18 @@ class Worker:
                 print(f"[Worker] AES Task {st_id} record not found in DB.")
                 return
             aes_task_type = task_record.task_type
+            context["trace_id"] = context.get("trace_id") or task_record.trace_id or str(uuid4())
+            context["origin_type"] = context.get("origin_type") or task_record.origin_type or "aes_task"
+            context["origin_id"] = context.get("origin_id") or task_record.origin_id or task_record.id
 
         if not aes_task_type:
             raise ValueError("aes_task_type is required for AES system tasks without scheduled_task_id")
+        if not context.get("trace_id"):
+            context["trace_id"] = str(uuid4())
+        if not context.get("origin_type"):
+            context["origin_type"] = "aes_task"
+        if not context.get("origin_id"):
+            context["origin_id"] = st_id or aes_task_type
 
         print(f"[Worker] Running AES system task: {aes_task_type}")
         handler = AESSystemHandlers(db_session, user_id)
@@ -283,7 +292,7 @@ class Worker:
             # Guard: don't overwrite "cancelled" if cooperative cancel fired
             current_task_status = await self.manager.get_status(task_id)
             if current_task_status and current_task_status.get("status") == "cancelled":
-                print(f"Worker: Task {task_id} was cancelled — skipping completion.")
+                print(f"Worker: Task {task_id} was cancelled 窶・skipping completion.")
                 return
             await self.manager.update_status(task_id, "completed", result, phase="Completed", step="Done")
             if task_id:
@@ -361,7 +370,7 @@ class Worker:
                 await db_session.commit()
 
         if not session_id:
-            # Fallback priority: is_default → last_message_at DESC → created_at DESC
+            # Fallback priority: is_default last_message_at DESC 竊・created_at DESC
             sess_res = await db_session.execute(
                 select(ChatSession).filter(
                     ChatSession.project_id == project_id,
@@ -377,7 +386,7 @@ class Worker:
                 session_id = session.id
                 print(f"[Worker] Resolved session via fallback: {session_id} (is_default={session.is_default})")
             else:
-                # No sessions exist — create first session as default
+                # No sessions exist create first session as default
                 session_id = str(uuid4())
                 db_session.add(ChatSession(
                     id=session_id,
@@ -480,12 +489,19 @@ class Worker:
 
         # 7. Build metadata for tools/roles (This will pass to tools and roles to deal with system specific information)
         prompt_data = getattr(engine, "_prompt_data", {})
+        trace_id = context.get("trace_id") or str(uuid4())
+        context["trace_id"] = trace_id
+        origin_type = context.get("origin_type") or "chat_request"
+        origin_id = context.get("origin_id") or task_id or session_id or project_id
         metadata = {
             "project_id": project_id,
             "user_id": user_id,
             "db_session": db_session,
             "api_key": api_key,
             "session_id": session_id,
+            "trace_id": trace_id,
+            "origin_type": origin_type,
+            "origin_id": origin_id,
             "attached_files": context.get("attached_files", []),
             "progress_cb": progress_cb,
             **prompt_data,
@@ -499,7 +515,7 @@ class Worker:
                 pass
 
         # 8. Start the run asynchronously so the engine-issued run_id is
-        #    available before completion — required for cancel API support.
+        #    available before completion 窶・required for cancel API support.
         init_response = await engine.execute_run(
             message=user_msg,
             agent_id=agent_id,
@@ -509,29 +525,32 @@ class Worker:
         )
         run_id = init_response.run_id
 
-        # Store task_id → run_id mapping so the cancel endpoint can update
+        # Store task_id 竊・run_id mapping so the cancel endpoint can update
         # the orchestration run in DB as part of Layer B cancellation.
         if task_id:
             await self.manager.set_run_for_task(task_id, run_id)
 
-        # Create AgentRun projection (1:1 with orchestration_runs, best-effort)
+        # Create NativeRun projection (best-effort)
         native_run_id = None
         try:
-            from domains.native.run_service import RunService
-            await RunService.create_run_from_orchestration(
+            from domains.native.run_service import NativeRunService
+            created_run = await NativeRunService.create_run_from_orchestration(
                 db_session,
                 run_id=run_id,
                 user_id=user_id,
                 project_id=project_id,
                 session_id=session_id,
                 summary=message[:120] if message else "",
+                trace_id=trace_id,
+                origin_type=origin_type,
+                origin_id=origin_id,
             )
             await db_session.commit()   # ensure it's visible to daemon / other sessions
-            native_run_id = run_id
+            native_run_id = created_run.id
         except Exception as _e:
             import logging as _logging
             _logging.getLogger(__name__).warning(
-                "AgentRun projection failed (non-fatal): %s", _e
+                "NativeRun projection failed (non-fatal): %s", _e
             )
 
         # 9. Wait for the run to complete (CancelledError propagates cleanly)
@@ -542,7 +561,7 @@ class Worker:
             f"has_message={bool(getattr(run_response, 'message', None))}"
         )
 
-        # Update AgentRun status to reflect completion (best-effort)
+        # Update NativeRun status to reflect completion (best-effort)
         if native_run_id:
             try:
                 _orch_error = getattr(run_response, "error", None) or ""
@@ -551,12 +570,12 @@ class Worker:
                     else "completed" if run_response.completed
                     else "failed"
                 )
-                from domains.native.run_service import RunService
-                await RunService.finish_run(db_session, native_run_id, _final_status)
+                from domains.native.run_service import NativeRunService
+                await NativeRunService.finish_run(db_session, native_run_id, _final_status)
             except Exception as _e2:
                 import logging as _logging2
                 _logging2.getLogger(__name__).warning(
-                    "AgentRun finish failed (non-fatal): %s", _e2
+                    "NativeRun finish failed (non-fatal): %s", _e2
                 )
 
         # 10. Extract response text
@@ -571,12 +590,12 @@ class Worker:
                 if error_detail in ("Cancelled by user", "cancelled"):
                     print(f"[Worker] Run {run_response.run_id} was cancelled.")
                     response_text = "Cancelled."
-                # Run failed — surface the error
+                # Run failed surface the error
                 if not response_text.strip():
                     response_text = f"An error occurred during processing: {error_detail or 'Unknown error'}"
                 print(f"[Worker] Run {run_response.run_id} failed: {error_detail}")
             else:
-                # Run completed but output was empty — pull from last assistant msg
+                # Run completed but output was empty pull from last assistant msg
                 last_assistant = [
                     m for m in run_response.history
                     if m.role.value == "assistant" and m.content.strip()
@@ -743,3 +762,5 @@ class Worker:
 if __name__ == "__main__":
     my_worker = Worker()
     asyncio.run(my_worker.run())
+
+

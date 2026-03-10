@@ -8,15 +8,15 @@ from pydantic import BaseModel
 from datetime import datetime
 
 from shared.database import (
-    get_async_db, AgentRun, RunExecution, RunApproval,
+    get_async_db, NativeRun, RunExecution, RunApproval,
     IntegrationConnection, AutomationRule, NativeDevice,
 )
-from domains.native.run_service import RunService
+from domains.native.run_service import NativeRunService
 from domains.identity.auth import resolve_identity, Identity
 
 logger = logging.getLogger(__name__)
 
-runs_router = APIRouter(prefix="/api/runs", tags=["Runs"])
+runs_router = APIRouter(prefix="/api/native-runs", tags=["Runs"])
 native_router = APIRouter(prefix="/api/native", tags=["Native"])
 
 
@@ -92,6 +92,9 @@ class RunCreate(BaseModel):
     agent_id: Optional[str] = None
     session_id: Optional[str] = None
     summary: Optional[str] = None
+    trace_id: Optional[str] = None
+    origin_type: Optional[str] = None
+    origin_id: Optional[str] = None
 
 
 class RunStatusUpdate(BaseModel):
@@ -143,10 +146,14 @@ class ExecutionResponse(BaseModel):
 
 class RunResponse(BaseModel):
     id: str
+    orchestration_run_id: Optional[str]
     user_id: str
     project_id: Optional[str]
     agent_id: Optional[str]
     session_id: Optional[str]
+    trace_id: Optional[str]
+    origin_type: Optional[str]
+    origin_id: Optional[str]
     status: str
     summary: Optional[str]
     started_at: Optional[str]
@@ -196,17 +203,21 @@ def _exec_to_response(e: RunExecution) -> ExecutionResponse:
     )
 
 
-def _run_to_response(r: AgentRun) -> RunResponse:
+def _run_to_response(r: NativeRun) -> RunResponse:
     # Avoid implicit lazy-load of run.executions under AsyncSession.
     executions_loaded = r.__dict__.get("executions")
     executions = executions_loaded if isinstance(executions_loaded, list) else []
 
     return RunResponse(
         id=r.id,
+        orchestration_run_id=r.orchestration_run_id,
         user_id=r.user_id,
         project_id=r.project_id,
         agent_id=r.agent_id,
         session_id=r.session_id,
+        trace_id=r.trace_id,
+        origin_type=r.origin_type,
+        origin_id=r.origin_id,
         status=r.status,
         summary=r.summary,
         started_at=r.started_at.isoformat() if r.started_at else None,
@@ -240,13 +251,16 @@ async def create_run(
     db: AsyncSession = Depends(get_async_db),
     identity: Identity = Depends(resolve_identity),
 ):
-    run = await RunService.create_run(
+    run = await NativeRunService.create_run(
         db=db,
         user_id=identity.user_id,
         project_id=body.project_id,
         agent_id=body.agent_id,
         session_id=body.session_id,
         summary=body.summary,
+        trace_id=body.trace_id or str(uuid.uuid4()),
+        origin_type=body.origin_type or "native_api",
+        origin_id=body.origin_id,
     )
     return _run_to_response(run)
 
@@ -258,7 +272,7 @@ async def list_runs(
     db: AsyncSession = Depends(get_async_db),
     identity: Identity = Depends(resolve_identity),
 ):
-    runs = await RunService.list_runs(
+    runs = await NativeRunService.list_runs(
         db=db,
         user_id=identity.user_id,
         status=status,
@@ -278,7 +292,7 @@ async def cancel_run(
 ):
     """Cancel a run and all its non-terminal executions."""
     try:
-        run = await RunService.cancel_run(db=db, run_id=run_id, user_id=identity.user_id)
+        run = await NativeRunService.cancel_run(db=db, run_id=run_id, user_id=identity.user_id)
         return _run_to_response(run)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -292,11 +306,11 @@ async def retry_execution(
     identity: Identity = Depends(resolve_identity),
 ):
     """Clone a failed/rejected execution as a new pending one."""
-    run = await RunService.get_run(db, run_id, identity.user_id)
+    run = await NativeRunService.get_run(db, run_id, identity.user_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     try:
-        new_exec = await RunService.retry_execution(db=db, run_id=run_id, exec_id=exec_id)
+        new_exec = await NativeRunService.retry_execution(db=db, run_id=run.id, exec_id=exec_id)
         return _exec_to_response(new_exec)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -397,12 +411,12 @@ async def _require_user_owns_exec(
     exec_id: str,
     user_id: str,
 ) -> RunExecution:
-    """Verify the execution's parent AgentRun belongs to the user."""
-    from shared.database import AgentRun
+    """Verify the execution's parent NativeRun belongs to the user."""
+    from shared.database import NativeRun
     res = await db.execute(
         select(RunExecution)
-        .join(AgentRun, AgentRun.id == RunExecution.run_id)
-        .where(RunExecution.id == exec_id, AgentRun.user_id == user_id)
+        .join(NativeRun, NativeRun.id == RunExecution.run_id)
+        .where(RunExecution.id == exec_id, NativeRun.user_id == user_id)
     )
     exc = res.scalars().first()
     if not exc:
@@ -420,7 +434,7 @@ async def stream_execution_output(
 ):
     """Daemon endpoint: post partial stdout while the process is running."""
     await _require_device_owns_exec(db, exec_id, device_id, identity.user_id)
-    await RunService.patch_partial_stdout(db, exec_id, body.stdout)
+    await NativeRunService.patch_partial_stdout(db, exec_id, body.stdout)
     return {"ok": True}
 
 
@@ -433,7 +447,7 @@ async def get_execution_stdin(
 ):
     """Daemon endpoint: dequeue all pending stdin strings (one-shot read)."""
     await _require_device_owns_exec(db, exec_id, device_id, identity.user_id)
-    queue = await RunService.dequeue_stdin(db, exec_id)
+    queue = await NativeRunService.dequeue_stdin(db, exec_id)
     return {"pending": queue}
 
 
@@ -447,7 +461,7 @@ async def enqueue_execution_stdin(
     """Agent endpoint: enqueue text to send to the running process's stdin."""
     await _require_user_owns_exec(db, exec_id, identity.user_id)
     try:
-        await RunService.enqueue_stdin(db, exec_id, body.text)
+        await NativeRunService.enqueue_stdin(db, exec_id, body.text)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"ok": True}
@@ -509,13 +523,29 @@ async def claim_execution(
     return _exec_to_response(exc)
 
 
+@runs_router.get("/by-orchestration/{orchestration_run_id}", response_model=RunResponse)
+async def get_run_by_orchestration_run_id(
+    orchestration_run_id: str,
+    db: AsyncSession = Depends(get_async_db),
+    identity: Identity = Depends(resolve_identity),
+):
+    run = await NativeRunService.get_native_run_by_orchestration_run_id(
+        db,
+        orchestration_run_id=orchestration_run_id,
+        user_id=identity.user_id,
+    )
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return _run_to_response(run)
+
+
 @runs_router.get("/{run_id}", response_model=RunResponse)
 async def get_run(
     run_id: str,
     db: AsyncSession = Depends(get_async_db),
     identity: Identity = Depends(resolve_identity),
 ):
-    run = await RunService.get_run(db, run_id, identity.user_id)
+    run = await NativeRunService.get_run(db, run_id, identity.user_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     return _run_to_response(run)
@@ -529,7 +559,7 @@ async def update_run(
     identity: Identity = Depends(resolve_identity),
 ):
     try:
-        run = await RunService.update_run_status(
+        run = await NativeRunService.update_run_status(
             db=db,
             run_id=run_id,
             user_id=identity.user_id,
@@ -548,12 +578,12 @@ async def add_execution(
     db: AsyncSession = Depends(get_async_db),
     identity: Identity = Depends(resolve_identity),
 ):
-    run = await RunService.get_run(db, run_id, identity.user_id)
+    run = await NativeRunService.get_run(db, run_id, identity.user_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-    exc = await RunService.add_execution(
+    exc = await NativeRunService.add_execution(
         db=db,
-        run_id=run_id,
+        run_id=run.id,
         kind=body.kind,
         payload=body.payload,
         risk_level=body.risk_level,
@@ -569,12 +599,12 @@ async def get_execution(
     db: AsyncSession = Depends(get_async_db),
     identity: Identity = Depends(resolve_identity),
 ):
-    """Get a single execution — used by daemon to poll approval status."""
-    run = await RunService.get_run(db, run_id, identity.user_id)
+    """Get a single execution  Eused by daemon to poll approval status."""
+    run = await NativeRunService.get_run(db, run_id, identity.user_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-    exc = await RunService.get_execution(db, exec_id)
-    if not exc or exc.run_id != run_id:
+    exc = await NativeRunService.get_execution(db, exec_id)
+    if not exc or exc.run_id != run.id:
         raise HTTPException(status_code=404, detail="Execution not found")
     return _exec_to_response(exc)
 
@@ -588,12 +618,12 @@ async def update_execution(
     identity: Identity = Depends(resolve_identity),
 ):
     """Update execution status. Setting waiting_approval auto-creates a RunApproval."""
-    run = await RunService.get_run(db, run_id, identity.user_id)
+    run = await NativeRunService.get_run(db, run_id, identity.user_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
     try:
-        exc = await RunService.update_execution_status(
+        exc = await NativeRunService.update_execution_status(
             db=db,
             exec_id=exec_id,
             status=body.status,
@@ -603,29 +633,29 @@ async def update_execution(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-    if exc.run_id != run_id:
+    if exc.run_id != run.id:
         raise HTTPException(status_code=404, detail="Execution not found")
 
     # Auto-create RunApproval when daemon signals waiting_approval
     if body.status == "waiting_approval":
         reason = (body.result or {}).get("approval_reason")
-        await RunService.request_approval(db, exec_id, run_id, reason=reason)
+        await NativeRunService.request_approval(db, exec_id, run.id, reason=reason)
         if run.status not in ("waiting_approval", "completed", "failed", "canceled"):
-            await RunService.update_run_status(db, run_id, identity.user_id, "waiting_approval")
+            await NativeRunService.update_run_status(db, run.id, identity.user_id, "waiting_approval")
 
     elif body.status in ("succeeded", "failed", "rejected"):
         # Auto-complete run when all executions reach terminal state
-        execs = await RunService.list_executions(db, run_id)
+        execs = await NativeRunService.list_executions(db, run.id)
         terminal = {"succeeded", "failed", "rejected"}
         if all(e.status in terminal for e in execs):
             any_failed = any(e.status in ("failed", "rejected") for e in execs)
-            await RunService.update_run_status(
-                db, run_id, identity.user_id,
+            await NativeRunService.update_run_status(
+                db, run.id, identity.user_id,
                 "failed" if any_failed else "completed",
             )
 
     # Refresh to pick up updated approvals
-    exc = await RunService.get_execution(db, exec_id)
+    exc = await NativeRunService.get_execution(db, exec_id)
     return _exec_to_response(exc)
 
 
@@ -636,14 +666,14 @@ async def approve_execution(
     db: AsyncSession = Depends(get_async_db),
     identity: Identity = Depends(resolve_identity),
 ):
-    run = await RunService.get_run(db, run_id, identity.user_id)
+    run = await NativeRunService.get_run(db, run_id, identity.user_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     try:
-        approval = await RunService.decide_approval(
+        approval = await NativeRunService.decide_approval(
             db=db,
             approval_id=approval_id,
-            run_id=run_id,
+            run_id=run.id,
             user_id=identity.user_id,
             decision="approved",
         )
@@ -659,14 +689,14 @@ async def reject_execution(
     db: AsyncSession = Depends(get_async_db),
     identity: Identity = Depends(resolve_identity),
 ):
-    run = await RunService.get_run(db, run_id, identity.user_id)
+    run = await NativeRunService.get_run(db, run_id, identity.user_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     try:
-        approval = await RunService.decide_approval(
+        approval = await NativeRunService.decide_approval(
             db=db,
             approval_id=approval_id,
-            run_id=run_id,
+            run_id=run.id,
             user_id=identity.user_id,
             decision="rejected",
         )
@@ -970,3 +1000,4 @@ async def create_rule(
         is_active=rule.is_active,
         created_at=rule.created_at.isoformat(),
     )
+

@@ -380,6 +380,9 @@ class DeepResearchTool:
                     external_ref=interaction_id,
                     project_id=ctx.metadata.get("project_id"),
                     session_id=ctx.metadata.get("session_id"),
+                    trace_id=ctx.metadata.get("trace_id"),
+                    origin_type=ctx.metadata.get("origin_type") or "orchestration_run",
+                    origin_id=ctx.metadata.get("origin_id") or ctx.run_id,
                 )
                 job = await LongRunningJobService.create_job(
                     db=db,
@@ -460,6 +463,9 @@ class DeepResearchTool:
                     result_path=result_path_arg,
                     project_id=ctx.metadata.get("project_id"),
                     session_id=ctx.metadata.get("session_id"),
+                    trace_id=ctx.metadata.get("trace_id"),
+                    origin_type=ctx.metadata.get("origin_type") or "orchestration_run",
+                    origin_id=ctx.metadata.get("origin_id") or ctx.run_id,
                 )
                 job = await LongRunningJobService.create_job(
                     db=db,

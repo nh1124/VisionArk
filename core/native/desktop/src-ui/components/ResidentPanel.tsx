@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { Play, Pause, Terminal, Bell } from "lucide-react"
-import type { AgentRun, RunExecution } from "../../../shared/types"
+import type { NativeRun, RunExecution } from "../../../shared/types"
 import { listRuns } from "../../../bridge/api"
 
 interface Props {
@@ -10,7 +10,7 @@ interface Props {
 }
 
 export default function ResidentPanel({ onApprovalNeeded, onOpenConsole }: Props) {
-  const [runs, setRuns] = useState<AgentRun[]>([])
+  const [runs, setRuns] = useState<NativeRun[]>([])
   const [paused, setPaused] = useState(false)
   const notifiedRef = useRef(new Set<string>())
 
@@ -29,15 +29,15 @@ export default function ResidentPanel({ onApprovalNeeded, onOpenConsole }: Props
               if (!notifiedRef.current.has(exec.id)) {
                 notifiedRef.current.add(exec.id)
                 invoke("send_notification", {
-                  title: "VisionArk — 承認が必要です",
-                  body: `「${exec.kind}」の実行を確認してください`,
+                  title: "VisionArk  E承認が忁E��でぁE,
+                  body: `、E{exec.kind}」�E実行を確認してください`,
                 }).catch(() => {})
               }
             }
           }
         }
       } catch {
-        // ignore — not authenticated yet
+        // ignore  Enot authenticated yet
       }
     }
     load()
@@ -46,7 +46,7 @@ export default function ResidentPanel({ onApprovalNeeded, onOpenConsole }: Props
   }, [paused, onApprovalNeeded])
 
   // Flatten active executions across all runs
-  const activeExecs: Array<{ run: AgentRun; exec: RunExecution }> = []
+  const activeExecs: Array<{ run: NativeRun; exec: RunExecution }> = []
   for (const run of runs) {
     for (const exec of run.executions) {
       if (["pending", "running", "waiting_approval"].includes(exec.status)) {
@@ -105,9 +105,10 @@ export default function ResidentPanel({ onApprovalNeeded, onOpenConsole }: Props
       {hasApproval && (
         <div className="flex items-center gap-2 px-3 py-2 bg-yellow-500/10 rounded-xl border border-yellow-500/30">
           <Bell size={14} className="text-yellow-400 flex-shrink-0" />
-          <span className="text-xs text-yellow-300">承認が必要です</span>
+          <span className="text-xs text-yellow-300">承認が忁E��でぁE/span>
         </div>
       )}
     </div>
   )
 }
+

@@ -58,6 +58,9 @@ class AESDispatcher:
             context = {
                 "scheduled_task_id": task.id,
                 "project_id": task.project_id,
+                "trace_id": task.trace_id,
+                "origin_type": task.origin_type,
+                "origin_id": task.origin_id,
                 **(task.payload or {}),
             }
 
@@ -78,6 +81,9 @@ class AESDispatcher:
         project_id: str = None,
         payload: dict = None,
         recurring_rule: str = None,
+        trace_id: str | None = None,
+        origin_type: str | None = None,
+        origin_id: str | None = None,
         db_session: AsyncSession | None = None,
     ):
         """API/Service method to programmatically schedule a task.
@@ -95,6 +101,9 @@ class AESDispatcher:
                 project_id=project_id,
                 payload=payload,
                 recurring_rule=recurring_rule,
+                trace_id=trace_id,
+                origin_type=origin_type,
+                origin_id=origin_id,
             )
 
         async with self.session_maker() as session:
@@ -106,6 +115,9 @@ class AESDispatcher:
                 project_id=project_id,
                 payload=payload,
                 recurring_rule=recurring_rule,
+                trace_id=trace_id,
+                origin_type=origin_type,
+                origin_id=origin_id,
             )
 
     @staticmethod

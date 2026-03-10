@@ -118,6 +118,9 @@ class PostMessageHandler(BaseAESHandler):
             "user_id": self.user_id,
             "project_id": project_id,
             "env": "v4",
+            "trace_id": context.get("trace_id"),
+            "origin_type": context.get("origin_type") or "aes_post_message",
+            "origin_id": context.get("origin_id"),
         }
         if session_id:
             task_context["session_id"] = session_id
@@ -171,6 +174,9 @@ class MonitorCheckHandler(BaseAESHandler):
             user_id=self.user_id,
             monitor_job_id=monitor_job_id,
             monitor_run_id=monitor_run_id,
+            trace_id=context.get("trace_id"),
+            origin_type=context.get("origin_type") or "aes_monitor_check",
+            origin_id=context.get("origin_id") or monitor_job_id,
         )
 
 class AESSystemHandlers:

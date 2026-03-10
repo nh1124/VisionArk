@@ -4,6 +4,7 @@ Automation & Scheduled Tasks API
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from datetime import datetime
+import uuid
 from typing import Optional, List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete as sql_delete
@@ -23,6 +24,9 @@ class ScheduleTaskRequest(BaseModel):
     payload: Dict[str, Any] = Field(default_factory=dict)
     recurring_rule: Optional[str] = None
     recurrence_timezone: Optional[str] = None
+    trace_id: Optional[str] = None
+    origin_type: Optional[str] = None
+    origin_id: Optional[str] = None
 
 class ScheduledTaskSchema(BaseModel):
     id: str
@@ -152,6 +156,9 @@ async def schedule_task(
         project_id=request.project_id,
         payload=normalized_payload,
         recurring_rule=normalized_rule,
+        trace_id=request.trace_id or str(uuid.uuid4()),
+        origin_type=request.origin_type or "automation_api",
+        origin_id=request.origin_id,
     )
     
     return {"status": "success", "task_id": task_id}
@@ -191,6 +198,9 @@ async def update_task(
         project_id=request.project_id,
         payload=normalized_payload,
         recurring_rule=normalized_rule,
+        trace_id=request.trace_id or task.trace_id or str(uuid.uuid4()),
+        origin_type=request.origin_type or task.origin_type or "automation_api",
+        origin_id=request.origin_id or task.origin_id,
     )
     
     return {"status": "success", "message": "Task updated"}

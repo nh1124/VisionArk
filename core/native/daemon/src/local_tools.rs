@@ -122,25 +122,25 @@ pub async fn dispatch_tool(
         }
         "open_app" => open_app(args).await,
 
-        // ── Phase 1 tools ────────────────────────────────────────────────
+        //  Phase 1 tools 
         "get_native_environment" => get_native_environment().await,
         "get_active_window"     => get_active_window().await,
         "list_running_apps"     => list_running_apps().await,
         "launch_app"            => launch_app(args).await,
         "capture_screen"        => capture_screen(args).await,
 
-        // ── Phase 2: Window control ──────────────────────────────────────
+        //  Phase 2: Window control 
         "focus_window"  => focus_window(args).await,
         "close_window"  => close_window(args).await,
 
-        // ── Phase 2: Mouse / Keyboard ────────────────────────────────────
+        //  Phase 2: Mouse / Keyboard 
         "mouse_move"     => mouse_move(args).await,
         "mouse_click"    => mouse_click(args).await,
         "mouse_drag"     => mouse_drag(args).await,
         "keyboard_type"  => keyboard_type(args).await,
         "keyboard_hotkey" => keyboard_hotkey(args).await,
 
-        // ── Phase 3: Screen understanding ────────────────────────────────
+        //  Phase 3: Screen understanding 
         "capture_window" => capture_window(args).await,
         "find_on_screen" => find_on_screen(args).await,
 
@@ -193,7 +193,7 @@ fn is_allowed_path(path: &Path, allowed: &[String]) -> bool {
         .any(|a| target.starts_with(resolve_user_path(a)))
 }
 
-// ── Helper: focus guard (expected_window safety check) ──────────────────────
+//  Helper: focus guard (expected_window safety check) 
 
 fn check_expected_window(args: &Value) -> Result<(), String> {
     if let Some(expected) = args.get("expected_window").and_then(|v| v.as_str()) {
@@ -246,9 +246,9 @@ fn resolve_run_shell_cwd(raw: &str) -> Option<PathBuf> {
     Some(resolve_user_path(trimmed))
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
+// 
 // Existing tools (unchanged)
-// ════════════════════════════════════════════════════════════════════════════════
+// 
 
 async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id: &str) -> ToolResult {
     let timeout_secs = args["timeout"].as_u64().unwrap_or(30);
@@ -358,7 +358,7 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
     let stdout_handle = child.stdout.take().unwrap();
     let stderr_handle = child.stderr.take().unwrap();
 
-    // ── Background readers ──────────────────────────────────────────────────
+    //  Background readers 
     let (out_tx, mut out_rx) = mpsc::channel::<String>(512);
     let (err_tx, mut err_rx) = mpsc::channel::<String>(512);
 
@@ -375,7 +375,7 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
         }
     });
 
-    // ── Background child waiter ─────────────────────────────────────────────
+    //  Background child waiter 
     // We use a channel rather than child.wait() in the select loop so that
     // orphaned grandchildren (which keep the stdout/stderr pipe handles open
     // on Windows) do NOT prevent us from finishing once the top-level child exits.
@@ -386,15 +386,15 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
         let _ = exit_tx.send(code).await;
     });
 
-    // ── Scheduled kill channel ──────────────────────────────────────────────
+    //  Scheduled kill channel 
     // Used by completion_markers: after marker fires we close stdin, then
     // wait 3 s and kill the entire process tree.  Node.js may refuse to exit
-    // even after EOF if it has live child processes (python.exe, git.exe, …)
+    // even after EOF if it has live child processes (python.exe, git.exe, )
     // registered in its event loop.  taskkill /F /T is the only reliable fix.
     let (kill_tx, mut kill_rx) = mpsc::channel::<()>(1);
     let mut kill_scheduled = false;
 
-    // ── Streaming loop ──────────────────────────────────────────────────────
+    //  Streaming loop 
     let mut full_stdout = String::new();
     let mut full_stderr = String::new();
     let mut pending_patch = String::new();
@@ -440,13 +440,13 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
 
                         // Completion marker: close stdin and schedule a forced kill.
                         // Closing stdin sends EOF to the child process readline, but node.js
-                        // may keep running if child processes (python.exe, git.exe …)
+                        // may keep running if child processes (python.exe, git.exe )
                         // are still alive in its event loop.  We schedule taskkill
                         // /F /T in 3 s to kill the entire tree after output has flushed.
                         if !completion_markers.is_empty() && !kill_scheduled {
                             let line_lc = line.trim().to_lowercase();
                             if completion_markers.iter().any(|m| line_lc.contains(m.as_str())) {
-                                info!("run_shell: completion marker '{}' — closing stdin, kill tree in 3s (exec={})", line.trim(), exec_id);
+                                info!("run_shell: completion marker '{}' closing stdin, kill tree in 3s (exec={})", line.trim(), exec_id);
                                 drop(stdin_writer.take());
                                 kill_scheduled = true;
                                 let ktx = kill_tx.clone();
@@ -472,7 +472,7 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
                         if !completion_markers.is_empty() && !kill_scheduled {
                             let line_lc = line.trim().to_lowercase();
                             if completion_markers.iter().any(|m| line_lc.contains(m.as_str())) {
-                                info!("run_shell: completion marker '{}' in stderr — closing stdin, kill tree in 3s (exec={})", line.trim(), exec_id);
+                                info!("run_shell: completion marker '{}' in stderr closing stdin, kill tree in 3s (exec={})", line.trim(), exec_id);
                                 drop(stdin_writer.take());
                                 kill_scheduled = true;
                                 let ktx = kill_tx.clone();
@@ -497,7 +497,7 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
                     };
                     let _ = client
                         .patch_ignore(
-                            &format!("/api/runs/executions/{}/stream?device_id={}", exec_id, device_id),
+                            &format!("/api/native-runs/executions/{}/stream?device_id={}", exec_id, device_id),
                             &serde_json::json!({ "stdout": stored }),
                         )
                         .await;
@@ -509,7 +509,7 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
                 // Poll for agent-enqueued stdin
                 if !exec_id.is_empty() {
                     if let Ok(val) = client
-                        .get_value(&format!("/api/runs/executions/{}/stdin?device_id={}", exec_id, device_id))
+                        .get_value(&format!("/api/native-runs/executions/{}/stdin?device_id={}", exec_id, device_id))
                         .await
                     {
                         if let Some(pending) = val["pending"].as_array() {
@@ -592,7 +592,7 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
                 );
             }
 
-            // Scheduled kill: completion marker fired 3 s ago — force-kill the tree.
+            // Scheduled kill: completion marker fired 3 s ago force-kill the tree.
             // node.exe may still be running (child processes keeping event loop alive).
             _ = kill_rx.recv(), if exit_code_opt.is_none() => {
                 info!("run_shell: killing process tree (exec={})", exec_id);
@@ -688,7 +688,7 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
         };
         let _ = client
             .patch_ignore(
-                &format!("/api/runs/executions/{}/stream?device_id={}", exec_id, device_id),
+                &format!("/api/native-runs/executions/{}/stream?device_id={}", exec_id, device_id),
                 &serde_json::json!({ "stdout": stored }),
             )
             .await;
@@ -831,9 +831,9 @@ async fn open_app(args: &Value) -> ToolResult {
     }
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
+// 
 // Phase 1 tools
-// ════════════════════════════════════════════════════════════════════════════════
+// 
 
 async fn get_native_environment() -> ToolResult {
     info!("get_native_environment");
@@ -1031,9 +1031,9 @@ async fn capture_screen(args: &Value) -> ToolResult {
     encode_capture_to_base64_raw(w, h, data)
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
+// 
 // Phase 2: Window control
-// ════════════════════════════════════════════════════════════════════════════════
+// 
 
 async fn focus_window(args: &Value) -> ToolResult {
     let title = args["title"].as_str();
@@ -1077,9 +1077,9 @@ async fn close_window(args: &Value) -> ToolResult {
     }
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
+// 
 // Phase 2: Mouse / Keyboard
-// ════════════════════════════════════════════════════════════════════════════════
+// 
 
 async fn mouse_move(args: &Value) -> ToolResult {
     let x = match args["x"].as_i64() {
@@ -1335,9 +1335,9 @@ fn str_to_key(s: &str) -> enigo::Key {
     }
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
+// 
 // Phase 3: Screen understanding
-// ════════════════════════════════════════════════════════════════════════════════
+// 
 
 async fn capture_window(args: &Value) -> ToolResult {
     let title = args["title"].as_str();
@@ -1417,7 +1417,7 @@ async fn find_on_screen(args: &Value) -> ToolResult {
     let height = capture.height();
     let rgba_data = capture.into_raw();
 
-    // Convert BGRA → RGBA on Windows
+    // Convert BGRA RGBA on Windows
     let mut data = rgba_data;
     if cfg!(target_os = "windows") {
         for pixel in data.chunks_exact_mut(4) {
@@ -1474,7 +1474,7 @@ async fn find_on_screen(args: &Value) -> ToolResult {
     }))
 }
 
-// ── Shared capture helper ───────────────────────────────────────────────────
+//  Shared capture helper 
 
 fn encode_capture_to_base64_raw(width: u32, height: u32, mut rgba_data: Vec<u8>) -> ToolResult {
     // screenshots on Windows returns BGRA, swap B and R
@@ -1509,4 +1509,5 @@ fn encode_capture_to_base64_raw(width: u32, height: u32, mut rgba_data: Vec<u8>)
         "data": b64,
     }))
 }
+
 

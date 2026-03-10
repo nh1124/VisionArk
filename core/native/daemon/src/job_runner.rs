@@ -8,8 +8,8 @@ use crate::config::ExecutionPolicy;
 use crate::local_tools;
 
 /// Entry point: poll/run loop.
-/// Phase 3: pull対象を run_executions ベースへ切替。
-/// 旧 /api/jobs polling は削除し、/api/runs/pull + claim を使用。
+/// Phase 3: poll run_executions from /api/native-runs/pull.
+/// Legacy /api/jobs polling is removed; this loop uses pull + claim.
 pub async fn run(
     api_base: String,
     token: String,
@@ -23,7 +23,7 @@ pub async fn run(
     if let Some(ref did) = device_id {
         info!("Run runner using device_id={} (run_executions mode)", did);
     } else {
-        info!("Run runner: no device_id — skipping execution pull (configure VISIONARK_DEVICE_ID)");
+        info!("Run runner: no device_id; skipping execution pull (configure VISIONARK_DEVICE_ID)");
     }
 
     loop {
@@ -37,10 +37,10 @@ pub async fn run(
                         // Pre-claim cancel check: skip if parent run is already canceled
                         match get_run_status(&client, &run_id).await {
                             Ok(ref s) if s == "canceled" || s == "cancelled" => {
-                                info!("Run {} is canceled — skipping execution {}", run_id, exec_id);
+                                info!("Run {} is canceled; skipping execution {}", run_id, exec_id);
                                 continue;
                             }
-                            Err(e) => warn!("Could not check run status for {}: {} — proceeding", run_id, e),
+                            Err(e) => warn!("Could not check run status for {}: {}; proceeding", run_id, e),
                             _ => {}
                         }
 
@@ -48,7 +48,7 @@ pub async fn run(
                         match claim_execution(&client, &exec_id, did).await {
                             Ok(_) => info!("Claimed execution {} on device {}", exec_id, did),
                             Err(e) => {
-                                warn!("Could not claim execution {}: {} — skipping", exec_id, e);
+                                warn!("Could not claim execution {}: {}; skipping", exec_id, e);
                                 continue;
                             }
                         }
@@ -67,13 +67,13 @@ pub async fn run(
         tokio::select! {
             _ = tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval_secs)) => {}
             _ = trigger_rx.recv() => {
-                info!("WS push trigger received — polling immediately");
+                info!("WS push trigger received; polling immediately");
             }
         }
     }
 }
 
-// ── Execution runner ──────────────────────────────────────────────────────────
+// Execution runner
 
 async fn run_execution(
     client: &BridgeClient,
@@ -93,11 +93,11 @@ async fn run_execution(
     // High/critical risk: signal waiting_approval (backend auto-creates RunApproval)
     if risk == "high" || risk == "critical" {
         info!("Execution {} requires approval (risk={})", exec_id, risk);
-        let reason = format!("実行前承認が必要です: {} (risk={})", kind, risk);
+        let reason = format!("Execution requires approval: {} (risk={})", kind, risk);
         // Single PATCH: sets status to waiting_approval + embeds reason in result
         client
             .patch_ignore(
-                &format!("/api/runs/{}/executions/{}", run_id, exec_id),
+                &format!("/api/native-runs/{}/executions/{}", run_id, exec_id),
                 &serde_json::json!({
                     "status": "waiting_approval",
                     "result": { "approval_reason": reason }
@@ -116,8 +116,7 @@ async fn run_execution(
             }
         }
     }
-
-    // Map kind → local tool + args
+    // Map kind -> local tool + args
     let (tool, args) = kind_to_tool(&kind, &payload);
     let tool_result = local_tools::dispatch_tool(policy, &tool, &args, client, run_id, exec_id, device_id).await;
 
@@ -136,7 +135,7 @@ async fn run_execution(
     Ok(())
 }
 
-/// Map run execution kind → (tool_name, args).
+/// Map run execution kind -> (tool_name, args).
 /// kind format: "local.<tool>" or direct tool name.
 fn kind_to_tool(kind: &str, payload: &Value) -> (String, Value) {
     // Strip "local." prefix if present
@@ -144,7 +143,7 @@ fn kind_to_tool(kind: &str, payload: &Value) -> (String, Value) {
     (tool, payload.clone())
 }
 
-// ── Approval helpers ──────────────────────────────────────────────────────────
+// Approval helpers
 
 enum ApprovalResult {
     Approved,
@@ -164,7 +163,7 @@ async fn wait_for_approval(
         // Check parent run cancellation first
         match get_run_status(client, run_id).await {
             Ok(ref s) if s == "canceled" || s == "cancelled" => {
-                info!("Run {} canceled during approval wait — aborting execution {}", run_id, exec_id);
+                info!("Run {} canceled during approval wait; aborting execution {}", run_id, exec_id);
                 return Ok(ApprovalResult::Rejected);
             }
             Err(e) => warn!("Could not check run status during approval wait: {}", e),
@@ -172,7 +171,7 @@ async fn wait_for_approval(
         }
 
         match client
-            .get_value(&format!("/api/runs/{}/executions/{}", run_id, exec_id))
+            .get_value(&format!("/api/native-runs/{}/executions/{}", run_id, exec_id))
             .await
         {
             Ok(exec) => match exec["status"].as_str().unwrap_or("") {
@@ -190,18 +189,18 @@ async fn wait_for_approval(
     }
 }
 
-// ── API helpers ───────────────────────────────────────────────────────────────
+// API helpers
 
 /// Fetch the status string of a Run from the backend.
 async fn get_run_status(client: &BridgeClient, run_id: &str) -> Result<String> {
-    let val = client.get_value(&format!("/api/runs/{}", run_id)).await?;
+    let val = client.get_value(&format!("/api/native-runs/{}", run_id)).await?;
     let status = val["status"].as_str().unwrap_or("").to_string();
     Ok(status)
 }
 
 async fn pull_executions(client: &BridgeClient, device_id: &str) -> Result<Vec<Value>> {
     let path = format!(
-        "/api/runs/pull?device_id={}&limit=10",
+        "/api/native-runs/pull?device_id={}&limit=10",
         urlencoding_simple(device_id)
     );
     client.get_vec(&path).await
@@ -209,7 +208,7 @@ async fn pull_executions(client: &BridgeClient, device_id: &str) -> Result<Vec<V
 
 async fn claim_execution(client: &BridgeClient, exec_id: &str, device_id: &str) -> Result<Value> {
     let path = format!(
-        "/api/runs/executions/{}/claim?device_id={}",
+        "/api/native-runs/executions/{}/claim?device_id={}",
         exec_id,
         urlencoding_simple(device_id)
     );
@@ -224,7 +223,7 @@ async fn set_execution_status(
 ) -> Result<()> {
     client
         .patch_ignore(
-            &format!("/api/runs/{}/executions/{}", run_id, exec_id),
+            &format!("/api/native-runs/{}/executions/{}", run_id, exec_id),
             &serde_json::json!({ "status": status }),
         )
         .await
@@ -238,7 +237,7 @@ async fn fail_execution(
 ) -> Result<()> {
     client
         .patch_ignore(
-            &format!("/api/runs/{}/executions/{}", run_id, exec_id),
+            &format!("/api/native-runs/{}/executions/{}", run_id, exec_id),
             &serde_json::json!({ "status": "failed", "error_log": error_log }),
         )
         .await
@@ -261,13 +260,13 @@ async fn patch_execution_result(
     }
     client
         .patch_ignore(
-            &format!("/api/runs/{}/executions/{}", run_id, exec_id),
+            &format!("/api/native-runs/{}/executions/{}", run_id, exec_id),
             &body,
         )
         .await
 }
 
-/// Minimal percent-encoding for device_id (UUIDs only need hyphens — safe as-is).
+/// Minimal percent-encoding for device_id (UUIDs are mostly safe as-is).
 fn urlencoding_simple(s: &str) -> String {
     s.chars()
         .map(|c| match c {
@@ -276,3 +275,4 @@ fn urlencoding_simple(s: &str) -> String {
         })
         .collect()
 }
+

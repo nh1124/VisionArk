@@ -306,6 +306,9 @@ class ScheduleRecurringPromptTool:
                 project_id=project_id,
                 payload=payload,
                 recurring_rule=normalized_rule,
+                trace_id=ctx.metadata.get("trace_id"),
+                origin_type=ctx.metadata.get("origin_type") or "orchestration_run",
+                origin_id=ctx.metadata.get("origin_id") or ctx.run_id,
             )
 
             return make_result(
@@ -377,6 +380,9 @@ class ScheduleMonitorJobTool:
                     "notification_config": args.get("notify", {"channel": "in_app"}),
                     "cooldown_seconds": args.get("cooldown_seconds", 0),
                 },
+                trace_id=ctx.metadata.get("trace_id"),
+                origin_type=ctx.metadata.get("origin_type") or "orchestration_run",
+                origin_id=ctx.metadata.get("origin_id") or ctx.run_id,
             )
             return make_result(
                 call,

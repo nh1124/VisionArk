@@ -36,3 +36,6 @@ class JobCreateOptions:
     result_path: Optional[str] = None
     project_id: Optional[str] = None
     session_id: Optional[str] = None
+    trace_id: Optional[str] = None
+    origin_type: Optional[str] = None
+    origin_id: Optional[str] = None

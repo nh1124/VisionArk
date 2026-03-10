@@ -61,7 +61,7 @@ impl Default for ExecutionPolicy {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DaemonConfig {
     pub api_url: String,
-    /// Bearer token — populated from env var or keyring, never written to disk.
+    /// Bearer token - populated from env var or keyring, never written to disk.
     #[serde(default, skip_serializing)]
     pub token: String,
     /// Job polling interval in seconds (can be overridden per deployment).
@@ -99,11 +99,11 @@ pub fn config_file_path() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join(CONFIG_DIR_NAME).join(CONFIG_FILE_NAME))
 }
 
-/// Load configuration.  Never panics — falls back to defaults on any error.
+/// Load configuration.  Never panics - falls back to defaults on any error.
 pub fn load() -> DaemonConfig {
     let mut cfg = DaemonConfig::default();
 
-    // ── 1. Read config file ────────────────────────────────────────────────
+    // -- 1. Read config file ------------------------------------------------
     if let Some(path) = config_file_path() {
         if path.exists() {
             match std::fs::read_to_string(&path) {
@@ -122,11 +122,11 @@ pub fn load() -> DaemonConfig {
                 Err(e) => warn!("Config read error ({}): {}", path.display(), e),
             }
         } else {
-            info!("No config file found at {} — using defaults", path.display());
+            info!("No config file found at {} - using defaults", path.display());
         }
     }
 
-    // ── 2. Environment variable overrides ─────────────────────────────────
+    // -- 2. Environment variable overrides ---------------------------------
     // Env vars allow CI/CD and Docker to override without touching the GUI.
     if let Ok(url) = std::env::var("VISIONARK_API_URL") {
         let url = url.trim().to_string();

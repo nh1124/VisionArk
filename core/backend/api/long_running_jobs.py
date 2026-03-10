@@ -32,6 +32,9 @@ class JobResponse(BaseModel):
     error_code: Optional[str]
     error_message: Optional[str]
     external_ref: Optional[str]
+    trace_id: Optional[str]
+    origin_type: Optional[str]
+    origin_id: Optional[str]
     created_at: Optional[str]
     started_at: Optional[str]
     completed_at: Optional[str]
@@ -59,6 +62,9 @@ def _job_to_response(job) -> dict:
         "error_code": job.error_code,
         "error_message": job.error_message,
         "external_ref": job.external_ref,
+        "trace_id": job.trace_id,
+        "origin_type": job.origin_type,
+        "origin_id": job.origin_id,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "started_at": job.started_at.isoformat() if job.started_at else None,
         "completed_at": job.completed_at.isoformat() if job.completed_at else None,

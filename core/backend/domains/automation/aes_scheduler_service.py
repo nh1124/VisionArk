@@ -32,6 +32,9 @@ class AESSchedulerService:
         project_id: Optional[str] = None,
         payload: Optional[Dict[str, Any]] = None,
         recurring_rule: Optional[str] = None,
+        trace_id: Optional[str] = None,
+        origin_type: Optional[str] = None,
+        origin_id: Optional[str] = None,
     ) -> str:
         """Create a new ScheduledTask with normalised timestamp.
 
@@ -47,6 +50,9 @@ class AESSchedulerService:
             payload=payload or {},
             scheduled_at=scheduled_at,
             recurring_rule=recurring_rule,
+            trace_id=trace_id,
+            origin_type=origin_type,
+            origin_id=origin_id,
             status=ScheduledTaskStatus.PENDING,
         )
         self.db.add(new_task)
@@ -65,6 +71,9 @@ class AESSchedulerService:
         project_id: Optional[str] = None,
         payload: Optional[Dict[str, Any]] = None,
         recurring_rule: Optional[str] = None,
+        trace_id: Optional[str] = None,
+        origin_type: Optional[str] = None,
+        origin_id: Optional[str] = None,
     ) -> None:
         """Update an existing ScheduledTask and reset to PENDING."""
         task.project_id = project_id
@@ -72,6 +81,9 @@ class AESSchedulerService:
         task.payload = payload or {}
         task.scheduled_at = self._normalise_dt(scheduled_at)
         task.recurring_rule = recurring_rule
+        task.trace_id = trace_id
+        task.origin_type = origin_type
+        task.origin_id = origin_id
         task.status = ScheduledTaskStatus.PENDING
         await self.db.commit()
 
@@ -94,6 +106,9 @@ class AESSchedulerService:
             project_id=original.project_id,
             payload=original.payload,
             recurring_rule=original.recurring_rule,
+            trace_id=original.trace_id,
+            origin_type=original.origin_type,
+            origin_id=original.origin_id,
         )
 
     # ------------------------------------------------------------------ #

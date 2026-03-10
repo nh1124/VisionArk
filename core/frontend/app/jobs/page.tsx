@@ -9,7 +9,7 @@ import { apiFetch } from "@/lib/api"
 type RunStatus = "queued" | "running" | "waiting_approval" | "completed" | "failed" | "canceled"
 type ExecStatus = "pending" | "running" | "waiting_approval" | "succeeded" | "failed" | "rejected"
 
-interface AgentRun {
+interface NativeRun {
   id: string
   status: RunStatus
   summary: string | null
@@ -65,7 +65,7 @@ function StatusChip({ status, map }: { status: string; map: Record<string, strin
 }
 
 function fmtDate(s: string | null) {
-  if (!s) return "—"
+  if (!s) return ""
   return new Date(s).toLocaleString("en-US", {
     month: "short", day: "numeric",
     hour: "2-digit", minute: "2-digit",
@@ -87,7 +87,7 @@ function ExecutionRow({ exec, runId, onRefresh }: {
   const handleRetry = async () => {
     setRetrying(true)
     try {
-      const res = await apiFetch(`/api/runs/${runId}/executions/${exec.id}/retry`, { method: "POST" })
+      const res = await apiFetch(`/api/native-runs/${runId}/executions/${exec.id}/retry`, { method: "POST" })
       if (res.ok) onRefresh()
     } finally {
       setRetrying(false)
@@ -125,7 +125,7 @@ function ExecutionRow({ exec, runId, onRefresh }: {
 
 // ── Run Row ───────────────────────────────────────────────────────────────────
 
-function RunRow({ run, onRefresh }: { run: AgentRun; onRefresh: () => void }) {
+function RunRow({ run, onRefresh }: { run: NativeRun; onRefresh: () => void }) {
   const [expanded, setExpanded] = useState(false)
   const [stopping, setStopping] = useState(false)
   const isActive = ACTIVE_STATUSES.includes(run.status)
@@ -133,7 +133,7 @@ function RunRow({ run, onRefresh }: { run: AgentRun; onRefresh: () => void }) {
   const handleStop = async () => {
     setStopping(true)
     try {
-      const res = await apiFetch(`/api/runs/${run.id}/cancel`, { method: "POST" })
+      const res = await apiFetch(`/api/native-runs/${run.id}/cancel`, { method: "POST" })
       if (res.ok) onRefresh()
     } finally {
       setStopping(false)
@@ -210,7 +210,7 @@ const STATUS_TABS = [
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function RunCenterPage() {
-  const [runs, setRuns] = useState<AgentRun[]>([])
+  const [runs, setRuns] = useState<NativeRun[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState("")
@@ -221,10 +221,10 @@ export default function RunCenterPage() {
       const params = statusFilter && statusFilter !== "active"
         ? `?status=${statusFilter}&limit=50`
         : "?limit=50"
-      const res = await apiFetch(`/api/runs${params}`)
+      const res = await apiFetch(`/api/native-runs${params}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
-      let list: AgentRun[] = Array.isArray(data) ? data : (data.runs ?? [])
+      let list: NativeRun[] = Array.isArray(data) ? data : (data.runs ?? [])
       // Client-side filter for "active"
       if (statusFilter === "active") {
         list = list.filter(r => ACTIVE_STATUSES.includes(r.status))
@@ -283,8 +283,8 @@ export default function RunCenterPage() {
               key={tab.value}
               onClick={() => setStatusFilter(tab.value)}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${statusFilter === tab.value
-                  ? "bg-blue-600 text-white"
-                  : "text-gray-400 hover:text-white hover:bg-gray-800"
+                ? "bg-blue-600 text-white"
+                : "text-gray-400 hover:text-white hover:bg-gray-800"
                 }`}
             >
               {tab.label}
@@ -325,3 +325,5 @@ export default function RunCenterPage() {
     </div>
   )
 }
+
+

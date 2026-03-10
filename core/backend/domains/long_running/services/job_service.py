@@ -29,6 +29,9 @@ class LongRunningJobService:
         provider: Optional[str] = None,
         model: Optional[str] = None,
         options: Optional[JobCreateOptions] = None,
+        trace_id: Optional[str] = None,
+        origin_type: Optional[str] = None,
+        origin_id: Optional[str] = None,
     ) -> LongRunningJob:
         opts = options or JobCreateOptions()
         job = LongRunningJob(
@@ -41,6 +44,9 @@ class LongRunningJobService:
             provider=provider,
             model=model,
             input_payload=input_payload,
+            trace_id=trace_id or opts.trace_id,
+            origin_type=origin_type or opts.origin_type,
+            origin_id=origin_id or opts.origin_id,
             status=JobStatus.QUEUED,
             sync_timeout_sec=opts.sync_timeout_sec,
             max_retries=opts.max_retries,

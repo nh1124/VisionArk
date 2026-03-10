@@ -1,6 +1,6 @@
 import type {
   NativeDevice, IntegrationConnection, AutomationRule,
-  AgentRun, RunExecution, RunApproval,
+  NativeRun, RunExecution, RunApproval,
 } from "../shared/types"
 
 // ─── Configuration ─────────────────────────────────────────────────────────────
@@ -13,7 +13,7 @@ import type {
 //   • Tauri mode : non-FormData requests route through invoke("bridge_request")
 //                  which calls bridge-rs::http::raw_request_str in Rust.
 //   • Browser/dev: standard fetch() with AbortController timeout.
-//   FormData (file uploads) always use fetch() — multipart is not routed via Rust.
+//   FormData (file uploads) always use fetch()  Emultipart is not routed via Rust.
 //
 // Desktop bootstraps this at startup:
 //
@@ -63,7 +63,7 @@ function cfg(): BridgeConfig {
 // ─── HTTP client ──────────────────────────────────────────────────────────────
 //
 // Features:
-//   • Per-request token injection (always fresh — no stale-token risk)
+//   • Per-request token injection (always fresh  Eno stale-token risk)
 //   • 30-second timeout via AbortController
 //   • 5xx retry: up to 2 retries with exponential back-off (1s, 2s)
 //   • 401 transparent refresh: calls handleRefresh(), retries once with new token
@@ -75,8 +75,8 @@ const MAX_RETRIES = 2
 /**
  * Single attempt: inject token + X-Timezone, then dispatch via the
  * appropriate transport:
- *   • Tauri + non-FormData → invoke("bridge_request") → bridge-rs (Rust)
- *   • Browser or FormData  → fetch() with 30-second AbortController timeout
+ *   • Tauri + non-FormData ↁEinvoke("bridge_request") ↁEbridge-rs (Rust)
+ *   • Browser or FormData  ↁEfetch() with 30-second AbortController timeout
  */
 async function _once(
   path: string,
@@ -89,7 +89,7 @@ async function _once(
   if (token) headers["Authorization"] = `Bearer ${token}`
   headers["X-Timezone"] = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
 
-  // FormData (file uploads) must use fetch — multipart isn't handled by bridge_request
+  // FormData (file uploads) must use fetch  Emultipart isn't handled by bridge_request
   const isFormData = init.body instanceof FormData
 
   if (!isFormData && cfg().isTauri?.()) {
@@ -115,7 +115,7 @@ async function _once(
 
   // Always use the enriched `headers` (has Authorization + X-Timezone).
   // For FormData the browser automatically appends Content-Type: multipart/form-data
-  // with the correct boundary even when custom headers are provided — as long as
+  // with the correct boundary even when custom headers are provided  Eas long as
   // we don't explicitly set Content-Type ourselves (we don't for FormData callers).
 
   try {
@@ -154,7 +154,7 @@ export async function apiFetch(
     const token = await cfg().getToken() // fresh token every attempt
     const res = await _once(path, init, token)
 
-    // 401 → try refresh once (first attempt only)
+    // 401 ↁEtry refresh once (first attempt only)
     if (res.status === 401 && attempt === 0) {
       const { handleRefresh } = cfg()
       if (handleRefresh) {
@@ -297,26 +297,26 @@ export async function createRun(payload: {
   agent_id?: string
   session_id?: string
   summary?: string
-}): Promise<AgentRun> {
-  return _json<AgentRun>("/api/runs", { method: "POST", body: JSON.stringify(payload) })
+}): Promise<NativeRun> {
+  return _json<NativeRun>("/api/native-runs", { method: "POST", body: JSON.stringify(payload) })
 }
 
 export async function listRuns(params?: {
   status?: string
   limit?: number
-}): Promise<AgentRun[]> {
+}): Promise<NativeRun[]> {
   const qs = new URLSearchParams()
   if (params?.status) qs.set("status", params.status)
   if (params?.limit) qs.set("limit", String(params.limit))
-  return _json<AgentRun[]>(`/api/runs?${qs.toString()}`)
+  return _json<NativeRun[]>(`/api/native-runs?${qs.toString()}`)
 }
 
-export async function getRun(run_id: string): Promise<AgentRun> {
-  return _json<AgentRun>(`/api/runs/${run_id}`)
+export async function getRun(run_id: string): Promise<NativeRun> {
+  return _json<NativeRun>(`/api/native-runs/${run_id}`)
 }
 
-export async function updateRun(run_id: string, status: string, summary?: string): Promise<AgentRun> {
-  return _json<AgentRun>(`/api/runs/${run_id}`, {
+export async function updateRun(run_id: string, status: string, summary?: string): Promise<NativeRun> {
+  return _json<NativeRun>(`/api/native-runs/${run_id}`, {
     method: "PATCH",
     body: JSON.stringify({ status, summary }),
   })
@@ -328,7 +328,7 @@ export async function addExecution(run_id: string, payload: {
   risk_level?: string
   target_device_id?: string
 }): Promise<RunExecution> {
-  return _json<RunExecution>(`/api/runs/${run_id}/executions`, {
+  return _json<RunExecution>(`/api/native-runs/${run_id}/executions`, {
     method: "POST",
     body: JSON.stringify(payload),
   })
@@ -340,26 +340,26 @@ export async function updateExecution(
   status: string,
   extras?: { result?: Record<string, unknown>; error_log?: string }
 ): Promise<RunExecution> {
-  return _json<RunExecution>(`/api/runs/${run_id}/executions/${exec_id}`, {
+  return _json<RunExecution>(`/api/native-runs/${run_id}/executions/${exec_id}`, {
     method: "PATCH",
     body: JSON.stringify({ status, ...extras }),
   })
 }
 
 export async function approveExecution(run_id: string, approval_id: string): Promise<RunApproval> {
-  return _json<RunApproval>(`/api/runs/${run_id}/approve/${approval_id}`, { method: "POST" })
+  return _json<RunApproval>(`/api/native-runs/${run_id}/approve/${approval_id}`, { method: "POST" })
 }
 
 export async function rejectExecution(run_id: string, approval_id: string): Promise<RunApproval> {
-  return _json<RunApproval>(`/api/runs/${run_id}/reject/${approval_id}`, { method: "POST" })
+  return _json<RunApproval>(`/api/native-runs/${run_id}/reject/${approval_id}`, { method: "POST" })
 }
 
-export async function cancelRun(run_id: string): Promise<AgentRun> {
-  return _json<AgentRun>(`/api/runs/${run_id}/cancel`, { method: "POST" })
+export async function cancelRun(run_id: string): Promise<NativeRun> {
+  return _json<NativeRun>(`/api/native-runs/${run_id}/cancel`, { method: "POST" })
 }
 
 export async function retryExecution(run_id: string, exec_id: string): Promise<RunExecution> {
-  return _json<RunExecution>(`/api/runs/${run_id}/executions/${exec_id}/retry`, { method: "POST" })
+  return _json<RunExecution>(`/api/native-runs/${run_id}/executions/${exec_id}/retry`, { method: "POST" })
 }
 
 export async function pullExecutions(params: {
@@ -368,12 +368,12 @@ export async function pullExecutions(params: {
 }): Promise<RunExecution[]> {
   const qs = new URLSearchParams({ device_id: params.device_id })
   if (params.limit) qs.set("limit", String(params.limit))
-  return _json<RunExecution[]>(`/api/runs/pull?${qs.toString()}`)
+  return _json<RunExecution[]>(`/api/native-runs/pull?${qs.toString()}`)
 }
 
 export async function claimExecution(exec_id: string, device_id: string): Promise<RunExecution> {
   return _json<RunExecution>(
-    `/api/runs/executions/${exec_id}/claim?device_id=${encodeURIComponent(device_id)}`,
+    `/api/native-runs/executions/${exec_id}/claim?device_id=${encodeURIComponent(device_id)}`,
     { method: "POST" }
   )
 }
@@ -391,6 +391,9 @@ export interface LRJob {
   error_code?: string
   error_message?: string
   result_path?: string
+  trace_id?: string
+  origin_type?: string
+  origin_id?: string
   created_at?: string
   started_at?: string
   completed_at?: string
@@ -412,3 +415,4 @@ export async function listLRJobs(params?: {
 export async function cancelLRJob(job_id: string): Promise<void> {
   await _json(`/api/long-running-jobs/${job_id}/cancel`, { method: "POST" })
 }
+

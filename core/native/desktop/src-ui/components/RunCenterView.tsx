@@ -4,7 +4,7 @@ import {
   Plus, ShieldCheck, ShieldX, ChevronRight, Activity, X, Monitor,
   Square, RotateCcw, Layers,
 } from "lucide-react"
-import type { AgentRun, RunExecution, RunApproval, NativeDevice } from "../../../shared/types"
+import type { NativeRun, RunExecution, RunApproval, NativeDevice } from "../../../shared/types"
 import {
   listRuns, createRun, approveExecution, rejectExecution, listDevices,
   cancelRun, retryExecution, listLRJobs, cancelLRJob, type LRJob,
@@ -58,7 +58,7 @@ function ExecIcon({ status }: { status: string }) {
 
 interface NewRunModalProps {
   onClose: () => void
-  onCreated: (run: AgentRun) => void
+  onCreated: (run: NativeRun) => void
 }
 
 function NewRunModal({ onClose, onCreated }: NewRunModalProps) {
@@ -128,7 +128,7 @@ function NewRunModal({ onClose, onCreated }: NewRunModalProps) {
 interface ApprovalCardProps {
   approval: RunApproval
   exec: RunExecution
-  run: AgentRun
+  run: NativeRun
   onDecided: () => void
 }
 
@@ -205,9 +205,9 @@ const LRJ_STATUS: Record<string, { label: string; cls: string }> = {
 
 export default function RunCenterView() {
   const [mainTab, setMainTab] = useState<MainTab>("runs")
-  const [runs, setRuns] = useState<AgentRun[]>([])
+  const [runs, setRuns] = useState<NativeRun[]>([])
   const [devices, setDevices] = useState<NativeDevice[]>([])
-  const [selectedRun, setSelectedRun] = useState<AgentRun | null>(null)
+  const [selectedRun, setSelectedRun] = useState<NativeRun | null>(null)
   const [filter, setFilter] = useState<RunFilter>("all")
   const [loading, setLoading] = useState(false)
   const [showNewRun, setShowNewRun] = useState(false)
@@ -272,7 +272,7 @@ export default function RunCenterView() {
   }
 
   // All pending approvals across all runs (for the right pane when no run is selected)
-  const allPendingApprovals: Array<{ approval: RunApproval; exec: RunExecution; run: AgentRun }> = []
+  const allPendingApprovals: Array<{ approval: RunApproval; exec: RunExecution; run: NativeRun }> = []
   for (const run of runs) {
     for (const exec of run.executions) {
       for (const a of exec.approvals) {
@@ -410,7 +410,7 @@ export default function RunCenterView() {
                         {job.created_at ? new Date(job.created_at).toLocaleString(undefined, {
                           month: "numeric", day: "numeric",
                           hour: "2-digit", minute: "2-digit",
-                        }) : "—"}
+                        }) : "N/A"}
                       </p>
                     </div>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium flex-shrink-0 ${s.cls}`}>
@@ -425,13 +425,13 @@ export default function RunCenterView() {
         </div>
       </div>
 
-      {/* ── Center: Execution timeline / Job detail ────────────────────────── */}
+      {/* Center: Execution timeline / Job detail */}
       <div className="flex-1 flex flex-col border-r border-gray-800 min-w-0">
         {mainTab === "jobs" ? (
           !selectedJob ? (
             <div className="flex flex-col items-center justify-center h-full text-gray-700 gap-2">
               <Layers size={32} className="text-gray-800" />
-              <p className="text-sm">← Select a background job</p>
+              <p className="text-sm">Select a background job</p>
             </div>
           ) : (
             <div className="flex flex-col h-full">
@@ -490,7 +490,7 @@ export default function RunCenterView() {
         ) : !selectedRun ? (
           <div className="flex flex-col items-center justify-center h-full text-gray-700 gap-2">
             <Activity size={32} className="text-gray-800" />
-            <p className="text-sm">← Select a run</p>
+            <p className="text-sm">Select a run</p>
           </div>
         ) : (
           <>
@@ -658,3 +658,5 @@ export default function RunCenterView() {
     </div>
   )
 }
+
+

@@ -287,7 +287,7 @@ mod platform {
     }
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
+// -- Public API ----------------------------------------------------------------
 
 pub fn get_active_window_info() -> Option<WindowInfo> {
     platform::active_window_info()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -31,6 +32,9 @@ class MonitorJobCreateRequest(BaseModel):
     is_active: bool = True
     valid_from: Optional[datetime] = None
     valid_until: Optional[datetime] = None
+    trace_id: Optional[str] = None
+    origin_type: Optional[str] = None
+    origin_id: Optional[str] = None
 
 
 class MonitorJobUpdateRequest(BaseModel):
@@ -86,6 +90,9 @@ class MonitorRunSchema(BaseModel):
     latency_ms: Optional[int]
     error_log: Optional[str]
     result_payload: Dict[str, Any]
+    trace_id: Optional[str]
+    origin_type: Optional[str]
+    origin_id: Optional[str]
 
 
 class MonitorAlertSchema(BaseModel):
@@ -140,6 +147,9 @@ def _run_to_schema(run: MonitorJobRun) -> MonitorRunSchema:
         latency_ms=run.latency_ms,
         error_log=run.error_log,
         result_payload=run.result_payload or {},
+        trace_id=run.trace_id,
+        origin_type=run.origin_type,
+        origin_id=run.origin_id,
     )
 
 
@@ -166,7 +176,13 @@ async def create_monitor_job(
 ):
     service = MonitoringService(db)
     try:
-        job = await service.create_job(identity.user_id, request.model_dump())
+        job = await service.create_job(
+            identity.user_id,
+            request.model_dump(exclude={"trace_id", "origin_type", "origin_id"}),
+            trace_id=request.trace_id or str(uuid.uuid4()),
+            origin_type=request.origin_type or "monitor_api",
+            origin_id=request.origin_id,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _job_to_schema(job)
@@ -220,7 +236,13 @@ async def update_monitor_job(
         return _job_to_schema(job)
 
     try:
-        updated = await service.update_job(job, payload)
+        updated = await service.update_job(
+            job,
+            payload,
+            trace_id=str(uuid.uuid4()),
+            origin_type="monitor_api",
+            origin_id=job_id,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _job_to_schema(updated)
@@ -236,7 +258,12 @@ async def pause_monitor_job(
     job = await service.get_job(identity.user_id, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Monitor job not found")
-    job = await service.pause_job(job)
+    job = await service.pause_job(
+        job,
+        trace_id=str(uuid.uuid4()),
+        origin_type="monitor_api",
+        origin_id=job_id,
+    )
     return _job_to_schema(job)
 
 
@@ -250,7 +277,12 @@ async def resume_monitor_job(
     job = await service.get_job(identity.user_id, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Monitor job not found")
-    job = await service.resume_job(job)
+    job = await service.resume_job(
+        job,
+        trace_id=str(uuid.uuid4()),
+        origin_type="monitor_api",
+        origin_id=job_id,
+    )
     return _job_to_schema(job)
 
 
@@ -265,7 +297,13 @@ async def test_monitor_job_once(
     if not job:
         raise HTTPException(status_code=404, detail="Monitor job not found")
 
-    run = await service.test_job_once(identity.user_id, job_id)
+    run = await service.test_job_once(
+        identity.user_id,
+        job_id,
+        trace_id=str(uuid.uuid4()),
+        origin_type="monitor_test",
+        origin_id=job_id,
+    )
     return _run_to_schema(run)
 
 

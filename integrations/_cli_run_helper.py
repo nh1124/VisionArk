@@ -123,8 +123,8 @@ async def dispatch_shell_command(
     user_id = ctx.user_id
 
     try:
-        from sqlalchemy import select
-        from shared.database import AgentRun, RunExecution
+        from sqlalchemy import or_, select
+        from shared.database import NativeRun, RunExecution
         import uuid as _uuid
 
         # Resolve device
@@ -135,13 +135,20 @@ async def dispatch_shell_command(
                 f"Device '{device_id}' not found or is disabled.",
             )
 
-        # Verify AgentRun exists
-        res = await db.execute(select(AgentRun).where(AgentRun.id == run_id))
+        # Resolve NativeRun by native ID or orchestration ID (legacy-compatible).
+        res = await db.execute(
+            select(NativeRun).where(
+                or_(
+                    NativeRun.id == run_id,
+                    NativeRun.orchestration_run_id == run_id,
+                )
+            )
+        )
         run = res.scalars().first()
         if run is None:
             return _err_result(
                 "internal_error",
-                f"AgentRun '{run_id}' not found. CLI tools must be called from within an active agent run.",
+                f"NativeRun '{run_id}' not found. CLI tools must be called from within an active run.",
             )
 
         # Build run_shell payload
@@ -277,7 +284,7 @@ async def dispatch_shell_command_async(
     Returns a ToolResult with::
         job_id:       str  — use with codex_job_status / codex_job_cancel
         execution_id: str  — RunExecution ID
-        run_id:       str  — AgentRun ID
+        run_id:       str  — NativeRun ID
         status:       "queued"
     """
     if cmd is None and argv is None:
@@ -294,8 +301,8 @@ async def dispatch_shell_command_async(
     user_id = ctx.user_id
 
     try:
-        from sqlalchemy import select
-        from shared.database import AgentRun, RunExecution
+        from sqlalchemy import or_, select
+        from shared.database import NativeRun, RunExecution
         import uuid as _uuid
 
         # Resolve device
@@ -306,13 +313,20 @@ async def dispatch_shell_command_async(
                 f"Device '{device_id}' not found or is disabled.",
             )
 
-        # Verify AgentRun exists
-        res = await db.execute(select(AgentRun).where(AgentRun.id == run_id))
+        # Resolve NativeRun by native ID or orchestration ID (legacy-compatible).
+        res = await db.execute(
+            select(NativeRun).where(
+                or_(
+                    NativeRun.id == run_id,
+                    NativeRun.orchestration_run_id == run_id,
+                )
+            )
+        )
         run = res.scalars().first()
         if run is None:
             return _err_result(
                 "internal_error",
-                f"AgentRun '{run_id}' not found.",
+                f"NativeRun '{run_id}' not found.",
             )
 
         # Build run_shell payload
@@ -360,6 +374,9 @@ async def dispatch_shell_command_async(
                 "run_id": run.id,
                 **(job_extra_input or {}),
             },
+            trace_id=getattr(run, "trace_id", None),
+            origin_type="native_execution",
+            origin_id=exc.id,
         )
 
         return _ok_result(

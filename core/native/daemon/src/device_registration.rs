@@ -76,7 +76,7 @@ pub async fn register(api_url: &str, token: &str) -> Result<String> {
     Ok(device_id)
 }
 
-/// Heartbeat loop — runs forever, pinging the backend every 30 seconds.
+/// Heartbeat loop - runs forever, pinging the backend every 30 seconds.
 /// Errors are logged and swallowed so the loop never exits unexpectedly.
 pub async fn heartbeat_loop(api_url: String, token: String, device_id: String) {
     let client = BridgeClient::new(&api_url, &token);
