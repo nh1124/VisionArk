@@ -265,11 +265,23 @@ export default function TaskEditPanel({
                 {s.charAt(0).toUpperCase() + s.slice(1)}
               </button>
             ))}
-            {task.is_locked && (
-              <span className="ml-auto flex items-center gap-1 text-xs text-amber-400">
-                <Lock size={12} /> Locked
+            <button
+              type="button"
+              onClick={() => update("is_locked", !task.is_locked)}
+              className={`ml-auto inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-xs font-bold transition-colors ${
+                task.is_locked
+                  ? "bg-amber-500/10 border-amber-500/40 text-amber-300 hover:bg-amber-500/20"
+                  : "bg-gray-900 border-gray-800 text-gray-400 hover:border-gray-600 hover:text-gray-300"
+              }`}
+              title={task.is_locked ? "Turn lock off" : "Turn lock on"}
+              aria-pressed={!!task.is_locked}
+            >
+              <Lock size={12} />
+              <span>Lock</span>
+              <span className={`rounded px-1.5 py-0.5 text-[10px] leading-none ${task.is_locked ? "bg-amber-500/20" : "bg-gray-800"}`}>
+                {task.is_locked ? "ON" : "OFF"}
               </span>
-            )}
+            </button>
           </div>
 
           <div>
