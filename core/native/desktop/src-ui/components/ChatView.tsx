@@ -34,6 +34,44 @@ interface PendingLocalSend {
 
 const LOCAL_SEND_DEDUP_WINDOW_MS = 15_000
 
+interface CachedSessionState {
+    pendingUserByTaskId: Map<string, string>
+    realtimeByTaskId: Map<string, RealtimeTaskState>
+}
+
+const sessionRuntimeCache = new Map<string, CachedSessionState>()
+
+function sessionKey(projectId: string, sessionId?: string | null) {
+    return `${projectId}::${sessionId || "default"}`
+}
+
+function getSessionCache(projectId: string, sessionId?: string | null): CachedSessionState {
+    const key = sessionKey(projectId, sessionId)
+    let state = sessionRuntimeCache.get(key)
+    if (!state) {
+        state = {
+            pendingUserByTaskId: new Map<string, string>(),
+            realtimeByTaskId: new Map<string, RealtimeTaskState>(),
+        }
+        sessionRuntimeCache.set(key, state)
+    }
+    return state
+}
+
+function upsertSessionCacheTask(projectId: string, sessionId: string | null | undefined, taskId: string, message: string, statusText: string) {
+    if (!taskId) return
+    const state = getSessionCache(projectId, sessionId)
+    if (message) state.pendingUserByTaskId.set(taskId, message)
+    state.realtimeByTaskId.set(taskId, { taskId, message: message || state.pendingUserByTaskId.get(taskId) || "Scheduled message", statusText })
+}
+
+function clearSessionCacheTask(projectId: string, sessionId: string | null | undefined, taskId: string, dropPendingUser = false) {
+    if (!taskId) return
+    const state = getSessionCache(projectId, sessionId)
+    if (dropPendingUser) state.pendingUserByTaskId.delete(taskId)
+    state.realtimeByTaskId.delete(taskId)
+}
+
 const normalizeMessageContent = (content: string): string =>
     (content || "").trim().replace(/\s+/g, " ")
 
@@ -67,7 +105,34 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
     const loadHistory = useCallback(async () => {
         try {
             const msgs = await fetchHistory(projectId, effectiveSessionRef.current)
-            setMessages(msgs)
+            const state = getSessionCache(projectId, effectiveSessionRef.current)
+            const persistedUserTexts = new Set(
+                msgs
+                    .filter((m) => m.role === "user")
+                    .map((m) => normalizeMessageContent(m.content || ""))
+                    .filter(Boolean)
+            )
+
+            const injected = Array.from(state.pendingUserByTaskId.entries())
+                .filter(([, content]) => {
+                    const normalized = normalizeMessageContent(content || "")
+                    return !normalized || !persistedUserTexts.has(normalized)
+                })
+                .map(([taskId, content]) => ({
+                    role: "user" as const,
+                    content: content || "Scheduled message",
+                    meta_payload: { transient: true, realtime_task_id: taskId },
+                }))
+
+            // Drop pending cache entries once their user message is confirmed in DB.
+            for (const [taskId, content] of state.pendingUserByTaskId.entries()) {
+                const normalized = normalizeMessageContent(content || "")
+                if (normalized && persistedUserTexts.has(normalized)) {
+                    state.pendingUserByTaskId.delete(taskId)
+                }
+            }
+            setMessages([...msgs, ...injected])
+            setRealtimeTasks(Array.from(state.realtimeByTaskId.values()))
         } catch (e) {
             console.error("Failed to load history:", e)
         }
@@ -137,13 +202,14 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
         const onRealtime = (evt: Event) => {
             const detail = (evt as CustomEvent<any>).detail || {}
             const sameProject = !detail.project_id || detail.project_id === projectId
+            if (!sameProject) {
+                return
+            }
+            const eventSessionId = detail.session_id ? String(detail.session_id) : (effectiveSessionRef.current ?? null)
             const sameSession =
                 !detail.session_id ||
                 !effectiveSessionRef.current ||
                 detail.session_id === effectiveSessionRef.current
-            if (!sameProject || !sameSession) {
-                return
-            }
 
             if (detail.task_type === "user_message" && detail.task_id) {
                 const taskId = String(detail.task_id)
@@ -159,39 +225,56 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                 }
 
                 if (status === "queued" || status === "processing") {
+                    upsertSessionCacheTask(projectId, eventSessionId, taskId, msg, phase)
                     const pendingIdx = normalizedMsg
                         ? pendingLocalSendsRef.current.findIndex((s) => normalizeMessageContent(s.content) === normalizedMsg)
                         : -1
                     const isCurrentTask = !!currentTaskIdRef.current && taskId === currentTaskIdRef.current
-                    upsertRealtimeTask(taskId, msg, phase)
+                    if (sameSession) upsertRealtimeTask(taskId, msg, phase)
                     if (pendingIdx >= 0) {
                         pendingLocalSendsRef.current.splice(pendingIdx, 1)
                         if (!currentTaskIdRef.current) {
                             currentTaskIdRef.current = taskId
                         }
                     }
-                    if (!isCurrentTask && pendingIdx < 0 && !injectedTaskIdsRef.current.has(taskId)) {
-                        injectedTaskIdsRef.current.add(taskId)
-                        setMessages((prev) => [
-                            ...prev,
-                            {
-                                role: "user",
-                                content: msg || "Scheduled message",
-                                meta_payload: { transient: true, realtime_task_id: taskId },
-                            },
-                        ])
+                    if (sameSession && !isCurrentTask && pendingIdx < 0 && !injectedTaskIdsRef.current.has(taskId)) {
+                        const normalizedIncoming = normalizeMessageContent(msg || "Scheduled message")
+                        setMessages((prev) => {
+                            const alreadyExists = prev.some((m) => {
+                                if (m.role !== "user") return false
+                                if (m.meta_payload?.realtime_task_id === taskId) return true
+                                const normalizedExisting = normalizeMessageContent(m.content || "")
+                                return normalizedExisting && normalizedExisting === normalizedIncoming
+                            })
+                            if (alreadyExists) {
+                                injectedTaskIdsRef.current.add(taskId)
+                                return prev
+                            }
+                            injectedTaskIdsRef.current.add(taskId)
+                            return [
+                                ...prev,
+                                {
+                                    role: "user",
+                                    content: msg || "Scheduled message",
+                                    meta_payload: { transient: true, realtime_task_id: taskId },
+                                },
+                            ]
+                        })
                     }
                     return
                 }
 
                 if (status === "completed" || status === "failed" || status === "cancelled") {
-                    setRealtimeTasks((prev) => prev.filter((t) => t.taskId !== taskId))
-                    loadHistory()
+                    clearSessionCacheTask(projectId, eventSessionId, taskId, false)
+                    if (sameSession) {
+                        setRealtimeTasks((prev) => prev.filter((t) => t.taskId !== taskId))
+                        loadHistory()
+                    }
                 }
                 return
             }
 
-            if (!loading) {
+            if (sameSession && !loading) {
                 loadHistory()
             }
         }
@@ -211,6 +294,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
         setStatusText("")
         setElapsedTime(0)
         if (taskId) {
+            clearSessionCacheTask(projectId, effectiveSessionRef.current ?? sessionId, taskId, false)
             setRealtimeTasks((prev) => prev.filter((t) => t.taskId !== taskId))
             try { await cancelTask(taskId) } catch { /* best-effort */ }
         }
@@ -357,9 +441,11 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                     }))
                 }
             }
+            const resolvedSessionId = usedSessionId || effectiveSessionRef.current || sessionId || null
+            upsertSessionCacheTask(projectId, resolvedSessionId, task_id, content, "Queued...")
             localStorage.setItem("va_last_command_session", JSON.stringify({
                 project_id: projectId,
-                session_id: usedSessionId || effectiveSessionRef.current || sessionId || null,
+                session_id: resolvedSessionId,
             }))
 
             upsertRealtimeTask(task_id, content, "Queued...")
@@ -380,6 +466,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                         setStatusText("")
                         setElapsedTime(0)
                         currentTaskIdRef.current = null
+                        clearSessionCacheTask(projectId, effectiveSessionRef.current ?? sessionId, task_id, false)
                         setRealtimeTasks((prev) => prev.filter((t) => t.taskId !== task_id))
                         await loadHistory()
                     } else if (taskData.status === "failed" || taskData.status === "cancelled") {
@@ -388,6 +475,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                         setStatusText("")
                         setElapsedTime(0)
                         currentTaskIdRef.current = null
+                        clearSessionCacheTask(projectId, effectiveSessionRef.current ?? sessionId, task_id, false)
                         setRealtimeTasks((prev) => prev.filter((t) => t.taskId !== task_id))
                         if (taskData.status === "failed") {
                             setMessages((prev) => [
@@ -399,15 +487,19 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                         // Show detailed status using phase/step if available
                         if (taskData.status === "queued") {
                             setStatusText("Queued...")
+                            upsertSessionCacheTask(projectId, effectiveSessionRef.current ?? sessionId, task_id, content, "Queued...")
                             upsertRealtimeTask(task_id, content, "Queued...")
                         } else if (taskData.step) {
                             setStatusText(`Running: ${taskData.step}`)
+                            upsertSessionCacheTask(projectId, effectiveSessionRef.current ?? sessionId, task_id, content, `Running: ${taskData.step}`)
                             upsertRealtimeTask(task_id, content, `Running: ${taskData.step}`)
                         } else if (taskData.phase) {
                             setStatusText(`${taskData.phase}...`)
+                            upsertSessionCacheTask(projectId, effectiveSessionRef.current ?? sessionId, task_id, content, `${taskData.phase}...`)
                             upsertRealtimeTask(task_id, content, `${taskData.phase}...`)
                         } else {
                             setStatusText("Processing...")
+                            upsertSessionCacheTask(projectId, effectiveSessionRef.current ?? sessionId, task_id, content, "Processing...")
                             upsertRealtimeTask(task_id, content, "Processing...")
                         }
                     }
@@ -429,6 +521,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
             const failedTaskId = currentTaskIdRef.current
             currentTaskIdRef.current = null
             if (failedTaskId) {
+                clearSessionCacheTask(projectId, effectiveSessionRef.current ?? sessionId, failedTaskId, false)
                 setRealtimeTasks((prev) => prev.filter((t) => t.taskId !== failedTaskId))
             }
             setMessages((prev) => [

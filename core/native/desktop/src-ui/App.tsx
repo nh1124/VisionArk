@@ -639,19 +639,21 @@ function MainApp({ windowLabel }: { windowLabel: string }) {
                 calendarStatusFilter={calendarStatusFilter}
               />
             )}
-            {view === "chat" && selectedProjectId && (
-              <ChatView
-                projectId={selectedProjectId}
-                sessionId={selectedSessionId}
-                projectName={selectedProjectName}
-                sidebarMode={projectSidebarMode}
-                setSidebarMode={setProjectSidebarMode}
-                onSessionChange={(next) => {
-                  // Ignore accidental null/empty session updates while staying on chat.
-                  if (!next) return
-                  setSelectedSessionId(next)
-                }}
-              />
+            {selectedProjectId && (
+              <div className={view === "chat" ? "h-full" : "hidden"}>
+                <ChatView
+                  projectId={selectedProjectId}
+                  sessionId={selectedSessionId}
+                  projectName={selectedProjectName}
+                  sidebarMode={projectSidebarMode}
+                  setSidebarMode={setProjectSidebarMode}
+                  onSessionChange={(next) => {
+                    // Ignore accidental null/empty session updates while staying on chat.
+                    if (!next) return
+                    setSelectedSessionId(next)
+                  }}
+                />
+              </div>
             )}
             {view === "workspace" && <WorkspaceView />}
             {view === "projects" && <ProjectsView onOpenProject={(id) => handleNavChange("chat", id)} />}

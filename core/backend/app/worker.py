@@ -336,6 +336,7 @@ class Worker:
         )
         missing_key_error = None
         if not api_key:
+            # The message will be stored in DB as the assistant error message after checking session exists 
             missing_key_error = (
                 f"Error: No API key configured for {provider_id}. "
                 f"Please set your API key in settings."
@@ -390,18 +391,23 @@ class Worker:
         else:
             print(f"[Worker] Using explicit session_id from context: {session_id}")
 
+        # 3. Pre-message store before running engine
+        # Persist user message first so it survives later engine errors/cancellation.
+        user_msg_id = str(uuid4())
+        db_session.add(ChatMessage(
+            id=user_msg_id,
+            session_id=session_id,
+            role="user",
+            content=message,
+            meta_payload={"attached_files": [
+                f.to_dict() if hasattr(f, "to_dict") else str(f)
+                for f in context.get("attached_files", [])
+            ]} if context.get("attached_files") else None,
+        ))
+        await db_session.commit()
+
+        # Persist explicit user-visible error when provider key is missing.
         if missing_key_error:
-            # Persist explicit user-visible error when provider key is missing.
-            db_session.add(ChatMessage(
-                id=str(uuid4()),
-                session_id=session_id,
-                role="user",
-                content=message,
-                meta_payload={"attached_files": [
-                    f.to_dict() if hasattr(f, "to_dict") else str(f)
-                    for f in context.get("attached_files", [])
-                ]} if context.get("attached_files") else None,
-            ))
             db_session.add(ChatMessage(
                 id=str(uuid4()),
                 session_id=session_id,
@@ -418,11 +424,12 @@ class Worker:
             )
             return missing_key_error
 
-        # 3. Load chat history as v2 Messages
+        # 4. Load chat history as v2 Messages
         history_res = await db_session.execute(
             select(ChatMessage).filter(
                 ChatMessage.session_id == session_id,
                 ChatMessage.is_excluded == False,
+                ChatMessage.id != user_msg_id,
             ).order_by(ChatMessage.created_at.asc())
         )
         db_messages = history_res.scalars().all()
@@ -442,7 +449,8 @@ class Worker:
                 content=dbm.content or "",
             ))
 
-        # 4. Create v2 user message
+        # 5. Create v2 user message explicitly.
+        # Do not derive from history ordering because that can be non-deterministic.
         user_msg = V2Message(role=MessageRole.USER, content=message)
 
         if task_id:
@@ -452,7 +460,7 @@ class Worker:
             except Exception:
                 pass
 
-        # 5. Create engine
+        # 6. Create engine
         engine, agent_id = await create_engine_for_project(
             project_id=project_id,
             user_id=user_id,
@@ -470,7 +478,7 @@ class Worker:
                 except Exception as e:
                     print(f"[Worker] Error in progress_cb: {e}")
 
-        # 6. Build metadata for tools/roles
+        # 7. Build metadata for tools/roles (This will pass to tools and roles to deal with system specific information)
         prompt_data = getattr(engine, "_prompt_data", {})
         metadata = {
             "project_id": project_id,
@@ -490,7 +498,7 @@ class Worker:
             except Exception:
                 pass
 
-        # 7. Start the run asynchronously so the engine-issued run_id is
+        # 8. Start the run asynchronously so the engine-issued run_id is
         #    available before completion — required for cancel API support.
         init_response = await engine.execute_run(
             message=user_msg,
@@ -526,7 +534,7 @@ class Worker:
                 "AgentRun projection failed (non-fatal): %s", _e
             )
 
-        # 8. Wait for the run to complete (CancelledError propagates cleanly)
+        # 9. Wait for the run to complete (CancelledError propagates cleanly)
         run_response = await engine.wait_response(run_id)
         print(
             f"[Worker] Run finished task={task_id} run_id={run_id} completed={run_response.completed} "
@@ -551,7 +559,7 @@ class Worker:
                     "AgentRun finish failed (non-fatal): %s", _e2
                 )
 
-        # 9. Extract response text
+        # 10. Extract response text
         response_text = ""
         if run_response.message:
             response_text = run_response.message.content
@@ -578,7 +586,7 @@ class Worker:
                 else:
                     response_text = "Task completed."
 
-        # 10. Save assistant response to DB (user message already persisted)
+        # 11. Save assistant response to DB (user message already persisted)
         assistant_msg_id = str(uuid4())
         db_session.add(ChatMessage(
             id=assistant_msg_id,
@@ -647,7 +655,7 @@ class Worker:
             f"assistant_len={len(response_text or '')}"
         )
 
-        # 11. Ingest to knowledge core (best-effort)
+        # 12. Ingest to knowledge core (best-effort)
         try:
             from shared.service_helpers import get_kc_service
             kc_svc = get_kc_service(user_id, db_session)
