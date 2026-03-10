@@ -165,6 +165,12 @@ export default function NavSidebar({
   const [projectSearchQuery, setProjectSearchQuery] = useState("")
   const [chatSearchQuery, setChatSearchQuery] = useState("")
   const [dragOverContext, setDragOverContext] = useState<string | null>(null)
+  const [selectedSidebarProjectIds, setSelectedSidebarProjectIds] = useState<Set<string>>(new Set())
+  const [lastSidebarProjectId, setLastSidebarProjectId] = useState<string | null>(null)
+  const [selectedSidebarSessionIds, setSelectedSidebarSessionIds] = useState<Set<string>>(new Set())
+  const [lastSidebarSessionId, setLastSidebarSessionId] = useState<string | null>(null)
+  const [sidebarBulkMenu, setSidebarBulkMenu] = useState<{ mode: "projects" | "sessions"; top: number; right: number } | null>(null)
+  const sidebarBulkMenuRef = useRef<HTMLDivElement>(null)
 
   const primaryActive = useMemo(() => mapViewToPrimary(active), [active])
   const todayIso = useMemo(() => {
@@ -266,6 +272,9 @@ export default function NavSidebar({
         setSessionMenuOpen(null)
         setSessionMenuPos(null)
       }
+      if (sidebarBulkMenuRef.current && !sidebarBulkMenuRef.current.contains(e.target as Node)) {
+        setSidebarBulkMenu(null)
+      }
       if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
         setUserMenuOpen(false)
       }
@@ -315,6 +324,14 @@ export default function NavSidebar({
     return () => window.removeEventListener("va-task-drag-active", onDragState as EventListener)
   }, [])
 
+  useEffect(() => {
+    setSelectedSidebarProjectIds(new Set())
+    setSelectedSidebarSessionIds(new Set())
+    setLastSidebarProjectId(null)
+    setLastSidebarSessionId(null)
+    setSidebarBulkMenu(null)
+  }, [active, selectedProjectId])
+
   async function handleTaskDropToContext(context: string, e: React.DragEvent<HTMLButtonElement>) {
     e.preventDefault()
     e.stopPropagation()
@@ -346,6 +363,126 @@ export default function NavSidebar({
     }
   }
 
+  function toggleSidebarProjectSelection(projectId: string, shiftKey: boolean) {
+    const ids = filteredProjects.map((p) => p.id)
+    const next = new Set(selectedSidebarProjectIds)
+    if (shiftKey && lastSidebarProjectId) {
+      const from = ids.indexOf(lastSidebarProjectId)
+      const to = ids.indexOf(projectId)
+      if (from !== -1 && to !== -1) {
+        const [lo, hi] = from <= to ? [from, to] : [to, from]
+        ids.slice(lo, hi + 1).forEach((id) => next.add(id))
+        setSelectedSidebarProjectIds(next)
+        setLastSidebarProjectId(projectId)
+        return
+      }
+    }
+    if (next.has(projectId)) next.delete(projectId)
+    else next.add(projectId)
+    setSelectedSidebarProjectIds(next)
+    setLastSidebarProjectId(projectId)
+  }
+
+  function toggleSidebarSessionSelection(sessionId: string, shiftKey: boolean) {
+    const ids = filteredSessions.map((s) => s.id)
+    const next = new Set(selectedSidebarSessionIds)
+    if (shiftKey && lastSidebarSessionId) {
+      const from = ids.indexOf(lastSidebarSessionId)
+      const to = ids.indexOf(sessionId)
+      if (from !== -1 && to !== -1) {
+        const [lo, hi] = from <= to ? [from, to] : [to, from]
+        ids.slice(lo, hi + 1).forEach((id) => next.add(id))
+        setSelectedSidebarSessionIds(next)
+        setLastSidebarSessionId(sessionId)
+        return
+      }
+    }
+    if (next.has(sessionId)) next.delete(sessionId)
+    else next.add(sessionId)
+    setSelectedSidebarSessionIds(next)
+    setLastSidebarSessionId(sessionId)
+  }
+
+  async function handleBulkDeleteSidebarProjects() {
+    const ids = Array.from(selectedSidebarProjectIds)
+    if (ids.length === 0) return
+    try {
+      await Promise.all(ids.map((id) => apiFetch(`/api/agents/project/${id}`, { method: "DELETE" })))
+      const refreshed = await listProjects()
+      setProjects(refreshed)
+      setSelectedSidebarProjectIds(new Set())
+      setLastSidebarProjectId(null)
+      if (selectedProjectId && ids.includes(selectedProjectId)) onChange("projects")
+    } catch (e) {
+      console.error("Bulk delete projects failed:", e)
+    }
+  }
+
+  async function handleBulkExportSidebarProjects() {
+    const ids = Array.from(selectedSidebarProjectIds)
+    if (ids.length === 0) return
+    try {
+      const token = await getFileToken()
+      for (const id of ids) {
+        const project = projects.find((p) => p.id === id)
+        if (!project) continue
+        const url = `${BASE_URL}/api/export/chat/project/${project.id}?token=${token}`
+        const a = document.createElement("a")
+        a.href = url
+        a.download = `${project.display_name || project.name}_chat.md`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+      }
+    } catch (e) {
+      console.error("Bulk export projects failed:", e)
+    }
+  }
+
+  async function handleBulkArchiveSidebarSessions() {
+    const ids = Array.from(selectedSidebarSessionIds)
+    if (ids.length === 0) return
+    try {
+      await Promise.all(ids.map((id) =>
+        apiFetch(`/api/agents/sessions/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ is_archived: true }),
+        })
+      ))
+      if (selectedProjectId) {
+        const refreshed = await listSessions(selectedProjectId)
+        setSessions(refreshed)
+      }
+      setSelectedSidebarSessionIds(new Set())
+      setLastSidebarSessionId(null)
+    } catch (e) {
+      console.error("Bulk archive sessions failed:", e)
+    }
+  }
+
+  async function handleBulkExportSidebarSessions() {
+    const ids = Array.from(selectedSidebarSessionIds)
+    if (ids.length === 0) return
+    try {
+      const token = await getFileToken()
+      for (const id of ids) {
+        const session = sessions.find((s) => s.id === id)
+        if (!session) continue
+        const url = `${BASE_URL}/api/export/chat/session/${session.id}?token=${token}`
+        const a = document.createElement("a")
+        a.href = url
+        const titleSlug = (session.title || "Untitled").replace(/ /g, "_").toLowerCase()
+        a.download = `chat_export_${titleSlug}.md`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+      }
+    } catch (e) {
+      console.error("Bulk export sessions failed:", e)
+    }
+  }
+
   function openProjectMenu(e: React.MouseEvent, projectId: string) {
     e.preventDefault()
     e.stopPropagation()
@@ -374,6 +511,20 @@ export default function NavSidebar({
     setSessionMenuPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right })
     setProjectMenuOpen(null)
     setProjectMenuPos(null)
+  }
+
+  function openSidebarBulkMenu(e: React.MouseEvent, mode: "projects" | "sessions") {
+    e.preventDefault()
+    e.stopPropagation()
+    setProjectMenuOpen(null)
+    setProjectMenuPos(null)
+    setSessionMenuOpen(null)
+    setSessionMenuPos(null)
+    setSidebarBulkMenu({
+      mode,
+      top: e.clientY,
+      right: Math.max(8, window.innerWidth - e.clientX),
+    })
   }
 
   function startEditProject(project: Project) {
@@ -628,12 +779,19 @@ export default function NavSidebar({
               <div className="px-3 py-2 text-xs text-gray-600 italic">No matching projects</div>
             ) : filteredProjects.map((project) => {
               const isHovered = hoveredProject === project.id
+              const isSelected = selectedSidebarProjectIds.has(project.id)
+              const isActiveProject = selectedProjectId === project.id
               return (
                 <div
                   key={`project-${project.id}`}
                   className="relative"
                   onMouseEnter={() => setHoveredProject(project.id)}
                   onMouseLeave={() => { if (projectMenuOpen !== project.id) setHoveredProject(null) }}
+                  onContextMenu={(e) => {
+                    if (selectedSidebarProjectIds.size > 0 && selectedSidebarProjectIds.has(project.id)) {
+                      openSidebarBulkMenu(e, "projects")
+                    }
+                  }}
                 >
                   {editingProjectId === project.id ? (
                     <input
@@ -649,11 +807,26 @@ export default function NavSidebar({
                     />
                   ) : (
                     <button
-                      onClick={() => {
+                      onClick={(e) => {
+                        if (e.shiftKey) {
+                          e.preventDefault()
+                          toggleSidebarProjectSelection(project.id, true)
+                          return
+                        }
+                        if (selectedSidebarProjectIds.size > 0) {
+                          toggleSidebarProjectSelection(project.id, false)
+                          return
+                        }
                         const lastSessionId = localStorage.getItem(`va_last_session_${project.id}`)
                         onChange("chat", project.id, lastSessionId || undefined)
                       }}
-                      className="w-full flex items-center px-3 py-2 rounded-lg text-sm text-left text-gray-400 hover:bg-gray-800/50 hover:text-white"
+                      className={`w-full flex items-center px-3 py-2 rounded-lg text-sm text-left transition-colors ${
+                        isSelected
+                          ? "bg-cyan-500/15 text-cyan-100"
+                          : isActiveProject
+                            ? "bg-gray-800 text-white"
+                            : "text-gray-400 hover:bg-gray-800/50 hover:text-white"
+                      }`}
                     >
                       <span className="truncate flex-1">{project.display_name || project.name}</span>
                     </button>
@@ -707,12 +880,18 @@ export default function NavSidebar({
             ) : filteredSessions.map((session) => {
               const isActiveSession = selectedSessionId === session.id
               const isHovered = hoveredSession === session.id
+              const isSelected = selectedSidebarSessionIds.has(session.id)
               return (
                 <div
                   key={`session-${session.id}`}
                   className="relative"
                   onMouseEnter={() => setHoveredSession(session.id)}
                   onMouseLeave={() => { if (sessionMenuOpen !== session.id) setHoveredSession(null) }}
+                  onContextMenu={(e) => {
+                    if (selectedSidebarSessionIds.size > 0 && selectedSidebarSessionIds.has(session.id)) {
+                      openSidebarBulkMenu(e, "sessions")
+                    }
+                  }}
                 >
                   {editingSessionId === session.id ? (
                     <input
@@ -728,12 +907,27 @@ export default function NavSidebar({
                     />
                   ) : (
                     <button
-                      onClick={() => {
+                      onClick={(e) => {
+                        if (e.shiftKey) {
+                          e.preventDefault()
+                          toggleSidebarSessionSelection(session.id, true)
+                          return
+                        }
+                        if (selectedSidebarSessionIds.size > 0) {
+                          toggleSidebarSessionSelection(session.id, false)
+                          return
+                        }
                         if (!selectedProjectId) return
                         localStorage.setItem(`va_last_session_${selectedProjectId}`, session.id)
                         onChange("chat", selectedProjectId, session.id)
                       }}
-                      className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm text-left ${isActiveSession ? "bg-cyan-500/15 text-white" : "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200"}`}
+                      className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm text-left transition-colors ${
+                        isSelected
+                          ? "bg-cyan-500/15 text-cyan-100"
+                          : isActiveSession
+                            ? "bg-cyan-500/15 text-white"
+                            : "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200"
+                      }`}
                     >
                       <MessageSquare size={11} className="flex-shrink-0 opacity-40" />
                       <span className="truncate flex-1">{session.title || "Untitled Chat"}</span>
@@ -1041,6 +1235,86 @@ export default function NavSidebar({
       </div>
 
       <KeyboardShortcutsModal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+
+      {sidebarBulkMenu && (
+        <div
+          ref={sidebarBulkMenuRef}
+          style={{ position: "fixed", top: sidebarBulkMenu.top, right: sidebarBulkMenu.right, zIndex: 9999 }}
+          className="bg-gray-800 border border-gray-700 rounded-lg shadow-xl py-1 min-w-[180px]"
+        >
+          {sidebarBulkMenu.mode === "projects" ? (
+            <>
+              <div className="px-3 py-1 text-[11px] text-gray-500 border-b border-gray-700/70">
+                {selectedSidebarProjectIds.size} selected projects
+              </div>
+              <button
+                onClick={() => {
+                  void handleBulkExportSidebarProjects()
+                  setSidebarBulkMenu(null)
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
+              >
+                <Download size={14} /> Export Selected
+              </button>
+              <button
+                onClick={() => {
+                  void handleBulkDeleteSidebarProjects()
+                  setSidebarBulkMenu(null)
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10"
+              >
+                <Trash2 size={14} /> Delete Selected
+              </button>
+              <div className="my-1 border-t border-gray-700" />
+              <button
+                onClick={() => {
+                  setSelectedSidebarProjectIds(new Set())
+                  setLastSidebarProjectId(null)
+                  setSidebarBulkMenu(null)
+                }}
+                className="w-full text-left px-3 py-2 text-xs text-gray-500 hover:text-gray-300"
+              >
+                Clear Selection
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="px-3 py-1 text-[11px] text-gray-500 border-b border-gray-700/70">
+                {selectedSidebarSessionIds.size} selected sessions
+              </div>
+              <button
+                onClick={() => {
+                  void handleBulkExportSidebarSessions()
+                  setSidebarBulkMenu(null)
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
+              >
+                <Download size={14} /> Export Selected
+              </button>
+              <button
+                onClick={() => {
+                  void handleBulkArchiveSidebarSessions()
+                  setSidebarBulkMenu(null)
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10"
+              >
+                <Archive size={14} /> Archive Selected
+              </button>
+              <div className="my-1 border-t border-gray-700" />
+              <button
+                onClick={() => {
+                  setSelectedSidebarSessionIds(new Set())
+                  setLastSidebarSessionId(null)
+                  setSidebarBulkMenu(null)
+                }}
+                className="w-full text-left px-3 py-2 text-xs text-gray-500 hover:text-gray-300"
+              >
+                Clear Selection
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {projectMenuOpen && projectMenuPos && openMenuProject && (
         <div

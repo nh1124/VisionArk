@@ -31,12 +31,15 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
     const [searchQuery, setSearchQuery] = useState("")
     const [activeMenu, setActiveMenu] = useState<string | null>(null)
     const menuRef = useRef<HTMLDivElement>(null)
+    const contextMenuRef = useRef<HTMLDivElement>(null)
     const [renamingProject, setRenamingProject] = useState<string | null>(null)
     const [renameValue, setRenameValue] = useState("")
     const [savingRename, setSavingRename] = useState(false)
     const [viewMode, setViewMode] = useState<"tile" | "list">("tile")
     const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string } | null>(null)
     const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false)
+    const [lastSelectedProjectId, setLastSelectedProjectId] = useState<string | null>(null)
+    const [contextMenu, setContextMenu] = useState<{ projectId: string; top: number; left: number; bulk: boolean } | null>(null)
 
     useEffect(() => {
         loadProjects()
@@ -44,6 +47,9 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
         const handleClickOutside = (e: MouseEvent) => {
             if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
                 setActiveMenu(null)
+            }
+            if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+                setContextMenu(null)
             }
         }
         document.addEventListener("mousedown", handleClickOutside)
@@ -67,18 +73,24 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
         }
     }
 
-    const toggleSelection = (id: string) => {
-        const s = new Set(selectedProjects)
-        s.has(id) ? s.delete(id) : s.add(id)
-        setSelectedProjects(s)
-    }
-
-    const toggleSelectAll = (filtered: Project[]) => {
-        if (selectedProjects.size === filtered.length && filtered.length > 0) {
-            setSelectedProjects(new Set())
-        } else {
-            setSelectedProjects(new Set(filtered.map(p => p.id)))
+    const toggleSelection = (id: string, shiftKey: boolean, orderedProjects: Project[]) => {
+        const next = new Set(selectedProjects)
+        if (shiftKey && lastSelectedProjectId) {
+            const ids = orderedProjects.map(p => p.id)
+            const from = ids.indexOf(lastSelectedProjectId)
+            const to = ids.indexOf(id)
+            if (from !== -1 && to !== -1) {
+                const [lo, hi] = from <= to ? [from, to] : [to, from]
+                ids.slice(lo, hi + 1).forEach(pid => next.add(pid))
+                setSelectedProjects(next)
+                setLastSelectedProjectId(id)
+                return
+            }
         }
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        setSelectedProjects(next)
+        setLastSelectedProjectId(id)
     }
 
     const cloneProject = async (id: string, displayName: string) => {
@@ -110,6 +122,42 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
             setSelectedProjects(new Set())
             await loadProjects()
         } catch (err) { console.error("Bulk delete error:", err) } finally { setBulkDeleteConfirm(false) }
+    }
+
+    const bulkExport = async () => {
+        try {
+            const token = await getFileToken()
+            for (const id of Array.from(selectedProjects)) {
+                const project = projects.find(p => p.id === id)
+                if (!project) continue
+                const link = document.createElement("a")
+                link.href = `/api/export/chat/project/${id}?token=${token}`
+                link.setAttribute("download", `${project.display_name || project.name}_chat.md`)
+                document.body.appendChild(link)
+                link.click()
+                document.body.removeChild(link)
+            }
+        } catch (err) { console.error("Bulk export error:", err) }
+    }
+
+    const openProjectContextMenu = (e: React.MouseEvent, project: Project) => {
+        e.preventDefault()
+        e.stopPropagation()
+        setActiveMenu(null)
+
+        const clickedSelected = selectedProjects.has(project.id)
+        if (!clickedSelected) {
+            setSelectedProjects(new Set([project.id]))
+            setLastSelectedProjectId(project.id)
+        }
+
+        const bulk = clickedSelected && selectedProjects.size > 1
+        setContextMenu({
+            projectId: project.id,
+            top: e.clientY,
+            left: e.clientX,
+            bulk,
+        })
     }
 
     const startRename = (p: Project) => {
@@ -193,34 +241,6 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
 
                     {/* Content */}
                     <div className="min-h-[300px]">
-                        {/* Bulk actions */}
-                        {!loading && filteredProjects.length > 0 && (
-                            <div className="mb-6 flex items-center justify-between border-b border-gray-800 pb-4">
-                                <label className="flex items-center gap-3 text-sm text-gray-400 cursor-pointer hover:text-gray-200">
-                                    <input
-                                        type="checkbox"
-                                        checked={selectedProjects.size === filteredProjects.length && filteredProjects.length > 0}
-                                        onChange={() => toggleSelectAll(filteredProjects)}
-                                        className="w-4 h-4 rounded border-gray-700 bg-gray-900 text-cyan-500"
-                                    />
-                                    <span className="font-medium">
-                                        {selectedProjects.size === filteredProjects.length ? "Deselect All" : "Select All"}
-                                        <span className="ml-2 px-1.5 py-0.5 bg-gray-800 rounded text-[10px] text-gray-500">
-                                            {selectedProjects.size}/{filteredProjects.length}
-                                        </span>
-                                    </span>
-                                </label>
-                                {selectedProjects.size > 0 && (
-                                    <button
-                                        onClick={() => setBulkDeleteConfirm(true)}
-                                        className="flex items-center gap-2 px-4 py-1.5 bg-red-500/10 border border-red-500/30 text-red-500 hover:bg-red-500 hover:text-white rounded-lg text-xs font-bold transition-all"
-                                    >
-                                        <Trash2 size={12} /> DELETE SELECTED
-                                    </button>
-                                )}
-                            </div>
-                        )}
-
                         {loading ? (
                             <div className="flex flex-col items-center justify-center py-32 gap-4">
                                 <div className="w-12 h-12 border-4 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin" />
@@ -246,9 +266,20 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
 
                                     if (viewMode === "list") {
                                         return (
-                                            <div key={project.id} className={`group flex items-center justify-between bg-gray-900/40 border ${isSelected ? "border-cyan-500" : "border-gray-800"} rounded-2xl p-4 hover:bg-gray-800/50 transition-all`}>
+                                            <div
+                                                key={project.id}
+                                                onClick={(e) => {
+                                                    if (e.shiftKey) {
+                                                        e.preventDefault()
+                                                        toggleSelection(project.id, true, filteredProjects)
+                                                    } else if (selectedProjects.size > 0) {
+                                                        toggleSelection(project.id, false, filteredProjects)
+                                                    }
+                                                }}
+                                                onContextMenu={(e) => openProjectContextMenu(e, project)}
+                                                className={`group flex items-center justify-between bg-gray-900/40 border ${isSelected ? "border-cyan-500" : "border-gray-800"} rounded-2xl p-4 hover:bg-gray-800/50 transition-all`}
+                                            >
                                                 <div className="flex items-center gap-4 flex-1 min-w-0">
-                                                    <input type="checkbox" checked={isSelected} onChange={() => toggleSelection(project.id)} className="w-4 h-4 rounded border-gray-700 bg-gray-800 text-cyan-500" />
                                                     {renamingProject === project.id ? (
                                                         <div className="flex items-center gap-2 flex-1">
                                                             <input
@@ -305,6 +336,13 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
                                     return (
                                         <div
                                             key={project.id}
+                                            onClick={(e) => {
+                                                if (e.shiftKey) {
+                                                    e.preventDefault()
+                                                    toggleSelection(project.id, true, filteredProjects)
+                                                }
+                                            }}
+                                            onContextMenu={(e) => openProjectContextMenu(e, project)}
                                             className={`group relative bg-gray-900/60 border rounded-3xl p-6 transition-all duration-300 flex flex-col ${colSpan} ${isSelected ? "border-cyan-500 ring-1 ring-cyan-500/20" : "border-gray-800 hover:border-cyan-500/30 shadow-xl"}`}
                                         >
                                             <div className="flex items-start justify-between mb-4">
@@ -442,6 +480,80 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
                             <button onClick={bulkDelete} className="px-5 py-1.5 rounded-lg text-sm bg-red-500 hover:bg-red-400 text-white font-bold">Delete All</button>
                         </div>
                     </div>
+                </div>
+            )}
+
+            {contextMenu && (
+                <div
+                    ref={contextMenuRef}
+                    style={{ position: "fixed", top: contextMenu.top, left: contextMenu.left, zIndex: 60 }}
+                    className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl py-1 min-w-[200px]"
+                >
+                    {contextMenu.bulk ? (
+                        <>
+                            <div className="px-3 py-1 text-[11px] text-gray-500 border-b border-gray-800">
+                                {selectedProjects.size} selected projects
+                            </div>
+                            <button
+                                onClick={() => { void bulkExport(); setContextMenu(null) }}
+                                className="w-full text-left flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-800"
+                            >
+                                <Download size={14} /> Export Selected
+                            </button>
+                            <button
+                                onClick={() => { setBulkDeleteConfirm(true); setContextMenu(null) }}
+                                className="w-full text-left flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10"
+                            >
+                                <Trash2 size={14} /> Delete Selected
+                            </button>
+                            <div className="my-1 border-t border-gray-800" />
+                            <button
+                                onClick={() => { setSelectedProjects(new Set()); setContextMenu(null) }}
+                                className="w-full text-left px-3 py-2 text-xs text-gray-500 hover:text-gray-300"
+                            >
+                                Clear Selection
+                            </button>
+                        </>
+                    ) : (() => {
+                        const project = projects.find(p => p.id === contextMenu.projectId)
+                        if (!project) return null
+                        const name = project.display_name || project.name
+                        return (
+                            <>
+                                <button
+                                    onClick={() => { startRename(project); setContextMenu(null) }}
+                                    className="w-full text-left flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-800"
+                                >
+                                    <Settings size={14} /> Settings
+                                </button>
+                                <button
+                                    onClick={() => { void cloneProject(project.id, name); setContextMenu(null) }}
+                                    className="w-full text-left flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-800"
+                                >
+                                    <Copy size={14} /> Clone
+                                </button>
+                                <button
+                                    onClick={() => { onOpenProject?.(project.id); setContextMenu(null) }}
+                                    className="w-full text-left flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-800"
+                                >
+                                    <Rocket size={14} /> Open
+                                </button>
+                                <button
+                                    onClick={() => { void handleExportChat(project.id, name); setContextMenu(null) }}
+                                    className="w-full text-left flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-800"
+                                >
+                                    <Download size={14} /> Export Chat
+                                </button>
+                                <div className="my-1 border-t border-gray-800" />
+                                <button
+                                    onClick={() => { setDeleteConfirm({ id: project.id, name }); setContextMenu(null) }}
+                                    className="w-full text-left flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10"
+                                >
+                                    <Trash2 size={14} /> Delete
+                                </button>
+                            </>
+                        )
+                    })()}
                 </div>
             )}
         </div>
