@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { Activity, Bell, Pause, Play } from "lucide-react"
-import type { NativeRun, RunExecution } from "../../../shared/types"
+import type { Run, RunExecution } from "../../../shared/types"
 import { listRuns } from "../../../bridge/api"
 
 const EXEC_STATUS_COLORS: Record<string, string> = {
@@ -15,11 +15,11 @@ const EXEC_STATUS_COLORS: Record<string, string> = {
 
 interface Props {
   onApprovalNeeded: (runId: string) => void
-  onRunsUpdated: (runs: NativeRun[]) => void
+  onRunsUpdated: (runs: Run[]) => void
 }
 
 export default function StatusPanel({ onApprovalNeeded, onRunsUpdated }: Props) {
-  const [runs, setRuns] = useState<NativeRun[]>([])
+  const [runs, setRuns] = useState<Run[]>([])
   const [paused, setPaused] = useState(false)
   const notifiedRef = useRef(new Set<string>())
 
@@ -38,8 +38,8 @@ export default function StatusPanel({ onApprovalNeeded, onRunsUpdated }: Props) 
               if (!notifiedRef.current.has(exec.id)) {
                 notifiedRef.current.add(exec.id)
                 invoke("send_notification", {
-                  title: "VisionArk 窶・謇ｿ隱阪′蠢・ｦ√〒縺・,
-                  body: `縲・{exec.kind}縲阪・螳溯｡後ｒ遒ｺ隱阪＠縺ｦ縺上□縺輔＞`,
+                  title: "VisionArk approval required",
+                  body: `Please review execution: ${exec.kind}`,
                 }).catch(() => {})
               }
             }
@@ -88,7 +88,7 @@ export default function StatusPanel({ onApprovalNeeded, onRunsUpdated }: Props) 
         >
           <Bell size={12} className="text-yellow-400 flex-shrink-0" />
           <span className="text-xs text-yellow-300 leading-tight">
-            {needsApproval.length} 莉ｶ縺ｮ謇ｿ隱榊ｾ・■
+            {needsApproval.length} approvals pending
           </span>
         </button>
       )}
@@ -128,4 +128,5 @@ export default function StatusPanel({ onApprovalNeeded, onRunsUpdated }: Props) 
     </aside>
   )
 }
+
 

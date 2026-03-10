@@ -15,7 +15,7 @@ stateless service classes with well-defined async methods.
 """
 
 from domains.long_running.services.job_service import LongRunningJobService
-from domains.native.run_service import RunService
+from domains.native.run_service import NativeRunService as RunService
 
 __all__ = [
     "LongRunningJobService",

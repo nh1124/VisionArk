@@ -33,7 +33,7 @@ _DEFAULT_STALL_TIMEOUT_SEC = 420
 
 @lrj_registry.register("cli.run_shell")
 class CliShellHandler:
-    """Polls a RunExecution until terminal, then completes or fails the LRJ."""
+    """Polls a NativeRun until terminal, then completes or fails the LRJ."""
 
     async def run(
         self,
@@ -51,7 +51,7 @@ class CliShellHandler:
             return
 
         from sqlalchemy import select
-        from shared.database import RunExecution
+        from shared.database import NativeRun
 
         deadline = time.monotonic() + _MAX_POLL_SEC
         exc = None
@@ -64,15 +64,15 @@ class CliShellHandler:
             await asyncio.sleep(_POLL_INTERVAL_SEC)
 
             res = await db.execute(
-                select(RunExecution)
-                .where(RunExecution.id == execution_id)
+                select(NativeRun)
+                .where(NativeRun.id == execution_id)
                 .execution_options(populate_existing=True)  # bypass identity map cache
             )
             exc = res.scalars().first()
 
             if exc is None:
                 await svc.fail_job(db, job.id, "not_found",
-                                   f"RunExecution '{execution_id}' not found.")
+                                   f"NativeRun '{execution_id}' not found.")
                 return
 
             if exc.status == "waiting_approval":
@@ -138,7 +138,7 @@ class CliShellHandler:
 
         else:
             await svc.fail_job(db, job.id, "timeout",
-                               f"RunExecution '{execution_id}' timed out after {_MAX_POLL_SEC}s.")
+                               f"NativeRun '{execution_id}' timed out after {_MAX_POLL_SEC}s.")
             return
 
         if exc.status == "rejected":

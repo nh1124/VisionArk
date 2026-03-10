@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 # VisionArk System Initialization
 # Linux/macOS equivalent of initialize_system.bat
 
@@ -34,24 +34,47 @@ if [[ "${confirm,,}" != "y" ]]; then
 fi
 
 echo
-echo "[1/4] Stopping and removing Docker containers and volumes..."
-docker-compose -f "$COMPOSE_FILE" down -v
+echo "[1/6] Stopping and removing Docker containers and volumes..."
+docker-compose -f "$COMPOSE_FILE" --profile all down -v --remove-orphans
 
 echo
-echo "[2/4] Wiping host data directories..."
+echo "[2/6] Removing residual PostgreSQL volumes..."
+mapfile -t PG_VOLUMES < <(docker volume ls --format '{{.Name}}' | grep -E '(^|_)postgres_data($|_)' || true)
+if [[ ${#PG_VOLUMES[@]} -gt 0 ]]; then
+    for vol in "${PG_VOLUMES[@]}"; do
+        echo "Removing volume: $vol"
+        docker volume rm -f "$vol" >/dev/null || true
+    done
+else
+    echo "No postgres_data volumes found - skipping."
+fi
+
+echo
+echo "[3/6] Wiping host data directories..."
 if [[ -d "$PROJECT_ROOT/data" ]]; then
     echo "Cleaning data/..."
     rm -rf "${PROJECT_ROOT:?}/data/"*
 else
-    echo "data/ not found — skipping."
+    echo "data/ not found - skipping."
+fi
+
+if [[ -d "$PROJECT_ROOT/logs" ]]; then
+    echo "Cleaning logs/..."
+    rm -rf "${PROJECT_ROOT:?}/logs/"*
+else
+    echo "logs/ not found - skipping."
 fi
 
 echo
-echo "[3/4] Rebuilding and starting services..."
+echo "[4/6] Migration mode..."
+echo "_run_migrations is now a placeholder (no legacy migration replay)."
+
+echo
+echo "[5/6] Rebuilding and starting services..."
 docker-compose -f "$COMPOSE_FILE" --profile all up -d --build
 
 echo
-echo "[4/4] Verification..."
+echo "[6/6] Verification..."
 docker-compose -f "$COMPOSE_FILE" ps
 
 echo

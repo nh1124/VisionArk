@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react"
 import { Monitor, Smartphone, Server, HelpCircle, RefreshCw, Trash2, Wifi, WifiOff, Clock } from "lucide-react"
 import type { NativeDevice, DeviceKind, DeviceStatus } from "../../../shared/types"
 import { listDevices, patchDevice, deleteDevice } from "../../../bridge/api"
+import { getApiBase } from "../lib/api"
 import { invoke, isTauri } from "@tauri-apps/api/core"
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -39,14 +40,20 @@ export default function DevicesView() {
   const currentDevice = devices.find(d => d.id === currentDeviceId)
   const otherDevices = devices.filter(d => d.id !== currentDeviceId)
 
+  const deviceIdKey = () => {
+    const base = getApiBase().replace(/[^a-zA-Z0-9]/g, "_")
+    return `va_device_id_${base}`
+  }
+
   const loadDeviceId = async () => {
+    const key = deviceIdKey()
     try {
       if (isTauri()) {
-        const id = await invoke<string>("get_secure_token", { key: "va_device_id" })
+        const id = await invoke<string>("get_secure_token", { key })
         return id || null
       }
     } catch { /* ignore */ }
-    return localStorage.getItem("va_device_id")
+    return localStorage.getItem(key)
   }
 
   const load = async () => {

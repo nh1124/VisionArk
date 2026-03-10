@@ -10,6 +10,8 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 use tracing::{info, warn};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 fn runtime_log_path() -> Option<PathBuf> {
     if let Ok(appdata) = std::env::var("APPDATA") {
@@ -77,24 +79,32 @@ async fn run_inner() -> Result<()> {
     );
 
     // Resolve device_id: use pre-configured value, or auto-register.
-    // Registration requires a token; without one the daemon still works but
-    // falls back to poll loop without device routing.
-    let device_id = if let Some(id) = cfg.device_id.clone() {
+    // The device_id is shared between heartbeat_loop and job_runner via Arc<Mutex<String>>.
+    // Empty string = not yet registered; heartbeat_loop will register on first tick.
+    let initial_device_id = if let Some(id) = cfg.device_id.clone() {
         info!("Using pre-configured device_id={}", id);
-        Some(id)
+        id
     } else if !cfg.token.is_empty() {
         match device_registration::register(&cfg.api_url, &cfg.token).await {
-            Ok(id) => Some(id),
+            Ok(id) => id,
             Err(e) => {
                 warn!(
-                    "Device registration failed (running without device routing): {}",
+                    "Device registration failed (will retry via heartbeat): {}",
                     e
                 );
-                None
+                String::new()
             }
         }
     } else {
         warn!("No token configured; skipping device registration");
+        String::new()
+    };
+
+    // Shared device_id: heartbeat_loop re-registers on 404 and updates this value;
+    // job_runner reads it each poll cycle so it automatically picks up the new id.
+    let device_id_shared: Option<Arc<Mutex<String>>> = if !cfg.token.is_empty() {
+        Some(Arc::new(Mutex::new(initial_device_id)))
+    } else {
         None
     };
 
@@ -111,12 +121,12 @@ async fn run_inner() -> Result<()> {
     // Start activity monitor
     let activity_handle = tokio::spawn(activity::monitor_loop());
 
-    // Start heartbeat loop (keeps device status online)
-    if let Some(ref id) = device_id {
+    // Start heartbeat loop (keeps device status online, re-registers on 404)
+    if let Some(ref shared) = device_id_shared {
         tokio::spawn(device_registration::heartbeat_loop(
             cfg.api_url.clone(),
             cfg.token.clone(),
-            id.clone(),
+            shared.clone(),
         ));
     }
 
@@ -127,7 +137,7 @@ async fn run_inner() -> Result<()> {
         cfg.policy,
         trigger_rx,
         cfg.poll_interval_secs,
-        device_id,
+        device_id_shared,
     ));
 
     let (r1, r2, r3) = tokio::try_join!(bridge_handle, activity_handle, runner_handle)?;

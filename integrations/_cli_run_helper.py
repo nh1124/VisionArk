@@ -1,7 +1,7 @@
 """Shared helper for CLI integration tools that dispatch native shell commands.
 
 Each CLI integration (codex, antigravity, claude) imports from here to avoid
-duplicating RunExecution creation and polling logic.
+duplicating NativeRun creation and polling logic.
 
 Response format (all tools):
   ok:           bool
@@ -96,7 +96,7 @@ async def dispatch_shell_command(
     timeout: int = 60,
     sync: bool = True,
 ) -> ToolResult:
-    """Create a RunExecution for a shell command and optionally wait for result.
+    """Create a NativeRun for a shell command and optionally wait for result.
 
     Parameters
     ----------
@@ -123,9 +123,7 @@ async def dispatch_shell_command(
     user_id = ctx.user_id
 
     try:
-        from sqlalchemy import or_, select
-        from shared.database import NativeRun, RunExecution
-        import uuid as _uuid
+        from domains.native.run_service import NativeRunService
 
         # Resolve device
         resolved_device_id, device_label = await _resolve_device(db, user_id, device_id)
@@ -133,22 +131,6 @@ async def dispatch_shell_command(
             return _err_result(
                 "internal_error",
                 f"Device '{device_id}' not found or is disabled.",
-            )
-
-        # Resolve NativeRun by native ID or orchestration ID (legacy-compatible).
-        res = await db.execute(
-            select(NativeRun).where(
-                or_(
-                    NativeRun.id == run_id,
-                    NativeRun.orchestration_run_id == run_id,
-                )
-            )
-        )
-        run = res.scalars().first()
-        if run is None:
-            return _err_result(
-                "internal_error",
-                f"NativeRun '{run_id}' not found. CLI tools must be called from within an active run.",
             )
 
         # Build run_shell payload
@@ -160,32 +142,35 @@ async def dispatch_shell_command(
         if cwd:
             payload["cwd"] = cwd
 
-        # Create RunExecution
-        exc = RunExecution(
-            id=str(_uuid.uuid4()),
-            run_id=run.id,
+        # Create NativeRun unit directly from orchestration context.
+        native_run = await NativeRunService.create_run(
+            db=db,
+            user_id=user_id,
+            project_id=getattr(ctx, "project_id", None),
+            session_id=getattr(ctx, "session_id", None),
+            summary="cli.run_shell",
+            trace_id=getattr(ctx, "trace_id", None),
+            origin_type="integration.cli",
+            origin_id=run_id,
+            orchestration_run_id=run_id,
             kind="local.run_shell",
-            status="pending",
-            risk_level=risk_level,
             payload=payload,
+            risk_level=risk_level,
             target_device_id=resolved_device_id,
         )
-        db.add(exc)
-        await db.commit()
-        await db.refresh(exc)
 
         _cmd_preview = (cmd or " ".join(argv or []))[:80]
         logger.info(
             "cli_dispatch: user=%s run=%s exec=%s cmd=%r device=%s sync=%s",
-            user_id, run.id, exc.id, _cmd_preview, resolved_device_id, sync,
+            user_id, native_run.id, native_run.id, _cmd_preview, resolved_device_id, sync,
         )
 
         if not sync:
             return _ok_result(
                 f"Command queued for '{device_label}'.",
-                run_id=run.id,
-                execution_id=exc.id,
-                status=exc.status,
+                run_id=native_run.id,
+                execution_id=native_run.id,
+                status=native_run.status,
             )
 
         # Synchronous polling
@@ -194,15 +179,15 @@ async def dispatch_shell_command(
 
         while time.monotonic() < deadline:
             await asyncio.sleep(1.0)
-            await db.refresh(exc)
-            if exc.status in _TERMINAL_STATES:
+            await db.refresh(native_run)
+            if native_run.status in _TERMINAL_STATES:
                 break
-            if exc.status == "waiting_approval":
+            if native_run.status == "waiting_approval":
                 deadline = max(deadline, time.monotonic() + 300)
 
         # Map final status to response
-        if exc.status == "succeeded":
-            raw = exc.result or {}
+        if native_run.status == "succeeded":
+            raw = native_run.result or {}
             stdout: str = raw.get("stdout", "")
             stderr: str = raw.get("stderr", "")
             exit_code: int = raw.get("exit_code", 0)
@@ -212,47 +197,47 @@ async def dispatch_shell_command(
                 return _err_result(
                     category,
                     f"Command exited {exit_code}: {stderr.strip() or stdout.strip()}",
-                    run_id=run.id,
-                    execution_id=exc.id,
+                    run_id=native_run.id,
+                    execution_id=native_run.id,
                     raw=raw,
                 )
 
             return _ok_result(
                 stdout.strip() or "Command completed.",
-                run_id=run.id,
-                execution_id=exc.id,
+                run_id=native_run.id,
+                execution_id=native_run.id,
                 raw=raw,
             )
 
-        if exc.status == "failed":
+        if native_run.status == "failed":
             return _err_result(
                 "internal_error",
-                exc.error_log or "Execution failed.",
-                run_id=run.id,
-                execution_id=exc.id,
+                native_run.error_log or "Execution failed.",
+                run_id=native_run.id,
+                execution_id=native_run.id,
             )
 
-        if exc.status == "rejected":
+        if native_run.status == "rejected":
             return _err_result(
                 "permission_denied",
                 "Execution was rejected by the user.",
-                run_id=run.id,
-                execution_id=exc.id,
+                run_id=native_run.id,
+                execution_id=native_run.id,
             )
 
-        if exc.status == "waiting_approval":
+        if native_run.status == "waiting_approval":
             return _err_result(
                 "approval_required",
                 "Execution is waiting for user approval in the Run Center.",
-                run_id=run.id,
-                execution_id=exc.id,
+                run_id=native_run.id,
+                execution_id=native_run.id,
             )
 
         return _err_result(
             "timeout",
-            f"Execution timed out after {timeout}s (status={exc.status}).",
-            run_id=run.id,
-            execution_id=exc.id,
+            f"Execution timed out after {timeout}s (status={native_run.status}).",
+            run_id=native_run.id,
+            execution_id=native_run.id,
         )
 
     except Exception as e:
@@ -276,14 +261,14 @@ async def dispatch_shell_command_async(
     extra_payload: dict | None = None,
     job_extra_input: dict | None = None,
 ) -> ToolResult:
-    """Create a RunExecution + LongRunningJob and return immediately with job_id.
+    """Create a NativeRun + LongRunningJob and return immediately with job_id.
 
     The background handler ``cli.run_shell`` (CliShellHandler) will poll the
-    RunExecution and update the job to completed/failed when the daemon finishes.
+    NativeRun and update the job to completed/failed when the daemon finishes.
 
     Returns a ToolResult with::
         job_id:       str  — use with codex_job_status / codex_job_cancel
-        execution_id: str  — RunExecution ID
+        execution_id: str  — NativeRun ID
         run_id:       str  — NativeRun ID
         status:       "queued"
     """
@@ -301,9 +286,7 @@ async def dispatch_shell_command_async(
     user_id = ctx.user_id
 
     try:
-        from sqlalchemy import or_, select
-        from shared.database import NativeRun, RunExecution
-        import uuid as _uuid
+        from domains.native.run_service import NativeRunService
 
         # Resolve device
         resolved_device_id, device_label = await _resolve_device(db, user_id, device_id)
@@ -311,22 +294,6 @@ async def dispatch_shell_command_async(
             return _err_result(
                 "internal_error",
                 f"Device '{device_id}' not found or is disabled.",
-            )
-
-        # Resolve NativeRun by native ID or orchestration ID (legacy-compatible).
-        res = await db.execute(
-            select(NativeRun).where(
-                or_(
-                    NativeRun.id == run_id,
-                    NativeRun.orchestration_run_id == run_id,
-                )
-            )
-        )
-        run = res.scalars().first()
-        if run is None:
-            return _err_result(
-                "internal_error",
-                f"NativeRun '{run_id}' not found.",
             )
 
         # Build run_shell payload
@@ -342,24 +309,27 @@ async def dispatch_shell_command_async(
         if extra_payload:
             payload.update(extra_payload)
 
-        # Create RunExecution (no timeout in payload — handler manages deadline)
-        exc = RunExecution(
-            id=str(_uuid.uuid4()),
-            run_id=run.id,
+        # Create NativeRun (no hard timeout handling here; handler manages deadline)
+        native_run = await NativeRunService.create_run(
+            db=db,
+            user_id=user_id,
+            project_id=getattr(ctx, "project_id", None),
+            session_id=getattr(ctx, "session_id", None),
+            summary="cli.run_shell.async",
+            trace_id=getattr(ctx, "trace_id", None),
+            origin_type="integration.cli",
+            origin_id=run_id,
+            orchestration_run_id=run_id,
             kind="local.run_shell",
-            status="pending",
-            risk_level=risk_level,
             payload=payload,
+            risk_level=risk_level,
             target_device_id=resolved_device_id,
         )
-        db.add(exc)
-        await db.commit()
-        await db.refresh(exc)
 
         _cmd_preview = (cmd or " ".join(argv or []))[:80]
         logger.info(
             "cli_dispatch_async: user=%s run=%s exec=%s cmd=%r device=%s",
-            user_id, run.id, exc.id, _cmd_preview, resolved_device_id,
+            user_id, native_run.id, native_run.id, _cmd_preview, resolved_device_id,
         )
 
         # Create LongRunningJob that the background handler will drive
@@ -370,20 +340,20 @@ async def dispatch_shell_command_async(
             tool_name=tool_name,
             job_kind="cli.run_shell",
             input_payload={
-                "execution_id": exc.id,
-                "run_id": run.id,
+                "execution_id": native_run.id,
+                "run_id": native_run.id,
                 **(job_extra_input or {}),
             },
-            trace_id=getattr(run, "trace_id", None),
+            trace_id=getattr(native_run, "trace_id", None),
             origin_type="native_execution",
-            origin_id=exc.id,
+            origin_id=native_run.id,
         )
 
         return _ok_result(
             f"Task queued for '{device_label}'. Poll job_id to check progress.",
             job_id=job.id,
-            execution_id=exc.id,
-            run_id=run.id,
+            execution_id=native_run.id,
+            run_id=native_run.id,
             status="queued",
         )
 

@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import json
 import sys
 import os
@@ -82,7 +82,7 @@ class Worker:
         #     await init_skills()
         #     print("Skills: Registered skills synced.")
         # except Exception as se:
-        #     print(f"笞・・Skill sync failed: {se}")
+        #     print(f"Skill sync failed: {se}")
 
         print("Worker started. Waiting for tasks...")
 
@@ -292,7 +292,7 @@ class Worker:
             # Guard: don't overwrite "cancelled" if cooperative cancel fired
             current_task_status = await self.manager.get_status(task_id)
             if current_task_status and current_task_status.get("status") == "cancelled":
-                print(f"Worker: Task {task_id} was cancelled 窶・skipping completion.")
+                print(f"Worker: Task {task_id} was cancelled; skipping completion.")
                 return
             await self.manager.update_status(task_id, "completed", result, phase="Completed", step="Done")
             if task_id:
@@ -370,7 +370,7 @@ class Worker:
                 await db_session.commit()
 
         if not session_id:
-            # Fallback priority: is_default last_message_at DESC 竊・created_at DESC
+            # Fallback priority: is_default, last_message_at DESC, then created_at DESC
             sess_res = await db_session.execute(
                 select(ChatSession).filter(
                     ChatSession.project_id == project_id,
@@ -515,7 +515,7 @@ class Worker:
                 pass
 
         # 8. Start the run asynchronously so the engine-issued run_id is
-        #    available before completion 窶・required for cancel API support.
+        #    available before completion, required for cancel API support.
         init_response = await engine.execute_run(
             message=user_msg,
             agent_id=agent_id,
@@ -525,33 +525,10 @@ class Worker:
         )
         run_id = init_response.run_id
 
-        # Store task_id 竊・run_id mapping so the cancel endpoint can update
+        # Store task_id -> run_id mapping so the cancel endpoint can update
         # the orchestration run in DB as part of Layer B cancellation.
         if task_id:
             await self.manager.set_run_for_task(task_id, run_id)
-
-        # Create NativeRun projection (best-effort)
-        native_run_id = None
-        try:
-            from domains.native.run_service import NativeRunService
-            created_run = await NativeRunService.create_run_from_orchestration(
-                db_session,
-                run_id=run_id,
-                user_id=user_id,
-                project_id=project_id,
-                session_id=session_id,
-                summary=message[:120] if message else "",
-                trace_id=trace_id,
-                origin_type=origin_type,
-                origin_id=origin_id,
-            )
-            await db_session.commit()   # ensure it's visible to daemon / other sessions
-            native_run_id = created_run.id
-        except Exception as _e:
-            import logging as _logging
-            _logging.getLogger(__name__).warning(
-                "NativeRun projection failed (non-fatal): %s", _e
-            )
 
         # 9. Wait for the run to complete (CancelledError propagates cleanly)
         run_response = await engine.wait_response(run_id)
@@ -560,23 +537,6 @@ class Worker:
             f"error={getattr(run_response, 'error', None)!r} "
             f"has_message={bool(getattr(run_response, 'message', None))}"
         )
-
-        # Update NativeRun status to reflect completion (best-effort)
-        if native_run_id:
-            try:
-                _orch_error = getattr(run_response, "error", None) or ""
-                _final_status = (
-                    "canceled" if _orch_error in ("Cancelled by user", "cancelled")
-                    else "completed" if run_response.completed
-                    else "failed"
-                )
-                from domains.native.run_service import NativeRunService
-                await NativeRunService.finish_run(db_session, native_run_id, _final_status)
-            except Exception as _e2:
-                import logging as _logging2
-                _logging2.getLogger(__name__).warning(
-                    "NativeRun finish failed (non-fatal): %s", _e2
-                )
 
         # 10. Extract response text
         response_text = ""
@@ -762,5 +722,3 @@ class Worker:
 if __name__ == "__main__":
     my_worker = Worker()
     asyncio.run(my_worker.run())
-
-

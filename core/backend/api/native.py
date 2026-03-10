@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+﻿from fastapi import APIRouter, Depends, HTTPException, Query
 import logging
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from datetime import datetime
 
 from shared.database import (
-    get_async_db, NativeRun, RunExecution, RunApproval,
+    get_async_db, NativeRun, NativeExecution, RunApproval,
     IntegrationConnection, AutomationRule, NativeDevice,
 )
 from domains.native.run_service import NativeRunService
@@ -20,7 +20,7 @@ runs_router = APIRouter(prefix="/api/native-runs", tags=["Runs"])
 native_router = APIRouter(prefix="/api/native", tags=["Native"])
 
 
-# ─── Pydantic schemas ─────────────────────────────────────────────────────────
+# Pydantic schemas
 
 class DeviceRegister(BaseModel):
     display_name: str
@@ -85,7 +85,7 @@ class RuleResponse(BaseModel):
     created_at: str
 
 
-# ─── Run Center schemas ───────────────────────────────────────────────────────
+# Run schemas
 
 class RunCreate(BaseModel):
     project_id: Optional[str] = None
@@ -118,7 +118,6 @@ class ExecutionUpdate(BaseModel):
 class ApprovalResponse(BaseModel):
     id: str
     execution_id: str
-    run_id: str
     status: str
     reason: Optional[str]
     requested_at: str
@@ -163,13 +162,12 @@ class RunResponse(BaseModel):
     executions: List[ExecutionResponse]
 
 
-# ─── Helper serializers ───────────────────────────────────────────────────────
+# Helper serializers
 
 def _approval_to_response(a: RunApproval) -> ApprovalResponse:
     return ApprovalResponse(
         id=a.id,
         execution_id=a.execution_id,
-        run_id=a.run_id,
         status=a.status,
         reason=a.reason,
         requested_at=a.requested_at.isoformat(),
@@ -178,15 +176,11 @@ def _approval_to_response(a: RunApproval) -> ApprovalResponse:
     )
 
 
-def _exec_to_response(e: RunExecution) -> ExecutionResponse:
-    # Avoid triggering implicit lazy-loads in async context.
-    # If relationship attributes were not explicitly preloaded, treat as empty.
-    approvals_loaded = e.__dict__.get("approvals")
-    approvals = approvals_loaded if isinstance(approvals_loaded, list) else []
-
+def _exec_to_response(e: NativeRun, approvals: Optional[List[RunApproval]] = None) -> ExecutionResponse:
+    resolved_approvals = approvals or []
     return ExecutionResponse(
         id=e.id,
-        run_id=e.run_id,
+        run_id=e.id,
         kind=e.kind,
         status=e.status,
         risk_level=e.risk_level,
@@ -199,32 +193,58 @@ def _exec_to_response(e: RunExecution) -> ExecutionResponse:
         finished_at=e.finished_at.isoformat() if e.finished_at else None,
         created_at=e.created_at.isoformat(),
         updated_at=e.updated_at.isoformat() if e.updated_at else None,
-        approvals=[_approval_to_response(a) for a in approvals],
+        approvals=[_approval_to_response(a) for a in resolved_approvals],
     )
 
 
-def _run_to_response(r: NativeRun) -> RunResponse:
-    # Avoid implicit lazy-load of run.executions under AsyncSession.
-    executions_loaded = r.__dict__.get("executions")
-    executions = executions_loaded if isinstance(executions_loaded, list) else []
+def _log_to_response(log: NativeExecution, run: NativeRun, approvals: Optional[List[RunApproval]] = None) -> ExecutionResponse:
+    payload = dict(log.payload or {})
+    return ExecutionResponse(
+        id=log.id,
+        run_id=run.id,
+        kind=(payload.get("kind") if isinstance(payload, dict) else None) or run.kind,
+        status=log.status,
+        risk_level=run.risk_level,
+        payload=payload,
+        result=log.result,
+        error_log=log.error_log,
+        target_device_id=run.target_device_id,
+        claimed_by_device_id=run.claimed_by_device_id,
+        started_at=run.started_at.isoformat() if run.started_at else None,
+        finished_at=run.finished_at.isoformat() if run.finished_at else None,
+        created_at=log.created_at.isoformat(),
+        updated_at=None,
+        approvals=[_approval_to_response(a) for a in (approvals or [])],
+    )
+
+
+def _run_to_response(r: NativeRun, executions: Optional[List[NativeExecution]] = None, approvals: Optional[List[RunApproval]] = None) -> RunResponse:
+    run_logs = executions or []
+    run_result = dict(r.result or {})
+    summary = run_result.get("summary")
+    agent_id = run_result.get("agent_id")
+    execution_responses: List[ExecutionResponse] = []
+    for idx, log in enumerate(run_logs):
+        log_approvals = approvals if idx == len(run_logs) - 1 else []
+        execution_responses.append(_log_to_response(log, r, approvals=log_approvals))
 
     return RunResponse(
         id=r.id,
         orchestration_run_id=r.orchestration_run_id,
-        user_id=r.user_id,
+        user_id=r.user_id or "",
         project_id=r.project_id,
-        agent_id=r.agent_id,
+        agent_id=agent_id,
         session_id=r.session_id,
         trace_id=r.trace_id,
         origin_type=r.origin_type,
         origin_id=r.origin_id,
         status=r.status,
-        summary=r.summary,
+        summary=summary,
         started_at=r.started_at.isoformat() if r.started_at else None,
         finished_at=r.finished_at.isoformat() if r.finished_at else None,
-        created_at=r.created_at.isoformat(),
+        created_at=r.created_at.isoformat() if r.created_at else datetime.utcnow().isoformat(),
         updated_at=r.updated_at.isoformat() if r.updated_at else None,
-        executions=[_exec_to_response(e) for e in executions],
+        executions=execution_responses,
     )
 
 
@@ -243,7 +263,7 @@ def _device_to_response(d: NativeDevice) -> DeviceResponse:
     )
 
 
-# ─── Runs endpoints ───────────────────────────────────────────────────────────
+# Run endpoints
 
 @runs_router.post("", response_model=RunResponse)
 async def create_run(
@@ -262,7 +282,9 @@ async def create_run(
         origin_type=body.origin_type or "native_api",
         origin_id=body.origin_id,
     )
-    return _run_to_response(run)
+    execs = await NativeRunService.list_executions(db, run.id)
+    approvals = await NativeRunService.list_approvals_for_run(db, run.id)
+    return _run_to_response(run, execs, approvals=approvals)
 
 
 @runs_router.get("", response_model=List[RunResponse])
@@ -278,7 +300,12 @@ async def list_runs(
         status=status,
         limit=limit,
     )
-    return [_run_to_response(r) for r in runs]
+    out: List[RunResponse] = []
+    for run in runs:
+        execs = await NativeRunService.list_executions(db, run.id)
+        approvals = await NativeRunService.list_approvals_for_run(db, run.id)
+        out.append(_run_to_response(run, execs, approvals=approvals))
+    return out
 
 
 # NOTE: /pull, /cancel, /retry, and /executions/{exec_id}/claim must appear
@@ -293,15 +320,16 @@ async def cancel_run(
     """Cancel a run and all its non-terminal executions."""
     try:
         run = await NativeRunService.cancel_run(db=db, run_id=run_id, user_id=identity.user_id)
-        return _run_to_response(run)
+        execs = await NativeRunService.list_executions(db, run.id)
+        approvals = await NativeRunService.list_approvals_for_run(db, run.id)
+        return _run_to_response(run, execs, approvals=approvals)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@runs_router.post("/{run_id}/executions/{exec_id}/retry", response_model=ExecutionResponse)
+@runs_router.post("/{run_id}/retry", response_model=ExecutionResponse)
 async def retry_execution(
     run_id: str,
-    exec_id: str,
     db: AsyncSession = Depends(get_async_db),
     identity: Identity = Depends(resolve_identity),
 ):
@@ -310,7 +338,7 @@ async def retry_execution(
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     try:
-        new_exec = await NativeRunService.retry_execution(db=db, run_id=run.id, exec_id=exec_id)
+        new_exec = await NativeRunService.retry_execution(db=db, run_id=run.id, exec_id=run.id)
         return _exec_to_response(new_exec)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -335,13 +363,13 @@ async def pull_executions_for_device(
             raise HTTPException(status_code=403, detail="Device not found or not owned by user")
 
         stmt = (
-            select(RunExecution)
-            .where(RunExecution.status == "pending")
+            select(NativeRun)
+            .where(NativeRun.status == "pending")
             .where(
-                (RunExecution.target_device_id == device_id) |
-                (RunExecution.target_device_id == None)  # noqa: E711
+                (NativeRun.target_device_id == device_id) |
+                (NativeRun.target_device_id == None)  # noqa: E711
             )
-            .order_by(RunExecution.created_at.asc())
+            .order_by(NativeRun.created_at.asc())
             .limit(limit)
         )
         result = await db.execute(stmt)
@@ -384,7 +412,7 @@ async def _require_device_owns_exec(
     exec_id: str,
     device_id: str,
     user_id: str,
-) -> RunExecution:
+) -> NativeRun:
     """Verify the device belongs to the user and has claimed the execution."""
     res = await db.execute(
         select(NativeDevice).where(
@@ -395,9 +423,9 @@ async def _require_device_owns_exec(
     if not res.scalars().first():
         raise HTTPException(status_code=403, detail="Device not found or not owned by user")
     res = await db.execute(
-        select(RunExecution).where(
-            RunExecution.id == exec_id,
-            RunExecution.claimed_by_device_id == device_id,
+        select(NativeRun).where(
+            NativeRun.id == exec_id,
+            NativeRun.claimed_by_device_id == device_id,
         )
     )
     exc = res.scalars().first()
@@ -410,13 +438,13 @@ async def _require_user_owns_exec(
     db: AsyncSession,
     exec_id: str,
     user_id: str,
-) -> RunExecution:
-    """Verify the execution's parent NativeRun belongs to the user."""
-    from shared.database import NativeRun
+) -> NativeRun:
+    """Verify the execution belongs to the user."""
     res = await db.execute(
-        select(RunExecution)
-        .join(NativeRun, NativeRun.id == RunExecution.run_id)
-        .where(RunExecution.id == exec_id, NativeRun.user_id == user_id)
+        select(NativeRun).where(
+            NativeRun.id == exec_id,
+            NativeRun.user_id == user_id,
+        )
     )
     exc = res.scalars().first()
     if not exc:
@@ -487,12 +515,12 @@ async def claim_execution(
 
     # Atomic claim: update only if still pending and claimable by this device.
     claim_result = await db.execute(
-        update(RunExecution)
+        update(NativeRun)
         .where(
-            RunExecution.id == exec_id,
-            RunExecution.status == "pending",
-            ((RunExecution.target_device_id == device_id) | (RunExecution.target_device_id == None)),  # noqa: E711
-            ((RunExecution.claimed_by_device_id == None) | (RunExecution.claimed_by_device_id == device_id)),  # noqa: E711
+            NativeRun.id == exec_id,
+            NativeRun.status == "pending",
+            ((NativeRun.target_device_id == device_id) | (NativeRun.target_device_id == None)),  # noqa: E711
+            ((NativeRun.claimed_by_device_id == None) | (NativeRun.claimed_by_device_id == device_id)),  # noqa: E711
         )
         .values(
             claimed_by_device_id=device_id,
@@ -503,7 +531,7 @@ async def claim_execution(
 
     if not claim_result.rowcount:
         # Build a precise error message for callers.
-        res = await db.execute(select(RunExecution).where(RunExecution.id == exec_id))
+        res = await db.execute(select(NativeRun).where(NativeRun.id == exec_id))
         exc = res.scalars().first()
         if not exc:
             raise HTTPException(status_code=404, detail="Execution not found")
@@ -515,28 +543,12 @@ async def claim_execution(
             raise HTTPException(status_code=409, detail="Execution already claimed by another device")
         raise HTTPException(status_code=409, detail="Execution claim conflict")
 
-    res = await db.execute(select(RunExecution).where(RunExecution.id == exec_id))
+    res = await db.execute(select(NativeRun).where(NativeRun.id == exec_id))
     exc = res.scalars().first()
     if not exc:
         raise HTTPException(status_code=404, detail="Execution not found after claim")
     logger.info("execution.claimed device=%s exec=%s", device_id, exec_id)
     return _exec_to_response(exc)
-
-
-@runs_router.get("/by-orchestration/{orchestration_run_id}", response_model=RunResponse)
-async def get_run_by_orchestration_run_id(
-    orchestration_run_id: str,
-    db: AsyncSession = Depends(get_async_db),
-    identity: Identity = Depends(resolve_identity),
-):
-    run = await NativeRunService.get_native_run_by_orchestration_run_id(
-        db,
-        orchestration_run_id=orchestration_run_id,
-        user_id=identity.user_id,
-    )
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
-    return _run_to_response(run)
 
 
 @runs_router.get("/{run_id}", response_model=RunResponse)
@@ -548,7 +560,9 @@ async def get_run(
     run = await NativeRunService.get_run(db, run_id, identity.user_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-    return _run_to_response(run)
+    execs = await NativeRunService.list_executions(db, run.id)
+    approvals = await NativeRunService.list_approvals_for_run(db, run.id)
+    return _run_to_response(run, execs, approvals=approvals)
 
 
 @runs_router.patch("/{run_id}", response_model=RunResponse)
@@ -566,7 +580,9 @@ async def update_run(
             status=body.status,
             summary=body.summary,
         )
-        return _run_to_response(run)
+        execs = await NativeRunService.list_executions(db, run.id)
+        approvals = await NativeRunService.list_approvals_for_run(db, run.id)
+        return _run_to_response(run, execs, approvals=approvals)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -589,35 +605,18 @@ async def add_execution(
         risk_level=body.risk_level,
         target_device_id=body.target_device_id,
     )
-    return _exec_to_response(exc)
+    approvals = await NativeRunService.list_approvals_for_run(db, run.id)
+    return _log_to_response(exc, run, approvals=approvals)
 
 
-@runs_router.get("/{run_id}/executions/{exec_id}", response_model=ExecutionResponse)
-async def get_execution(
+@runs_router.patch("/{run_id}/status", response_model=ExecutionResponse)
+async def update_execution_status(
     run_id: str,
-    exec_id: str,
-    db: AsyncSession = Depends(get_async_db),
-    identity: Identity = Depends(resolve_identity),
-):
-    """Get a single execution  Eused by daemon to poll approval status."""
-    run = await NativeRunService.get_run(db, run_id, identity.user_id)
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
-    exc = await NativeRunService.get_execution(db, exec_id)
-    if not exc or exc.run_id != run.id:
-        raise HTTPException(status_code=404, detail="Execution not found")
-    return _exec_to_response(exc)
-
-
-@runs_router.patch("/{run_id}/executions/{exec_id}", response_model=ExecutionResponse)
-async def update_execution(
-    run_id: str,
-    exec_id: str,
     body: ExecutionUpdate,
     db: AsyncSession = Depends(get_async_db),
     identity: Identity = Depends(resolve_identity),
 ):
-    """Update execution status. Setting waiting_approval auto-creates a RunApproval."""
+    """Daemon endpoint: update run status. Setting waiting_approval auto-creates a RunApproval."""
     run = await NativeRunService.get_run(db, run_id, identity.user_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -625,7 +624,7 @@ async def update_execution(
     try:
         exc = await NativeRunService.update_execution_status(
             db=db,
-            exec_id=exec_id,
+            exec_id=run_id,
             status=body.status,
             result=body.result,
             error_log=body.error_log,
@@ -633,29 +632,15 @@ async def update_execution(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-    if exc.run_id != run.id:
-        raise HTTPException(status_code=404, detail="Execution not found")
-
     # Auto-create RunApproval when daemon signals waiting_approval
     if body.status == "waiting_approval":
         reason = (body.result or {}).get("approval_reason")
-        await NativeRunService.request_approval(db, exec_id, run.id, reason=reason)
+        await NativeRunService.request_approval(db, run_id, reason=reason)
         if run.status not in ("waiting_approval", "completed", "failed", "canceled"):
             await NativeRunService.update_run_status(db, run.id, identity.user_id, "waiting_approval")
 
-    elif body.status in ("succeeded", "failed", "rejected"):
-        # Auto-complete run when all executions reach terminal state
-        execs = await NativeRunService.list_executions(db, run.id)
-        terminal = {"succeeded", "failed", "rejected"}
-        if all(e.status in terminal for e in execs):
-            any_failed = any(e.status in ("failed", "rejected") for e in execs)
-            await NativeRunService.update_run_status(
-                db, run.id, identity.user_id,
-                "failed" if any_failed else "completed",
-            )
-
     # Refresh to pick up updated approvals
-    exc = await NativeRunService.get_execution(db, exec_id)
+    exc = await NativeRunService.get_execution(db, run_id)
     return _exec_to_response(exc)
 
 
@@ -705,7 +690,7 @@ async def reject_execution(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-# ─── Device management endpoints ─────────────────────────────────────────────
+# Device management endpoints
 
 _STALE_THRESHOLD_SECONDS = 60
 
@@ -845,8 +830,8 @@ async def delete_device(
         
     # Clear the target_device_id on any associated run executions to avoid FK constraint errors
     await db.execute(
-        update(RunExecution)
-        .where(RunExecution.target_device_id == device_id)
+        update(NativeRun)
+        .where(NativeRun.target_device_id == device_id)
         .values(target_device_id=None)
     )
         
@@ -854,7 +839,7 @@ async def delete_device(
     await db.commit()
 
 
-# ─── Native integrations endpoints ───────────────────────────────────────────
+# Native integrations endpoints
 
 @native_router.get("/integrations", response_model=List[IntegrationResponse])
 async def list_integrations(
@@ -924,7 +909,7 @@ async def create_integration(
     )
 
 
-# ─── Automation rules endpoints ───────────────────────────────────────────────
+# Automation rules endpoints
 
 @native_router.get("/rules", response_model=List[RuleResponse])
 async def list_rules(
@@ -1000,4 +985,10 @@ async def create_rule(
         is_active=rule.is_active,
         created_at=rule.created_at.isoformat(),
     )
+
+
+
+
+
+
 

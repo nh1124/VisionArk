@@ -852,7 +852,7 @@ class MCPServerConfig(Base):
 
 
 class ToolRegistry(Base):
-    """Per-user tool registry — stores all known tools (core, integration, upload)."""
+    """Per-user tool registry that stores all known tools (core, integration, upload)."""
     __tablename__ = "tool_registry"
 
     id = Column(String(36), primary_key=True)               # UUID
@@ -985,46 +985,17 @@ class NativeDevice(Base):
     updated_at     = Column(DateTime, onupdate=datetime.utcnow)
 
 
-# ### Run Center: Native Runs / Executions / Approvals ###
-# Run-centric model (レポート§3.2 仕様案):
-#   NativeRun … 1回のネイティブ実行セッション（主）
-#   RunExecution … Runの中で発生した実行イベント（旧Job相当、後述）
-#   RunApproval … Executionに紐づく承認依頼（後述）
-
 class NativeRun(Base):
-    """Native Run projection for operational run-center workflows."""
+    """Native local execution unit dispatched to a device."""
     __tablename__ = "native_runs"
-    id          = Column(
-        String(36),
-        primary_key=True,
-    )
-    orchestration_run_id = Column(
-        String(36),
-        ForeignKey("orchestration_runs.run_id"),
-        nullable=True,
-        index=True,
-    )
-    user_id     = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
-    project_id  = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
-    agent_id    = Column(String(36), nullable=True)
-    session_id  = Column(String(36), nullable=True)
-    trace_id    = Column(String(64), nullable=True, index=True)
-    origin_type = Column(String(50), nullable=True, index=True)
-    origin_id   = Column(String(100), nullable=True, index=True)
-    # queued | running | waiting_approval | completed | failed | canceled
-    status      = Column(String(30), default="queued", index=True)
-    summary     = Column(Text, nullable=True)
-    started_at  = Column(DateTime, nullable=True)
-    finished_at = Column(DateTime, nullable=True)
-    created_at  = Column(DateTime, default=datetime.utcnow)
-    updated_at  = Column(DateTime, onupdate=datetime.utcnow)
-
-
-class RunExecution(Base):
-    """Run Execution — Run 内で発生した実行イベント（旧 Job 相当）"""
-    __tablename__ = "run_executions"
     id               = Column(String(36), primary_key=True)
-    run_id           = Column(String(36), ForeignKey("native_runs.id"), nullable=False, index=True)
+    orchestration_run_id = Column(String(36), ForeignKey("orchestration_runs.run_id"), nullable=True, index=True)
+    user_id          = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
+    project_id       = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
+    session_id       = Column(String(36), ForeignKey("chat_sessions.id"), nullable=True, index=True)
+    trace_id         = Column(String(64), nullable=True, index=True)
+    origin_type      = Column(String(50), nullable=True, index=True)
+    origin_id        = Column(String(100), nullable=True, index=True)
     # local.file | local.dev | local.shell | integration.* | web.*
     kind             = Column(String(100), nullable=False)
     # pending | running | waiting_approval | succeeded | failed | rejected
@@ -1044,15 +1015,27 @@ class RunExecution(Base):
     updated_at       = Column(DateTime, onupdate=datetime.utcnow)
 
 
+class NativeExecution(Base):
+    """Native execution log entry for a NativeRun lifecycle."""
+    __tablename__ = "native_executions"
+    id             = Column(String(36), primary_key=True)
+    native_run_id  = Column(String(36), ForeignKey("native_runs.id"), nullable=False, index=True)
+    status         = Column(String(30), nullable=False, index=True)
+    event_type     = Column(String(50), nullable=False, default="status")
+    payload        = Column(JSON, default=dict)
+    result         = Column(JSON, nullable=True)
+    error_log      = Column(Text, nullable=True)
+    created_at     = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 class RunApproval(Base):
-    """Run Approval — Execution に紐づく承認依頼"""
+    """Approval request associated with a run execution."""
     __tablename__ = "run_approvals"
     id           = Column(String(36), primary_key=True)
-    execution_id = Column(String(36), ForeignKey("run_executions.id"), nullable=False, index=True)
-    run_id       = Column(String(36), ForeignKey("native_runs.id"), nullable=False, index=True)
+    execution_id = Column(String(36), ForeignKey("native_runs.id"), nullable=False, index=True)
     # pending | approved | rejected
     status       = Column(String(20), default="pending", index=True)
-    reason       = Column(Text, nullable=True)          # 承認依頼の理由（ステップ説明等）
+    reason       = Column(Text, nullable=True)          # Human-readable approval reason.
     requested_at = Column(DateTime, default=datetime.utcnow)
     decided_at   = Column(DateTime, nullable=True)
     decided_by   = Column(String(36), nullable=True)    # user_id
@@ -1186,6 +1169,12 @@ def init_database(database_url: str = None):
             conn.execute(text("ALTER TABLE agent_runs RENAME TO native_runs"))
             print("[INFO] Pre-migration: Renamed agent_runs -> native_runs")
 
+    # Pre-migration: rename run_executions -> native_runs (NativeRun tablename correction).
+    if 'run_executions' in existing_tables and 'native_runs' not in existing_tables:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE run_executions RENAME TO native_runs"))
+            print("[INFO] Pre-migration: Renamed run_executions -> native_runs")
+
     Base.metadata.create_all(engine)
     
     # 3. Run schema migrations for existing tables
@@ -1195,664 +1184,25 @@ def init_database(database_url: str = None):
 
 
 def _run_migrations(engine):
-    """Run schema migrations to update existing tables"""
+    """Run incremental schema migrations for existing databases."""
     from sqlalchemy import text, inspect
-    
     inspector = inspect(engine)
-    
-    # Migration: Ensure service_registry has all credential/config columns used by ORM
-    if 'service_registry' in inspector.get_table_names():
-        columns = {col['name'] for col in inspector.get_columns('service_registry')}
-        service_registry_missing_columns = [
-            ("access_token_encrypted", "TEXT"),
-            ("refresh_token_encrypted", "TEXT"),
-            ("remote_user_id", "VARCHAR(100)"),
-            ("config", "JSON"),
-        ]
-        for col_name, col_type in service_registry_missing_columns:
-            if col_name not in columns:
-                with engine.connect() as conn:
-                    conn.execute(
-                        text(f"ALTER TABLE service_registry ADD COLUMN {col_name} {col_type}")
-                    )
-                    conn.commit()
-                print(f"[INFO] Migration: Added {col_name} column to service_registry")
-    
-    # Migration: Add directory and is_directory columns to uploaded_files if missing
-    if 'uploaded_files' in inspector.get_table_names():
-        columns = [col['name'] for col in inspector.get_columns('uploaded_files')]
-        if 'directory' not in columns:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE uploaded_files ADD COLUMN directory VARCHAR(50)"))
-                # Default existing ones to 'refs' if they look like they belong there
-                conn.execute(text("UPDATE uploaded_files SET directory = 'refs' WHERE directory IS NULL"))
-                conn.commit()
-                print("[OK] Migration: Added directory column to uploaded_files")
-        
-        if 'is_directory' not in columns:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE uploaded_files ADD COLUMN is_directory BOOLEAN DEFAULT FALSE"))
-                conn.commit()
-                print("[OK] Migration: Added is_directory column to uploaded_files")
+    existing_tables = inspector.get_table_names()
 
-    # Migration: Add streaming columns to run_executions if missing
-    if 'run_executions' in inspector.get_table_names():
-        columns = [col['name'] for col in inspector.get_columns('run_executions')]
-        if 'partial_stdout' not in columns:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE run_executions ADD COLUMN partial_stdout TEXT"))
-                conn.commit()
-                print("[OK] Migration: Added partial_stdout to run_executions")
-        if 'stdin_queue' not in columns:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE run_executions ADD COLUMN stdin_queue JSON"))
-                conn.commit()
-                print("[OK] Migration: Added stdin_queue to run_executions")
-    pass
-
-
-    # Migration: Add role_name, display_name, tools to agent_profiles if missing
-    if 'agent_profiles' in inspector.get_table_names():
-        columns = [col['name'] for col in inspector.get_columns('agent_profiles')]
-        if 'role_name' not in columns:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE agent_profiles ADD COLUMN role_name VARCHAR(50)"))
-                conn.execute(text("ALTER TABLE agent_profiles ADD COLUMN display_name VARCHAR(200)"))
-                conn.execute(text("ALTER TABLE agent_profiles ADD COLUMN tools JSON"))
-                conn.commit()
-                print("[INFO] Migration: Added role_name, display_name, and tools columns to agent_profiles")
-
-    # Migration: Add description to project_agents if missing
-    if 'project_agents' in inspector.get_table_names():
-        columns = [col['name'] for col in inspector.get_columns('project_agents')]
-        if 'description' not in columns:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE project_agents ADD COLUMN description VARCHAR(500)"))
-                conn.commit()
-                print("[INFO] Migration: Added description column to project_agents")
-
-    # Migration: Add meta_payload to project_agents if missing
-    if 'project_agents' in inspector.get_table_names():
-        columns = [col['name'] for col in inspector.get_columns('project_agents')]
-        if 'meta_payload' not in columns:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE project_agents ADD COLUMN meta_payload JSON"))
-                conn.commit()
-                print("[INFO] Migration: Added meta_payload column to project_agents")
-    # Migration: Rename project_name/source_project to project_id in multiple tables
-    for table, old_col, new_col in [
-        ('rag_metadata', 'project_name', 'project_id'),
-        ('archived_contexts', 'project_name', 'project_id'),
-    ]:
-        if table in inspector.get_table_names():
-            columns = [col['name'] for col in inspector.get_columns(table)]
-            if old_col in columns and new_col not in columns:
-                with engine.connect() as conn:
-                    try:
-                        conn.execute(text(f"ALTER TABLE {table} RENAME COLUMN {old_col} TO {new_col}"))
-                        conn.commit()
-                        print(f"[INFO] Migration: Renamed {old_col} to {new_col} in {table}")
-                    except Exception as e:
-                        print(f"[ERROR] Migration: Failed to rename {old_col} to {new_col} in {table}: {str(e)}")
-    
-    # Migration: Add project_id to external_identities if missing
-    if 'external_identities' in inspector.get_table_names():
-        columns = [c['name'] for c in inspector.get_columns('external_identities')]
-        if 'project_id' not in columns:
-            with engine.connect() as conn:
-                try:
-                    conn.execute(text("ALTER TABLE external_identities ADD COLUMN project_id VARCHAR(36) REFERENCES projects(id)"))
-                    conn.commit()
-                    print("[INFO] Migration: Added project_id column to external_identities")
-                except Exception as e:
-                    print(f"[WARN] Migration failed for external_identities.project_id: {str(e)}")
-    # Migration: Add unique constraint uix_project_role to project_agents if missing
-    if 'project_agents' in inspector.get_table_names():
-        constraints = inspector.get_unique_constraints('project_agents')
-        if not any(c['name'] == 'uix_project_role' for c in constraints):
-            with engine.connect() as conn:
-                try:
-                    conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uix_project_role ON project_agents (COALESCE(project_id, 'SYSTEM'), role_name)"))
-                    conn.commit()
-                    print("[INFO] Migration: Added unique index uix_project_role to project_agents")
-                except Exception as e:
-                    print(f"[WARN] Migration failed for uix_project_role: {str(e)}")
-
-    # Migration: Initialize general_settings in user_settings if null
-    if 'user_settings' in inspector.get_table_names():
-        with engine.connect() as conn:
-            try:
-                # Initialize rows where general_settings is null
-                conn.execute(text(
-                    "UPDATE user_settings SET general_settings = '{\"language\": \"en\", \"timezone\": \"UTC\", \"location\": \"\"}' "
-                    "WHERE general_settings IS NULL OR general_settings::text = '{}'"
-                ))
-                conn.commit()
-                print("[INFO] Migration: Initialized general_settings in user_settings")
-            except Exception as e:
-                print(f"[WARN] Migration failed for user_settings initialization: {str(e)}")
-
-    # Migration: Increase Skill ID column lengths
-    if 'skills' in inspector.get_table_names():
-        columns = {col['name']: col for col in inspector.get_columns('skills')}
-        # Check if the 'id' column exists and if it's currently shorter than 100
-        # The type object from inspector might vary, but length is a common attribute for String/VARCHAR
+    # Drop run_approvals.run_id column (redundant with execution_id; was for orchestration tracing).
+    if 'run_approvals' in existing_tables:
         try:
-            current_length = columns['id']['type'].length
-            if current_length and current_length < 100:
-                with engine.connect() as conn:
-                    conn.execute(text("ALTER TABLE skills ALTER COLUMN id TYPE VARCHAR(100)"))
-                    if 'project_skills' in inspector.get_table_names():
-                        conn.execute(text("ALTER TABLE project_skills ALTER COLUMN skill_id TYPE VARCHAR(100)"))
-                    conn.commit()
-                    print("[OK] Migration: Increased Skill ID column lengths to 100")
-        except (AttributeError, KeyError) as e:
-            # Fallback if length attribute is missing or structure is different
-            print(f"[DEBUG] Migration check for Skill ID skipped or failed: {str(e)}")
-
-    # Migration: Update project_skills foreign key to use CASCADE delete
-    if 'project_skills' in inspector.get_table_names():
-        with engine.connect() as conn:
-            try:
-                conn.execute(text("""
-                    ALTER TABLE project_skills
-                    DROP CONSTRAINT IF EXISTS project_skills_skill_id_fkey,
-                    ADD CONSTRAINT project_skills_skill_id_fkey
-                    FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
-                """))
-                conn.commit()
-                print("[OK] Migration: Updated project_skills foreign key to CASCADE delete")
-            except Exception as e:
-                print(f"[WARN] Migration failed for project_skills cascade: {str(e)}")
-            
-    # Migration: Add tags column to notes if missing
-    if 'notes' in inspector.get_table_names():
-        columns = [col['name'] for col in inspector.get_columns('notes')]
-        if 'tags' not in columns:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE notes ADD COLUMN tags JSON DEFAULT '[]'"))
-                conn.commit()
-                print("[OK] Migration: Added tags column to notes")
-
-    # Migration: Add sub_message_id to tool_usages if missing
-    if 'tool_usages' in inspector.get_table_names():
-        columns = [col['name'] for col in inspector.get_columns('tool_usages')]
-        if 'sub_message_id' not in columns:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE tool_usages ADD COLUMN sub_message_id VARCHAR(36) REFERENCES chat_sub_messages(id)"))
-                conn.commit()
-                print("[OK] Migration: Added sub_message_id column to tool_usages")
-        
-        if 'arguments' in columns and 'args' not in columns:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE tool_usages RENAME COLUMN arguments TO args"))
-                conn.commit()
-                print("[OK] Migration: Renamed tool_usages.arguments to tool_usages.args")
-        elif 'args' not in columns:
-             # Just in case it's newly created but without args? Unlikely but safer.
-             with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE tool_usages ADD COLUMN args JSON"))
-                conn.commit()
-                print("[OK] Migration: Added args column to tool_usages")
-
-        if 'meta_payload' not in columns:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE tool_usages ADD COLUMN meta_payload JSON"))
-                conn.commit()
-                print("[OK] Migration: Added meta_payload column to tool_usages")
-
-        if 'call_id' not in columns:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE tool_usages ADD COLUMN call_id VARCHAR(100)"))
-                conn.commit()
-                print("[OK] Migration: Added call_id column to tool_usages")
-
-    # Migration: Add orchestration2 columns to chat_sub_messages
-    if 'chat_sub_messages' in inspector.get_table_names():
-        columns = [col['name'] for col in inspector.get_columns('chat_sub_messages')]
-        if 'kind' not in columns:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE chat_sub_messages ADD COLUMN kind VARCHAR(20)"))
-                conn.commit()
-                print("[OK] Migration: Added kind column to chat_sub_messages")
-        if 'run_id' not in columns:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE chat_sub_messages ADD COLUMN run_id VARCHAR(36)"))
-                conn.commit()
-                print("[OK] Migration: Added run_id column to chat_sub_messages")
-        if 'step_id' not in columns:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE chat_sub_messages ADD COLUMN step_id VARCHAR(36)"))
-                conn.commit()
-                print("[OK] Migration: Added step_id column to chat_sub_messages")
-
-    # Migration: Add new columns to orchestration_runs for state persistence
-    if 'orchestration_runs' in inspector.get_table_names():
-        columns = [col['name'] for col in inspector.get_columns('orchestration_runs')]
-        new_cols = {
-            'pending_approval_ids': "JSON DEFAULT '[]'",
-            'pending_delegation_ids': "JSON DEFAULT '[]'",
-            'history_json': "JSON",
-            'input_message_json': "JSON",
-            'output_message_json': "JSON",
-        }
-        for col_name, col_type in new_cols.items():
-            if col_name not in columns:
-                with engine.connect() as conn:
-                    conn.execute(text(f"ALTER TABLE orchestration_runs ADD COLUMN {col_name} {col_type}"))
-                    conn.commit()
-                    print(f"[OK] Migration: Added {col_name} column to orchestration_runs")
-
-    # Migration: Add orchestration_delegations V1 delivery/idempotency/session columns
-    if 'orchestration_delegations' in inspector.get_table_names():
-        columns = [col['name'] for col in inspector.get_columns('orchestration_delegations')]
-        new_cols = {
-            'subagent_session_id': "VARCHAR(36) REFERENCES orchestration_subagent_sessions(id)",
-            'delivery_status': "VARCHAR(30) DEFAULT 'pending'",
-            'delivery_cursor': "BIGINT",
-            'request_id': "VARCHAR(100)",
-            'context_scope': "VARCHAR(20)",
-        }
-        with engine.connect() as conn:
-            for col_name, col_type in new_cols.items():
-                if col_name not in columns:
-                    conn.execute(
-                        text(f"ALTER TABLE orchestration_delegations ADD COLUMN {col_name} {col_type}")
-                    )
-                    print(f"[OK] Migration: Added {col_name} column to orchestration_delegations")
-
-            # Cursor and lookup indexes for receive/ack path
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS ix_orchestration_delegations_parent_delivery_cursor
-                ON orchestration_delegations(parent_run_id, delivery_cursor)
-            """))
-            conn.execute(text("""
-                CREATE UNIQUE INDEX IF NOT EXISTS uix_orch_deleg_parent_request_idx
-                ON orchestration_delegations(parent_run_id, request_id)
-            """))
-            # Postgres sequence used to assign monotonic delivery_cursor values.
-            try:
-                conn.execute(text("""
-                    CREATE SEQUENCE IF NOT EXISTS orchestration_delegations_delivery_cursor_seq
-                """))
-            except Exception:
-                pass
-            conn.commit()
-
-    # Migration: Ensure unique index for orchestration_subagent_sessions continuity key
-    if 'orchestration_subagent_sessions' in inspector.get_table_names():
-        with engine.connect() as conn:
-            conn.execute(text("""
-                CREATE UNIQUE INDEX IF NOT EXISTS uix_orch_subagent_session_parent_agent_idx
-                ON orchestration_subagent_sessions(parent_session_id, project_agent_id)
-            """))
-            conn.commit()
-
-    # Migration: Add run_id to approval_requests for orchestration2 tracking
-    if 'approval_requests' in inspector.get_table_names():
-        columns = [col['name'] for col in inspector.get_columns('approval_requests')]
-        if 'run_id' not in columns:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE approval_requests ADD COLUMN run_id VARCHAR(36)"))
-                conn.commit()
-                print("[OK] Migration: Added run_id column to approval_requests")
-
-    # Migration: Add graph_id to agents if missing (plain string — no FK to graph_registry)
-    if 'agents' in inspector.get_table_names():
-        columns = [col['name'] for col in inspector.get_columns('agents')]
-        if 'graph_id' not in columns:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE agents ADD COLUMN graph_id VARCHAR(100)"))
-                conn.commit()
-                print("[OK] Migration: Added graph_id column to agents")
-
-    # Migration: Add file/directory support columns to workspace_items
-    if 'workspace_items' in inspector.get_table_names():
-        columns = [col['name'] for col in inspector.get_columns('workspace_items')]
-        new_cols = {
-            'item_type': "VARCHAR(20) DEFAULT 'note'",
-            'storage_path': "VARCHAR(512)",
-            'mime_type': "VARCHAR(100)",
-            'size_bytes': "INTEGER",
-            'checksum': "VARCHAR(64)",
-        }
-        with engine.connect() as conn:
-            for col_name, col_def in new_cols.items():
-                if col_name not in columns:
-                    conn.execute(text(f"ALTER TABLE workspace_items ADD COLUMN {col_name} {col_def}"))
-                    print(f"[OK] Migration: Added {col_name} column to workspace_items")
-            conn.commit()
-
-    # Migration: Add is_default and last_message_at to chat_sessions
-    if 'chat_sessions' in inspector.get_table_names():
-        cols = {c['name'] for c in inspector.get_columns('chat_sessions')}
-        if 'is_default' not in cols:
-            with engine.connect() as conn:
-                conn.execute(text(
-                    "ALTER TABLE chat_sessions ADD COLUMN is_default BOOLEAN NOT NULL DEFAULT FALSE"
-                ))
-                # Mark the most recent active session per project as default
-                conn.execute(text("""
-                    UPDATE chat_sessions SET is_default = TRUE
-                    WHERE id IN (
-                        SELECT DISTINCT ON (project_id) id
-                        FROM chat_sessions
-                        WHERE is_archived = FALSE
-                        ORDER BY project_id, created_at DESC
-                    )
-                """))
-                conn.commit()
-                print("[OK] Migration: Added is_default column to chat_sessions")
-        if 'last_message_at' not in cols:
-            with engine.connect() as conn:
-                conn.execute(text(
-                    "ALTER TABLE chat_sessions ADD COLUMN last_message_at TIMESTAMP"
-                ))
-                conn.commit()
-                print("[OK] Migration: Added last_message_at column to chat_sessions")
-        with engine.connect() as conn:
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS ix_chat_sessions_project_archived_updated
-                ON chat_sessions(project_id, is_archived, updated_at)
-            """))
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS ix_chat_sessions_project_default
-                ON chat_sessions(project_id, is_default)
-            """))
-            conn.commit()
-
-    # Migration: Allow uploaded_files.project_id to be NULL (for global notes without a project)
-    if 'uploaded_files' in inspector.get_table_names():
-        col_info = inspector.get_columns('uploaded_files')
-        for col in col_info:
-            if col['name'] == 'project_id':
-                # nullable is False means NOT NULL constraint is still present
-                if not col.get('nullable', True):
-                    try:
-                        with engine.connect() as conn:
-                            conn.execute(text(
-                                "ALTER TABLE uploaded_files ALTER COLUMN project_id DROP NOT NULL"
-                            ))
-                            conn.commit()
-                            print("[OK] Migration: uploaded_files.project_id is now nullable (supports global notes)")
-                    except Exception as e:
-                        print(f"[WARN] Migration: Could not make uploaded_files.project_id nullable: {e}")
-                break
-
-    # Migration: Add definition registry columns to skill_registry
-    if 'skill_registry' in inspector.get_table_names():
-        cols = {c['name'] for c in inspector.get_columns('skill_registry')}
-        new_cols = {
-            'origin_type': "VARCHAR(20) DEFAULT 'core'",
-            'origin_id': "VARCHAR(100)",
-            'status': "VARCHAR(20) DEFAULT 'active'",
-            'is_active': "BOOLEAN DEFAULT TRUE",
-            'version_hash': "VARCHAR(64)",
-            'validation_error': "TEXT",
-            'artifact_path': "VARCHAR(500)",
-            'artifact_hash': "VARCHAR(64)",
-            'activated_at': "TIMESTAMP",
-        }
-        with engine.connect() as conn:
-            for col_name, col_def in new_cols.items():
-                if col_name not in cols:
-                    conn.execute(text(
-                        f"ALTER TABLE skill_registry ADD COLUMN {col_name} {col_def}"
-                    ))
-                    print(f"[OK] Migration: Added {col_name} to skill_registry")
-            conn.commit()
-
-    # Migration: Add instructions column to skill_registry
-    if 'skill_registry' in inspector.get_table_names():
-        cols = {c['name'] for c in inspector.get_columns('skill_registry')}
-        if 'instructions' not in cols:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE skill_registry ADD COLUMN IF NOT EXISTS instructions TEXT"))
-                conn.commit()
-                print("[OK] Migration: Added instructions to skill_registry")
-
-    # Migration: Create mcp_server_configs table if it doesn't exist
-    # (Base.metadata.create_all handles new tables, but add index explicitly)
-    if 'mcp_server_configs' in inspector.get_table_names():
-        with engine.connect() as conn:
-            conn.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_mcp_server_configs_user_id ON mcp_server_configs(user_id)"
-            ))
-            conn.commit()
-
-    # Migration: Widen tool_registry.description from VARCHAR(500) to TEXT
-    if 'tool_registry' in inspector.get_table_names():
-        cols = {c['name']: c for c in inspector.get_columns('tool_registry')}
-        if 'description' in cols:
-            col_type = cols['description']['type']
-            # Only migrate if it's still a VARCHAR (has a length attribute)
-            if hasattr(col_type, 'length') and col_type.length is not None:
-                with engine.connect() as conn:
-                    conn.execute(text(
-                        "ALTER TABLE tool_registry ALTER COLUMN description TYPE TEXT"
-                    ))
-                    conn.commit()
-                    print("[OK] Migration: Widened tool_registry.description to TEXT")
-
-    # Migration: Ensure monitoring schema compatibility and indexes
-    if 'monitor_jobs' in inspector.get_table_names():
-        cols = {c['name'] for c in inspector.get_columns('monitor_jobs')}
-        new_cols = {
-            'cooldown_seconds': "INTEGER NOT NULL DEFAULT 0",
-            'max_retries': "INTEGER NOT NULL DEFAULT 2",
-            'retry_backoff_seconds': "INTEGER NOT NULL DEFAULT 60",
-            'valid_from': "TIMESTAMP",
-            'valid_until': "TIMESTAMP",
-            'next_run_at': "TIMESTAMP",
-            'last_run_at': "TIMESTAMP",
-            'last_status': "VARCHAR(20)",
-            'last_error': "TEXT",
-            'consecutive_failures': "INTEGER NOT NULL DEFAULT 0",
-        }
-        with engine.connect() as conn:
-            for col_name, col_def in new_cols.items():
-                if col_name not in cols:
-                    conn.execute(text(f"ALTER TABLE monitor_jobs ADD COLUMN {col_name} {col_def}"))
-                    print(f"Migration: Added {col_name} to monitor_jobs")
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS ix_monitor_jobs_user_active_next
-                ON monitor_jobs(user_id, is_active, next_run_at)
-            """))
-            conn.commit()
-
-    if 'monitor_job_runs' in inspector.get_table_names():
-        cols = {c['name'] for c in inspector.get_columns('monitor_job_runs')}
-        if 'metadata_payload' not in cols and 'meta_payload' in cols:
-            with engine.connect() as conn:
-                conn.execute(text(
-                    "ALTER TABLE monitor_job_runs RENAME COLUMN meta_payload TO metadata_payload"
-                ))
-                conn.commit()
-                print("Migration: Renamed monitor_job_runs.meta_payload to metadata_payload")
-
-        with engine.connect() as conn:
-            run_trace_cols = {
-                "trace_id": "VARCHAR(64)",
-                "origin_type": "VARCHAR(50)",
-                "origin_id": "VARCHAR(100)",
-            }
-            for col_name, col_def in run_trace_cols.items():
-                if col_name not in cols:
-                    conn.execute(text(f"ALTER TABLE monitor_job_runs ADD COLUMN {col_name} {col_def}"))
-                    print(f"Migration: Added {col_name} to monitor_job_runs")
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS ix_monitor_job_runs_job_started
-                ON monitor_job_runs(monitor_job_id, started_at DESC)
-            """))
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS ix_monitor_job_runs_user_status
-                ON monitor_job_runs(user_id, status)
-            """))
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS ix_monitor_job_runs_trace_id
-                ON monitor_job_runs(trace_id)
-            """))
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS ix_monitor_job_runs_origin
-                ON monitor_job_runs(origin_type, origin_id)
-            """))
-            conn.commit()
-
-    if 'monitor_alerts' in inspector.get_table_names():
-        cols = {c['name'] for c in inspector.get_columns('monitor_alerts')}
-        if 'metadata_payload' not in cols and 'meta_payload' in cols:
-            with engine.connect() as conn:
-                conn.execute(text(
-                    "ALTER TABLE monitor_alerts RENAME COLUMN meta_payload TO metadata_payload"
-                ))
-                conn.commit()
-                print("Migration: Renamed monitor_alerts.meta_payload to metadata_payload")
-
-        with engine.connect() as conn:
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS ix_monitor_alerts_user_triggered
-                ON monitor_alerts(user_id, triggered_at DESC)
-            """))
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS ix_monitor_alerts_job_dedupe
-                ON monitor_alerts(monitor_job_id, dedupe_key, triggered_at DESC)
-            """))
-            conn.commit()
-
-    # Migration: Add trace/origin columns to long_running_jobs
-    if 'long_running_jobs' in inspector.get_table_names():
-        cols = {c['name'] for c in inspector.get_columns('long_running_jobs')}
-        new_cols = {
-            "trace_id": "VARCHAR(64)",
-            "origin_type": "VARCHAR(50)",
-            "origin_id": "VARCHAR(100)",
-        }
-        with engine.connect() as conn:
-            for col_name, col_def in new_cols.items():
-                if col_name not in cols:
-                    conn.execute(text(f"ALTER TABLE long_running_jobs ADD COLUMN {col_name} {col_def}"))
-                    print(f"Migration: Added {col_name} to long_running_jobs")
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS ix_long_running_jobs_trace_id
-                ON long_running_jobs(trace_id)
-            """))
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS ix_long_running_jobs_origin
-                ON long_running_jobs(origin_type, origin_id)
-            """))
-            conn.commit()
-
-    # Migration: Add trace/origin columns to scheduled_tasks (AES execution records)
-    if 'scheduled_tasks' in inspector.get_table_names():
-        cols = {c['name'] for c in inspector.get_columns('scheduled_tasks')}
-        new_cols = {
-            "trace_id": "VARCHAR(64)",
-            "origin_type": "VARCHAR(50)",
-            "origin_id": "VARCHAR(100)",
-        }
-        with engine.connect() as conn:
-            for col_name, col_def in new_cols.items():
-                if col_name not in cols:
-                    conn.execute(text(f"ALTER TABLE scheduled_tasks ADD COLUMN {col_name} {col_def}"))
-                    print(f"Migration: Added {col_name} to scheduled_tasks")
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS ix_scheduled_tasks_trace_id
-                ON scheduled_tasks(trace_id)
-            """))
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS ix_scheduled_tasks_origin
-                ON scheduled_tasks(origin_type, origin_id)
-            """))
-            conn.commit()
-
-    # Migration: Promote legacy agent_runs table name to native_runs.
-    table_names = set(inspector.get_table_names())
-    if 'agent_runs' in table_names and 'native_runs' not in table_names:
-        with engine.connect() as conn:
-            conn.execute(text("ALTER TABLE agent_runs RENAME TO native_runs"))
-            conn.commit()
-            print("Migration: Renamed agent_runs -> native_runs")
-        inspector = inspect(engine)
-        table_names = set(inspector.get_table_names())
-
-    # Migration: NativeRun schema upgrades on the active run table.
-    run_table = 'native_runs' if 'native_runs' in table_names else 'agent_runs' if 'agent_runs' in table_names else None
-    if run_table:
-        cols = {c['name'] for c in inspector.get_columns(run_table)}
-        new_cols = {
-            "orchestration_run_id": "VARCHAR(36)",
-            "trace_id": "VARCHAR(64)",
-            "origin_type": "VARCHAR(50)",
-            "origin_id": "VARCHAR(100)",
-        }
-        with engine.connect() as conn:
-            for col_name, col_def in new_cols.items():
-                if col_name not in cols:
-                    conn.execute(text(f"ALTER TABLE {run_table} ADD COLUMN {col_name} {col_def}"))
-                    print(f"Migration: Added {col_name} to {run_table}")
-
-            if 'orchestration_runs' in table_names:
-                conn.execute(text(f"""
-                    UPDATE {run_table} r
-                    SET orchestration_run_id = r.id
-                    WHERE r.orchestration_run_id IS NULL
-                      AND EXISTS (
-                          SELECT 1 FROM orchestration_runs o
-                          WHERE o.run_id = r.id
-                      )
-                """))
-
-            conn.execute(text(f"""
-                CREATE INDEX IF NOT EXISTS ix_{run_table}_orchestration_run_id
-                ON {run_table}(orchestration_run_id)
-            """))
-            conn.execute(text(f"""
-                CREATE INDEX IF NOT EXISTS ix_{run_table}_trace_id
-                ON {run_table}(trace_id)
-            """))
-            conn.execute(text(f"""
-                CREATE INDEX IF NOT EXISTS ix_{run_table}_origin
-                ON {run_table}(origin_type, origin_id)
-            """))
-            conn.commit()
-
-        # Drop legacy FK <run_table>.id -> orchestration_runs.run_id when present.
-        for fk in inspector.get_foreign_keys(run_table):
-            referred_table = fk.get("referred_table")
-            constrained_cols = set(fk.get("constrained_columns") or [])
-            fk_name = fk.get("name")
-            if referred_table == "orchestration_runs" and "id" in constrained_cols and fk_name:
-                with engine.connect() as conn:
-                    try:
-                        conn.execute(text(f"ALTER TABLE {run_table} DROP CONSTRAINT IF EXISTS {fk_name}"))
-                        conn.commit()
-                        print(f"Migration: Dropped legacy FK {fk_name} on {run_table}.id")
-                    except Exception as e:
-                        print(f"[WARN] Migration: failed to drop legacy {run_table}.id FK {fk_name}: {e}")
-
-        # Migration: Add/ensure FK <run_table>.orchestration_run_id -> orchestration_runs.run_id
-        if 'orchestration_runs' in table_names:
-            constraints = inspector.get_foreign_keys(run_table)
-            has_orch_fk = any(
-                c.get('referred_table') == 'orchestration_runs'
-                and 'orchestration_run_id' in (c.get('constrained_columns') or [])
-                for c in constraints
-            )
-            if not has_orch_fk:
-                fk_name = f"fk_{run_table}_orchestration_run_id"
-                with engine.connect() as conn:
-                    try:
-                        conn.execute(text(f"""
-                            ALTER TABLE {run_table}
-                            ADD CONSTRAINT {fk_name}
-                            FOREIGN KEY (orchestration_run_id) REFERENCES orchestration_runs(run_id)
-                            ON DELETE SET NULL
-                            NOT VALID
-                        """))
-                        conn.commit()
-                        print(f"Migration: Added FK {run_table}.orchestration_run_id -> orchestration_runs.run_id")
-                    except Exception as e:
-                        print(f"[WARN] Migration: FK {run_table}.orchestration_run_id failed (non-fatal): {e}")
+            cols = [c['name'] for c in inspector.get_columns('run_approvals')]
+            if 'run_id' in cols:
+                fks = inspector.get_foreign_keys('run_approvals')
+                with engine.begin() as conn:
+                    for fk in fks:
+                        if 'run_id' in fk.get('constrained_columns', []) and fk.get('name'):
+                            conn.execute(text(f"ALTER TABLE run_approvals DROP CONSTRAINT {fk['name']}"))
+                    conn.execute(text("ALTER TABLE run_approvals DROP COLUMN run_id"))
+                print("[INFO] Migration: Dropped run_approvals.run_id column")
+        except Exception as e:
+            print(f"[WARN] Migration: Could not drop run_approvals.run_id: {e}")
 
 
 # Global sync session maker
@@ -1917,6 +1267,7 @@ async def get_async_db():
 
 # Initialize global AsyncSessionLocal for legacy usage in worker
 AsyncSessionLocal = get_async_session_maker()
+
 
 
 

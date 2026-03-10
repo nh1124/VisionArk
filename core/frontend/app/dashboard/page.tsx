@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -292,7 +292,7 @@ export default function DashboardPage() {
                                     <Cloud size={20} className="text-blue-200" />
                                 </div>
                                 <div>
-                                    <p className="text-2xl lg:text-4xl font-bold text-white leading-none">{weather?.temp ?? "--"}°C</p>
+                                    <p className="text-2xl lg:text-4xl font-bold text-white leading-none">{weather?.temp ?? "--"}ﾂｰC</p>
                                     <p className="text-[8px] font-bold text-blue-200/60 uppercase tracking-widest mt-1">
                                         {location} / {weather?.description || "Syncing"}
                                     </p>
@@ -447,4 +447,7 @@ function EmptyState({ message }: { message: string }) {
         </div>
     );
 }
+
+
+
 

@@ -1,4 +1,4 @@
-use crate::activity;
+﻿use crate::activity;
 use crate::config::ExecutionPolicy;
 use base64::Engine;
 use bridge_rs::http::BridgeClient;
@@ -21,7 +21,6 @@ pub async fn dispatch_tool(
     args: &Value,
     client: &BridgeClient,
     run_id: &str,
-    exec_id: &str,
     device_id: &str,
 ) -> ToolResult {
     // Dry-run: log without executing
@@ -37,7 +36,7 @@ pub async fn dispatch_tool(
                     "run_shell is disabled by execution policy (shell_enabled = false)".into(),
                 );
             }
-            run_shell(args, client, exec_id, device_id).await
+            run_shell(args, client, run_id, device_id).await
         }
         "read_file" => {
             let path = args["path"].as_str().unwrap_or("");
@@ -250,7 +249,7 @@ fn resolve_run_shell_cwd(raw: &str) -> Option<PathBuf> {
 // Existing tools (unchanged)
 // 
 
-async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id: &str) -> ToolResult {
+async fn run_shell(args: &Value, client: &BridgeClient, run_id: &str, device_id: &str) -> ToolResult {
     let timeout_secs = args["timeout"].as_u64().unwrap_or(30);
     let heartbeat_secs = args["heartbeat_secs"].as_u64().unwrap_or(0);
     let idle_approval_secs = args["idle_approval_secs"].as_u64().unwrap_or(0);
@@ -446,7 +445,7 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
                         if !completion_markers.is_empty() && !kill_scheduled {
                             let line_lc = line.trim().to_lowercase();
                             if completion_markers.iter().any(|m| line_lc.contains(m.as_str())) {
-                                info!("run_shell: completion marker '{}' closing stdin, kill tree in 3s (exec={})", line.trim(), exec_id);
+                                info!("run_shell: completion marker '{}' closing stdin, kill tree in 3s (exec={})", line.trim(), run_id);
                                 drop(stdin_writer.take());
                                 kill_scheduled = true;
                                 let ktx = kill_tx.clone();
@@ -472,7 +471,7 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
                         if !completion_markers.is_empty() && !kill_scheduled {
                             let line_lc = line.trim().to_lowercase();
                             if completion_markers.iter().any(|m| line_lc.contains(m.as_str())) {
-                                info!("run_shell: completion marker '{}' in stderr closing stdin, kill tree in 3s (exec={})", line.trim(), exec_id);
+                                info!("run_shell: completion marker '{}' in stderr closing stdin, kill tree in 3s (exec={})", line.trim(), run_id);
                                 drop(stdin_writer.take());
                                 kill_scheduled = true;
                                 let ktx = kill_tx.clone();
@@ -488,7 +487,7 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
             }
 
             _ = patch_tick.tick() => {
-                if !exec_id.is_empty() && !pending_patch.is_empty() {
+                if !run_id.is_empty() && !pending_patch.is_empty() {
                     // Keep last 20 KB in the DB field
                     let stored = if full_stdout.len() > 20_480 {
                         utf8_safe_tail(&full_stdout, 20_480)
@@ -497,7 +496,7 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
                     };
                     let _ = client
                         .patch_ignore(
-                            &format!("/api/native-runs/executions/{}/stream?device_id={}", exec_id, device_id),
+                            &format!("/api/native-runs/executions/{}/stream?device_id={}", run_id, device_id),
                             &serde_json::json!({ "stdout": stored }),
                         )
                         .await;
@@ -507,9 +506,9 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
 
             _ = stdin_tick.tick() => {
                 // Poll for agent-enqueued stdin
-                if !exec_id.is_empty() {
+                if !run_id.is_empty() {
                     if let Ok(val) = client
-                        .get_value(&format!("/api/native-runs/executions/{}/stdin?device_id={}", exec_id, device_id))
+                        .get_value(&format!("/api/native-runs/executions/{}/stdin?device_id={}", run_id, device_id))
                         .await
                     {
                         if let Some(pending) = val["pending"].as_array() {
@@ -517,7 +516,7 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
                                 if let Some(text) = item.as_str() {
                                     if let Some(ref mut w) = stdin_writer {
                                         let _ = w.write_all(text.as_bytes()).await;
-                                        info!("run_shell: wrote {} bytes to stdin (exec={})", text.len(), exec_id);
+                                        info!("run_shell: wrote {} bytes to stdin (exec={})", text.len(), run_id);
                                     }
                                 }
                             }
@@ -539,7 +538,7 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
                         idle_newline_at = Some(now);
                         info!(
                             "run_shell: idle auto-approval newline sent (idle={}s, exec={})",
-                            idle_approval_secs, exec_id
+                            idle_approval_secs, run_id
                         );
                     }
                 }
@@ -555,7 +554,7 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
                         "run_shell stalled after auto-approval (no output for {}s after newline)",
                         idle_kill_after_approval_secs
                     ));
-                    info!("run_shell: idle stall detected; killing process tree (exec={})", exec_id);
+                    info!("run_shell: idle stall detected; killing process tree (exec={})", run_id);
                     #[cfg(target_os = "windows")]
                     if let Some(pid) = child_pid {
                         let _ = tokio::process::Command::new("taskkill")
@@ -581,7 +580,7 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
             }, if heartbeat_tick.is_some() => {
                 info!(
                     "run_shell: heartbeat exec={} elapsed={}s stdout_bytes={} stderr_bytes={} cwd={}",
-                    exec_id,
+                    run_id,
                     started_at.elapsed().as_secs(),
                     full_stdout.len(),
                     full_stderr.len(),
@@ -595,7 +594,7 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
             // Scheduled kill: completion marker fired 3 s ago force-kill the tree.
             // node.exe may still be running (child processes keeping event loop alive).
             _ = kill_rx.recv(), if exit_code_opt.is_none() => {
-                info!("run_shell: killing process tree (exec={})", exec_id);
+                info!("run_shell: killing process tree (exec={})", run_id);
                 #[cfg(target_os = "windows")]
                 if let Some(pid) = child_pid {
                     let _ = tokio::process::Command::new("taskkill")
@@ -621,7 +620,7 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
             code = exit_rx.recv() => {
                 exit_code_opt = Some(code.unwrap_or(-1));
                 drop(stdin_writer.take());
-                info!("run_shell: child exited (code={:?}, exec={})", exit_code_opt, exec_id);
+                info!("run_shell: child exited (code={:?}, exec={})", exit_code_opt, run_id);
 
                 let drain_until = tokio::time::Instant::now() + Duration::from_millis(1000);
                 loop {
@@ -680,7 +679,7 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
     };
 
     // Final stdout patch
-    if !exec_id.is_empty() {
+    if !run_id.is_empty() {
         let stored = if full_stdout.len() > 20_480 {
             utf8_safe_tail(&full_stdout, 20_480)
         } else {
@@ -688,7 +687,7 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
         };
         let _ = client
             .patch_ignore(
-                &format!("/api/native-runs/executions/{}/stream?device_id={}", exec_id, device_id),
+                &format!("/api/native-runs/executions/{}/stream?device_id={}", run_id, device_id),
                 &serde_json::json!({ "stdout": stored }),
             )
             .await;
@@ -1509,5 +1508,7 @@ fn encode_capture_to_base64_raw(width: u32, height: u32, mut rgba_data: Vec<u8>)
         "data": b64,
     }))
 }
+
+
 
 

@@ -1,19 +1,18 @@
-import type {
+﻿import type {
   NativeDevice, IntegrationConnection, AutomationRule,
-  NativeRun, RunExecution, RunApproval,
+  Run, RunExecution, RunApproval,
 } from "../shared/types"
 
-// ─── Configuration ─────────────────────────────────────────────────────────────
 //
 // bridge/api.ts is the single HTTP client for the Native layer.
 // Both desktop (TypeScript) and its components route all backend requests here.
 // The Rust daemon uses bridge-rs (Rust crate) for its HTTP/WS communication.
 //
 // Transport strategy (Phase 2):
-//   • Tauri mode : non-FormData requests route through invoke("bridge_request")
+//   - Tauri mode : non-FormData requests route through invoke("bridge_request")
 //                  which calls bridge-rs::http::raw_request_str in Rust.
-//   • Browser/dev: standard fetch() with AbortController timeout.
-//   FormData (file uploads) always use fetch()  Emultipart is not routed via Rust.
+//   - Browser/dev: standard fetch() with AbortController timeout.
+//   FormData (file uploads) always use fetch() -multipart is not routed via Rust.
 //
 // Desktop bootstraps this at startup:
 //
@@ -60,14 +59,13 @@ function cfg(): BridgeConfig {
   return _config
 }
 
-// ─── HTTP client ──────────────────────────────────────────────────────────────
 //
 // Features:
-//   • Per-request token injection (always fresh  Eno stale-token risk)
-//   • 30-second timeout via AbortController
-//   • 5xx retry: up to 2 retries with exponential back-off (1s, 2s)
-//   • 401 transparent refresh: calls handleRefresh(), retries once with new token
-//   • X-Timezone header for LBS date-boundary accuracy
+//   - Per-request token injection (always fresh -no stale-token risk)
+//   - 30-second timeout via AbortController
+//   - 5xx retry: up to 2 retries with exponential back-off (1s, 2s)
+//   - 401 transparent refresh: calls handleRefresh(), retries once with new token
+//   - X-Timezone header for LBS date-boundary accuracy
 
 const TIMEOUT_MS = 30_000
 const MAX_RETRIES = 2
@@ -75,8 +73,8 @@ const MAX_RETRIES = 2
 /**
  * Single attempt: inject token + X-Timezone, then dispatch via the
  * appropriate transport:
- *   • Tauri + non-FormData ↁEinvoke("bridge_request") ↁEbridge-rs (Rust)
- *   • Browser or FormData  ↁEfetch() with 30-second AbortController timeout
+ *   - Tauri + non-FormData ->invoke("bridge_request") ->bridge-rs (Rust)
+ *   - Browser or FormData  ->fetch() with 30-second AbortController timeout
  */
 async function _once(
   path: string,
@@ -89,11 +87,10 @@ async function _once(
   if (token) headers["Authorization"] = `Bearer ${token}`
   headers["X-Timezone"] = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
 
-  // FormData (file uploads) must use fetch  Emultipart isn't handled by bridge_request
+  // FormData (file uploads) must use fetch -multipart isn't handled by bridge_request
   const isFormData = init.body instanceof FormData
 
   if (!isFormData && cfg().isTauri?.()) {
-    // ── Rust transport (bridge-rs) ───────────────────────────────────────────
     const bodyStr =
       init.body != null && typeof init.body === "string" ? init.body : undefined
 
@@ -109,13 +106,12 @@ async function _once(
     }
   }
 
-  // ── fetch transport (browser dev mode or FormData) ────────────────────────
   const ctrl = new AbortController()
   const tid = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
 
   // Always use the enriched `headers` (has Authorization + X-Timezone).
   // For FormData the browser automatically appends Content-Type: multipart/form-data
-  // with the correct boundary even when custom headers are provided  Eas long as
+  // with the correct boundary even when custom headers are provided -as long as
   // we don't explicitly set Content-Type ourselves (we don't for FormData callers).
 
   try {
@@ -154,7 +150,7 @@ export async function apiFetch(
     const token = await cfg().getToken() // fresh token every attempt
     const res = await _once(path, init, token)
 
-    // 401 ↁEtry refresh once (first attempt only)
+    // 401 ->try refresh once (first attempt only)
     if (res.status === 401 && attempt === 0) {
       const { handleRefresh } = cfg()
       if (handleRefresh) {
@@ -193,7 +189,6 @@ export async function apiJson<T>(
   return res.json() as Promise<T>
 }
 
-// ─── Internal helpers for domain functions ────────────────────────────────────
 
 async function _json<T>(path: string, init?: RequestInit): Promise<T> {
   return apiJson<T>(path, init)
@@ -208,7 +203,6 @@ async function _void(path: string, init?: RequestInit): Promise<void> {
   }
 }
 
-// ─── Devices ──────────────────────────────────────────────────────────────────
 
 export async function listDevices(): Promise<NativeDevice[]> {
   return _json<NativeDevice[]>("/api/native/devices")
@@ -245,7 +239,6 @@ export async function deleteDevice(device_id: string): Promise<void> {
   await _void(`/api/native/devices/${device_id}`, { method: "DELETE" })
 }
 
-// ─── Integrations ─────────────────────────────────────────────────────────────
 
 export async function listIntegrations(): Promise<IntegrationConnection[]> {
   return _json<IntegrationConnection[]>("/api/native/integrations")
@@ -266,7 +259,6 @@ export async function deleteIntegration(id: string): Promise<void> {
   await _void(`/api/native/integrations/${id}`, { method: "DELETE" })
 }
 
-// ─── Rules ───────────────────────────────────────────────────────────────────
 
 export async function listRules(): Promise<AutomationRule[]> {
   return _json<AutomationRule[]>("/api/native/rules")
@@ -290,33 +282,32 @@ export async function createRule(payload: {
   })
 }
 
-// ─── Runs ─────────────────────────────────────────────────────────────────────
 
 export async function createRun(payload: {
   project_id?: string
   agent_id?: string
   session_id?: string
   summary?: string
-}): Promise<NativeRun> {
-  return _json<NativeRun>("/api/native-runs", { method: "POST", body: JSON.stringify(payload) })
+}): Promise<Run> {
+  return _json<Run>("/api/native-runs", { method: "POST", body: JSON.stringify(payload) })
 }
 
 export async function listRuns(params?: {
   status?: string
   limit?: number
-}): Promise<NativeRun[]> {
+}): Promise<Run[]> {
   const qs = new URLSearchParams()
   if (params?.status) qs.set("status", params.status)
   if (params?.limit) qs.set("limit", String(params.limit))
-  return _json<NativeRun[]>(`/api/native-runs?${qs.toString()}`)
+  return _json<Run[]>(`/api/native-runs?${qs.toString()}`)
 }
 
-export async function getRun(run_id: string): Promise<NativeRun> {
-  return _json<NativeRun>(`/api/native-runs/${run_id}`)
+export async function getRun(run_id: string): Promise<Run> {
+  return _json<Run>(`/api/native-runs/${run_id}`)
 }
 
-export async function updateRun(run_id: string, status: string, summary?: string): Promise<NativeRun> {
-  return _json<NativeRun>(`/api/native-runs/${run_id}`, {
+export async function updateRun(run_id: string, status: string, summary?: string): Promise<Run> {
+  return _json<Run>(`/api/native-runs/${run_id}`, {
     method: "PATCH",
     body: JSON.stringify({ status, summary }),
   })
@@ -336,11 +327,10 @@ export async function addExecution(run_id: string, payload: {
 
 export async function updateExecution(
   run_id: string,
-  exec_id: string,
   status: string,
   extras?: { result?: Record<string, unknown>; error_log?: string }
 ): Promise<RunExecution> {
-  return _json<RunExecution>(`/api/native-runs/${run_id}/executions/${exec_id}`, {
+  return _json<RunExecution>(`/api/native-runs/${run_id}/status`, {
     method: "PATCH",
     body: JSON.stringify({ status, ...extras }),
   })
@@ -354,12 +344,12 @@ export async function rejectExecution(run_id: string, approval_id: string): Prom
   return _json<RunApproval>(`/api/native-runs/${run_id}/reject/${approval_id}`, { method: "POST" })
 }
 
-export async function cancelRun(run_id: string): Promise<NativeRun> {
-  return _json<NativeRun>(`/api/native-runs/${run_id}/cancel`, { method: "POST" })
+export async function cancelRun(run_id: string): Promise<Run> {
+  return _json<Run>(`/api/native-runs/${run_id}/cancel`, { method: "POST" })
 }
 
-export async function retryExecution(run_id: string, exec_id: string): Promise<RunExecution> {
-  return _json<RunExecution>(`/api/native-runs/${run_id}/executions/${exec_id}/retry`, { method: "POST" })
+export async function retryExecution(run_id: string): Promise<RunExecution> {
+  return _json<RunExecution>(`/api/native-runs/${run_id}/retry`, { method: "POST" })
 }
 
 export async function pullExecutions(params: {
@@ -378,7 +368,6 @@ export async function claimExecution(exec_id: string, device_id: string): Promis
   )
 }
 
-// ── Long-Running Jobs ─────────────────────────────────────────────────────────
 
 export interface LRJob {
   job_id: string
@@ -415,4 +404,7 @@ export async function listLRJobs(params?: {
 export async function cancelLRJob(job_id: string): Promise<void> {
   await _json(`/api/long-running-jobs/${job_id}/cancel`, { method: "POST" })
 }
+
+
+
 

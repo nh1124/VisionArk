@@ -1,17 +1,21 @@
 //! Auto-registration and heartbeat for the VisionArk daemon.
 //!
-//! On daemon startup (when no device_id is configured), `register()` calls
-//! `POST /api/native/devices/register` and returns the assigned device_id.
+//! On daemon startup, `register()` calls `POST /api/native/devices/register`
+//! and returns the assigned device_id (idempotent upsert by display_name + platform).
 //!
-//! `heartbeat_loop()` then runs in the background, calling
-//! `POST /api/native/devices/{id}/heartbeat` every 30 seconds to keep the
-//! device status "online" in the backend.
+//! `heartbeat_loop()` runs in the background, pinging every 30 seconds.
+//! If the backend returns 404 (device not found), it automatically re-registers
+//! and updates the shared device_id so the job_runner picks it up on the next poll.
 
 use anyhow::Result;
 use bridge_rs::http::BridgeClient;
 use serde_json::json;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio::time::{interval, Duration};
 use tracing::{info, warn};
+
+use crate::config;
 
 const HEARTBEAT_INTERVAL_SECS: u64 = 30;
 
@@ -27,7 +31,6 @@ fn detect_platform() -> &'static str {
 
 /// Try to get a reasonable hostname for the display name.
 fn get_hostname() -> String {
-    // Windows sets COMPUTERNAME; Linux/macOS set HOSTNAME
     for var in &["COMPUTERNAME", "HOSTNAME"] {
         if let Ok(name) = std::env::var(var) {
             let name = name.trim().to_string();
@@ -73,22 +76,61 @@ pub async fn register(api_url: &str, token: &str) -> Result<String> {
         .to_string();
 
     info!("Device registered: id={}", device_id);
+    // Persist per-server so the daemon survives restarts without re-registering.
+    config::save_device_id(api_url, &device_id);
     Ok(device_id)
 }
 
-/// Heartbeat loop - runs forever, pinging the backend every 30 seconds.
-/// Errors are logged and swallowed so the loop never exits unexpectedly.
-pub async fn heartbeat_loop(api_url: String, token: String, device_id: String) {
+/// Heartbeat loop — runs forever, pinging the backend every 30 seconds.
+///
+/// The device_id is shared with the job_runner via `Arc<Mutex<String>>`.
+/// On 404 (device deleted from DB), the loop automatically re-registers and
+/// updates the shared device_id so the job_runner uses the new one on the
+/// next poll cycle.
+pub async fn heartbeat_loop(
+    api_url: String,
+    token: String,
+    device_id: Arc<Mutex<String>>,
+) {
     let client = BridgeClient::new(&api_url, &token);
-    let path = format!("/api/native/devices/{}/heartbeat", device_id);
-
-    info!("Starting heartbeat loop for device_id={}", device_id);
+    info!("Starting heartbeat loop");
 
     let mut ticker = interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
     loop {
         ticker.tick().await;
-        if let Err(e) = client.post_value(&path).await {
-            warn!("Heartbeat failed for device_id={}: {}", device_id, e);
+
+        let id = device_id.lock().await.clone();
+        if id.is_empty() {
+            // No device yet — try to register
+            match register(&api_url, &token).await {
+                Ok(new_id) => {
+                    info!("heartbeat_loop: registered device_id={}", new_id);
+                    *device_id.lock().await = new_id;
+                }
+                Err(e) => warn!("heartbeat_loop: registration attempt failed: {}", e),
+            }
+            continue;
+        }
+
+        let path = format!("/api/native/devices/{}/heartbeat", id);
+        match client.post_value(&path).await {
+            Ok(_) => {}
+            Err(e) => {
+                let err_str = e.to_string();
+                warn!("Heartbeat failed for device_id={}: {}", id, e);
+
+                // On 404 the device no longer exists in the DB — re-register.
+                if err_str.contains("404") {
+                    info!("Device not found; re-registering...");
+                    match register(&api_url, &token).await {
+                        Ok(new_id) => {
+                            info!("Re-registered device: new_id={}", new_id);
+                            *device_id.lock().await = new_id;
+                        }
+                        Err(e) => warn!("Re-registration failed: {}", e),
+                    }
+                }
+            }
         }
     }
 }

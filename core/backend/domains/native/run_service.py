@@ -1,4 +1,4 @@
-"""NativeRunService - domain service for Run Center operations."""
+﻿"""NativeRunService - NativeRun unit management with NativeExecution logs."""
 
 from __future__ import annotations
 
@@ -7,28 +7,45 @@ import logging
 import uuid
 from typing import List, Optional
 
-from sqlalchemy import or_, select, update
-from sqlalchemy import update as sa_update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.database import NativeRun, RunApproval, RunExecution
+from shared.database import NativeExecution, NativeRun, RunApproval
 
 logger = logging.getLogger(__name__)
 
 
 class NativeRunService:
     @staticmethod
+    async def _append_log(
+        db: AsyncSession,
+        native_run_id: str,
+        status: str,
+        event_type: str = "status",
+        payload: Optional[dict] = None,
+        result: Optional[dict] = None,
+        error_log: Optional[str] = None,
+    ) -> NativeExecution:
+        log = NativeExecution(
+            id=str(uuid.uuid4()),
+            native_run_id=native_run_id,
+            status=status,
+            event_type=event_type,
+            payload=payload or {},
+            result=result,
+            error_log=error_log,
+        )
+        db.add(log)
+        await db.flush()
+        return log
+
+    @staticmethod
     async def _resolve_run_by_identifier(
         db: AsyncSession,
         run_id: str,
         user_id: Optional[str] = None,
     ) -> Optional[NativeRun]:
-        stmt = select(NativeRun).where(
-            or_(
-                NativeRun.id == run_id,
-                NativeRun.orchestration_run_id == run_id,
-            )
-        )
+        stmt = select(NativeRun).where(NativeRun.id == run_id)
         if user_id:
             stmt = stmt.where(NativeRun.user_id == user_id)
         res = await db.execute(stmt)
@@ -45,60 +62,41 @@ class NativeRunService:
         trace_id: Optional[str] = None,
         origin_type: Optional[str] = None,
         origin_id: Optional[str] = None,
+        orchestration_run_id: Optional[str] = None,
+        kind: str = "manual",
+        payload: Optional[dict] = None,
+        risk_level: str = "low",
+        target_device_id: Optional[str] = None,
     ) -> NativeRun:
-        run = NativeRun(
+        native_run = NativeRun(
             id=str(uuid.uuid4()),
+            orchestration_run_id=orchestration_run_id,
             user_id=user_id,
             project_id=project_id,
-            agent_id=agent_id,
             session_id=session_id,
-            status="queued",
-            summary=summary,
             trace_id=trace_id,
             origin_type=origin_type,
             origin_id=origin_id,
+            kind=kind,
+            status="pending",
+            risk_level=risk_level,
+            payload=payload or {},
+            target_device_id=target_device_id,
+            result={"summary": summary, "agent_id": agent_id} if summary or agent_id else None,
         )
-        db.add(run)
-        await db.commit()
-        await db.refresh(run)
-        logger.info("native_run.created user=%s run=%s", user_id, run.id)
-        return run
-
-    @staticmethod
-    async def create_run_from_orchestration(
-        db: AsyncSession,
-        run_id: str,
-        user_id: str,
-        project_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        summary: Optional[str] = None,
-        trace_id: Optional[str] = None,
-        origin_type: Optional[str] = "orchestration_run",
-        origin_id: Optional[str] = None,
-    ) -> NativeRun:
-        native_run_id = str(uuid.uuid4())
-        run = NativeRun(
-            id=native_run_id,
-            orchestration_run_id=run_id,
-            user_id=user_id,
-            project_id=project_id,
-            session_id=session_id,
-            status="running",
-            summary=summary,
-            started_at=datetime.utcnow(),
-            trace_id=trace_id,
-            origin_type=origin_type,
-            origin_id=origin_id or run_id,
-        )
-        db.add(run)
+        db.add(native_run)
         await db.flush()
-        logger.info(
-            "native_run.created_from_orchestration user=%s native_run=%s orchestration_run=%s",
-            user_id,
-            native_run_id,
-            run_id,
+        await NativeRunService._append_log(
+            db,
+            native_run.id,
+            status="pending",
+            event_type="created",
+            payload={"kind": kind, "summary": summary, "agent_id": agent_id},
         )
-        return run
+        await db.commit()
+        await db.refresh(native_run)
+        logger.info("native_run.created user=%s run=%s kind=%s", user_id, native_run.id, kind)
+        return native_run
 
     @staticmethod
     async def finish_run(
@@ -106,33 +104,16 @@ class NativeRunService:
         run_id: str,
         status: str,
     ) -> None:
-        await db.execute(
-            sa_update(NativeRun)
-            .where(
-                or_(
-                    NativeRun.id == run_id,
-                    NativeRun.orchestration_run_id == run_id,
-                )
-            )
-            .values(
-                status=status,
-                finished_at=datetime.utcnow(),
-            )
-        )
-        await db.flush()
+        run = await NativeRunService._resolve_run_by_identifier(db, run_id)
+        if not run:
+            return
+        run.status = status
+        run.updated_at = datetime.utcnow()
+        if status in ("succeeded", "failed", "rejected", "canceled", "cancelled"):
+            run.finished_at = datetime.utcnow()
+        await NativeRunService._append_log(db, run.id, status=status, event_type="finished")
+        await db.commit()
         logger.info("native_run.finished run=%s status=%s", run_id, status)
-
-    @staticmethod
-    async def get_native_run_by_orchestration_run_id(
-        db: AsyncSession,
-        orchestration_run_id: str,
-        user_id: Optional[str] = None,
-    ) -> Optional[NativeRun]:
-        stmt = select(NativeRun).where(NativeRun.orchestration_run_id == orchestration_run_id)
-        if user_id:
-            stmt = stmt.where(NativeRun.user_id == user_id)
-        res = await db.execute(stmt)
-        return res.scalars().first()
 
     @staticmethod
     async def get_run(
@@ -150,11 +131,14 @@ class NativeRunService:
         limit: int = 50,
     ) -> List[NativeRun]:
         stmt = select(NativeRun).where(NativeRun.user_id == user_id)
-        if status:
+        if status and status != "active":
             stmt = stmt.where(NativeRun.status == status)
         stmt = stmt.order_by(NativeRun.created_at.desc()).limit(limit)
         res = await db.execute(stmt)
-        return list(res.scalars().all())
+        rows = list(res.scalars().all())
+        if status == "active":
+            return [r for r in rows if r.status in ("pending", "running", "waiting_approval")]
+        return rows
 
     @staticmethod
     async def update_run_status(
@@ -166,15 +150,23 @@ class NativeRunService:
     ) -> NativeRun:
         run = await NativeRunService._resolve_run_by_identifier(db, run_id, user_id)
         if not run:
-            raise ValueError(f"NativeRun {run_id} not found")
+            raise ValueError(f"Run {run_id} not found")
         prev = run.status
         run.status = status
-        if status == "running" and not run.started_at:
-            run.started_at = datetime.utcnow()
-        if status in ("completed", "failed", "canceled"):
+        run.updated_at = datetime.utcnow()
+        if status in ("succeeded", "failed", "rejected", "canceled", "cancelled"):
             run.finished_at = datetime.utcnow()
         if summary is not None:
-            run.summary = summary
+            result = dict(run.result or {})
+            result["summary"] = summary
+            run.result = result
+        await NativeRunService._append_log(
+            db,
+            run.id,
+            status=status,
+            event_type="status",
+            payload={"previous_status": prev},
+        )
         await db.commit()
         await db.refresh(run)
         logger.info("native_run.updated user=%s run=%s %s->%s", user_id, run.id, prev, status)
@@ -188,39 +180,47 @@ class NativeRunService:
         payload: dict,
         risk_level: str = "low",
         target_device_id: Optional[str] = None,
-    ) -> RunExecution:
-        exc = RunExecution(
-            id=str(uuid.uuid4()),
-            run_id=run_id,
-            kind=kind,
-            status="pending",
-            risk_level=risk_level,
-            payload=payload,
-            target_device_id=target_device_id,
+    ) -> NativeExecution:
+        run = await NativeRunService._resolve_run_by_identifier(db, run_id)
+        if not run:
+            raise ValueError(f"NativeRun {run_id} not found")
+        if target_device_id:
+            run.target_device_id = target_device_id
+        if risk_level:
+            run.risk_level = risk_level
+        if kind:
+            run.kind = kind
+        if payload is not None:
+            run.payload = payload
+        run.updated_at = datetime.utcnow()
+        log = await NativeRunService._append_log(
+            db,
+            run.id,
+            status=run.status,
+            event_type=kind or "log",
+            payload=payload or {},
         )
-        db.add(exc)
         await db.commit()
-        await db.refresh(exc)
-        logger.info("execution.created run=%s exec=%s kind=%s", run_id, exc.id, kind)
-        return exc
+        await db.refresh(log)
+        return log
 
     @staticmethod
     async def get_execution(
         db: AsyncSession,
         exec_id: str,
-    ) -> Optional[RunExecution]:
-        res = await db.execute(select(RunExecution).where(RunExecution.id == exec_id))
-        return res.scalars().first()
+    ) -> Optional[NativeRun]:
+        # Compatibility: execution_id is treated as NativeRun.id for daemon APIs.
+        return await NativeRunService._resolve_run_by_identifier(db, exec_id)
 
     @staticmethod
     async def list_executions(
         db: AsyncSession,
         run_id: str,
-    ) -> List[RunExecution]:
+    ) -> List[NativeExecution]:
         res = await db.execute(
-            select(RunExecution)
-            .where(RunExecution.run_id == run_id)
-            .order_by(RunExecution.created_at.asc())
+            select(NativeExecution)
+            .where(NativeExecution.native_run_id == run_id)
+            .order_by(NativeExecution.created_at.asc())
         )
         return list(res.scalars().all())
 
@@ -231,25 +231,34 @@ class NativeRunService:
         status: str,
         result: Optional[dict] = None,
         error_log: Optional[str] = None,
-    ) -> RunExecution:
-        res = await db.execute(select(RunExecution).where(RunExecution.id == exec_id))
-        exc = res.scalars().first()
-        if not exc:
-            raise ValueError(f"RunExecution {exec_id} not found")
-        prev = exc.status
-        exc.status = status
-        if status == "running" and not exc.started_at:
-            exc.started_at = datetime.utcnow()
-        if status in ("succeeded", "failed", "rejected"):
-            exc.finished_at = datetime.utcnow()
+    ) -> NativeRun:
+        run = await NativeRunService._resolve_run_by_identifier(db, exec_id)
+        if not run:
+            raise ValueError(f"NativeRun {exec_id} not found")
+        prev = run.status
+        run.status = status
+        run.updated_at = datetime.utcnow()
+        if status == "running" and not run.started_at:
+            run.started_at = datetime.utcnow()
+        if status in ("succeeded", "failed", "rejected", "canceled", "cancelled"):
+            run.finished_at = datetime.utcnow()
         if result is not None:
-            exc.result = result
+            run.result = result
         if error_log is not None:
-            exc.error_log = error_log
+            run.error_log = error_log
+        await NativeRunService._append_log(
+            db,
+            run.id,
+            status=status,
+            event_type="status",
+            result=result,
+            error_log=error_log,
+            payload={"previous_status": prev},
+        )
         await db.commit()
-        await db.refresh(exc)
-        logger.info("execution.updated exec=%s %s->%s", exec_id, prev, status)
-        return exc
+        await db.refresh(run)
+        logger.info("native_run.status updated run=%s %s->%s", exec_id, prev, status)
+        return run
 
     @staticmethod
     async def patch_partial_stdout(
@@ -257,40 +266,56 @@ class NativeRunService:
         exec_id: str,
         stdout: str,
     ) -> None:
-        await db.execute(
-            update(RunExecution)
-            .where(RunExecution.id == exec_id)
-            .values(partial_stdout=stdout)
+        run = await NativeRunService._resolve_run_by_identifier(db, exec_id)
+        if not run:
+            raise ValueError(f"NativeRun {exec_id} not found")
+        run.partial_stdout = stdout
+        await NativeRunService._append_log(
+            db,
+            run.id,
+            status=run.status,
+            event_type="stdout",
+            payload={"stdout": stdout},
         )
         await db.commit()
 
     @staticmethod
     async def get_partial_stdout(db: AsyncSession, exec_id: str) -> Optional[str]:
-        res = await db.execute(select(RunExecution).where(RunExecution.id == exec_id))
-        exc = res.scalars().first()
-        return exc.partial_stdout if exc else None
+        run = await NativeRunService._resolve_run_by_identifier(db, exec_id)
+        return run.partial_stdout if run else None
 
     @staticmethod
     async def enqueue_stdin(db: AsyncSession, exec_id: str, text: str) -> None:
-        res = await db.execute(select(RunExecution).where(RunExecution.id == exec_id))
-        exc = res.scalars().first()
-        if not exc:
-            raise ValueError(f"RunExecution {exec_id} not found")
-        queue = list(exc.stdin_queue or [])
+        run = await NativeRunService._resolve_run_by_identifier(db, exec_id)
+        if not run:
+            raise ValueError(f"NativeRun {exec_id} not found")
+        queue = list(run.stdin_queue or [])
         queue.append(text)
-        exc.stdin_queue = queue
+        run.stdin_queue = queue
+        await NativeRunService._append_log(
+            db,
+            run.id,
+            status=run.status,
+            event_type="stdin.enqueue",
+            payload={"text": text},
+        )
         await db.commit()
-        logger.info("execution.stdin_enqueued exec=%s text_len=%d", exec_id, len(text))
 
     @staticmethod
     async def dequeue_stdin(db: AsyncSession, exec_id: str) -> list:
-        res = await db.execute(select(RunExecution).where(RunExecution.id == exec_id))
-        exc = res.scalars().first()
-        if not exc:
+        run = await NativeRunService._resolve_run_by_identifier(db, exec_id)
+        if not run:
             return []
-        queue = list(exc.stdin_queue or [])
+        queue = list(run.stdin_queue or [])
         if queue:
-            exc.stdin_queue = []
+            run.stdin_queue = []
+            await NativeRunService._append_log(
+                db,
+                run.id,
+                status=run.status,
+                event_type="stdin.dequeue",
+                payload={"count": len(queue)},
+            )
             await db.commit()
         return queue
 
@@ -302,22 +327,21 @@ class NativeRunService:
     ) -> NativeRun:
         run = await NativeRunService._resolve_run_by_identifier(db, run_id, user_id)
         if not run:
-            raise ValueError(f"NativeRun {run_id} not found")
-        if run.status in ("completed", "failed", "canceled"):
+            raise ValueError(f"Run {run_id} not found")
+        if run.status in ("succeeded", "failed", "rejected", "canceled", "cancelled"):
             raise ValueError(f"Run already in terminal state: {run.status}")
 
-        non_terminal = ("pending", "running", "waiting_approval")
-        await db.execute(
-            update(RunExecution)
-            .where(
-                RunExecution.run_id == run.id,
-                RunExecution.status.in_(non_terminal),
-            )
-            .values(status="failed", error_log="Run canceled by user", finished_at=datetime.utcnow())
-        )
-
         run.status = "canceled"
+        run.error_log = "Run canceled by user"
         run.finished_at = datetime.utcnow()
+        run.updated_at = datetime.utcnow()
+        await NativeRunService._append_log(
+            db,
+            run.id,
+            status="canceled",
+            event_type="cancel",
+            error_log=run.error_log,
+        )
         await db.commit()
         await db.refresh(run)
         logger.info("native_run.canceled user=%s run=%s", user_id, run.id)
@@ -328,61 +352,74 @@ class NativeRunService:
         db: AsyncSession,
         run_id: str,
         exec_id: str,
-    ) -> RunExecution:
-        run = await NativeRunService._resolve_run_by_identifier(db, run_id, user_id=None)
-        if not run:
+    ) -> NativeRun:
+        source: Optional[NativeRun] = None
+        if exec_id == run_id:
+            source = await NativeRunService._resolve_run_by_identifier(db, run_id)
+        else:
+            # Compatibility: allow retry requests that pass a log id.
+            log_res = await db.execute(select(NativeExecution).where(NativeExecution.id == exec_id))
+            log_row = log_res.scalars().first()
+            if log_row and log_row.native_run_id == run_id:
+                source = await NativeRunService._resolve_run_by_identifier(db, run_id)
+
+        if not source:
             raise ValueError(f"NativeRun {run_id} not found")
+        if source.status not in ("failed", "rejected", "canceled", "cancelled"):
+            raise ValueError(f"Only failed/rejected/canceled runs can be retried, got: {source.status}")
 
-        res = await db.execute(
-            select(RunExecution).where(
-                RunExecution.id == exec_id,
-                RunExecution.run_id == run.id,
-            )
-        )
-        original = res.scalars().first()
-        if not original:
-            raise ValueError(f"RunExecution {exec_id} not found")
-        if original.status not in ("failed", "rejected"):
-            raise ValueError(f"Only failed/rejected executions can be retried, got: {original.status}")
-
-        new_exec = RunExecution(
+        retry = NativeRun(
             id=str(uuid.uuid4()),
-            run_id=run.id,
-            kind=original.kind,
+            orchestration_run_id=source.orchestration_run_id,
+            user_id=source.user_id,
+            project_id=source.project_id,
+            session_id=source.session_id,
+            trace_id=source.trace_id,
+            origin_type=source.origin_type,
+            origin_id=source.origin_id,
+            kind=source.kind,
             status="pending",
-            risk_level=original.risk_level,
-            payload=original.payload or {},
-            target_device_id=original.target_device_id,
+            risk_level=source.risk_level,
+            payload=source.payload or {},
+            target_device_id=source.target_device_id,
         )
-        db.add(new_exec)
-
-        if run.status in ("completed", "failed", "canceled"):
-            run.status = "running"
-            run.finished_at = None
-
+        db.add(retry)
+        await db.flush()
+        await NativeRunService._append_log(
+            db,
+            retry.id,
+            status="pending",
+            event_type="retry",
+            payload={"source_run_id": source.id},
+        )
         await db.commit()
-        await db.refresh(new_exec)
-        logger.info("execution.retried original=%s new=%s run=%s", exec_id, new_exec.id, run.id)
-        return new_exec
+        await db.refresh(retry)
+        logger.info("native_run.retried source=%s retry=%s", source.id, retry.id)
+        return retry
 
     @staticmethod
     async def request_approval(
         db: AsyncSession,
         execution_id: str,
-        run_id: str,
         reason: Optional[str] = None,
     ) -> RunApproval:
         approval = RunApproval(
             id=str(uuid.uuid4()),
             execution_id=execution_id,
-            run_id=run_id,
             status="pending",
             reason=reason,
         )
         db.add(approval)
+        await NativeRunService._append_log(
+            db,
+            execution_id,
+            status="waiting_approval",
+            event_type="approval.requested",
+            payload={"approval_id": approval.id, "reason": reason},
+        )
         await db.commit()
         await db.refresh(approval)
-        logger.info("approval.requested exec=%s approval=%s", execution_id, approval.id)
+        logger.info("approval.requested run=%s approval=%s", execution_id, approval.id)
         return approval
 
     @staticmethod
@@ -393,7 +430,7 @@ class NativeRunService:
         res = await db.execute(
             select(RunApproval)
             .where(
-                RunApproval.run_id == run_id,
+                RunApproval.execution_id == run_id,
                 RunApproval.status == "pending",
             )
             .order_by(RunApproval.requested_at.asc())
@@ -407,7 +444,7 @@ class NativeRunService:
     ) -> List[RunApproval]:
         res = await db.execute(
             select(RunApproval)
-            .where(RunApproval.run_id == run_id)
+            .where(RunApproval.execution_id == run_id)
             .order_by(RunApproval.requested_at.asc())
         )
         return list(res.scalars().all())
@@ -423,7 +460,7 @@ class NativeRunService:
         res = await db.execute(
             select(RunApproval).where(
                 RunApproval.id == approval_id,
-                RunApproval.run_id == run_id,
+                RunApproval.execution_id == run_id,
                 RunApproval.status == "pending",
             )
         )
@@ -437,13 +474,14 @@ class NativeRunService:
             db,
             approval.execution_id,
             status="running" if decision == "approved" else "rejected",
+            error_log="Rejected by user" if decision == "rejected" else None,
         )
         await db.commit()
         await db.refresh(approval)
         logger.info(
-            "approval.decided approval=%s exec=%s decision=%s by=%s",
+            "approval.decided approval=%s run=%s decision=%s by=%s",
             approval_id,
-            approval.execution_id,
+            run_id,
             decision,
             user_id,
         )

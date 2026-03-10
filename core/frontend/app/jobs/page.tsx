@@ -1,15 +1,14 @@
-"use client"
+﻿"use client"
 
 import { useEffect, useState, useCallback } from "react"
 import { RefreshCw, Square, RotateCcw, ChevronDown, ChevronRight, Activity } from "lucide-react"
 import { apiFetch } from "@/lib/api"
 
-// ── Types ─────────────────────────────────────────────────────────────────────
 
-type RunStatus = "queued" | "running" | "waiting_approval" | "completed" | "failed" | "canceled"
+type RunStatus = "pending" | "queued" | "running" | "waiting_approval" | "succeeded" | "completed" | "failed" | "rejected" | "canceled"
 type ExecStatus = "pending" | "running" | "waiting_approval" | "succeeded" | "failed" | "rejected"
 
-interface NativeRun {
+interface Run {
   id: string
   status: RunStatus
   summary: string | null
@@ -35,14 +34,16 @@ interface RunExecution {
   created_at: string
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 const RUN_STATUS_COLOR: Record<RunStatus, string> = {
+  pending: "text-gray-300 bg-gray-800",
   queued: "text-gray-400 bg-gray-800",
   running: "text-blue-300 bg-blue-900/40",
   waiting_approval: "text-yellow-300 bg-yellow-900/40",
+  succeeded: "text-green-300 bg-green-900/40",
   completed: "text-green-300 bg-green-900/40",
   failed: "text-red-300 bg-red-900/40",
+  rejected: "text-orange-300 bg-orange-900/40",
   canceled: "text-gray-500 bg-gray-800",
 }
 
@@ -72,9 +73,8 @@ function fmtDate(s: string | null) {
   })
 }
 
-const ACTIVE_STATUSES: RunStatus[] = ["queued", "running", "waiting_approval"]
+const ACTIVE_STATUSES: RunStatus[] = ["pending", "queued", "running", "waiting_approval"]
 
-// ── Execution Row ─────────────────────────────────────────────────────────────
 
 function ExecutionRow({ exec, runId, onRefresh }: {
   exec: RunExecution
@@ -123,9 +123,8 @@ function ExecutionRow({ exec, runId, onRefresh }: {
   )
 }
 
-// ── Run Row ───────────────────────────────────────────────────────────────────
 
-function RunRow({ run, onRefresh }: { run: NativeRun; onRefresh: () => void }) {
+function RunRow({ run, onRefresh }: { run: Run; onRefresh: () => void }) {
   const [expanded, setExpanded] = useState(false)
   const [stopping, setStopping] = useState(false)
   const isActive = ACTIVE_STATUSES.includes(run.status)
@@ -197,7 +196,6 @@ function RunRow({ run, onRefresh }: { run: NativeRun; onRefresh: () => void }) {
   )
 }
 
-// ── Status filter tabs ────────────────────────────────────────────────────────
 
 const STATUS_TABS = [
   { label: "All", value: "" },
@@ -207,10 +205,9 @@ const STATUS_TABS = [
   { label: "Canceled", value: "canceled" },
 ]
 
-// ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function RunCenterPage() {
-  const [runs, setRuns] = useState<NativeRun[]>([])
+  const [runs, setRuns] = useState<Run[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState("")
@@ -224,7 +221,7 @@ export default function RunCenterPage() {
       const res = await apiFetch(`/api/native-runs${params}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
-      let list: NativeRun[] = Array.isArray(data) ? data : (data.runs ?? [])
+      let list: Run[] = Array.isArray(data) ? data : (data.runs ?? [])
       // Client-side filter for "active"
       if (statusFilter === "active") {
         list = list.filter(r => ACTIVE_STATUSES.includes(r.status))
@@ -297,7 +294,7 @@ export default function RunCenterPage() {
       <div className="max-w-5xl mx-auto px-4 py-6">
         {loading && (
           <div className="flex items-center justify-center py-20 text-gray-600 text-sm">
-            Loading runs…
+            Loading runs...
           </div>
         )}
 
@@ -325,5 +322,8 @@ export default function RunCenterPage() {
     </div>
   )
 }
+
+
+
 
 

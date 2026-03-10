@@ -4,20 +4,22 @@ import {
   Plus, ShieldCheck, ShieldX, ChevronRight, Activity, X, Monitor,
   Square, RotateCcw, Layers,
 } from "lucide-react"
-import type { NativeRun, RunExecution, RunApproval, NativeDevice } from "../../../shared/types"
+import type { Run, RunExecution, RunApproval, NativeDevice } from "../../../shared/types"
 import {
   listRuns, createRun, approveExecution, rejectExecution, listDevices,
   cancelRun, retryExecution, listLRJobs, cancelLRJob, type LRJob,
 } from "../../../bridge/api"
 
-// ── Status styles ──────────────────────────────────────────────────────────────
 
 const RUN_STATUS: Record<string, { label: string; cls: string }> = {
+  pending: { label: "Pending", cls: "text-gray-300 bg-gray-800" },
   queued: { label: "Queued", cls: "text-gray-400 bg-gray-800" },
   running: { label: "Running", cls: "text-blue-400 bg-blue-400/10" },
   waiting_approval: { label: "Needs Approval", cls: "text-yellow-400 bg-yellow-400/10" },
+  succeeded: { label: "Succeeded", cls: "text-emerald-400 bg-emerald-400/10" },
   completed: { label: "Completed", cls: "text-emerald-400 bg-emerald-400/10" },
   failed: { label: "Failed", cls: "text-red-400 bg-red-400/10" },
+  rejected: { label: "Rejected", cls: "text-orange-400 bg-orange-400/10" },
   canceled: { label: "Canceled", cls: "text-red-300 bg-red-300/10" },
 }
 
@@ -54,11 +56,10 @@ function ExecIcon({ status }: { status: string }) {
   return <Clock size={12} className="text-gray-600" />
 }
 
-// ── New Run Modal ──────────────────────────────────────────────────────────────
 
 interface NewRunModalProps {
   onClose: () => void
-  onCreated: (run: NativeRun) => void
+  onCreated: (run: Run) => void
 }
 
 function NewRunModal({ onClose, onCreated }: NewRunModalProps) {
@@ -123,12 +124,11 @@ function NewRunModal({ onClose, onCreated }: NewRunModalProps) {
   )
 }
 
-// ── Approval card ──────────────────────────────────────────────────────────────
 
 interface ApprovalCardProps {
   approval: RunApproval
   exec: RunExecution
-  run: NativeRun
+  run: Run
   onDecided: () => void
 }
 
@@ -189,7 +189,6 @@ function ApprovalCard({ approval, exec, run, onDecided }: ApprovalCardProps) {
   )
 }
 
-// ── Main: RunCenterView ────────────────────────────────────────────────────────
 
 type RunFilter = "all" | "active" | "done"
 type MainTab = "runs" | "jobs"
@@ -205,9 +204,9 @@ const LRJ_STATUS: Record<string, { label: string; cls: string }> = {
 
 export default function RunCenterView() {
   const [mainTab, setMainTab] = useState<MainTab>("runs")
-  const [runs, setRuns] = useState<NativeRun[]>([])
+  const [runs, setRuns] = useState<Run[]>([])
   const [devices, setDevices] = useState<NativeDevice[]>([])
-  const [selectedRun, setSelectedRun] = useState<NativeRun | null>(null)
+  const [selectedRun, setSelectedRun] = useState<Run | null>(null)
   const [filter, setFilter] = useState<RunFilter>("all")
   const [loading, setLoading] = useState(false)
   const [showNewRun, setShowNewRun] = useState(false)
@@ -254,8 +253,8 @@ export default function RunCenterView() {
   }, [])
 
   const filtered = runs.filter(r => {
-    if (filter === "active") return ["queued", "running", "waiting_approval"].includes(r.status)
-    if (filter === "done") return ["completed", "failed", "canceled"].includes(r.status)
+    if (filter === "active") return ["pending", "queued", "running", "waiting_approval"].includes(r.status)
+    if (filter === "done") return ["succeeded", "completed", "failed", "rejected", "canceled"].includes(r.status)
     return true
   })
 
@@ -272,7 +271,7 @@ export default function RunCenterView() {
   }
 
   // All pending approvals across all runs (for the right pane when no run is selected)
-  const allPendingApprovals: Array<{ approval: RunApproval; exec: RunExecution; run: NativeRun }> = []
+  const allPendingApprovals: Array<{ approval: RunApproval; exec: RunExecution; run: Run }> = []
   for (const run of runs) {
     for (const exec of run.executions) {
       for (const a of exec.approvals) {
@@ -286,7 +285,7 @@ export default function RunCenterView() {
   const deviceName = (id?: string) => {
     if (!id) return null
     const d = devices.find(x => x.id === id)
-    return d ? d.display_name : `${id.slice(0, 8)}…`
+    return d ? d.display_name : `${id.slice(0, 8)}...`
   }
 
   const approvalSource = selectedRun
@@ -295,7 +294,6 @@ export default function RunCenterView() {
 
   return (
     <div className="flex h-full">
-      {/* ── Left: Run/Job list ──────────────────────────────────────────────── */}
       <div className="flex flex-col w-64 min-w-64 border-r border-gray-800">
         {/* Toolbar */}
         <div className="flex items-center gap-1.5 px-3 py-2.5 border-b border-gray-800">
@@ -504,7 +502,7 @@ export default function RunCenterView() {
                   <p className="text-[10px] font-mono text-gray-600 mt-0.5">{selectedRun.id}</p>
                 </div>
                 <StatusBadge status={selectedRun.status} map={RUN_STATUS} />
-                {["queued", "running", "waiting_approval"].includes(selectedRun.status) && (
+                {["pending", "queued", "running", "waiting_approval"].includes(selectedRun.status) && (
                   <button
                     onClick={async () => {
                       try {
@@ -588,7 +586,7 @@ export default function RunCenterView() {
                         <button
                           onClick={async () => {
                             try {
-                              await retryExecution(selectedRun.id, exec.id)
+                              await retryExecution(selectedRun.id)
                               load()
                             } catch { /* ignore */ }
                           }}
@@ -608,7 +606,6 @@ export default function RunCenterView() {
         )}
       </div>
 
-      {/* ── Right: Approval queue ─────────────────────────────────────────── */}
       {mainTab === "runs" && <div className="flex flex-col w-64 min-w-64">
         <div className="px-3 py-2.5 border-b border-gray-800 flex-shrink-0">
           <div className="flex items-center gap-2">
@@ -658,5 +655,6 @@ export default function RunCenterView() {
     </div>
   )
 }
+
 
 

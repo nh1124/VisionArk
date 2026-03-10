@@ -1,10 +1,7 @@
-"""Native device execution tools — internal library.
+﻿"""Native device execution tools - internal library.
 
-These tools use the Run Center (NativeRun / RunExecution) to dispatch
-jobs to connected native devices via the daemon.
-
-Key design: ctx.run_id is orchestration identity. We resolve it to the
-NativeRun projection via `orchestration_run_id` (with legacy fallback to id).
+These tools use NativeRun records keyed by orchestration run_id
+to dispatch jobs to connected native devices via the daemon.
 """
 
 from __future__ import annotations
@@ -27,7 +24,6 @@ def _err(call: ToolCallRef, msg: str) -> ToolResult:
     return ToolResult(tool_name=call.tool_name, call_id=call.call_id, output=msg, error=msg)
 
 
-# ── ListNativeDevices ─────────────────────────────────────────────────────────
 
 class ListNativeDevicesTool:
     definition = ToolDef(
@@ -115,7 +111,6 @@ class ListNativeDevicesTool:
 
 
 
-# ── RunNativeJob ──────────────────────────────────────────────────────────────
 
 class RunNativeJobTool:
     definition = ToolDef(
@@ -239,11 +234,10 @@ class RunNativeJobTool:
         run_id   = ctx.run_id   # orchestration run identity
 
         try:
-            from sqlalchemy import or_, select
-            from shared.database import NativeDevice, NativeRun, RunExecution
-            import uuid as _uuid
+            from sqlalchemy import select
+            from shared.database import NativeDevice, OrchestrationRun, NativeRun
+            from domains.native.run_service import NativeRunService
 
-            # ── Resolve target device ─────────────────────────────────────────
             if target_device_id:
                 res = await db.execute(
                     select(NativeDevice).where(
@@ -265,48 +259,42 @@ class RunNativeJobTool:
                 target_device_id = device.id if device else None
                 device_label = device.display_name if device else "auto"
 
-            # Resolve NativeRun via orchestration run id (legacy rows may still use id==run_id).
-            res = await db.execute(
-                select(NativeRun).where(
-                    or_(
-                        NativeRun.id == run_id,
-                        NativeRun.orchestration_run_id == run_id,
-                    )
-                )
-            )
-            run = res.scalars().first()
-
-            if run is None:
+            res = await db.execute(select(OrchestrationRun).where(OrchestrationRun.run_id == run_id))
+            orch_run = res.scalars().first()
+            if orch_run is None:
                 return _err(
                     call,
-                    f"NativeRun for orchestration run {run_id} not found. "
+                    f"OrchestrationRun {run_id} not found. "
                     "run_native_job must be called from within an active orchestration run."
                 )
 
-            # ── Create RunExecution ───────────────────────────────────────────
-            exc = RunExecution(
-                id=str(_uuid.uuid4()),
-                run_id=run.id,
+            # Create NativeRun unit (local execution instruction) and initial log.
+            exc = await NativeRunService.create_run(
+                db=db,
+                user_id=orch_run.user_id,
+                project_id=orch_run.project_id,
+                session_id=orch_run.session_id,
+                summary=f"native:{job_type}",
+                trace_id=(orch_run.metadata_json or {}).get("trace_id"),
+                origin_type=(orch_run.metadata_json or {}).get("origin_type") or "orchestration_tool",
+                origin_id=(orch_run.metadata_json or {}).get("origin_id") or run_id,
+                orchestration_run_id=run_id,
                 kind=job_type.strip(),
-                status="pending",
-                risk_level=risk_level,
                 payload=payload or {},
+                risk_level=risk_level,
                 target_device_id=target_device_id,
             )
-            db.add(exc)
-            await db.commit()
-            await db.refresh(run)
-            await db.refresh(exc)
 
             logger.info(
                 "run_native_job: user=%s run=%s exec=%s kind=%s device=%s sync=%s",
-                user_id, run.id, exc.id, job_type, target_device_id, sync,
+                user_id, run_id, exc.id, job_type, target_device_id, sync,
             )
 
             import json
             if not sync:
                 result_data = {
-                    "run_id": run.id,
+                    "run_id": exc.id,
+                    "orchestration_run_id": run_id,
                     "execution_id": exc.id,
                     "status": exc.status,
                     "kind": exc.kind,
@@ -314,12 +302,11 @@ class RunNativeJobTool:
                     "risk_level": exc.risk_level,
                     "message": (
                         f"Execution '{job_type}' queued for {device_label}. "
-                        f"Monitor progress in Run Center (run_id={run.id})."
+                        f"Monitor progress in Run Center (native_run_id={exc.id})."
                     ),
                 }
                 return make_result(call, json.dumps(result_data, ensure_ascii=False))
 
-            # ── Synchronous polling loop ──────────────────────────────────
             import time
             terminal_states = {"succeeded", "failed", "rejected"}
             poll_interval = 1.0
@@ -344,30 +331,29 @@ class RunNativeJobTool:
                 if exc.status == "waiting_approval":
                     deadline = max(deadline, time.monotonic() + 300)
 
-            # ── Return result based on final status ───────────────────────
             import json
             if exc.status == "succeeded":
                 result_data = exc.result or {}
                 result_data["_meta"] = {
-                    "run_id": run.id,
+                    "run_id": exc.id,
+                    "orchestration_run_id": run_id,
                     "execution_id": exc.id,
                     "status": "succeeded",
                 }
                 return make_result(call, json.dumps(result_data, ensure_ascii=False))
             elif exc.status == "failed":
                 err_text = exc.error_log or "unknown error"
-                return _err(call, f"Execution failed: {err_text} (run_id={run.id}, exec_id={exc.id})")
+                return _err(call, f"Execution failed: {err_text} (native_run_id={exc.id})")
             elif exc.status == "rejected":
-                return _err(call, f"Execution was rejected by user (run_id={run.id}, exec_id={exc.id})")
+                return _err(call, f"Execution was rejected by user (native_run_id={exc.id})")
             else:
-                return _err(call, f"Execution timed out after {timeout}s (status={exc.status}, run_id={run.id}, exec_id={exc.id})")
+                return _err(call, f"Execution timed out after {timeout}s (status={exc.status}, native_run_id={exc.id})")
 
         except Exception as e:
             logger.error("run_native_job error: %s", e, exc_info=True)
             return _err(call, f"run_native_job error: {e}")
 
 
-# ── helpers for terminal result ───────────────────────────────────────────────
 
 def _build_terminal_result(call: ToolCallRef, exc) -> ToolResult:
     """Build tool result from a terminal-state execution."""
@@ -375,7 +361,8 @@ def _build_terminal_result(call: ToolCallRef, exc) -> ToolResult:
     if exc.status == "succeeded":
         result_data = exc.result or {}
         result_data["_meta"] = {
-            "run_id": exc.run_id,
+            "run_id": exc.id,
+            "orchestration_run_id": exc.orchestration_run_id,
             "execution_id": exc.id,
             "status": "succeeded",
         }
@@ -388,9 +375,7 @@ def _build_terminal_result(call: ToolCallRef, exc) -> ToolResult:
         return _err(call, f"Unexpected status: {exc.status}")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# check_execution_result — instant status check
-# ═══════════════════════════════════════════════════════════════════════════════
+# check_execution_result: instant status check
 
 class CheckExecutionResultTool:
     definition = ToolDef(
@@ -423,21 +408,22 @@ class CheckExecutionResultTool:
         db = get_db(ctx)
         try:
             from sqlalchemy import select
-            from shared.database import RunExecution
+            from shared.database import NativeRun
 
             res = await db.execute(
-                select(RunExecution).where(RunExecution.id == execution_id)
+                select(NativeRun).where(NativeRun.id == execution_id)
             )
             exc = res.scalars().first()
             if not exc:
                 return _err(call, f"Execution '{execution_id}' not found")
-            if exc.run_id != run_id_arg:
+            if exc.id != run_id_arg:
                 return _err(call, f"Execution '{execution_id}' does not belong to run '{run_id_arg}'")
 
             import json
             result = {
                 "execution_id": exc.id,
-                "run_id": exc.run_id,
+                "run_id": exc.id,
+            "orchestration_run_id": exc.orchestration_run_id,
                 "status": exc.status,
                 "kind": exc.kind,
             }
@@ -456,9 +442,7 @@ class CheckExecutionResultTool:
             return _err(call, f"Failed to check execution: {e}")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# wait_for_execution — blocking wait for a specific execution
-# ═══════════════════════════════════════════════════════════════════════════════
+# wait_for_execution: blocking wait for a specific execution
 
 class WaitForExecutionTool:
     definition = ToolDef(
@@ -498,15 +482,15 @@ class WaitForExecutionTool:
         try:
             import time
             from sqlalchemy import select
-            from shared.database import RunExecution
+            from shared.database import NativeRun
 
             res = await db.execute(
-                select(RunExecution).where(RunExecution.id == execution_id)
+                select(NativeRun).where(NativeRun.id == execution_id)
             )
             exc = res.scalars().first()
             if not exc:
                 return _err(call, f"Execution '{execution_id}' not found")
-            if exc.run_id != run_id_arg:
+            if exc.id != run_id_arg:
                 return _err(call, f"Execution '{execution_id}' does not belong to run '{run_id_arg}'")
 
             terminal_states = {"succeeded", "failed", "rejected"}
@@ -536,3 +520,6 @@ class WaitForExecutionTool:
         except Exception as e:
             logger.exception("wait_for_execution failed: %s", e)
             return _err(call, f"Failed to wait for execution: {e}")
+
+
+
