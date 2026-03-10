@@ -1,42 +1,56 @@
 # VisionArk Documentation Index
 
-このディレクトリは、VisionArk システムの設計、仕様、および機能に関する情報を体系化したものです。将来のコーディングエージェントや開発者がシステムを迅速に把握できるように構成されています。
+This index is the entry point for architecture, features, decisions, and investigation artifacts in `docs/`.
 
-## 🏗️ [Core Architecture](./core/)
-システムの中核となる設計思想や共通基盤に関するドキュメントです。
-- [System Design](./core/system_design.md): 全体アーキテクチャ、哲学、要件定義。
-- [File Management](./core/file_management.md): UUIDレジストリベースのファイル管理システム（最新）。
-- [Skills System](./core/skills_system.md): エージェントスキルの定義と登録メカニズム。
-- [External Integration](./core/external_integration.md): Microsoft Graph 等の外部サービス連携。
-- [AES Worker Spec](./core/aes_worker_spec.md): バックグラウンドワーカーの仕様。
-- [Node Prompt & Summarization](./core/node_prompt_summarization.md): プロンプト管理とコンテキスト要約のロジック。
-- [Project Governance](./core/project_governance.md): プロジェクト固有のファイル命名規則、ディレクトリ構造、メタデータ管理。
-- [External Integration](./core/external_integration.md): Microsoft Graph 等の外部サービス連携。
+## Core Architecture
+- [System Design](./core/system_design.md)
+- [Directory Structure](./core/directory_structure.md)
+- [Orchestration2 Engine](./core/orchestration2_engine.md)
+- [Orchestration2 Delegation v1](./core/orchestration2_delegation_v1.md)
+- [LLM Provider System](./core/llm_provider_system.md)
+- [LLM Reasoning Architecture](./core/llm_reasoning_architecture.md)
+- [Skills System](./core/skills_system.md)
+- [External Integration](./core/external_integration.md)
+- [File Management](./core/file_management.md)
+- [Asset Management](./core/asset_management.md)
+- [Notification System](./core/notification_system.md)
+- [Node Prompt and Summarization](./core/node_prompt_summarization.md)
+- [Project Governance](./core/project_governance.md)
+- [Task Cancellation](./core/task_cancellation.md)
+- [AES Worker Spec](./core/aes_worker_spec.md)
 
-## 🔌 [Integration Guide](./integration_guide/)
-外部システム連携（LINE, Calendar等）の開発者向け総合ガイド。
-- [Integration Developer Guide](./integration_guide/README.md)
+## Integration Guide
+- [Integration Guide Overview](./integration_guide/README.md)
+- [Architecture](./integration_guide/architecture.md)
+- [Database](./integration_guide/database.md)
+- [Agent Tools](./integration_guide/agent_tools.md)
+- [SDK Registries](./integration_guide/sdk_registries.md)
+- [UI Manifest](./integration_guide/ui_manifest.md)
 
-## ✨ [Features](./features/)
-各特定の機能やノードに関する詳細仕様です。
-- [Notes Feature](./features/notes_feature.md): ノート作成と管理機能。
-- [Ask Node](./features/ask_node.md): 質問回答に特化したノード。
-- [Calendar Integration](./features/external_calendar_integration.md): カレンダー同期機能の詳細。
-- [Browser Capability](./features/browser_capability.md): Playwright を使用したブラウザ操作機能。
+## Features
+- [Ask Node](./features/ask_node.md)
+- [Browser Capability](./features/browser_capability.md)
+- [External Calendar Integration](./features/external_calendar_integration.md)
+- [Notes Feature](./features/notes_feature.md)
+- [Task Management](./features/task_management.md)
 
-## 🛡️ [Audits](./audits/)
-システムの安全性や品質に関する監査結果です。
+## Decisions
+- [ADR: Native Run Identity Tracing](./decisions/ADR-native-run-identity-tracing.md)
+- [ADR: Skills Deprecation](./decisions/ADR-skills-deprecation.md)
+
+## Audits
 - [Ask Node Audit](./audits/ask_node_audit.md)
 
-## � [Proposals](./proposals/)
-将来の拡張やアーキテクチャの改善案に関するドキュメントです。
-- [SDK Evolution Proposal](./proposals/sdk_evolution.md): SDKの型安全化と将来の拡張ロードマップ。
+## Proposals
+- [Deep Research Timeout Strategy](./proposals/deep_research_timeout_strategy.md)
+- [Local Codex Antigravity CLI Operation Report](./proposals/local_codex_antigravity_cli_operation_report.md)
+- [Preinvestigation: Tool Skill Restructuring](./proposals/preinvestigation_tool_skill_restructuring.md)
+- [Run Center Investigation Report](./proposals/run_center_investigation_report.md)
+- [Proposal Archive](./proposals/archive/)
 
-## �📁 [Archive](./reports/archive/)
-過去の調査レポート、古いバージョンの仕様書など、歴史的コンテキストを保持するための場所です。
-- [Skill Mining Investigation](./reports/archive/skill_mining_investigation.md)
-- [Agent Skills Investigation](./reports/archive/agent_skills_investigation.md)
-- [Legacy Tool Path Conventions](./reports/archive/tool_path_conventions.md)
+## Reports
+- [Reports Directory](./reports/)
+- [Reports Archive](./reports/archive/)
 
 ---
-*Last Updated: 2026-02-03*
+Last Updated: 2026-03-10

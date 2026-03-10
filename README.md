@@ -1,57 +1,69 @@
-﻿# VisionArk
+# VisionArk
 
-> Experimental personal OS for AI-assisted project and task orchestration.
-> This repository is not production-ready.
+VisionArk is an experimental AI-assisted workspace platform built around the `orchestration2` engine.
 
-VisionArk is an AI-powered personal task management system built on a Project/Node architecture.
-It combines LBS (Load Balancing System) workload management with multi-agent orchestration.
+- Backend: FastAPI + domain modules
+- Frontend: Next.js
+- Native: Rust/Tauri workspace under `core/native`
+- Runtime: PostgreSQL + Redis + worker + optional Cloudflare tunnel
 
-## Core Features
+> Status: active development, not production-ready.
 
-- Project/Node agent architecture (Project Node + Member Nodes)
-- Agent-to-agent coordination (`ask_node`) with bounded recursion
-- Async task execution with worker queue
-- Artifacts and workspace file management
-- LBS scheduling and workload balancing
-- Knowledge retrieval and memory ingestion
-- Optional Cloudflare tunnel for edge exposure
-- Optional native desktop dev flow
+## Current Architecture (Code-Verified)
 
-## Tech Stack
+Core backend domains live in `core/backend/domains/`:
 
-- Frontend: Next.js, React, Tailwind CSS
-- Backend: FastAPI, SQLAlchemy (async), Pydantic
-- Queue: Redis
-- Database: PostgreSQL (Docker profile)
-- Deployment: Docker Compose profiles
+- `orchestration2`: graph-driven agent execution core (roles/tools/registries/bootstrap)
+- `workspace`: project/workspace files, context, notifications
+- `long_running`: long-running job handlers and executor
+- `monitoring`: collectors, detectors, notifiers, monitoring schedules
+- `native`: native runtime bridge service
+- `automation`, `identity`, `knowledge`
+
+API entrypoints are under `core/backend/api/` (for example: `agents`, `definitions`, `monitoring`, `native`, `long_running_jobs`).
+
+## Repository Layout
+
+```text
+VisionArk/
+  core/
+    backend/
+    frontend/
+    native/
+  infra/
+    docker-compose.yml
+    start_*.sh / start_*.bat
+    initialize_system.*
+    system_export.* / system_import.*
+  integrations/
+  assets/
+  data/
+  docs/
+  va_sdk/
+```
 
 ## Prerequisites
 
 - Docker + Docker Compose
-- Python 3.11+ (for local backend development only)
-- Node.js 18+ (for local frontend/native development only)
-- Gemini API key (or your configured provider)
+- Python 3.11+ (local backend development)
+- Node.js 18+ (local frontend/native development)
+- Rust/Cargo + Tauri dependencies (native development)
+- At least one LLM provider key in environment (default template uses Gemini)
 
-## Environment Layering
+## Environment Files
 
-VisionArk no longer uses `.env`.
-Use layered files instead:
+This project uses layered env files.
 
-- `.env.core`: shared vars for `db/backend/worker/frontend`
-- `.env.edge`: vars for `tunnel` only
-- Optional overlays: `.env.shared`, `.env.local`
-
-Setup:
+1. Create env files from templates:
 
 ```bash
 cp .env.core.example .env.core
 cp .env.edge.example .env.edge
 ```
 
-Required minimum:
-
-- In `.env.core`: `GEMINI_API_KEY`, `JWT_SECRET_KEY`, `ATMOS_SERVICE_KEY`
-- In `.env.edge`: `TUNNEL_TOKEN`
+2. Fill required values:
+- `.env.core`: `GEMINI_API_KEY`, `JWT_SECRET_KEY`, `ATMOS_SERVICE_KEY` (plus DB overrides if needed)
+- `.env.edge`: `TUNNEL_TOKEN` (only if using tunnel)
 
 ## Docker Compose Profiles
 
@@ -72,9 +84,9 @@ docker compose --env-file .env.core -f infra/docker-compose.yml --profile core -
 docker compose --env-file .env.edge -f infra/docker-compose.yml --profile edge up tunnel
 ```
 
-## Role-Based Startup Scripts
+## Startup Scripts
 
-### Windows
+Windows:
 
 ```bat
 .\infra\start_backend.bat
@@ -84,7 +96,7 @@ docker compose --env-file .env.edge -f infra/docker-compose.yml --profile edge u
 .\infra\start_all.bat
 ```
 
-### Linux/macOS
+Linux/macOS:
 
 ```bash
 ./infra/start_backend.sh
@@ -94,87 +106,36 @@ docker compose --env-file .env.edge -f infra/docker-compose.yml --profile edge u
 ./infra/start_all.sh
 ```
 
-## Access
-
-- UI: <http://localhost:3000>
-- API Docs: <http://localhost:8000/docs>
-
-## Cloudflare Tunnel Safety
-
-Do **not** use the same `TUNNEL_TOKEN` simultaneously across multiple environments.
-Use separate tokens for local/dev/staging validation.
-
-## Useful Operations
-
-### Initialize system (destructive)
-
-Removes containers/volumes and clears local data.
-
-- `infra/initialize_system.sh`
-- `infra/initialize_system.bat`
-
-### Export / Import backup
-
-- Export: `infra/system_export.sh` or `.bat`
-- Import: `infra/system_import.sh` or `.bat`
-
-These scripts now load `.env.core`.
-
-### Auto update on Git changes (Linux/macOS server)
-
-Use `infra/auto_update.sh` to detect remote branch updates and auto-deploy.
-
-One-shot check:
-
-```bash
-./infra/auto_update.sh once
-```
-
-Watch mode (every 60s by default):
-
-```bash
-./infra/auto_update.sh watch
-```
-
-Useful env vars:
-
-- `TARGET_BRANCH` (default: current branch)
-- `CHECK_INTERVAL_SECONDS` (default: `60`)
-- `DEPLOY_PROFILES` (default: `core ui`)
-- `RESTART_AFTER_PULL` (`1` to run compose up after pull, default `1`)
-- `ALLOW_DIRTY` (`0` by default; set `1` to ignore dirty worktree)
-
-Example:
-
-```bash
-TARGET_BRANCH=main CHECK_INTERVAL_SECONDS=30 DEPLOY_PROFILES="core ui edge" ./infra/auto_update.sh watch
-```
-
 ## Native Development
 
-Native scripts moved to `infra/start_native.sh` and `infra/start_native.bat`.
-Legacy `core/native/scripts/dev.*` has been removed.
+Native workspace is under `core/native/` and includes:
 
-## Project Structure
+- `daemon/` (Rust)
+- `bridge/` + `bridge-rs/`
+- `desktop/` (Tauri app)
 
-```text
-VisionArk/
-  core/
-    backend/
-    frontend/
-    native/
-  infra/
-    docker-compose.yml
-    start_backend.*
-    start_frontend.*
-    start_tunnel.*
-    start_native.*
-    start_all.*
-  integrations/
-  docs/
-  assets/
-  data/
-```
+Run via:
+- `infra/start_native.sh` (Linux/macOS)
+- `infra/start_native.bat` (Windows)
+
+## Access
+
+- Frontend: <http://localhost:3000>
+- API docs: <http://localhost:8000/docs>
+- Health check: <http://localhost:8000/health>
+
+## Operational Scripts
+
+- Initialize (destructive): `infra/initialize_system.sh` / `.bat`
+- Export backup: `infra/system_export.sh` / `.bat`
+- Import backup: `infra/system_import.sh` / `.bat`
+- Auto-update helper: `infra/auto_update.sh`
+
+## Documentation
+
+- Main docs index: `docs/README.md`
+- Core architecture docs: `docs/core/`
+- ADRs: `docs/decisions/`
 
 ## License
 

@@ -1,47 +1,66 @@
 # Project Directory Structure
 
 ## Overview
-VisionArk follows a **Domain-Driven Design (DDD)** architecture, emphasizing a clear separation between business logic (`domains`), technical implementation (`infrastructure`), and application entry points (`app`).
+VisionArk backend follows a domain-oriented architecture centered on `core/backend/domains/` and the `orchestration2` execution engine.
+
+- Domain logic is grouped by business capability under `domains/`.
+- API entry points live under `api/` and `app/`.
+- Technical integrations (LLM providers, queue) are under `infrastructure/`.
+- Cross-cutting helpers and DB primitives are under `shared/`.
 
 ## Root Directory (`VisionArk/`)
-*   `assets/`: Centralized storage for prompts, skills, and roles.
-*   `core/`: Core application source code.
-    *   `backend/`: Python FastAPI backend.
-    *   `frontend/`: Next.js frontend.
-*   `va_sdk/`: Shared Python SDK for external integrations and plugins.
-*   `integrations/`: External integration modules (LBS, Calendar, etc.) containing both backend logic and frontend manifests.
-*   `docs/`: Project documentation.
+- `core/`: Main source tree.
+  - `backend/`: FastAPI backend and agent runtime.
+  - `frontend/`: Web UI.
+  - `native/`: Native runtime and desktop app workspace (bridge, daemon, Tauri desktop).
+- `docs/`: Documentation and ADRs.
 
 ## Backend Structure (`core/backend/`)
 
-### 1. Application Layer (`app/`)
-Contains the application entry points and configuration.
-*   `main.py`: FastAPI application entry point, router inclusion, and startup logic.
-*   `worker.py`: Background task worker (Celery/dict-queue) for async operations.
-*   `config.py`: Environment configuration and settings.
+### 1. App Layer (`app/`)
+- `main.py`: FastAPI bootstrap and router wiring.
+- `worker.py`: Background worker bootstrap.
+- `config.py`: Runtime settings and environment handling.
 
-### 2. Domain Layer (`domains/`)
-Contains the core business logic, organized by domain. High-level policies reside here.
-*   **`identity/`**: User authentication, profile management, and service synchronization.
-*   **`knowledge/`**: RAG system, Vector Store interaction, file processing (PDF/Notes).
-*   **`workspace/`**: File management, Context management, Notifications.
-*   **`automation/`**: AES (Automated Execution System), Scheduler, Skill System, Commands.
-*   **`orchestration/`**: Agent orchestration, routing, chat projection, and **Tools** (Standard Library).
-*   **`orchestration2/`**: Next-generation graph-driven agent engine. Contains a reusable `engine/` core (interfaces, models, registries, orchestrator, store) with VisionArk-specific `roles/`, `tools/`, and `engine_setup.py`. See [`orchestration2_engine.md`](orchestration2_engine.md) for full architecture.
+### 2. API Layer (`api/`)
+Representative endpoint groups:
+- `agents.py`, `commands.py`, `decomposer.py`
+- `definitions.py`, `approvals.py`, `automation.py`
+- `long_running_jobs.py`, `monitoring.py`, `native.py`
+- `files.py`, `notes.py`, `notifications.py`, `workspace.py`
 
-### 3. Infrastructure Layer (`infrastructure/`)
-Contains technical implementations and interfaces to external systems.
-*   **`llm/`**: LLM Provider implementations (Gemini, VertexAI, etc.).
-*   **`queue/`**: Task queue implementation.
+### 3. Domain Layer (`domains/`)
+Current domain packages:
+- `automation/`: Scheduling and command parsing (AES scheduler/dispatcher and command library).
+- `identity/`: Identity and user-related domain logic.
+- `knowledge/`: Knowledge and retrieval-related domain logic.
+- `long_running/`: Long-running job models, handlers, executor, and service.
+- `monitoring/`: Collectors, detectors, notifiers, monitoring service/scheduling.
+- `native/`: Native runtime bridge (`run_service.py`).
+- `orchestration2/`: Primary orchestration engine and runtime assembly.
+- `workspace/`: Workspace context, files, and notification services.
 
-### 4. Shared Kernel (`shared/`)
-Contains code shared across all layers, with no domain-specific logic.
-*   `database.py`: Database models and connection logic.
-*   `security.py`: Hashing and encryption utilities.
-*   `jwt.py`: Token management.
-*   `paths.py`: Path resolution helpers.
+> Note: `domains/orchestration/` is not part of the current structure; `domains/orchestration2/` is the active orchestration domain.
 
-## Key Design Decisions
-*   **Externalization**: `va_sdk` and `integrations` are kept at the project root to allow them to be shared or developed independently of the core backend.
-*   **Asset Centralization**: All "soft code" (prompts, skills) are in `assets/` to allow for easy editing without backend redeployment.
-*   **Domain Isolation**: Services are grouped by business capability rather than technical function (e.g., no monolithic `services/` folder).
+### 4. Infrastructure Layer (`infrastructure/`)
+- `llm/`: Provider adapters and model routing (OpenAI/Anthropic/Orchestration provider integration).
+- `queue/`: Queue manager and background execution integration.
+
+### 5. Shared Layer (`shared/`)
+- `database.py`: DB models/session utilities.
+- `seed.py`: Seed and initialization helpers.
+- `paths.py`: Path conventions and filesystem helpers.
+- `security.py`, `jwt.py`, `encryption.py`: Security/auth primitives.
+- `logger.py`, `service_helpers.py`: Shared runtime helpers.
+
+## Orchestration2 Highlights (`domains/orchestration2/`)
+- `engine/`: Core execution abstractions (interfaces, models, orchestrator, registries, stores).
+- `engine_runtime/`: LLM runtime engines.
+- `bootstrap/`: Definition import/refresh/validation and project engine builder.
+- `config/`: Default graph/tool/skill catalogs.
+- `roles/` and `tools/library/`: Role policies and standard tool implementations.
+- `integrations/`: Tool/skill import and reflection services.
+
+## Maintenance Guidance
+- Keep this document aligned with actual directories under `core/backend/`.
+- When adding or moving a domain package, update this file in the same PR.
