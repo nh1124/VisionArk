@@ -3,12 +3,14 @@ Authentication API endpoints for Phase 1 (Session-based auth)
 Supports username/password registration and login with JWT tokens
 """
 import uuid
+import secrets
 import logging
 import shutil
 from fastapi import APIRouter, Depends, HTTPException, Response, Request
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
+from typing import Optional
 
 from shared.database import User, ServiceRegistry, UserSettings, Agent as UserAgent, get_engine
 from shared.seed import seed_user_definitions
@@ -24,6 +26,60 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_service_url(url: str) -> str:
+    """Normalize service URL and apply Docker hostname substitution."""
+    if "localhost" in url and os.path.exists("/.dockerenv"):
+        url = url.replace("localhost", "host.docker.internal")
+    if not url.startswith("http"):
+        url = f"http://{url}"
+    return url.rstrip("/")
+
+
+async def _auto_provision_lbs(username: str, service_email: str, service_password: str, lbs_url: str) -> Optional[str]:
+    """
+    Create a per-user LBS account and provision an API key.
+    Uses the system-level LBS_API_KEY (admin) to create the user,
+    then logs in as that user to provision a dedicated key.
+    Returns the provisioned API key string, or None on failure.
+    """
+    try:
+        from integrations.lbs.client import LBSClient
+        # Admin client (uses LBS_API_KEY from env or settings)
+        admin_client = LBSClient(base_url=lbs_url)
+        await admin_client.create_user(email=service_email, name=username, password=service_password)
+
+        # User client — login to obtain JWT, then provision key
+        user_client = LBSClient(base_url=lbs_url, api_key=None)
+        await user_client.login(username_or_email=service_email, password=service_password)
+        result = await user_client.provision_api_key(scopes=["read", "write"])
+        return result.get("api_key") or result.get("key")
+    except Exception as e:
+        logger.warning("LBS auto-provisioning failed for %s: %s", username, e)
+        return None
+
+
+async def _auto_provision_kc(username: str, service_email: str, service_password: str, kc_url: str, gemini_api_key: Optional[str]) -> Optional[str]:
+    """
+    Register a per-user KnowledgeCore account and create an API key.
+    Returns the API key string, or None on failure.
+    """
+    try:
+        from integrations.knowledge_core.client import KnowledgeCoreClient
+        async with KnowledgeCoreClient(base_url=kc_url) as kc:
+            await kc.register(
+                email=service_email,
+                password=service_password,
+                gemini_api_key=gemini_api_key or "",
+                name=username,
+            )
+            await kc.login(email=service_email, password=service_password)
+            key_resp = await kc.create_api_key(name=f"visionark-{username}")
+            return key_resp.api_key
+    except Exception as e:
+        logger.warning("KnowledgeCore auto-provisioning failed for %s: %s", username, e)
+        return None
+
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
 
@@ -32,8 +88,6 @@ class RegisterRequest(BaseModel):
     username: str
     password: str
     email: str | None = None
-    lbs_api_key: str
-    kc_api_key: str
     gemini_api_key: str | None = None
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
@@ -104,50 +158,16 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
     existing = db.query(User).filter(User.username == req.username).first()
     if existing:
         raise HTTPException(status_code=400, detail="Username already taken")
-    
+
     # Check if email already exists (if provided)
     if req.email:
         existing_email = db.query(User).filter(User.email == req.email).first()
         if existing_email:
             raise HTTPException(status_code=400, detail="Email already registered")
-    
-    # Validate LBS key before creating account
-    lbs_url = (settings.lbs_service_url or "http://localhost:8001/api/lbs")
-    if "localhost" in lbs_url and os.path.exists("/.dockerenv"):
-        lbs_url = lbs_url.replace("localhost", "host.docker.internal")
-    
-    if not lbs_url.startswith("http"):
-        lbs_url = f"http://{lbs_url}"
 
-    health_url = f"{lbs_url.rstrip('/')}/health"
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(health_url, headers={"x-api-key": req.lbs_api_key})
-            if resp.status_code != 200:
-                raise HTTPException(status_code=400, detail=f"Invalid LBS API Key (LBS returned {resp.status_code})")
-    except Exception as e:
-        logger.error(f"LBS validation failed during registration: {str(e)}")
-        raise HTTPException(status_code=400, detail="LBS service unreachable. Please ensure LBS is running.")
-
-    # Validate KnowledgeCore key before creating account
-    kc_url = (settings.knowledge_core_url or "http://localhost:8200")
-    if "localhost" in kc_url and os.path.exists("/.dockerenv"):
-        kc_url = kc_url.replace("localhost", "host.docker.internal")
-    
-    if not kc_url.startswith("http"):
-        kc_url = f"http://{kc_url}"
-
-    # Health is at root.
-    kc_root = kc_url.rstrip("/")
-    kc_health_url = f"{kc_root}/health"
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(kc_health_url, headers={"x-api-key": req.kc_api_key})
-            if resp.status_code != 200:
-                raise HTTPException(status_code=400, detail=f"Invalid KnowledgeCore API Key (KC returned {resp.status_code})")
-    except Exception as e:
-        logger.error(f"KnowledgeCore validation failed during registration: {str(e)}")
-        raise HTTPException(status_code=400, detail="KnowledgeCore service unreachable. Please ensure KnowledgeCore is running.")
+    # Validate at least one LLM key is provided
+    if not any([req.gemini_api_key, req.openai_api_key, req.anthropic_api_key]):
+        raise HTTPException(status_code=400, detail="At least one LLM API key is required (Gemini, OpenAI, or Anthropic)")
 
     # Create user
     user_id = str(uuid.uuid4())
@@ -155,7 +175,7 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
         password_hash = hash_password(req.password)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    
+
     user = User(
         id=user_id,
         username=req.username,
@@ -163,28 +183,6 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
         password_hash=password_hash,
         is_active=True
     )
-    
-    # Create LBS service registry entry
-    lbs_service = ServiceRegistry(
-        user_id=user_id,
-        service_name="lbs",
-        base_url=lbs_url,
-        api_key_encrypted=encrypt_string(req.lbs_api_key),
-        is_active=True
-    )
-    
-    # Create KnowledgeCore service registry entry
-    kc_service = ServiceRegistry(
-        user_id=user_id,
-        service_name="knowledge_core",
-        base_url=kc_url,
-        api_key_encrypted=encrypt_string(req.kc_api_key),
-        is_active=True
-    )
-    
-    # Validate at least one LLM key is provided
-    if not any([req.gemini_api_key, req.openai_api_key, req.anthropic_api_key]):
-        raise HTTPException(status_code=400, detail="At least one LLM API key is required (Gemini, OpenAI, or Anthropic)")
 
     # Create UserSettings with all provided LLM API keys
     ai_config = {}
@@ -199,7 +197,7 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
         user_id=user_id,
         ai_config=ai_config
     )
-    
+
     # Create user-level default Agent (one per user, shared across all projects)
     # skill_ids=[] → engine treats as ALL_SKILL_NAMES; graph_id=None → direct_assistant
     default_agent = UserAgent(
@@ -214,14 +212,46 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
 
     try:
         db.add(user)
-        db.add(lbs_service)
-        db.add(kc_service)
         db.add(user_settings)
         db.add(default_agent)
         db.commit()
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to create account: {str(e)}")
+
+    # --- Auto-provision LBS and KnowledgeCore accounts ---
+    # Use a dedicated service email and a generated strong password.
+    service_email = req.email or f"{req.username}@visionark.local"
+    service_password = secrets.token_urlsafe(24)
+
+    lbs_url = _resolve_service_url(settings.lbs_service_url or "http://localhost:8001/api/lbs")
+    kc_url = _resolve_service_url(settings.knowledge_core_url or "http://localhost:8200")
+
+    lbs_api_key = await _auto_provision_lbs(req.username, service_email, service_password, lbs_url)
+    kc_api_key = await _auto_provision_kc(req.username, service_email, service_password, kc_url, req.gemini_api_key)
+
+    # Store service registry entries (active only if key was provisioned)
+    try:
+        lbs_service = ServiceRegistry(
+            user_id=user_id,
+            service_name="lbs",
+            base_url=lbs_url,
+            api_key_encrypted=encrypt_string(lbs_api_key) if lbs_api_key else None,
+            is_active=bool(lbs_api_key),
+        )
+        kc_service = ServiceRegistry(
+            user_id=user_id,
+            service_name="knowledge_core",
+            base_url=kc_url,
+            api_key_encrypted=encrypt_string(kc_api_key) if kc_api_key else None,
+            is_active=bool(kc_api_key),
+        )
+        db.add(lbs_service)
+        db.add(kc_service)
+        db.commit()
+    except Exception as e:
+        logger.warning("Failed to store service registry entries for %s: %s", user_id, e)
+        db.rollback()
 
     # Seed per-user skill_registry and graph_registry
     # (done after commit so the user row exists before FK constraints are checked)

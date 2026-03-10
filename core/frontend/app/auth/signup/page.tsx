@@ -12,8 +12,6 @@ export default function SignUpPage() {
         email: "",
         password: "",
         confirmPassword: "",
-        lbs_api_key: "",
-        kc_api_key: "",
         gemini_api_key: "",
         openai_api_key: "",
         anthropic_api_key: "",
@@ -23,9 +21,7 @@ export default function SignUpPage() {
     const isPasswordValid = formData.password.length >= 8;
     const isConfirmValid = formData.password === formData.confirmPassword && formData.password !== "";
     const hasAtLeastOneLLMKey = formData.gemini_api_key !== "" || formData.openai_api_key !== "" || formData.anthropic_api_key !== "";
-    const isFormValid = isUsernameValid && isPasswordValid && isConfirmValid && formData.lbs_api_key !== "" && formData.kc_api_key !== "" && hasAtLeastOneLLMKey;
-    const [testStatus, setTestStatus] = useState<{ type: "success" | "error" | "loading", message: string } | null>(null);
-    const [kcTestStatus, setKcTestStatus] = useState<{ type: "success" | "error" | "loading", message: string } | null>(null);
+    const isFormValid = isUsernameValid && isPasswordValid && isConfirmValid && hasAtLeastOneLLMKey;
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
 
@@ -55,8 +51,6 @@ export default function SignUpPage() {
                     username: formData.username,
                     email: formData.email || null,
                     password: formData.password,
-                    lbs_api_key: formData.lbs_api_key,
-                    kc_api_key: formData.kc_api_key,
                     gemini_api_key: formData.gemini_api_key || undefined,
                     openai_api_key: formData.openai_api_key || undefined,
                     anthropic_api_key: formData.anthropic_api_key || undefined,
@@ -84,52 +78,6 @@ export default function SignUpPage() {
             setError("Network error. Please check the backend is running.");
         } finally {
             setLoading(false);
-        }
-    };
-
-    const testLBSKey = async () => {
-        if (!formData.lbs_api_key) {
-            setTestStatus({ type: "error", message: "Key required" });
-            return;
-        }
-        setTestStatus({ type: "loading", message: "Testing..." });
-        try {
-            const response = await fetch("/api/auth/test-lbs-connection", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ api_key: formData.lbs_api_key }),
-            });
-            const data = await response.json();
-            if (data.status === "success") {
-                setTestStatus({ type: "success", message: "Valid Key!" });
-            } else {
-                setTestStatus({ type: "error", message: data.message });
-            }
-        } catch (err) {
-            setTestStatus({ type: "error", message: "LBS Unreachable" });
-        }
-    };
-
-    const testKCKey = async () => {
-        if (!formData.kc_api_key) {
-            setKcTestStatus({ type: "error", message: "Key required" });
-            return;
-        }
-        setKcTestStatus({ type: "loading", message: "Testing..." });
-        try {
-            const response = await fetch("/api/auth/test-kc-connection", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ api_key: formData.kc_api_key }),
-            });
-            const data = await response.json();
-            if (data.status === "success") {
-                setKcTestStatus({ type: "success", message: "Valid Key!" });
-            } else {
-                setKcTestStatus({ type: "error", message: data.message });
-            }
-        } catch (err) {
-            setKcTestStatus({ type: "error", message: "KC Unreachable" });
         }
     };
 
@@ -228,76 +176,6 @@ export default function SignUpPage() {
                             {!isConfirmValid && formData.confirmPassword.length > 0 && (
                                 <p className="text-red-400 text-xs mt-1">Passwords do not match</p>
                             )}
-                        </div>
-
-                        <div className="pt-2">
-                            <label htmlFor="lbs_api_key" className="block text-sm font-medium text-blue-300 mb-2">
-                                LBS API Key *
-                            </label>
-                            <div className="flex gap-2">
-                                <input
-                                    type="password"
-                                    id="lbs_api_key"
-                                    name="lbs_api_key"
-                                    value={formData.lbs_api_key}
-                                    onChange={handleChange}
-                                    placeholder="LBS-XXXXXXXXXXXX"
-                                    className="flex-1 px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
-                                />
-                                <button
-                                    type="button"
-                                    onClick={testLBSKey}
-                                    className={`px-4 py-3 rounded-lg font-medium transition-all ${testStatus?.type === 'success'
-                                        ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-                                        : 'bg-blue-600 hover:bg-blue-700 text-white'
-                                        }`}
-                                >
-                                    {testStatus?.type === 'loading' ? '⏳' : testStatus?.type === 'success' ? '✓' : 'Verify'}
-                                </button>
-                            </div>
-                            {testStatus && (
-                                <p className={`mt-1 text-xs ${testStatus.type === 'success' ? 'text-green-400' : 'text-red-400'}`}>
-                                    {testStatus.message}
-                                </p>
-                            )}
-                            <p className="text-[10px] text-gray-500 mt-1">
-                                Vision Ark requires an LBS API Key for task scheduling features.
-                            </p>
-                        </div>
-
-                        <div className="pt-2">
-                            <label htmlFor="kc_api_key" className="block text-sm font-medium text-blue-300 mb-2">
-                                KnowledgeCore API Key *
-                            </label>
-                            <div className="flex gap-2">
-                                <input
-                                    type="password"
-                                    id="kc_api_key"
-                                    name="kc_api_key"
-                                    value={formData.kc_api_key}
-                                    onChange={handleChange}
-                                    placeholder="KC-XXXXXXXXXXXX"
-                                    className="flex-1 px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
-                                />
-                                <button
-                                    type="button"
-                                    onClick={testKCKey}
-                                    className={`px-4 py-3 rounded-lg font-medium transition-all ${kcTestStatus?.type === 'success'
-                                        ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-                                        : 'bg-blue-600 hover:bg-blue-700 text-white'
-                                        }`}
-                                >
-                                    {kcTestStatus?.type === 'loading' ? '⏳' : kcTestStatus?.type === 'success' ? '✓' : 'Verify'}
-                                </button>
-                            </div>
-                            {kcTestStatus && (
-                                <p className={`mt-1 text-xs ${kcTestStatus.type === 'success' ? 'text-green-400' : 'text-red-400'}`}>
-                                    {kcTestStatus.message}
-                                </p>
-                            )}
-                            <p className="text-[10px] text-gray-500 mt-1">
-                                KnowledgeCore provides persistent memory and contextual awareness for your agents.
-                            </p>
                         </div>
 
                         <div>
