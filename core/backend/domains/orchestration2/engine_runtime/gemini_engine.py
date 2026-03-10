@@ -381,38 +381,19 @@ class GeminiEngine(LLMEngine):
                     ))
 
             elif role == MessageRole.ASSISTANT.value:
+                # Past history is intentionally content-only to avoid
+                # re-injecting internal sub-messages (reasoning/tool traces)
+                # back into the model context.
                 parts: list[types.Part] = []
-                if msg.submessages:
-                    for sub in msg.submessages:
-                        if sub.kind in (SubMessageKind.TEXT, SubMessageKind.REASONING):
-                            if sub.content:
-                                parts.append(types.Part.from_text(text=sub.content))
-                        elif sub.kind == SubMessageKind.TOOL_CALL and sub.tool_call:
-                            fc = types.Part.from_function_call(
-                                name=sub.tool_call.tool_name,
-                                args=sub.tool_call.arguments or {},
-                            )
-                            pdata = sub.tool_call.provider_data
-                            if pdata.get("thought_signature"):
-                                fc.thought_signature = pdata["thought_signature"]
-                            if pdata.get("thought") is not None:
-                                fc.thought = pdata["thought"]
-                            parts.append(fc)
-                elif msg.content:
+                if msg.content:
                     parts.append(types.Part.from_text(text=msg.content))
                 if parts:
                     result.append(types.Content(role="model", parts=parts))
 
             elif role == MessageRole.TOOL.value:
-                tool_parts: list[types.Part] = []
-                for sub in msg.submessages:
-                    if sub.kind == SubMessageKind.TOOL_RESULT and sub.tool_call:
-                        tool_parts.append(types.Part.from_function_response(
-                            name=sub.tool_call.tool_name,
-                            response={"result": sub.content},
-                        ))
-                if tool_parts:
-                    result.append(types.Content(role="tool", parts=tool_parts))
+                # Keep history content-only: do not rebuild tool/function parts
+                # from persisted submessages.
+                continue
 
         return result
 
