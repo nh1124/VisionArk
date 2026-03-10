@@ -110,7 +110,10 @@ pub fn load() -> DaemonConfig {
                 Ok(content) => match toml::from_str::<DaemonConfig>(&content) {
                     Ok(parsed) => {
                         info!("Loaded config from {}", path.display());
-                        cfg.api_url = parsed.api_url;
+                        let parsed_api = parsed.api_url.trim();
+                        if !parsed_api.is_empty() {
+                            cfg.api_url = parsed_api.to_string();
+                        }
                         cfg.poll_interval_secs = parsed.poll_interval_secs;
                         cfg.policy = parsed.policy;
                     }

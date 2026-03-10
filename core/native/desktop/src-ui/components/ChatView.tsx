@@ -58,6 +58,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
     const [messageVotes, setMessageVotes] = useState<Record<number, MessageVote>>({})
     const [editingMessageIndex, setEditingMessageIndex] = useState<number | null>(null)
     const [editingMessageText, setEditingMessageText] = useState("")
+    const prevProjectIdRef = useRef<string>(projectId)
 
     // effectiveSessionId: session confirmed by backend (may differ from prop when
     // the provided session was not found and backend fell back to default)
@@ -84,6 +85,8 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
 
     // Reload history whenever session or project changes
     useEffect(() => {
+        const projectChanged = prevProjectIdRef.current !== projectId
+        prevProjectIdRef.current = projectId
         isInitialLoad.current = true
         effectiveSessionRef.current = sessionId
         injectedTaskIdsRef.current.clear()
@@ -95,7 +98,9 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
         setStatusText("")
         setElapsedTime(0)
         currentTaskIdRef.current = null
-        setMessages([])
+        if (projectChanged) {
+            setMessages([])
+        }
         setEditingMessageIndex(null)
         setEditingMessageText("")
         loadHistory()
@@ -329,7 +334,8 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
         setElapsedTime(0)
 
         try {
-            const { task_id, session_id: usedSessionId } = await sendChat(projectId, content, sessionId, model, files)
+            const requestedSessionId = effectiveSessionRef.current ?? sessionId
+            const { task_id, session_id: usedSessionId } = await sendChat(projectId, content, requestedSessionId, model, files)
             currentTaskIdRef.current = task_id
             if (normalizedContent) {
                 pendingLocalSendsRef.current = pendingLocalSendsRef.current.filter(
@@ -340,6 +346,16 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
             // Update the effective session if the backend resolved to a different one
             if (usedSessionId) {
                 effectiveSessionRef.current = usedSessionId
+                if (usedSessionId !== sessionId) {
+                    onSessionChange?.(usedSessionId)
+                    localStorage.setItem(`va_last_session_${projectId}`, usedSessionId)
+                    window.dispatchEvent(new CustomEvent("va-sessions-updated", {
+                        detail: {
+                            project_id: projectId,
+                            session_id: usedSessionId,
+                        },
+                    }))
+                }
             }
             localStorage.setItem("va_last_command_session", JSON.stringify({
                 project_id: projectId,

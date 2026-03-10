@@ -172,6 +172,11 @@ def _approval_to_response(a: RunApproval) -> ApprovalResponse:
 
 
 def _exec_to_response(e: RunExecution) -> ExecutionResponse:
+    # Avoid triggering implicit lazy-loads in async context.
+    # If relationship attributes were not explicitly preloaded, treat as empty.
+    approvals_loaded = e.__dict__.get("approvals")
+    approvals = approvals_loaded if isinstance(approvals_loaded, list) else []
+
     return ExecutionResponse(
         id=e.id,
         run_id=e.run_id,
@@ -187,11 +192,15 @@ def _exec_to_response(e: RunExecution) -> ExecutionResponse:
         finished_at=e.finished_at.isoformat() if e.finished_at else None,
         created_at=e.created_at.isoformat(),
         updated_at=e.updated_at.isoformat() if e.updated_at else None,
-        approvals=[_approval_to_response(a) for a in getattr(e, "approvals", []) or []],
+        approvals=[_approval_to_response(a) for a in approvals],
     )
 
 
 def _run_to_response(r: AgentRun) -> RunResponse:
+    # Avoid implicit lazy-load of run.executions under AsyncSession.
+    executions_loaded = r.__dict__.get("executions")
+    executions = executions_loaded if isinstance(executions_loaded, list) else []
+
     return RunResponse(
         id=r.id,
         user_id=r.user_id,
@@ -204,7 +213,7 @@ def _run_to_response(r: AgentRun) -> RunResponse:
         finished_at=r.finished_at.isoformat() if r.finished_at else None,
         created_at=r.created_at.isoformat(),
         updated_at=r.updated_at.isoformat() if r.updated_at else None,
-        executions=[_exec_to_response(e) for e in getattr(r, "executions", []) or []],
+        executions=[_exec_to_response(e) for e in executions],
     )
 
 
@@ -300,29 +309,52 @@ async def pull_executions_for_device(
     identity: Identity = Depends(resolve_identity),
 ):
     """Daemon endpoint: fetch pending executions assigned to this device."""
-    res = await db.execute(
-        select(NativeDevice).where(
-            NativeDevice.id == device_id,
-            NativeDevice.user_id == identity.user_id,
+    try:
+        res = await db.execute(
+            select(NativeDevice).where(
+                NativeDevice.id == device_id,
+                NativeDevice.user_id == identity.user_id,
+            )
         )
-    )
-    device = res.scalars().first()
-    if not device:
-        raise HTTPException(status_code=403, detail="Device not found or not owned by user")
+        device = res.scalars().first()
+        if not device:
+            raise HTTPException(status_code=403, detail="Device not found or not owned by user")
 
-    stmt = (
-        select(RunExecution)
-        .where(RunExecution.status == "pending")
-        .where(
-            (RunExecution.target_device_id == device_id) |
-            (RunExecution.target_device_id == None)  # noqa: E711
+        stmt = (
+            select(RunExecution)
+            .where(RunExecution.status == "pending")
+            .where(
+                (RunExecution.target_device_id == device_id) |
+                (RunExecution.target_device_id == None)  # noqa: E711
+            )
+            .order_by(RunExecution.created_at.asc())
+            .limit(limit)
         )
-        .order_by(RunExecution.created_at.asc())
-        .limit(limit)
-    )
-    result = await db.execute(stmt)
-    execs = result.scalars().all()
-    return [_exec_to_response(e) for e in execs]
+        result = await db.execute(stmt)
+        execs = result.scalars().all()
+
+        out: List[ExecutionResponse] = []
+        for e in execs:
+            try:
+                out.append(_exec_to_response(e))
+            except Exception:
+                logger.exception(
+                    "runs.pull.serialize_failed user=%s device=%s exec=%s",
+                    identity.user_id,
+                    device_id,
+                    getattr(e, "id", None),
+                )
+        return out
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "runs.pull.failed user=%s device=%s limit=%s",
+            identity.user_id,
+            device_id,
+            limit,
+        )
+        raise
 
 
 class StreamBody(BaseModel):

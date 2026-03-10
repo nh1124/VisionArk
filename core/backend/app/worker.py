@@ -325,15 +325,30 @@ class Worker:
 
         # Parse provider:model format (e.g. "openai:gpt-4.1-mini")
         provider_id, model_id = parse_model_spec(preferred_model)
+        print(
+            f"[Worker] Model resolution task={task_id} preferred_model={preferred_model!r} "
+            f"provider={provider_id!r} model={model_id!r}"
+        )
         api_key = get_api_key_for_provider(settings, provider_id)
+        print(
+            f"[Worker] API key presence task={task_id} provider={provider_id!r} "
+            f"has_key={bool(api_key)}"
+        )
+        missing_key_error = None
         if not api_key:
-            return f"Error: No API key configured for {provider_id}. Please set your API key in settings."
+            missing_key_error = (
+                f"Error: No API key configured for {provider_id}. "
+                f"Please set your API key in settings."
+            )
 
         # 2. Get or create session
         session_id = context.get("session_id")
         if session_id:
             sess_res = await db_session.execute(
-                select(ChatSession).filter(ChatSession.id == session_id)
+                select(ChatSession).filter(
+                    ChatSession.id == session_id,
+                    ChatSession.project_id == project_id,
+                )
             )
             if not sess_res.scalars().first():
                 db_session.add(ChatSession(
@@ -374,6 +389,34 @@ class Worker:
                 print(f"[Worker] Created new default session: {session_id}")
         else:
             print(f"[Worker] Using explicit session_id from context: {session_id}")
+
+        if missing_key_error:
+            # Persist explicit user-visible error when provider key is missing.
+            db_session.add(ChatMessage(
+                id=str(uuid4()),
+                session_id=session_id,
+                role="user",
+                content=message,
+                meta_payload={"attached_files": [
+                    f.to_dict() if hasattr(f, "to_dict") else str(f)
+                    for f in context.get("attached_files", [])
+                ]} if context.get("attached_files") else None,
+            ))
+            db_session.add(ChatMessage(
+                id=str(uuid4()),
+                session_id=session_id,
+                role="assistant",
+                content=missing_key_error,
+            ))
+            sess_update = await db_session.get(ChatSession, session_id)
+            if sess_update:
+                sess_update.last_message_at = datetime.utcnow()
+            await db_session.commit()
+            print(
+                f"[Worker] Missing API key persisted task={task_id} session_id={session_id} "
+                f"provider={provider_id!r}"
+            )
+            return missing_key_error
 
         # 3. Load chat history as v2 Messages
         history_res = await db_session.execute(
@@ -485,6 +528,11 @@ class Worker:
 
         # 8. Wait for the run to complete (CancelledError propagates cleanly)
         run_response = await engine.wait_response(run_id)
+        print(
+            f"[Worker] Run finished task={task_id} run_id={run_id} completed={run_response.completed} "
+            f"error={getattr(run_response, 'error', None)!r} "
+            f"has_message={bool(getattr(run_response, 'message', None))}"
+        )
 
         # Update AgentRun status to reflect completion (best-effort)
         if native_run_id:
@@ -514,9 +562,10 @@ class Worker:
                 # Distinguish user-initiated cancellation from actual errors
                 if error_detail in ("Cancelled by user", "cancelled"):
                     print(f"[Worker] Run {run_response.run_id} was cancelled.")
-                    return ""  # Caller will handle empty result for cancelled runs
+                    response_text = "Cancelled."
                 # Run failed — surface the error
-                response_text = f"An error occurred during processing: {error_detail or 'Unknown error'}"
+                if not response_text.strip():
+                    response_text = f"An error occurred during processing: {error_detail or 'Unknown error'}"
                 print(f"[Worker] Run {run_response.run_id} failed: {error_detail}")
             else:
                 # Run completed but output was empty — pull from last assistant msg
@@ -529,19 +578,7 @@ class Worker:
                 else:
                     response_text = "Task completed."
 
-        # 10. Save user message + assistant response to DB
-        user_msg_id = str(uuid4())
-        db_session.add(ChatMessage(
-            id=user_msg_id,
-            session_id=session_id,
-            role="user",
-            content=message,
-            meta_payload={"attached_files": [
-                f.to_dict() if hasattr(f, "to_dict") else str(f)
-                for f in context.get("attached_files", [])
-            ]} if context.get("attached_files") else None,
-        ))
-
+        # 10. Save assistant response to DB (user message already persisted)
         assistant_msg_id = str(uuid4())
         db_session.add(ChatMessage(
             id=assistant_msg_id,
@@ -605,6 +642,10 @@ class Worker:
             sess_update.last_message_at = datetime.utcnow()
 
         await db_session.commit()
+        print(
+            f"[Worker] DB commit done task={task_id} session_id={session_id} "
+            f"assistant_len={len(response_text or '')}"
+        )
 
         # 11. Ingest to knowledge core (best-effort)
         try:

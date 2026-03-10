@@ -494,7 +494,10 @@ async def chat_with_project(
     if not result.scalars().first():
         raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
     
-    print(f"[Project Chat] Request for {project_id} from user {identity.user_id}")
+    print(
+        f"[Project Chat] Request for {project_id} from user {identity.user_id} "
+        f"session_id={session_id!r} preferred_model={x_preferred_model!r}"
+    )
     
     # 2. Handle File Uploads
     uploaded_files = None

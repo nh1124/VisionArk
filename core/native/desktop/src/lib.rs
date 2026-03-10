@@ -1,4 +1,5 @@
 mod commands;
+mod core_log;
 mod daemon_manager;
 
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -48,6 +49,9 @@ fn resolve_daemon_bootstrap(app: &tauri::AppHandle) -> Option<DaemonBootstrap> {
 }
 
 pub fn run() {
+    core_log::install_panic_hook();
+    core_log::append_fallback("INFO", "desktop.run starting");
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -71,6 +75,8 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            let setup_handle = app.handle().clone();
+            core_log::append_with_app(&setup_handle, "INFO", "desktop.setup entered");
             // ── Register state ───────────────────────────────────────────
             app.manage(daemon_manager::DaemonState::new());
 
@@ -82,11 +88,31 @@ pub fn run() {
                 // Sleep briefly to let UI load/keyring settle if needed
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                 if let Some(bootstrap) = resolve_daemon_bootstrap(&app_handle) {
+                    core_log::append_with_app(
+                        &app_handle,
+                        "INFO",
+                        &format!(
+                            "daemon bootstrap from setup api_url={} token_present={} device_id_present={}",
+                            bootstrap.api_url,
+                            !bootstrap.token.trim().is_empty(),
+                            bootstrap
+                                .device_id
+                                .as_ref()
+                                .map(|d| !d.trim().is_empty())
+                                .unwrap_or(false)
+                        ),
+                    );
                     daemon_manager::start_daemon(
                         &app_handle,
                         bootstrap.api_url,
                         bootstrap.token,
                         bootstrap.device_id,
+                    );
+                } else {
+                    core_log::append_with_app(
+                        &app_handle,
+                        "INFO",
+                        "daemon bootstrap skipped (missing token/config)",
                     );
                 }
             });
@@ -139,6 +165,7 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+            core_log::append_with_app(&setup_handle, "INFO", "desktop.setup completed");
 
             Ok(())
         })
@@ -146,6 +173,11 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 let label = window.label().to_string();
+                core_log::append_with_app(
+                    &window.app_handle().clone(),
+                    "INFO",
+                    &format!("window.close_requested label={}", label),
+                );
                 if label == "main" {
                     // Original main window: hide to tray or exit
                     let app_handle = window.app_handle().clone();
@@ -157,12 +189,20 @@ pub fn run() {
                     if run_in_bg {
                         api.prevent_close();
                         window.hide().ok();
+                        core_log::append_with_app(&app_handle, "INFO", "main window hidden to tray");
                     } else {
+                        core_log::append_with_app(&app_handle, "INFO", "main window closing -> stopping daemon and exiting");
                         daemon_manager::stop_daemon(&app_handle);
                         std::process::exit(0);
                     }
                 }
                 // Dynamic main-* windows, quick-note windows, etc.: allow default close (destroy)
+            } else if matches!(event, WindowEvent::Destroyed) {
+                core_log::append_with_app(
+                    &window.app_handle().clone(),
+                    "INFO",
+                    &format!("window.destroyed label={}", window.label()),
+                );
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -177,13 +217,17 @@ pub fn run() {
             commands::get_config_file_path,
             commands::read_app_config,
             commands::write_app_config,
+            commands::append_client_log,
             commands::bridge_request,
             commands::start_daemon_command,
             commands::stop_daemon_command,
             create_new_window,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running VisionArk");
+        .unwrap_or_else(|e| {
+            core_log::append_fallback("ERROR", &format!("tauri.run failed: {}", e));
+            panic!("error while running VisionArk: {}", e);
+        });
 }
 
 /// Spawn a new Quick Note window each time the shortcut is pressed.

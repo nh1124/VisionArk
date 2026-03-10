@@ -3,6 +3,7 @@ use crate::config::ExecutionPolicy;
 use base64::Engine;
 use bridge_rs::http::BridgeClient;
 use serde_json::{json, Value};
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 use sysinfo::System;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -40,10 +41,12 @@ pub async fn dispatch_tool(
         }
         "read_file" => {
             let path = args["path"].as_str().unwrap_or("");
-            if !is_allowed_path(path, &policy.allowed_paths) {
+            let resolved = resolve_user_path(path);
+            if !is_allowed_path(&resolved, &policy.allowed_paths) {
                 return ToolResult::Err(format!(
-                    "read_file: path '{}' is outside allowed directories",
-                    path
+                    "read_file: path '{}' (resolved '{}') is outside allowed directories",
+                    path,
+                    resolved.display()
                 ));
             }
             read_file(args, policy.max_read_kb).await
@@ -55,20 +58,24 @@ pub async fn dispatch_tool(
                 );
             }
             let path = args["path"].as_str().unwrap_or("");
-            if !is_allowed_path(path, &policy.allowed_paths) {
+            let resolved = resolve_user_path(path);
+            if !is_allowed_path(&resolved, &policy.allowed_paths) {
                 return ToolResult::Err(format!(
-                    "write_file: path '{}' is outside allowed directories",
-                    path
+                    "write_file: path '{}' (resolved '{}') is outside allowed directories",
+                    path,
+                    resolved.display()
                 ));
             }
             write_file(args).await
         }
         "list_dir" => {
             let path = args["path"].as_str().unwrap_or("");
-            if !is_allowed_path(path, &policy.allowed_paths) {
+            let resolved = resolve_user_path(path);
+            if !is_allowed_path(&resolved, &policy.allowed_paths) {
                 return ToolResult::Err(format!(
-                    "list_dir: path '{}' is outside allowed directories",
-                    path
+                    "list_dir: path '{}' (resolved '{}') is outside allowed directories",
+                    path,
+                    resolved.display()
                 ));
             }
             list_dir(args).await
@@ -81,12 +88,17 @@ pub async fn dispatch_tool(
             }
             let src = args["src"].as_str().unwrap_or("");
             let dst = args["dst"].as_str().unwrap_or("");
-            if !is_allowed_path(src, &policy.allowed_paths)
-                || !is_allowed_path(dst, &policy.allowed_paths)
+            let src_resolved = resolve_user_path(src);
+            let dst_resolved = resolve_user_path(dst);
+            if !is_allowed_path(&src_resolved, &policy.allowed_paths)
+                || !is_allowed_path(&dst_resolved, &policy.allowed_paths)
             {
                 return ToolResult::Err(format!(
-                    "move_file: path(s) outside allowed directories (src='{}', dst='{}')",
-                    src, dst
+                    "move_file: path(s) outside allowed directories (src='{}' -> '{}', dst='{}' -> '{}')",
+                    src,
+                    src_resolved.display(),
+                    dst,
+                    dst_resolved.display()
                 ));
             }
             move_file(args).await
@@ -98,10 +110,12 @@ pub async fn dispatch_tool(
                 );
             }
             let path = args["path"].as_str().unwrap_or("");
-            if !is_allowed_path(path, &policy.allowed_paths) {
+            let resolved = resolve_user_path(path);
+            if !is_allowed_path(&resolved, &policy.allowed_paths) {
                 return ToolResult::Err(format!(
-                    "delete_file: path '{}' is outside allowed directories",
-                    path
+                    "delete_file: path '{}' (resolved '{}') is outside allowed directories",
+                    path,
+                    resolved.display()
                 ));
             }
             delete_file(args).await
@@ -135,14 +149,48 @@ pub async fn dispatch_tool(
 }
 
 /// Returns true if `path` is allowed by `allowed_paths`.
-fn is_allowed_path(path: &str, allowed: &[String]) -> bool {
+fn resolve_user_path(path: &str) -> PathBuf {
+    let p = PathBuf::from(path);
+    let joined = if p.is_absolute() {
+        p
+    } else if let Some(home) = dirs::home_dir() {
+        home.join(p)
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(p)
+    };
+    normalize_lexical_path(&joined)
+}
+
+/// Normalize path segments without touching the filesystem.
+/// This removes "." and resolves ".." lexically.
+fn normalize_lexical_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let _ = out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+fn is_allowed_path(path: &Path, allowed: &[String]) -> bool {
     if allowed.is_empty() {
         return true;
     }
-    let target = std::path::Path::new(path);
+    let target = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        resolve_user_path(&path.to_string_lossy())
+    };
     allowed
         .iter()
-        .any(|a| target.starts_with(std::path::Path::new(a)))
+        .any(|a| target.starts_with(resolve_user_path(a)))
 }
 
 // ── Helper: focus guard (expected_window safety check) ──────────────────────
@@ -187,17 +235,33 @@ fn utf8_safe_tail(s: &str, max_bytes: usize) -> String {
     s[start..].to_string()
 }
 
+/// Resolve run_shell cwd on device:
+/// - absolute path: used as-is
+/// - relative path (including "."): resolved from user's home directory
+fn resolve_run_shell_cwd(raw: &str) -> Option<PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(resolve_user_path(trimmed))
+}
+
 // ════════════════════════════════════════════════════════════════════════════════
 // Existing tools (unchanged)
 // ════════════════════════════════════════════════════════════════════════════════
 
 async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id: &str) -> ToolResult {
     let timeout_secs = args["timeout"].as_u64().unwrap_or(30);
-    let cwd = args["cwd"].as_str().map(|s| s.to_string());
+    let heartbeat_secs = args["heartbeat_secs"].as_u64().unwrap_or(0);
+    let idle_approval_secs = args["idle_approval_secs"].as_u64().unwrap_or(0);
+    let idle_kill_after_approval_secs = args["idle_kill_after_approval_secs"].as_u64().unwrap_or(0);
+    let cwd_raw = args["cwd"].as_str().map(|s| s.to_string());
+    let cwd_resolved = cwd_raw
+        .as_deref()
+        .and_then(resolve_run_shell_cwd);
 
-    // completion_markers: when any stdout line CONTAINS one of these strings,
+    // completion_markers: when any stdout/stderr line CONTAINS one of these strings,
     // stdin is closed (EOF sent) so the child process can exit cleanly.
-    // Used by codex_run to detect "tokens used" — codex's last output line.
     let completion_markers: Vec<String> = args["completion_markers"]
         .as_array()
         .map(|arr| {
@@ -248,12 +312,26 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
         }
     };
 
-    if let Some(dir) = &cwd {
+    if let Some(dir) = &cwd_resolved {
+        info!(
+            "run_shell: cwd raw={:?} resolved={}",
+            cwd_raw,
+            dir.display()
+        );
+        if !dir.is_dir() {
+            return ToolResult::Err(format!(
+                "run_shell invalid cwd: raw={:?} resolved={} exists={} is_dir={}",
+                cwd_raw,
+                dir.display(),
+                dir.exists(),
+                dir.is_dir()
+            ));
+        }
         command.current_dir(dir);
     }
 
     // Pipe all stdio.
-    // stdin stays open so the agent can send input via codex_approval.
+    // stdin stays open so higher-level tools can send interactive input.
     // Piped stdout/stderr allow line-by-line streaming to the API.
     command.stdin(std::process::Stdio::piped());
     command.stdout(std::process::Stdio::piped());
@@ -262,7 +340,17 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
 
     let mut child = match command.spawn() {
         Ok(c) => c,
-        Err(e) => return ToolResult::Err(format!("run_shell error: {}", e)),
+        Err(e) => {
+            return ToolResult::Err(format!(
+                "run_shell error: {} (cwd_raw={:?}, cwd_resolved={})",
+                e,
+                cwd_raw,
+                cwd_resolved
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default()
+            ))
+        }
     };
 
     let child_pid = child.id();
@@ -313,12 +401,27 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
     let mut stdout_closed = false;
     let mut stderr_closed = false;
     let mut exit_code_opt: Option<i32> = None;
+    let started_at = tokio::time::Instant::now();
+    let mut last_output_at = started_at;
+    let mut idle_newline_sent = false;
+    let mut idle_newline_at: Option<tokio::time::Instant> = None;
+    let mut forced_stall_reason: Option<String> = None;
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
     let mut patch_tick = tokio::time::interval(Duration::from_secs(3));
     let mut stdin_tick = tokio::time::interval(Duration::from_secs(2));
+    let mut idle_tick = tokio::time::interval(Duration::from_secs(5));
+    let mut heartbeat_tick = if heartbeat_secs > 0 {
+        Some(tokio::time::interval(Duration::from_secs(heartbeat_secs)))
+    } else {
+        None
+    };
     patch_tick.tick().await; // consume first tick immediately
     stdin_tick.tick().await;
+    idle_tick.tick().await;
+    if let Some(t) = heartbeat_tick.as_mut() {
+        t.tick().await;
+    }
 
     'main: loop {
         if stdout_closed && stderr_closed {
@@ -333,9 +436,10 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
                         full_stdout.push('\n');
                         pending_patch.push_str(&line);
                         pending_patch.push('\n');
+                        last_output_at = tokio::time::Instant::now();
 
                         // Completion marker: close stdin and schedule a forced kill.
-                        // Closing stdin sends EOF to codex's readline, but node.js
+                        // Closing stdin sends EOF to the child process readline, but node.js
                         // may keep running if child processes (python.exe, git.exe …)
                         // are still alive in its event loop.  We schedule taskkill
                         // /F /T in 3 s to kill the entire tree after output has flushed.
@@ -362,9 +466,9 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
                     Some(line) => {
                         full_stderr.push_str(&line);
                         full_stderr.push('\n');
+                        last_output_at = tokio::time::Instant::now();
 
                         // Also check completion_markers against stderr.
-                        // codex outputs "tokens used" to stderr, not stdout.
                         if !completion_markers.is_empty() && !kill_scheduled {
                             let line_lc = line.trim().to_lowercase();
                             if completion_markers.iter().any(|m| line_lc.contains(m.as_str())) {
@@ -420,6 +524,72 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
                         }
                     }
                 }
+            }
+
+            _ = idle_tick.tick() => {
+                let now = tokio::time::Instant::now();
+                if idle_approval_secs > 0
+                    && !idle_newline_sent
+                    && now.duration_since(last_output_at) >= Duration::from_secs(idle_approval_secs)
+                {
+                    if let Some(ref mut w) = stdin_writer {
+                        let _ = w.write_all(b"\n").await;
+                        let _ = w.flush().await;
+                        idle_newline_sent = true;
+                        idle_newline_at = Some(now);
+                        info!(
+                            "run_shell: idle auto-approval newline sent (idle={}s, exec={})",
+                            idle_approval_secs, exec_id
+                        );
+                    }
+                }
+
+                if idle_newline_sent
+                    && idle_kill_after_approval_secs > 0
+                    && exit_code_opt.is_none()
+                    && idle_newline_at
+                        .map(|t| now.duration_since(t) >= Duration::from_secs(idle_kill_after_approval_secs))
+                        .unwrap_or(false)
+                {
+                    forced_stall_reason = Some(format!(
+                        "run_shell stalled after auto-approval (no output for {}s after newline)",
+                        idle_kill_after_approval_secs
+                    ));
+                    info!("run_shell: idle stall detected; killing process tree (exec={})", exec_id);
+                    #[cfg(target_os = "windows")]
+                    if let Some(pid) = child_pid {
+                        let _ = tokio::process::Command::new("taskkill")
+                            .args(["/F", "/T", "/PID", &pid.to_string()])
+                            .stdin(std::process::Stdio::null())
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null())
+                            .spawn();
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    if let Some(pid) = child_pid {
+                        let _ = tokio::process::Command::new("kill")
+                            .args(["-TERM", &pid.to_string()])
+                            .spawn();
+                    }
+                }
+            }
+
+            _ = async {
+                if let Some(t) = heartbeat_tick.as_mut() {
+                    t.tick().await;
+                }
+            }, if heartbeat_tick.is_some() => {
+                info!(
+                    "run_shell: heartbeat exec={} elapsed={}s stdout_bytes={} stderr_bytes={} cwd={}",
+                    exec_id,
+                    started_at.elapsed().as_secs(),
+                    full_stdout.len(),
+                    full_stderr.len(),
+                    cwd_resolved
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "(none)".to_string())
+                );
             }
 
             // Scheduled kill: completion marker fired 3 s ago — force-kill the tree.
@@ -491,6 +661,10 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
         }
     }
 
+    if let Some(reason) = forced_stall_reason {
+        return ToolResult::Err(reason);
+    }
+
     // If we exited via stdout/stderr closing (not via exit_rx), collect exit code.
     let exit_code = match exit_code_opt {
         Some(ec) => ec,
@@ -528,12 +702,13 @@ async fn run_shell(args: &Value, client: &BridgeClient, exec_id: &str, device_id
 }
 
 async fn read_file(args: &Value, max_read_kb: u64) -> ToolResult {
-    let path = match args["path"].as_str() {
+    let raw_path = match args["path"].as_str() {
         Some(p) => p,
         None => return ToolResult::Err("read_file: missing 'path'".into()),
     };
+    let path = resolve_user_path(raw_path);
     if max_read_kb > 0 {
-        match tokio::fs::metadata(path).await {
+        match tokio::fs::metadata(&path).await {
             Ok(meta) => {
                 let size_kb = meta.len() / 1024;
                 if size_kb > max_read_kb {
@@ -546,30 +721,32 @@ async fn read_file(args: &Value, max_read_kb: u64) -> ToolResult {
             Err(e) => return ToolResult::Err(format!("read_file metadata error: {}", e)),
         }
     }
-    match tokio::fs::read_to_string(path).await {
+    match tokio::fs::read_to_string(&path).await {
         Ok(content) => ToolResult::Ok(json!({ "content": content })),
         Err(e) => ToolResult::Err(format!("read_file error: {}", e)),
     }
 }
 
 async fn write_file(args: &Value) -> ToolResult {
-    let path = match args["path"].as_str() {
+    let raw_path = match args["path"].as_str() {
         Some(p) => p,
         None => return ToolResult::Err("write_file: missing 'path'".into()),
     };
+    let path = resolve_user_path(raw_path);
     let content = args["content"].as_str().unwrap_or("");
-    match tokio::fs::write(path, content).await {
-        Ok(()) => ToolResult::Ok(json!({ "written": true, "path": path })),
+    match tokio::fs::write(&path, content).await {
+        Ok(()) => ToolResult::Ok(json!({ "written": true, "path": path.to_string_lossy() })),
         Err(e) => ToolResult::Err(format!("write_file error: {}", e)),
     }
 }
 
 async fn list_dir(args: &Value) -> ToolResult {
-    let path = match args["path"].as_str() {
+    let raw_path = match args["path"].as_str() {
         Some(p) => p,
         None => return ToolResult::Err("list_dir: missing 'path'".into()),
     };
-    let mut read_dir = match tokio::fs::read_dir(path).await {
+    let path = resolve_user_path(raw_path);
+    let mut read_dir = match tokio::fs::read_dir(&path).await {
         Ok(rd) => rd,
         Err(e) => return ToolResult::Err(format!("list_dir error: {}", e)),
     };
@@ -590,27 +767,30 @@ async fn list_dir(args: &Value) -> ToolResult {
 }
 
 async fn move_file(args: &Value) -> ToolResult {
-    let src = match args["src"].as_str() {
+    let raw_src = match args["src"].as_str() {
         Some(p) => p,
         None => return ToolResult::Err("move_file: missing 'src'".into()),
     };
-    let dst = match args["dst"].as_str() {
+    let raw_dst = match args["dst"].as_str() {
         Some(p) => p,
         None => return ToolResult::Err("move_file: missing 'dst'".into()),
     };
-    match tokio::fs::rename(src, dst).await {
-        Ok(()) => ToolResult::Ok(json!({ "moved": true, "src": src, "dst": dst })),
+    let src = resolve_user_path(raw_src);
+    let dst = resolve_user_path(raw_dst);
+    match tokio::fs::rename(&src, &dst).await {
+        Ok(()) => ToolResult::Ok(json!({ "moved": true, "src": src.to_string_lossy(), "dst": dst.to_string_lossy() })),
         Err(e) => ToolResult::Err(format!("move_file error: {}", e)),
     }
 }
 
 async fn delete_file(args: &Value) -> ToolResult {
-    let path = match args["path"].as_str() {
+    let raw_path = match args["path"].as_str() {
         Some(p) => p,
         None => return ToolResult::Err("delete_file: missing 'path'".into()),
     };
-    match tokio::fs::remove_file(path).await {
-        Ok(()) => ToolResult::Ok(json!({ "deleted": true, "path": path })),
+    let path = resolve_user_path(raw_path);
+    match tokio::fs::remove_file(&path).await {
+        Ok(()) => ToolResult::Ok(json!({ "deleted": true, "path": path.to_string_lossy() })),
         Err(e) => ToolResult::Err(format!("delete_file error: {}", e)),
     }
 }

@@ -66,8 +66,23 @@ function _openSocket() {
       if (set) {
         set.forEach((h) => h(msg.data))
       }
-    } catch {
-      // ignore malformed messages
+    } catch (e) {
+      const raw = typeof event.data === "string" ? event.data : String(event.data ?? "")
+      const preview = raw.length > 500 ? `${raw.slice(0, 500)}...` : raw
+      console.warn("[bridge/ws] malformed message", { error: String(e), length: raw.length, preview })
+      try {
+        localStorage.setItem(
+          "va_last_ws_parse_error",
+          JSON.stringify({
+            ts: new Date().toISOString(),
+            error: String(e),
+            length: raw.length,
+            preview,
+          })
+        )
+      } catch {
+        // ignore storage failures
+      }
     }
   }
 

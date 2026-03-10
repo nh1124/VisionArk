@@ -266,6 +266,8 @@ async def dispatch_shell_command_async(
     tool_name: str = "cli_run",
     timeout: int = 600,
     completion_markers: list[str] | None = None,
+    extra_payload: dict | None = None,
+    job_extra_input: dict | None = None,
 ) -> ToolResult:
     """Create a RunExecution + LongRunningJob and return immediately with job_id.
 
@@ -323,6 +325,8 @@ async def dispatch_shell_command_async(
             payload["cwd"] = cwd
         if completion_markers:
             payload["completion_markers"] = completion_markers
+        if extra_payload:
+            payload.update(extra_payload)
 
         # Create RunExecution (no timeout in payload — handler manages deadline)
         exc = RunExecution(
@@ -354,6 +358,7 @@ async def dispatch_shell_command_async(
             input_payload={
                 "execution_id": exc.id,
                 "run_id": run.id,
+                **(job_extra_input or {}),
             },
         )
 

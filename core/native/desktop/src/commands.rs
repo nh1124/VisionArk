@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::Write;
 use tauri::{AppHandle, Manager};
 
 // ─── App Config (shared with daemon via config file) ─────────────────────────
@@ -17,6 +19,8 @@ pub struct AppConfig {
 
 const CONFIG_DIR_NAME: &str = "visionark";
 const CONFIG_FILE_NAME: &str = "config.toml";
+const LOG_DIR_NAME: &str = "logs";
+const UI_LOG_FILE_NAME: &str = "desktop-ui.log";
 
 fn config_file_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     // Use config_dir() (no bundle-ID suffix) so the daemon can find the same file.
@@ -24,6 +28,24 @@ fn config_file_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
         .config_dir()
         .map(|d| d.join(CONFIG_DIR_NAME).join(CONFIG_FILE_NAME))
         .map_err(|e| e.to_string())
+}
+
+fn ui_log_file_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path()
+        .config_dir()
+        .map(|d| d.join(CONFIG_DIR_NAME).join(LOG_DIR_NAME).join(UI_LOG_FILE_NAME))
+        .map_err(|e| e.to_string())
+}
+
+fn rotate_if_too_large(path: &std::path::Path) -> Result<(), String> {
+    const MAX_BYTES: u64 = 5 * 1024 * 1024;
+    let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    if size < MAX_BYTES {
+        return Ok(());
+    }
+    let rotated = path.with_extension("log.1");
+    let _ = std::fs::remove_file(&rotated);
+    std::fs::rename(path, rotated).map_err(|e| e.to_string())
 }
 
 /// Returns the absolute path of the config file so the UI can display it.
@@ -51,6 +73,43 @@ pub fn write_app_config(app: AppHandle, config: AppConfig) -> Result<(), String>
     }
     let content = toml::to_string_pretty(&config).map_err(|e| e.to_string())?;
     std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn append_client_log(
+    app: AppHandle,
+    level: String,
+    message: String,
+    context: Option<String>,
+) -> Result<(), String> {
+    let path = ui_log_file_path(&app)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    if path.exists() {
+        rotate_if_too_large(&path)?;
+    }
+
+    let ts = format!("{:?}", std::time::SystemTime::now());
+    let ctx = context.unwrap_or_default();
+    let line = if ctx.trim().is_empty() {
+        format!("[{}] [{}] {}\n", ts, level, message.replace('\n', "\\n"))
+    } else {
+        format!(
+            "[{}] [{}] {} | {}\n",
+            ts,
+            level,
+            message.replace('\n', "\\n"),
+            ctx.replace('\n', "\\n")
+        )
+    };
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| e.to_string())?;
+    file.write_all(line.as_bytes()).map_err(|e| e.to_string())
 }
 
 // ─── App Info ────────────────────────────────────────────────────────────────

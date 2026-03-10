@@ -6,27 +6,79 @@ mod job_runner;
 mod local_tools;
 
 use anyhow::Result;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::PathBuf;
 use tracing::{info, warn};
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
+fn runtime_log_path() -> Option<PathBuf> {
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        return Some(PathBuf::from(appdata).join("visionark").join("logs").join("daemon-runtime.log"));
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return Some(PathBuf::from(home).join(".config").join("visionark").join("logs").join("daemon-runtime.log"));
+    }
+    None
+}
+
+fn append_runtime_log(level: &str, message: &str) {
+    let path = match runtime_log_path() {
+        Some(p) => p,
+        None => return,
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(meta) = std::fs::metadata(&path) {
+        if meta.len() > 5 * 1024 * 1024 {
+            let rotated = path.with_extension("log.1");
+            let _ = std::fs::remove_file(&rotated);
+            let _ = std::fs::rename(&path, rotated);
+        }
+    }
+    let mut file = match OpenOptions::new().create(true).append(true).open(&path) {
+        Ok(f) => f,
+        Err(_) => return,
+    };
+    let line = message.replace('\n', "\\n");
+    let _ = writeln!(file, "[{:?}] [{}] {}", std::time::SystemTime::now(), level, line);
+}
+
+fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|panic_info| {
+        let location = panic_info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "(unknown)".to_string());
+        let payload = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "non-string panic payload".to_string()
+        };
+        append_runtime_log("PANIC", &format!("panic at {}: {}", location, payload));
+    }));
+}
+
+async fn run_inner() -> Result<()> {
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    tracing_subscriber::fmt().with_env_filter(env_filter).init();
 
     info!("VisionArk Daemon starting...");
+    append_runtime_log("INFO", "daemon.run starting");
 
-    // Load configuration: config file → env var overrides → defaults
+    // Load configuration: config file -> env var overrides -> defaults
     let cfg = config::load();
     info!(
         "API base: {} (poll every {}s, dry_run={})",
         cfg.api_url, cfg.poll_interval_secs, cfg.policy.dry_run
     );
 
-    // ── Device registration ────────────────────────────────────────────────
     // Resolve device_id: use pre-configured value, or auto-register.
     // Registration requires a token; without one the daemon still works but
-    // falls back to the legacy poll-all-jobs mode.
+    // falls back to poll loop without device routing.
     let device_id = if let Some(id) = cfg.device_id.clone() {
         info!("Using pre-configured device_id={}", id);
         Some(id)
@@ -42,7 +94,7 @@ async fn main() -> Result<()> {
             }
         }
     } else {
-        warn!("No token configured — skipping device registration");
+        warn!("No token configured; skipping device registration");
         None
     };
 
@@ -59,7 +111,7 @@ async fn main() -> Result<()> {
     // Start activity monitor
     let activity_handle = tokio::spawn(activity::monitor_loop());
 
-    // Start heartbeat loop (keeps device status "online")
+    // Start heartbeat loop (keeps device status online)
     if let Some(ref id) = device_id {
         tokio::spawn(device_registration::heartbeat_loop(
             cfg.api_url.clone(),
@@ -84,4 +136,16 @@ async fn main() -> Result<()> {
     r3?;
 
     Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    install_panic_hook();
+    match run_inner().await {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            append_runtime_log("ERROR", &format!("daemon exited with error: {}", e));
+            Err(e)
+        }
+    }
 }

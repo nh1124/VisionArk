@@ -130,6 +130,12 @@ const MarkdownRenderer = React.memo(({
     nodeName = "hub",
     projectId = "default"
 }: MarkdownRendererProps) => {
+    const safeContent =
+        typeof content === "string"
+            ? content
+            : content == null
+                ? ""
+                : String(content);
     // State for short-lived file token
     const [fileToken, setFileToken] = useState<string | null>(null);
 
@@ -143,7 +149,7 @@ const MarkdownRenderer = React.memo(({
 
     // Pre-process content to catch bare artifact/ref paths and turn them into images
     // Matches patterns like artifacts/image.png or /artifacts/image.png
-    const processedContent = content.replace(
+    const processedContent = safeContent.replace(
         /(?<![!\]\(\[])\b((?:\/?(?:artifacts|refs|files))\/[^\s\)]+\.(?:png|jpe?g|gif|webp|svg|bmp|tiff))\b/gi,
         (match) => `![](${match})`
     );

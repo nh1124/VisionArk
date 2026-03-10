@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react"
+import React, { useCallback, useEffect, useRef, useState } from "react"
 import { listen } from "@tauri-apps/api/event"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { invoke, isTauri } from "@tauri-apps/api/core"
@@ -24,16 +24,21 @@ import { isLoggedIn, logout, listProjects, initApiBase, getApiBase, getToken, ha
 import { listRuns, configure as configureBridge } from "../../bridge/api"
 import * as bridgeWs from "../../bridge/ws"
 
+const daemonStartState = {
+  inFlight: false,
+  issued: false,
+}
+
 export default function App() {
   const [windowLabel] = useState(() => isTauri() ? getCurrentWindow().label : "main")
   const isConsole = windowLabel === "console"
   const isFileViewer = windowLabel.startsWith("fileviewer")
   if (isConsole) return <DaemonConsole />
   if (isFileViewer) return <FileViewerWindow />
-  return <MainApp />
+  return <MainApp windowLabel={windowLabel} />
 }
 
-function MainApp() {
+function MainApp({ windowLabel }: { windowLabel: string }) {
   const [loggedIn, setLoggedIn] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
   const [username, setUsername] = useState("")
@@ -49,11 +54,72 @@ function MainApp() {
   const [calendarStatusFilter, setCalendarStatusFilter] = useState<CalendarStatusFilter>("all")
   const [projectSidebarMode, setProjectSidebarMode] = useState<ProjectSidebarMode>(null)
   const [primaryCollapsed, setPrimaryCollapsed] = useState(false)
+  const lastJobEventSigRef = useRef<Map<string, string>>(new Map())
+  const lastUiDispatchAtRef = useRef<Map<string, number>>(new Map())
+  const lastSeqRef = useRef<Map<string, number>>(new Map())
+  const eventQueueRef = useRef<unknown[]>([])
+  const eventQueueRunningRef = useRef(false)
+  const lastQueueOverflowLogAtRef = useRef(0)
+
+  const appendClientLog = useCallback((level: string, message: string, context?: unknown) => {
+    const ctxString = context == null ? undefined : (() => {
+      try {
+        return JSON.stringify(context)
+      } catch {
+        return String(context)
+      }
+    })()
+    const appendFallback = (err?: unknown) => {
+      try {
+        const raw = localStorage.getItem("va_client_log_fallback")
+        const prev = raw ? JSON.parse(raw) : []
+        const next = Array.isArray(prev) ? prev : []
+        next.push({
+          ts: new Date().toISOString(),
+          level,
+          message,
+          context: ctxString,
+          invoke_error: err ? String(err) : undefined,
+        })
+        while (next.length > 200) next.shift()
+        localStorage.setItem("va_client_log_fallback", JSON.stringify(next))
+      } catch {
+        // ignore storage failures
+      }
+    }
+    if (isTauri()) {
+      invoke("append_client_log", { level, message, context: ctxString }).catch((err) => {
+        console.error("[client-log] append_client_log failed", err)
+        appendFallback(err)
+      })
+    } else {
+      console[level === "error" ? "error" : "log"](`[client-log][${level}] ${message}`, context ?? "")
+      appendFallback()
+    }
+  }, [])
+
+  useEffect(() => {
+    appendClientLog("info", "renderer.mounted", { window_label: windowLabel })
+    const onBeforeUnload = () => {
+      appendClientLog("info", "renderer.beforeunload", { window_label: windowLabel })
+    }
+    const onPageHide = () => {
+      appendClientLog("info", "renderer.pagehide", { window_label: windowLabel })
+    }
+    window.addEventListener("beforeunload", onBeforeUnload)
+    window.addEventListener("pagehide", onPageHide)
+    return () => {
+      appendClientLog("info", "renderer.unmounted", { window_label: windowLabel })
+      window.removeEventListener("beforeunload", onBeforeUnload)
+      window.removeEventListener("pagehide", onPageHide)
+    }
+  }, [appendClientLog, windowLabel])
 
   useEffect(() => {
     const bootstrap = async () => {
       // 1. Restore stored server URL
-      await initApiBase()
+      const bootApiBase = await initApiBase()
+      appendClientLog("info", "bootstrap.start", { window_label: windowLabel, api_base: bootApiBase })
       // 2. Wire bridge (the HTTP client) to desktop's URL/token/refresh management
       configureBridge({ getBaseUrl: getApiBase, getToken, handleRefresh })
       // 3. Now check authentication
@@ -63,17 +129,74 @@ function MainApp() {
           const profile = await getMe()
           setUsername(profile.username)
           setUserId(profile.user_id)
+          appendClientLog("info", "bootstrap.authenticated", { user_id: profile.user_id, window_label: windowLabel })
         } catch (e) {
-          console.warn("Failed to fetch user profile, clearing auth state", e)
-          status = false
-          await logout()
+          const errText = e instanceof Error ? e.message : String(e)
+          const isAuthFailure = /API\s(401|403)\b/.test(errText)
+          if (isAuthFailure) {
+            console.warn("Failed to fetch user profile due to auth error, clearing auth state", e)
+            appendClientLog("error", "bootstrap.profile_fetch_failed_auth", { error: String(e), window_label: windowLabel })
+            status = false
+            await logout()
+          } else {
+            // Keep auth state on transient network errors (e.g. backend reboot).
+            console.warn("Failed to fetch user profile (transient), keeping auth state", e)
+            appendClientLog("error", "bootstrap.profile_fetch_failed_transient", { error: String(e), window_label: windowLabel })
+          }
         }
       }
       setLoggedIn(status)
       setAuthChecked(true)
     }
     bootstrap()
-  }, [])
+  }, [appendClientLog, windowLabel])
+
+  useEffect(() => {
+    if (!loggedIn || userId) return
+    let cancelled = false
+    const retryLoadProfile = async () => {
+      try {
+        const profile = await getMe()
+        if (cancelled) return
+        setUsername(profile.username)
+        setUserId(profile.user_id)
+        appendClientLog("info", "bootstrap.profile_recovered", { user_id: profile.user_id, window_label: windowLabel })
+      } catch (e) {
+        appendClientLog("warn", "bootstrap.profile_retry_failed", { error: String(e), window_label: windowLabel })
+      }
+    }
+    retryLoadProfile()
+    const timer = setInterval(retryLoadProfile, 15_000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [loggedIn, userId, appendClientLog, windowLabel])
+
+  useEffect(() => {
+    const onError = (event: ErrorEvent) => {
+      const payload = {
+        message: event.message,
+        filename: event.filename,
+        lineno: event.lineno,
+        colno: event.colno,
+      }
+      localStorage.setItem("va_last_renderer_error", JSON.stringify(payload))
+      appendClientLog("error", "renderer.error", payload)
+    }
+    const onUnhandled = (event: PromiseRejectionEvent) => {
+      const reason = event.reason instanceof Error ? event.reason.stack || event.reason.message : String(event.reason)
+      const payload = { reason }
+      localStorage.setItem("va_last_renderer_unhandled_rejection", JSON.stringify(payload))
+      appendClientLog("error", "renderer.unhandled_rejection", payload)
+    }
+    window.addEventListener("error", onError)
+    window.addEventListener("unhandledrejection", onUnhandled)
+    return () => {
+      window.removeEventListener("error", onError)
+      window.removeEventListener("unhandledrejection", onUnhandled)
+    }
+  }, [appendClientLog])
 
   useEffect(() => {
     if (!loggedIn) return
@@ -81,20 +204,28 @@ function MainApp() {
     const startDaemon = async () => {
       // UI responsibility: daemon start trigger only.
       if (isTauri()) {
+        if (daemonStartState.inFlight || daemonStartState.issued) {
+          return
+        }
+        daemonStartState.inFlight = true
         const token = await getToken()
         const apiUrl = getApiBase()
         if (!token) {
+          daemonStartState.inFlight = false
           console.warn(
             `[daemon-start-skip] apiUrl=${apiUrl} deviceId=(empty) tokenPresent=false`
           )
         } else {
           try {
             await invoke("start_daemon_command", { apiUrl, token, deviceId: "" })
+            daemonStartState.issued = true
           } catch (e) {
             console.error(
               `[daemon-start-failed] apiUrl=${apiUrl} deviceId=(empty) tokenPresent=true`,
               e
             )
+          } finally {
+            daemonStartState.inFlight = false
           }
         }
       }
@@ -116,13 +247,21 @@ function MainApp() {
       setView(newView)
       if (projectId) {
         setSelectedProjectId(projectId)
-        setSelectedSessionId(sessionId || null)
+        setSelectedSessionId((prev) => {
+          const hasExplicitSession = !!(sessionId && sessionId.trim().length > 0)
+          // Guard: do not drop current session on same-project navigation
+          // when caller omitted sessionId.
+          if (!hasExplicitSession && selectedProjectId === projectId) {
+            return prev
+          }
+          return hasExplicitSession ? sessionId! : null
+        })
         const project = projects.find((p) => p.id === projectId)
         setSelectedProjectName(project?.display_name || project?.name || "Project")
         setProjectSidebarMode(null) // Reset sidebar when switching projects
       }
     },
-    [projects]
+    [projects, selectedProjectId]
   )
 
   useEffect(() => {
@@ -223,15 +362,110 @@ function MainApp() {
       const apiBase = getApiBase()
       const wsBase = apiBase.replace("http://", "ws://").replace("https://", "wss://")
       const wsUrl = `${wsBase}/api/notifications/ws/${userId}`
+      appendClientLog("info", "ws.connecting", { window_label: windowLabel, ws_url: wsUrl })
 
       bridgeWs.connect(wsUrl, token)
 
-      const dispatch = (data: unknown) => {
-        window.dispatchEvent(new CustomEvent("va-realtime-job", { detail: data }))
+      const enqueueRealtimeEvent = (detail: unknown) => {
+        const MAX_EVENT_QUEUE = 400
+        if (eventQueueRef.current.length >= MAX_EVENT_QUEUE) {
+          // Keep most recent events when burst traffic arrives.
+          eventQueueRef.current.shift()
+          const now = Date.now()
+          if (now - lastQueueOverflowLogAtRef.current > 5000) {
+            appendClientLog("warn", "ws.event_queue_overflow", { queue_len: eventQueueRef.current.length })
+            lastQueueOverflowLogAtRef.current = now
+          }
+        }
+        eventQueueRef.current.push(detail)
+        if (eventQueueRunningRef.current) return
+        eventQueueRunningRef.current = true
+
+        const pump = () => {
+          const next = eventQueueRef.current.shift()
+          if (next === undefined) {
+            eventQueueRunningRef.current = false
+            return
+          }
+          window.dispatchEvent(new CustomEvent("va-realtime-job", { detail: next }))
+          if (typeof window.requestAnimationFrame === "function") {
+            window.requestAnimationFrame(() => pump())
+          } else {
+            setTimeout(pump, 16)
+          }
+        }
+        pump()
       }
-      offCreated = bridgeWs.on("job.created", dispatch)
-      offUpdated = bridgeWs.on("job.updated", dispatch)
-      offNotification = bridgeWs.on("notification", dispatch)
+
+      const dispatch = (eventType: string) => (data: unknown) => {
+        let detail = data as any
+        if (eventType === "job.updated" && detail && typeof detail === "object") {
+          const taskId = String(detail.task_id || "")
+          const status = String(detail.status || "")
+          const phase = String(detail.phase || "")
+          const step = String(detail.step || "")
+          const msg = String(detail.message || "")
+          const seq = Number(detail.seq ?? 0)
+
+          if (taskId && Number.isFinite(seq) && seq > 0) {
+            const prevSeq = lastSeqRef.current.get(taskId) || 0
+            if (seq <= prevSeq) {
+              return
+            }
+            lastSeqRef.current.set(taskId, seq)
+            if (lastSeqRef.current.size > 500) {
+              const firstKey = lastSeqRef.current.keys().next().value
+              if (firstKey) lastSeqRef.current.delete(firstKey)
+            }
+          }
+
+          const signature = `${status}|${phase}|${step}|${msg.slice(0, 120)}`
+          if (taskId) {
+            const prev = lastJobEventSigRef.current.get(taskId)
+            if (prev === signature) {
+              return
+            }
+            lastJobEventSigRef.current.set(taskId, signature)
+            if (lastJobEventSigRef.current.size > 200) {
+              const firstKey = lastJobEventSigRef.current.keys().next().value
+              if (firstKey) lastJobEventSigRef.current.delete(firstKey)
+            }
+          }
+
+          const statusLower = status.toLowerCase()
+          const isTerminal = ["completed", "failed", "cancelled"].includes(statusLower)
+
+          // Avoid passing very large status strings through UI event bus
+          detail = {
+            ...detail,
+            message: msg.length > 500 ? `${msg.slice(0, 500)}...` : msg,
+          }
+
+          if (isTerminal) {
+            const payload = { event_type: eventType, data: detail }
+            localStorage.setItem("va_last_realtime_event", JSON.stringify(payload))
+            appendClientLog("info", "ws.job_updated", payload)
+          }
+
+          // Generic sampling for high-churn "processing" updates.
+          if (taskId && statusLower === "processing") {
+            const now = Date.now()
+            const prev = lastUiDispatchAtRef.current.get(taskId) || 0
+            if (now - prev < 800) {
+              return
+            }
+            lastUiDispatchAtRef.current.set(taskId, now)
+            if (lastUiDispatchAtRef.current.size > 500) {
+              const firstKey = lastUiDispatchAtRef.current.keys().next().value
+              if (firstKey) lastUiDispatchAtRef.current.delete(firstKey)
+            }
+          }
+        }
+        enqueueRealtimeEvent(detail)
+      }
+      offCreated = bridgeWs.on("job.created", dispatch("job.created"))
+      offUpdated = bridgeWs.on("job.updated", dispatch("job.updated"))
+      offNotification = bridgeWs.on("notification", dispatch("notification"))
     }
 
     setup()
@@ -243,7 +477,7 @@ function MainApp() {
       offNotification?.()
       bridgeWs.disconnect()
     }
-  }, [loggedIn, userId])
+  }, [loggedIn, userId, appendClientLog])
 
   // Poll for pending approvals count (from run_approvals) to show badge in NavSidebar
   useEffect(() => {
@@ -412,7 +646,11 @@ function MainApp() {
                 projectName={selectedProjectName}
                 sidebarMode={projectSidebarMode}
                 setSidebarMode={setProjectSidebarMode}
-                onSessionChange={setSelectedSessionId}
+                onSessionChange={(next) => {
+                  // Ignore accidental null/empty session updates while staying on chat.
+                  if (!next) return
+                  setSelectedSessionId(next)
+                }}
               />
             )}
             {view === "workspace" && <WorkspaceView />}

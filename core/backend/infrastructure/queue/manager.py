@@ -2,6 +2,7 @@
 import redis.asyncio as redis
 import json
 import uuid
+import asyncio
 from typing import Optional, Dict, Any
 from app.config import settings
 from shared.database import TaskType
@@ -35,7 +36,20 @@ class QueueManager:
                 port=settings.redis_port,
                 decode_responses=True
             )
+            cls._instance._task_locks: Dict[str, asyncio.Lock] = {}
         return cls._instance
+
+    def _task_lock(self, task_id: str) -> asyncio.Lock:
+        lock = self._task_locks.get(task_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._task_locks[task_id] = lock
+            if len(self._task_locks) > 1000:
+                # Best-effort cleanup: drop unlocked stale locks.
+                stale = [k for k, v in self._task_locks.items() if not v.locked()][:200]
+                for k in stale:
+                    self._task_locks.pop(k, None)
+        return lock
 
     async def enqueue(self, user_id: str, message: str, context: Optional[Dict] = None, task_type: TaskType = TaskType.USER_MESSAGE) -> str:
         """Add a task to the queue"""
@@ -144,20 +158,39 @@ class QueueManager:
                 await self.clear_active_task_for_session(session_id)
 
         if user_id:
-            await self._publish_job_event(
-                user_id=user_id,
-                event_type="job.updated",
-                data={
-                    "task_id": task_id,
-                    "status": status,
-                    "message": message,
-                    "phase": phase,
-                    "step": step,
-                    "task_type": task_type,
-                    "project_id": project_id,
-                    "session_id": session_id,
-                },
-            )
+            # Coalesce repeated progress updates and attach monotonic seq for clients.
+            lock = self._task_lock(task_id)
+            async with lock:
+                is_terminal = status in ["completed", "failed", "cancelled"]
+                event_sig = json.dumps(
+                    {"status": status, "phase": phase or "", "step": step or ""},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                sig_key = f"task_event_sig:{task_id}"
+                seq_key = f"task_event_seq:{task_id}"
+                prev_sig = await self.client.get(sig_key)
+
+                should_publish = is_terminal or (prev_sig != event_sig)
+                if should_publish:
+                    seq = int(await self.client.incr(seq_key))
+                    await self.client.expire(seq_key, 3600)
+                    await self.client.setex(sig_key, 3600, event_sig)
+                    await self._publish_job_event(
+                        user_id=user_id,
+                        event_type="job.updated",
+                        data={
+                            "task_id": task_id,
+                            "status": status,
+                            "message": message,
+                            "phase": phase,
+                            "step": step,
+                            "task_type": task_type,
+                            "project_id": project_id,
+                            "session_id": session_id,
+                            "seq": seq,
+                        },
+                    )
 
     async def get_status(self, task_id: str) -> Optional[Dict]:
         """Get task status"""
@@ -212,6 +245,8 @@ class QueueManager:
                 await self.clear_active_task_for_session(session_id)
 
         if user_id:
+            seq = int(await self.client.incr(f"task_event_seq:{task_id}"))
+            await self.client.expire(f"task_event_seq:{task_id}", 3600)
             await self._publish_job_event(
                 user_id=user_id,
                 event_type="job.updated",
@@ -221,6 +256,7 @@ class QueueManager:
                     "task_type": current_data.get("task_type"),
                     "project_id": project_id,
                     "session_id": session_id,
+                    "seq": seq,
                 },
             )
 

@@ -30,8 +30,24 @@ const DEFAULT_API_URL = "http://localhost:8000"
 
 export let BASE_URL = DEFAULT_API_URL
 
+function coerceNativeLocalApiUrl(url: string): string {
+    try {
+        const u = new URL(url)
+        const host = u.hostname.toLowerCase()
+        const isLocal = host === "localhost" || host === "127.0.0.1"
+        const isFrontendPort = u.port === "3000" || u.port === "3001" || u.port === "1420"
+        if (IS_TAURI && isLocal && isFrontendPort) {
+            return `${u.protocol}//${u.hostname}:8000`
+        }
+    } catch {
+        // keep original when URL parsing fails
+    }
+    return url
+}
+
 function normalizeUrl(url: string): string {
-    return url.trim().replace(/\/+$/, "") || DEFAULT_API_URL
+    const trimmed = url.trim().replace(/\/+$/, "") || DEFAULT_API_URL
+    return coerceNativeLocalApiUrl(trimmed)
 }
 
 function buildLoginBaseCandidates(baseUrl: string): string[] {

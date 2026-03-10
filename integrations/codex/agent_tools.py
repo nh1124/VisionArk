@@ -13,6 +13,8 @@ CodexJobCancelTool      Cancel a queued or running Codex task.
 
 from __future__ import annotations
 
+import logging
+import os
 from typing import Optional
 
 from pydantic import Field
@@ -24,6 +26,8 @@ from integrations._cli_run_helper import (
     _err_result,
     _ok_result,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ── check_runtime ──────────────────────────────────────────────────────────────
@@ -52,7 +56,6 @@ class CodexCheckRuntimeTool(BaseTool):
         if not ctx:
             return _err_result("internal_error", "Missing integration context.")
 
-        import shlex
         device_id: str | None = kwargs.get("device_id")
         workdir: str | None = kwargs.get("workdir")
 
@@ -75,10 +78,12 @@ class CodexCheckRuntimeTool(BaseTool):
 
         # Optionally check workdir accessibility
         if workdir:
-            # Use codex --version with --cd to verify the dir is accessible and trusted
+            # Validate workdir with the same execution path used by codex_run:
+            # spawn a tiny command with cwd=workdir on the target device.
             wd_result = await dispatch_shell_command(
                 ctx,
-                cmd=f"test -d {shlex.quote(workdir)} && echo ok || echo missing",
+                argv=["python", "-c", "print('ok')"],
+                cwd=workdir,
                 device_id=device_id,
                 risk_level="low",
                 timeout=10,
@@ -138,7 +143,7 @@ class CodexRunTool(BaseTool):
     name = "codex_run"
     description = (
         "Execute a coding task using the Codex CLI on a native device. "
-        "Returns immediately with a job_id — use codex_job_status to check progress "
+        "Returns immediately with a job_id  Euse codex_job_status to check progress "
         "and retrieve the result when complete. "
         "High-risk operations (file writes, refactors) may require user approval in the Run Center."
     )
@@ -148,6 +153,7 @@ class CodexRunTool(BaseTool):
         if not ctx:
             return _err_result("internal_error", "Missing integration context.")
 
+        import os
         prompt: str = kwargs.get("prompt", "")
         model: str | None = kwargs.get("model")
         sandbox: str | None = kwargs.get("sandbox")
@@ -157,8 +163,35 @@ class CodexRunTool(BaseTool):
 
         if not prompt.strip():
             return _err_result("invalid_args", "prompt is required and must not be empty.")
+        if not workdir or not str(workdir).strip():
+            return _err_result(
+                "invalid_args",
+                "workdir is required for codex_run. Please pass an explicit project directory path.",
+            )
+        workdir = str(workdir).strip()
+        # IMPORTANT:
+        # Do not resolve relative workdir on the backend host.
+        # Native commands run on a remote/local device via daemon, so relative
+        # path resolution must happen on that device (daemon side), not here.
+        expanded = os.path.expanduser(workdir)
+        if os.path.isabs(expanded):
+            workdir = os.path.abspath(expanded)
+        else:
+            # Keep relative path (e.g. ".", "./project") as-is.
+            # daemon local_tools.rs resolves it against device user's home.
+            workdir = workdir
+        logger.info(
+            "codex_run.request user=%s run=%s device=%s workdir=%r model=%r sandbox=%r prompt_len=%d",
+            getattr(ctx, "user_id", None),
+            (ctx.metadata or {}).get("run_id"),
+            device_id,
+            workdir,
+            model,
+            sandbox or "workspace-write+full-auto",
+            len(prompt),
+        )
 
-        # Build codex exec argv (direct spawn — no shell quoting involved)
+        # Build codex exec argv (direct spawn  Eno shell quoting involved)
         argv = ["codex", "exec"]
         if sandbox:
             argv += ["--sandbox", sandbox]
@@ -167,13 +200,20 @@ class CodexRunTool(BaseTool):
             argv += ["--sandbox", "workspace-write", "--full-auto"]
         if model:
             argv += ["--model", model]
-        if workdir:
+        # Keep Codex CLI invocation stable on Windows:
+        # use run_shell's cwd for working-directory control and avoid passing
+        # relative --cd (e.g. ".") directly to codex exec.
+        if os.path.isabs(workdir):
             argv += ["--cd", workdir]
+        else:
+            logger.warning(
+                "codex_run.relative_workdir detected workdir=%r; using run_shell cwd resolution and omitting --cd",
+                workdir,
+            )
         # Required when workdir is not a trusted git repo
         argv.append("--skip-git-repo-check")
         argv.append(prompt)
-
-        return await dispatch_shell_command_async(
+        result = await dispatch_shell_command_async(
             ctx,
             argv=argv,
             cwd=workdir,
@@ -181,9 +221,28 @@ class CodexRunTool(BaseTool):
             risk_level=risk_level,
             tool_name="codex_run",
             timeout=600,  # codex needs time for AI inference; daemon default (30s) is too short
-            # "tokens used" is codex's final output line — daemon closes stdin on match → codex exits
             completion_markers=["tokens used"],
+            extra_payload={
+                # Auto-recover when Codex/PowerShell gets stuck waiting for input.
+                "idle_approval_secs": 90,
+                "idle_kill_after_approval_secs": 120,
+                # Daemon heartbeat logs for observability.
+                "heartbeat_secs": 15,
+            },
+            job_extra_input={
+                # LRJ-level stale guard (seconds) to avoid infinite "running".
+                "stall_timeout_sec": 420,
+            },
         )
+        data = result.data or {}
+        logger.info(
+            "codex_run.queued ok=%s job_id=%s execution_id=%s run_id=%s",
+            data.get("ok"),
+            data.get("job_id"),
+            data.get("execution_id"),
+            data.get("run_id"),
+        )
+        return result
 
 
 # ── job_status ─────────────────────────────────────────────────────────────────
@@ -211,6 +270,7 @@ class CodexJobStatusTool(BaseTool):
         job_id: str = kwargs.get("job_id", "")
         if not job_id:
             return _err_result("invalid_args", "job_id is required.")
+        logger.info("codex_job_status.request user=%s job_id=%s", getattr(ctx, "user_id", None), job_id)
 
         try:
             from integrations._internal_services import LongRunningJobService
@@ -222,6 +282,7 @@ class CodexJobStatusTool(BaseTool):
             return _err_result("not_found", f"Job '{job_id}' not found.")
 
         status = job.status
+        logger.info("codex_job_status.state job_id=%s status=%s", job_id, status)
 
         if status == "completed":
             result = job.result_payload or {}
@@ -275,7 +336,7 @@ class CodexJobWaitTool(BaseTool):
     description = (
         "Wait for a Codex task to complete and return its result. "
         "Polls until the job is completed or failed (up to timeout seconds). "
-        "Use this right after codex_run — it blocks until the result is ready, "
+        "Use this right after codex_run  Eit blocks until the result is ready, "
         "so you do not need to manually poll codex_job_status."
     )
     args_schema = CodexJobWaitArgs
@@ -292,6 +353,12 @@ class CodexJobWaitTool(BaseTool):
 
         if not job_id:
             return _err_result("invalid_args", "job_id is required.")
+        logger.info(
+            "codex_job_wait.start user=%s job_id=%s timeout=%s",
+            getattr(ctx, "user_id", None),
+            job_id,
+            timeout,
+        )
 
         deadline = time.monotonic() + timeout
 
@@ -313,6 +380,13 @@ class CodexJobWaitTool(BaseTool):
             if status == "completed":
                 result = job.result_payload or {}
                 stdout = result.get("stdout", "")
+                logger.info(
+                    "codex_job_wait.completed job_id=%s stdout_len=%d stderr_len=%d exit_code=%s",
+                    job_id,
+                    len(stdout or ""),
+                    len(result.get("stderr", "") or ""),
+                    result.get("exit_code", 0),
+                )
                 return _ok_result(
                     stdout.strip() or "Codex task completed.",
                     job_id=job_id,
@@ -323,6 +397,12 @@ class CodexJobWaitTool(BaseTool):
                 )
 
             if status in ("failed", "cancelled"):
+                logger.warning(
+                    "codex_job_wait.terminal_non_success job_id=%s status=%s code=%s",
+                    job_id,
+                    status,
+                    job.error_code,
+                )
                 return _err_result(
                     job.error_code or status,
                     job.error_message or "Codex task failed.",
@@ -330,7 +410,7 @@ class CodexJobWaitTool(BaseTool):
                     status=status,
                 )
 
-            # queued / running — check timeout AFTER poll so we never skip the final check
+            # queued / running  Echeck timeout AFTER poll so we never skip the final check
             if time.monotonic() >= deadline:
                 break
 
@@ -428,8 +508,8 @@ class CodexJobOutputTool(BaseTool):
                 pass
 
         # Fallback: use LRJ progress message (updated every poll cycle)
+        progress = getattr(job, "progress", None) or {}
         if not partial:
-            progress = getattr(job, "progress", None) or {}
             if isinstance(progress, dict):
                 partial = progress.get("message", "")
 
@@ -445,6 +525,8 @@ class CodexJobOutputTool(BaseTool):
             partial[-3000:],
             job_id=job_id,
             status=job.status,
+            execution_id=exec_id,
+            progress_message=progress.get("message") if isinstance(progress, dict) else None,
             output=partial[-3000:],
             total_bytes=len(partial),
         )
