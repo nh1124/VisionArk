@@ -63,12 +63,6 @@ function buildLoginBaseCandidates(baseUrl: string): string[] {
         if ((host === "localhost" || host === "127.0.0.1") && (port === "3000" || port === "3001" || port === "1420")) {
             candidates.push(`${url.protocol}//${host}:8000`)
         }
-
-        // Production fallback: frontend domain -> api subdomain.
-        if (host !== "localhost" && host !== "127.0.0.1" && !host.startsWith("api.")) {
-            const baseHost = host.startsWith("www.") ? host.slice(4) : host
-            candidates.push(`${url.protocol}//api.${baseHost}${port ? `:${port}` : ""}`)
-        }
     } catch {
         // Ignore parse errors and use normalized value only.
     }
@@ -219,7 +213,10 @@ export const apiJson = _apiJson
 
 // ─── Auth ──────────────────────────────────────────────────────────────────────
 
-export async function login(username: string, password: string) {
+export async function login(username: string, password: string, serverUrl?: string) {
+    if (serverUrl?.trim()) {
+        await setApiBase(serverUrl)
+    }
     const bases = buildLoginBaseCandidates(BASE_URL)
     let lastError: Error | null = null
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react"
 import { ChevronDown, ChevronUp } from "lucide-react"
-import { login, getApiBase, setApiBase } from "../lib/api"
+import { login, getApiBase } from "../lib/api"
 import appIcon from "../../icons/icon.png"
 
 interface Props {
@@ -20,19 +20,13 @@ export default function LoginScreen({ onLogin }: Props) {
         setServerUrl(getApiBase())
     }, [])
 
-    const applyServerUrl = async (url: string) => {
-        if (!url.trim()) return
-        await setApiBase(url) // also auto-syncs bridge URL
-        setServerUrl(getApiBase()) // reflect normalization
-    }
-
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         if (!username || !password) return
         setLoading(true)
         setError("")
         try {
-            await login(username, password)
+            await login(username, password, serverUrl)
             onLogin(username)
         } catch (e) {
             const message = e instanceof Error ? e.message : "Login failed"
@@ -95,23 +89,13 @@ export default function LoginScreen({ onLogin }: Props) {
                                 <label className="block text-xs font-medium text-gray-500">
                                     Server URL
                                 </label>
-                                <div className="flex gap-2">
-                                    <input
-                                        type="url"
-                                        value={serverUrl}
-                                        onChange={(e) => setServerUrl(e.target.value)}
-                                        onBlur={(e) => { applyServerUrl(e.target.value) }}
-                                        className="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-sm text-white outline-none focus:border-cyan-500 transition-colors font-mono"
-                                        placeholder="http://localhost:8000"
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={() => applyServerUrl(serverUrl)}
-                                        className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-xl text-xs transition-colors"
-                                    >
-                                        Set
-                                    </button>
-                                </div>
+                                <input
+                                    type="url"
+                                    value={serverUrl}
+                                    onChange={(e) => setServerUrl(e.target.value)}
+                                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-sm text-white outline-none focus:border-cyan-500 transition-colors font-mono"
+                                    placeholder="http://localhost:8000"
+                                />
                                 <p className="text-[11px] text-gray-600">
                                     Current: {getApiBase()}
                                 </p>

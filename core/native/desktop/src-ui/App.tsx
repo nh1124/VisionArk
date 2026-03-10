@@ -342,9 +342,24 @@ function MainApp({ windowLabel }: { windowLabel: string }) {
   const handleLogout = useCallback(async () => {
     bridgeWs.disconnect()
     await logout()
+    // Stop the daemon process so it is restarted fresh (with the new server URL and a
+    // new device registration) on the next login. Without this, DaemonState.child in
+    // Rust remains Some(old_process) and start_daemon_command silently skips the restart.
+    if (isTauri()) {
+      try {
+        await invoke("stop_daemon_command")
+      } catch {
+        // best-effort
+      }
+    }
+    daemonStartState.inFlight = false
+    daemonStartState.issued = false
     setLoggedIn(false)
     setUsername("")
     setUserId("")
+    setProjects([])
+    setSelectedProjectId(null)
+    setSelectedSessionId(null)
   }, [])
 
   // Real-time sync via backend notification WebSocket (job.* events).
