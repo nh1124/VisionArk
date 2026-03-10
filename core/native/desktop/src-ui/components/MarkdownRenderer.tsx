@@ -15,6 +15,7 @@ interface MarkdownRendererProps {
     nodeType?: string;
     nodeName?: string;
     projectId?: string;
+    autoImagePathConversion?: boolean;
 }
 
 interface CodeBlockProps {
@@ -128,7 +129,8 @@ const MarkdownRenderer = React.memo(({
     className = "",
     nodeType = "hub",
     nodeName = "hub",
-    projectId = "default"
+    projectId = "default",
+    autoImagePathConversion = true
 }: MarkdownRendererProps) => {
     const safeContent =
         typeof content === "string"
@@ -149,10 +151,12 @@ const MarkdownRenderer = React.memo(({
 
     // Pre-process content to catch bare artifact/ref paths and turn them into images
     // Matches patterns like artifacts/image.png or /artifacts/image.png
-    const processedContent = safeContent.replace(
-        /(?<![!\]\(\[])\b((?:\/?(?:artifacts|refs|files))\/[^\s\)]+\.(?:png|jpe?g|gif|webp|svg|bmp|tiff))\b/gi,
-        (match) => `![](${match})`
-    );
+    const processedContent = autoImagePathConversion
+        ? safeContent.replace(
+            /(?<![!\]\(\[])\b((?:\/?(?:artifacts|refs|files))\/[^\s\)]+\.(?:png|jpe?g|gif|webp|svg|bmp|tiff))\b/gi,
+            (match) => `![](${match})`
+        )
+        : safeContent;
 
     return (
         <div className={`markdown-content prose prose-invert max-w-none prose-img:w-full prose-img:rounded-xl prose-img:border-gray-800/50 prose-a:text-cyan-400 ${className}`}>

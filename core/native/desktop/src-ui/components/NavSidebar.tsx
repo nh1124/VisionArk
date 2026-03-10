@@ -110,7 +110,7 @@ function mapViewToPrimary(view: NavView): PrimaryNavId {
 }
 
 function SectionTitle({ title }: { title: string }) {
-  return <h3 className="px-3 text-[10px] font-black uppercase tracking-[0.16em] text-gray-600">{title}</h3>
+  return <h3 className="px-3 text-[11px] font-semibold uppercase tracking-[0.1em] text-gray-500">{title}</h3>
 }
 
 export default function NavSidebar({
@@ -749,10 +749,10 @@ export default function NavSidebar({
 
   const renderProjectsSecondary = () =>
     active === "projects" ? (
-      <div className="space-y-4">
+      <div className="space-y-3">
         <div className="flex items-center gap-2 px-1 py-1 text-gray-300">
           <Folder size={16} />
-          <span className="text-xl font-semibold">All Projects</span>
+          <span className="text-lg font-medium">All Projects</span>
         </div>
 
         <div className="px-1">
@@ -761,13 +761,13 @@ export default function NavSidebar({
             placeholder="Search projects..."
             value={projectSearchQuery}
             onChange={(e) => setProjectSearchQuery(e.target.value)}
-            className="w-full h-11 rounded-xl bg-gray-900/80 border border-gray-800 px-4 text-gray-200 placeholder:text-gray-500 outline-none focus:border-cyan-500/40"
+            className="w-full h-10 rounded-xl bg-gray-900/80 border border-gray-800 px-3.5 text-sm text-gray-200 placeholder:text-gray-500 outline-none focus:border-cyan-500/40"
           />
         </div>
 
         <button
           onClick={handleNewProject}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-cyan-400 hover:bg-cyan-500/10"
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium text-cyan-400 hover:bg-cyan-500/10"
         >
           <Plus size={15} />
           <span>New Project</span>
@@ -828,7 +828,7 @@ export default function NavSidebar({
                             : "text-gray-400 hover:bg-gray-800/50 hover:text-white"
                       }`}
                     >
-                      <span className="truncate flex-1">{project.display_name || project.name}</span>
+                      <span className="truncate flex-1 text-[13px]">{project.display_name || project.name}</span>
                     </button>
                   )}
                   {(isHovered || projectMenuOpen === project.id) && editingProjectId !== project.id && (
@@ -846,13 +846,13 @@ export default function NavSidebar({
         </div>
       </div>
     ) : (
-      <div className="space-y-4">
+      <div className="space-y-3">
         <button
           onClick={() => onChange("projects")}
           className="w-full flex items-center gap-2 px-1 py-1 text-gray-300 hover:text-white"
         >
           <ChevronLeft size={16} />
-          <span className="text-xl font-semibold">Projects</span>
+          <span className="text-lg font-medium">Projects</span>
         </button>
 
         <div className="px-1">
@@ -861,13 +861,13 @@ export default function NavSidebar({
             placeholder="Search chats..."
             value={chatSearchQuery}
             onChange={(e) => setChatSearchQuery(e.target.value)}
-            className="w-full h-11 rounded-xl bg-gray-900/80 border border-gray-800 px-4 text-gray-200 placeholder:text-gray-500 outline-none focus:border-cyan-500/40"
+            className="w-full h-10 rounded-xl bg-gray-900/80 border border-gray-800 px-3.5 text-sm text-gray-200 placeholder:text-gray-500 outline-none focus:border-cyan-500/40"
           />
         </div>
 
         <button
           onClick={handleNewChat}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-cyan-400 hover:bg-cyan-500/10"
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium text-cyan-400 hover:bg-cyan-500/10"
         >
           <Plus size={15} />
           <span>New Chat</span>
@@ -930,7 +930,7 @@ export default function NavSidebar({
                       }`}
                     >
                       <MessageSquare size={11} className="flex-shrink-0 opacity-40" />
-                      <span className="truncate flex-1">{session.title || "Untitled Chat"}</span>
+                      <span className="truncate flex-1 text-[13px]">{session.title || "Untitled Chat"}</span>
                     </button>
                   )}
                   {(isHovered || sessionMenuOpen === session.id) && editingSessionId !== session.id && (
@@ -1121,8 +1121,8 @@ export default function NavSidebar({
   return (
     <>
       <div className="h-full flex border-r border-gray-800/50 bg-gray-950 flex-shrink-0">
-        <aside className={`${primaryCollapsed ? "w-16" : "w-52"} border-r border-gray-800/50 flex flex-col transition-all duration-200`}>
-          <div className={`p-3 ${primaryCollapsed ? "flex justify-center" : ""}`}>
+        <aside className={`${primaryCollapsed ? "w-14" : "w-48"} border-r border-gray-800/50 flex flex-col transition-all duration-200`}>
+          <div className={`p-2.5 ${primaryCollapsed ? "flex justify-center" : ""}`}>
             <button
               onClick={onTogglePrimaryCollapsed}
               className="w-8 h-8 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors flex items-center justify-center"
@@ -1132,7 +1132,7 @@ export default function NavSidebar({
             </button>
           </div>
 
-          <nav className={`flex-1 p-3 space-y-1 overflow-y-auto ${primaryCollapsed ? "px-2" : ""}`}>
+          <nav className={`flex-1 p-2.5 space-y-1 overflow-y-auto ${primaryCollapsed ? "px-1.5" : ""}`}>
             {primaryNavItems.map(({ id, icon: Icon, label, target }) => {
               const isPrimaryActive = primaryActive === id
               return (
@@ -1140,19 +1140,19 @@ export default function NavSidebar({
                   key={id}
                   onClick={() => onChange(target)}
                   title={primaryCollapsed ? label : undefined}
-                  className={`w-full flex items-center ${primaryCollapsed ? "justify-center px-2" : "gap-3 px-3"} py-2.5 rounded-xl text-sm font-semibold transition-colors ${isPrimaryActive ? "bg-cyan-500 text-white shadow-lg shadow-cyan-500/15" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}
+                  className={`w-full flex items-center ${primaryCollapsed ? "justify-center px-1.5" : "gap-2.5 px-3"} py-2 rounded-xl text-[13px] font-medium transition-colors ${isPrimaryActive ? "bg-cyan-500 text-white shadow-lg shadow-cyan-500/15" : "text-gray-400 hover:bg-gray-800/70 hover:text-gray-200"}`}
                 >
-                  <Icon size={18} />
+                  <Icon size={17} />
                   {!primaryCollapsed && <span>{label}</span>}
                 </button>
               )
             })}
           </nav>
 
-          <div className={`p-3 border-t border-gray-800/50 relative ${primaryCollapsed ? "px-2" : ""}`} ref={userMenuRef}>
+          <div className={`p-2.5 border-t border-gray-800/50 relative ${primaryCollapsed ? "px-1.5" : ""}`} ref={userMenuRef}>
             <button
               onClick={() => setUserMenuOpen(!userMenuOpen)}
-              className={`w-full flex items-center ${primaryCollapsed ? "justify-center px-2" : "gap-3 px-3"} py-2.5 rounded-xl text-sm font-semibold transition-colors ${userMenuOpen ? "bg-gray-800 text-white" : "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200"}`}
+              className={`w-full flex items-center ${primaryCollapsed ? "justify-center px-1.5" : "gap-2.5 px-3"} py-2 rounded-xl text-[13px] font-medium transition-colors ${userMenuOpen ? "bg-gray-800 text-white" : "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200"}`}
             >
               <div className="w-7 h-7 rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0 shadow-md">
                 {(username || "U").charAt(0).toUpperCase()}
@@ -1192,42 +1192,42 @@ export default function NavSidebar({
         </aside>
 
         {primaryActive !== "home" && (
-          <aside className="w-72 flex flex-col bg-gray-950/80">
+          <aside className="w-64 flex flex-col bg-gray-950/80 border-r border-gray-800/40">
             {primaryActive === "tasks" ? (
-              <div className="px-4 py-3">
+              <div className="px-5 py-3.5">
                 <div className="flex items-center gap-2 text-gray-300">
                   <ClipboardList size={16} />
-                  <span className="text-xl font-semibold">Tasks</span>
+                  <span className="text-lg font-medium">Tasks</span>
                 </div>
               </div>
             ) : primaryActive === "knowledge" ? (
-              <div className="px-4 py-3">
+              <div className="px-5 py-3.5">
                 <div className="flex items-center gap-2 text-gray-300">
                   <Library size={16} />
-                  <span className="text-xl font-semibold">Knowledge</span>
+                  <span className="text-lg font-medium">Knowledge</span>
                 </div>
               </div>
             ) : primaryActive === "automation" ? (
-              <div className="px-4 py-3">
+              <div className="px-5 py-3.5">
                 <div className="flex items-center gap-2 text-gray-300">
                   <Bot size={16} />
-                  <span className="text-xl font-semibold">Automation</span>
+                  <span className="text-lg font-medium">Automation</span>
                 </div>
               </div>
             ) : primaryActive === "devices" ? (
-              <div className="px-4 py-3">
+              <div className="px-5 py-3.5">
                 <div className="flex items-center gap-2 text-gray-300">
                   <Monitor size={16} />
-                  <span className="text-xl font-semibold">Devices</span>
+                  <span className="text-lg font-medium">Devices</span>
                 </div>
               </div>
             ) : primaryActive !== "projects" && (
-              <div className="px-4 py-3 border-b border-gray-800/50">
+              <div className="px-5 py-3.5 border-b border-gray-800/50">
                 <h2 className="text-sm font-semibold text-gray-200">{secondaryTitle[primaryActive]}</h2>
                 <p className="text-[11px] text-gray-500 mt-1">{secondaryDescription[primaryActive]}</p>
               </div>
             )}
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-3">
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
               {renderSecondary()}
             </div>
           </aside>

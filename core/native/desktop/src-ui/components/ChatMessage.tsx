@@ -159,7 +159,13 @@ export default function ChatMessage({
                                 </div>
                                 {sub.content && (
                                     <div className="text-gray-400">
-                                        <MarkdownRenderer content={sub.content} nodeType="project" nodeName={projectId} projectId={projectId} />
+                                        <MarkdownRenderer
+                                            content={sub.content}
+                                            nodeType="project"
+                                            nodeName={projectId}
+                                            projectId={projectId}
+                                            autoImagePathConversion={false}
+                                        />
                                     </div>
                                 )}
                                 {sub.tool_calls?.map((tc: any, j: number) => (
