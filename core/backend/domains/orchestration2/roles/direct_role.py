@@ -15,6 +15,28 @@ from domains.orchestration2.engine.models.execution import ExecutionContext, Rol
 logger = logging.getLogger(__name__)
 
 
+def _extract_attached_image_names(attached_files: list[Any]) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for file_obj in attached_files or []:
+        if isinstance(file_obj, dict):
+            name = file_obj.get("filename") or file_obj.get("name")
+            file_type = file_obj.get("file_type") or file_obj.get("type") or ""
+        else:
+            name = getattr(file_obj, "filename", None) or getattr(file_obj, "name", None)
+            file_type = getattr(file_obj, "file_type", None) or getattr(file_obj, "type", None) or ""
+
+        if not isinstance(name, str) or not name:
+            continue
+        if not isinstance(file_type, str) or not file_type.lower().startswith("image/"):
+            continue
+        if name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return names
+
+
 class DirectRole:
     """Single-step role: think → use tools → respond, all in one loop.
 
@@ -73,6 +95,16 @@ class DirectRole:
         agent_profile = ctx.metadata.get("agent_profile")
         if agent_profile:
             parts.append(f"\n## Role Profile\n{agent_profile}")
+
+        # 3b. Attached images in the current request
+        attached_images = _extract_attached_image_names(
+            ctx.metadata.get("attached_files", [])
+        )
+        if attached_images:
+            lines = ["\n## Attached Images (Current Request)"]
+            lines.extend([f"- {name}" for name in attached_images])
+            lines.append("Use these filenames when referring to uploaded images.")
+            parts.append("\n".join(lines))
 
         # 4. Skills injection
         skills_text = ctx.metadata.get("active_skills_text") or ctx.metadata.get("skills_text")

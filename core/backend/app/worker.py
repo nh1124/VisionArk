@@ -277,7 +277,7 @@ class Worker:
 
         # 1. Attachments
         if context.get("files"):
-            context["attached_files"] = await self._process_attachments(context, db_session)
+            context["attached_files"] = await self._collect_attached_files(context, db_session)
 
         # 2. Commands (Optimized: Check before Routing)
         if await self._command_detection(message, context):
@@ -403,15 +403,16 @@ class Worker:
         # 3. Pre-message store before running engine
         # Persist user message first so it survives later engine errors/cancellation.
         user_msg_id = str(uuid4())
+        attached_files = context.get("attached_files", [])
         db_session.add(ChatMessage(
             id=user_msg_id,
             session_id=session_id,
             role="user",
             content=message,
             meta_payload={"attached_files": [
-                f.to_dict() if hasattr(f, "to_dict") else str(f)
-                for f in context.get("attached_files", [])
-            ]} if context.get("attached_files") else None,
+                self._serialize_attached_file(f)
+                for f in attached_files
+            ]} if attached_files else None,
         ))
         await db_session.commit()
 
@@ -460,7 +461,11 @@ class Worker:
 
         # 5. Create v2 user message explicitly.
         # Do not derive from history ordering because that can be non-deterministic.
-        user_msg = V2Message(role=MessageRole.USER, content=message)
+        model_message = self._build_model_input_message(
+            message=message,
+            attached_files=context.get("attached_files", []),
+        )
+        user_msg = V2Message(role=MessageRole.USER, content=model_message)
 
         if task_id:
             try:
@@ -666,40 +671,79 @@ class Worker:
         else:
             print(f"[Worker] No handler registered for reply channel: {channel}")
 
-    async def _process_attachments(self, context: dict, db_session) -> list:
+    @staticmethod
+    def _serialize_attached_file(file_obj: Any) -> dict:
+        if isinstance(file_obj, dict):
+            return file_obj
+        if hasattr(file_obj, "to_dict"):
+            return file_obj.to_dict()
+        name = getattr(file_obj, "filename", None) or getattr(file_obj, "name", "unknown_file")
+        file_type = getattr(file_obj, "file_type", None) or getattr(file_obj, "type", "application/octet-stream")
+        size = getattr(file_obj, "size_bytes", None) or getattr(file_obj, "size", 0)
+        return {
+            "name": name,
+            "filename": name,
+            "type": file_type,
+            "file_type": file_type,
+            "size": size,
+            "size_bytes": size,
+        }
+
+    @staticmethod
+    def _extract_attached_image_names(attached_files: list[Any]) -> list[str]:
+        names: list[str] = []
+        seen: set[str] = set()
+        for file_obj in attached_files or []:
+            if isinstance(file_obj, dict):
+                name = file_obj.get("filename") or file_obj.get("name")
+                file_type = file_obj.get("file_type") or file_obj.get("type") or ""
+            else:
+                name = getattr(file_obj, "filename", None) or getattr(file_obj, "name", None)
+                file_type = getattr(file_obj, "file_type", None) or getattr(file_obj, "type", None) or ""
+
+            if not isinstance(name, str) or not name:
+                continue
+            if not isinstance(file_type, str) or not file_type.lower().startswith("image/"):
+                continue
+            if name in seen:
+                continue
+            seen.add(name)
+            names.append(name)
+        return names
+
+    def _build_model_input_message(self, message: str, attached_files: list[Any]) -> str:
+        image_names = self._extract_attached_image_names(attached_files)
+        if not image_names:
+            return message
+        lines = [message.rstrip(), "", "[Attached images in this message]"]
+        for name in image_names:
+            lines.append(f"- {name}")
+        lines.append("Use the filenames above when referring to uploaded images.")
+        return "\n".join(lines)
+
+    async def _collect_attached_files(self, context: dict, db_session) -> list[dict]:
         from shared.database import UploadedFile
-        from shared.file_types import AttachedFile
-        from domains.workspace.file_service import FileService
-        from shared.database import UserSettings
 
-        files_ids = context.get("files", [])
-        if not files_ids: return []
+        file_ids = context.get("files", [])
+        if not file_ids:
+            return []
 
-        files_data = []
-        for f_id in files_ids:
-            res = await db_session.execute(select(UploadedFile).filter(UploadedFile.id == f_id))
+        attached_files: list[dict] = []
+        for file_id in file_ids:
+            res = await db_session.execute(select(UploadedFile).filter(UploadedFile.id == file_id))
             file = res.scalars().first()
-            if file: files_data.append(file)
-
-        user_id = context.get("user_id")
-        res_settings = await db_session.execute(select(UserSettings).filter(UserSettings.user_id == user_id))
-        settings = res_settings.scalars().first()
-        api_key = settings.gemini_api_key if settings else None
-
-        if not api_key: return []
-
-        file_service = FileService(db_session, user_id, api_key)
-        attached_files = []
-        for file in files_data:
-            gemini_file = await file_service.upload_to_gemini(file)
-            attached_files.append(AttachedFile(
-                filename=file.filename,
-                file_type=file.mime_type,
-                size_bytes=file.size_bytes,
-                gemini_file_uri=gemini_file.get("gemini_file_uri") if gemini_file else None,
-                gemini_file_name=gemini_file.get("gemini_file_name") if gemini_file else None,
-                storage_path=file.storage_path
-            ))
+            if not file:
+                continue
+            attached_files.append({
+                "id": file.id,
+                "name": file.filename,
+                "filename": file.filename,
+                "type": file.mime_type,
+                "file_type": file.mime_type,
+                "size": file.size_bytes,
+                "size_bytes": file.size_bytes,
+                "storage_path": file.storage_path,
+            })
         return attached_files
 
     async def _command_detection(self, message: str, context: dict) -> bool:
