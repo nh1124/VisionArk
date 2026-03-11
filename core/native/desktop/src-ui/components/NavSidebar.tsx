@@ -448,6 +448,48 @@ export default function NavSidebar({
     setLastSidebarSessionId(sessionId)
   }
 
+  function clearSidebarSelections() {
+    setSelectedSidebarProjectIds(new Set())
+    setSelectedSidebarSessionIds(new Set())
+    setLastSidebarProjectId(null)
+    setLastSidebarSessionId(null)
+    setSidebarBulkMenu(null)
+  }
+
+  function handleSecondaryBackgroundClick(e: React.MouseEvent<HTMLDivElement>) {
+    if (e.shiftKey) return
+    if (selectedSidebarProjectIds.size === 0 && selectedSidebarSessionIds.size === 0) return
+    const target = e.target as HTMLElement | null
+    if (!target) return
+    if (target.closest("[data-sidebar-select-item='project']")) return
+    if (target.closest("[data-sidebar-select-item='session']")) return
+    if (target.closest("[data-sidebar-keep-selection='true']")) return
+    clearSidebarSelections()
+  }
+
+  function shouldKeepSidebarSelection(target: HTMLElement): boolean {
+    if (target.closest("[data-sidebar-select-item='project']")) return true
+    if (target.closest("[data-sidebar-select-item='session']")) return true
+    if (target.closest("[data-sidebar-keep-selection='true']")) return true
+    if (projectMenuRef.current?.contains(target)) return true
+    if (sessionMenuRef.current?.contains(target)) return true
+    if (sidebarBulkMenuRef.current?.contains(target)) return true
+    return false
+  }
+
+  useEffect(() => {
+    const onGlobalPointerDown = (e: MouseEvent) => {
+      if (e.shiftKey) return
+      if (selectedSidebarProjectIds.size === 0 && selectedSidebarSessionIds.size === 0) return
+      const target = e.target as HTMLElement | null
+      if (!target) return
+      if (shouldKeepSidebarSelection(target)) return
+      clearSidebarSelections()
+    }
+    document.addEventListener("mousedown", onGlobalPointerDown, true)
+    return () => document.removeEventListener("mousedown", onGlobalPointerDown, true)
+  }, [selectedSidebarProjectIds.size, selectedSidebarSessionIds.size])
+
   async function handleBulkDeleteSidebarProjects() {
     const ids = Array.from(selectedSidebarProjectIds)
     if (ids.length === 0) return
@@ -834,7 +876,6 @@ export default function NavSidebar({
             ) : filteredProjects.map((project) => {
               const isHovered = hoveredProject === project.id
               const isSelected = selectedSidebarProjectIds.has(project.id)
-              const isActiveProject = selectedProjectId === project.id
               return (
                 <div
                   key={`project-${project.id}`}
@@ -861,6 +902,7 @@ export default function NavSidebar({
                     />
                   ) : (
                     <button
+                      data-sidebar-select-item="project"
                       onClick={(e) => {
                         if (e.shiftKey) {
                           e.preventDefault()
@@ -868,8 +910,7 @@ export default function NavSidebar({
                           return
                         }
                         if (selectedSidebarProjectIds.size > 0) {
-                          toggleSidebarProjectSelection(project.id, false)
-                          return
+                          clearSidebarSelections()
                         }
                         const lastSessionId = localStorage.getItem(`va_last_session_${project.id}`)
                         onChange("chat", project.id, lastSessionId || undefined)
@@ -877,9 +918,7 @@ export default function NavSidebar({
                       className={`w-full flex items-center px-3 py-2 rounded-lg text-sm text-left transition-colors ${
                         isSelected
                           ? "bg-cyan-500/15 text-cyan-100"
-                          : isActiveProject
-                            ? "bg-gray-800 text-white"
-                            : "text-gray-400 hover:bg-gray-800/50 hover:text-white"
+                          : "text-gray-400 hover:bg-gray-800/50 hover:text-white"
                       }`}
                     >
                       <span className="truncate flex-1 text-[13px]">{project.display_name || project.name}</span>
@@ -887,6 +926,7 @@ export default function NavSidebar({
                   )}
                   {(isHovered || projectMenuOpen === project.id) && editingProjectId !== project.id && (
                     <button
+                      data-sidebar-keep-selection="true"
                       onClick={(e) => openProjectMenu(e, project.id)}
                       className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 text-gray-500 hover:text-white hover:bg-gray-700 rounded transition-colors"
                     >
@@ -961,6 +1001,7 @@ export default function NavSidebar({
                     />
                   ) : (
                     <button
+                      data-sidebar-select-item="session"
                       onClick={(e) => {
                         if (e.shiftKey) {
                           e.preventDefault()
@@ -968,8 +1009,7 @@ export default function NavSidebar({
                           return
                         }
                         if (selectedSidebarSessionIds.size > 0) {
-                          toggleSidebarSessionSelection(session.id, false)
-                          return
+                          clearSidebarSelections()
                         }
                         if (!selectedProjectId) return
                         localStorage.setItem(`va_last_session_${selectedProjectId}`, session.id)
@@ -989,6 +1029,7 @@ export default function NavSidebar({
                   )}
                   {(isHovered || sessionMenuOpen === session.id) && editingSessionId !== session.id && (
                     <button
+                      data-sidebar-keep-selection="true"
                       onClick={(e) => openSessionMenu(e, session.id)}
                       className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 text-gray-500 hover:text-white hover:bg-gray-700 rounded transition-colors"
                     >
@@ -1281,7 +1322,7 @@ export default function NavSidebar({
                 <p className="text-[11px] text-gray-500 mt-1">{secondaryDescription[primaryActive]}</p>
               </div>
             )}
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-4" onClickCapture={handleSecondaryBackgroundClick}>
               {renderSecondary()}
             </div>
           </aside>
