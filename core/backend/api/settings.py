@@ -4,6 +4,7 @@ from typing import List, Optional, Dict
 from pydantic import BaseModel, Field
 from datetime import datetime
 import httpx
+import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -16,6 +17,7 @@ from app.config import settings
 from va_sdk.discovery import get_integration_catalog
 
 router = APIRouter(prefix="/api/settings", tags=["Settings"])
+logger = logging.getLogger(__name__)
 
 @router.get("/integrations/hub")
 async def get_integration_hub_catalog():
@@ -235,6 +237,12 @@ async def register_service(
     db: AsyncSession = Depends(get_async_db)
 ):
     """Register or update a microservice connection"""
+    if reg.service_name == "lbs":
+        raise HTTPException(
+            status_code=403,
+            detail="LBS is managed by the server administrator (.env + server-issued key) and cannot be changed from UI.",
+        )
+
     # Check if exists
     result = await db.execute(select(ServiceRegistry).filter(
         ServiceRegistry.user_id == identity.user_id,
@@ -268,12 +276,18 @@ async def register_service(
     await db.commit()
     await db.refresh(service)
 
-    # Auto-refresh integration skills into skill_registry so they appear in Agents page
+    # Refresh core + integration definitions so new/changed services reflect in tool/skill registry.
     try:
-        from domains.orchestration2.bootstrap.definition_refresh_service import refresh_integrations
+        import asyncio
+        from shared.database import get_engine as _get_engine
+        from domains.orchestration2.bootstrap.definition_refresh_service import (
+            refresh_core_sync,
+            refresh_integrations,
+        )
+        await asyncio.to_thread(refresh_core_sync, _get_engine(), identity.user_id)
         await refresh_integrations(identity.user_id, db)
     except Exception as _exc:
-        logger.warning("Integration skill refresh after service register failed: %s", _exc)
+        logger.warning("Definition refresh after service register failed: %s", _exc)
 
     return service
 

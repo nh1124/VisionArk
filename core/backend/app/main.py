@@ -10,7 +10,7 @@ from shared.logger import setup_logging
 setup_logging()
 
 from shared.database import init_database
-from api import agents, commands, rag, context, files, auth, settings as settings_api, export, notes
+from api import agents, commands, rag, context, files, auth, settings as settings_api, export, notes, lbs_routes as lbs_api
 from api import decomposer, suggestions, scheduler, approvals, automation, notifications
 from api import monitoring
 from api import workspace as workspace_api
@@ -81,6 +81,7 @@ app.include_router(rag.router)
 app.include_router(context.router)
 app.include_router(files.files_router)  # Unified file management endpoints
 app.include_router(settings_api.router)
+app.include_router(lbs_api.router, prefix="/api/lbs", tags=["LBS"])
 app.include_router(decomposer.router)
 app.include_router(suggestions.router)
 app.include_router(export.router)

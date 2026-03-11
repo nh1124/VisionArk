@@ -46,6 +46,13 @@ from ...tools.library.markdown import (
     GetCurrentStatusTool, UpdateMDSectionTool,
 )
 from ...tools.library.document import RenderPdfTool
+from ...tools.library.lbs_ops import (
+    ListTasksTool, CreateTaskTool, UpdateTaskTool, DeleteTaskTool,
+    CompleteLBSTaskTool, GetLBSScheduleTool, GetLoadOnDayTool,
+    GetLoadInPeriodTool, ManageTaskExceptionTool, ListExceptionsTool,
+    GetCurrentConditionTool, UpdateUserConditionTool,
+    GetTaskHistoryTool, ResetUserConditionTool,
+)
 
 def get_delegation_tools(engine: Any) -> list[tuple[ToolDef, Any]]:
     """Return delegation-related tool (definition, implementation) pairs."""
@@ -116,6 +123,13 @@ def get_core_tools() -> list[tuple[ToolDef, Any]]:
 
         # Document output
         RenderPdfTool,
+        
+        # LBS (first-class domain)
+        ListTasksTool, CreateTaskTool, UpdateTaskTool, DeleteTaskTool,
+        CompleteLBSTaskTool, GetLBSScheduleTool, GetLoadOnDayTool,
+        GetLoadInPeriodTool, ManageTaskExceptionTool, ListExceptionsTool,
+        GetCurrentConditionTool, UpdateUserConditionTool,
+        GetTaskHistoryTool, ResetUserConditionTool,
     ]
 
     result = []

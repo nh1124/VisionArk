@@ -334,6 +334,15 @@ class ServiceRegistry(Base):
     user = relationship("User", back_populates="service_connections")
 
 
+class LBSTaskExtension(Base):
+    """Sidecar table for LBS tasks to store VisionArk-specific metadata."""
+    __tablename__ = "integr_lbs_task_extensions"
+
+    lbs_task_id = Column(String(36), primary_key=True)  # UUID from LBS microservice
+    meta_payload = Column(JSON, default=dict)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class ExternalIdentity(Base):
     """Linked identities from external systems (for SSO and cross-service sync)"""
     __tablename__ = "external_identities"

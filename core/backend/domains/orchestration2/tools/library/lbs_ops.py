@@ -1,5 +1,5 @@
 from va_sdk import BaseTool, BaseModel, IntegrationContext
-from integrations.lbs.client import get_lbs_client, TaskStatus
+from domains.lbs.client import get_lbs_client, TaskStatus
 from domains.identity.sync_coordinator import SyncCoordinator
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Any, Optional, Dict

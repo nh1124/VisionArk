@@ -1,4 +1,5 @@
 from ...engine.models.skill import SkillDef
+from .lbs_skillset import SKILL_DEFS as LBS_SKILL_DEFS
 
 SKILL_DEFS: list[SkillDef] = [
     SkillDef(
@@ -182,6 +183,6 @@ SKILL_DEFS: list[SkillDef] = [
             "Output contract: report the delegated agent's result verbatim without modification."
         ),
     ),
-]
+] + LBS_SKILL_DEFS
 
 ALL_SKILL_NAMES = [s.name for s in SKILL_DEFS]

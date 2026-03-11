@@ -44,7 +44,7 @@ async def _auto_provision_lbs(username: str, service_email: str, service_passwor
     Returns the provisioned API key string, or None on failure.
     """
     try:
-        from integrations.lbs.client import LBSClient
+        from domains.lbs.client import LBSClient
         # Admin client (uses LBS_API_KEY from env or settings)
         admin_client = LBSClient(base_url=lbs_url)
         await admin_client.create_user(email=service_email, name=username, password=service_password)

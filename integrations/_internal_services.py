@@ -16,8 +16,15 @@ stateless service classes with well-defined async methods.
 
 from domains.long_running.services.job_service import LongRunningJobService
 from domains.native.run_service import NativeRunService as RunService
+from domains.lbs.client import get_lbs_client as _get_lbs_client
+
+
+async def get_lbs_client(user_id, session):
+    """Gateway wrapper for LBS client access from integrations."""
+    return await _get_lbs_client(user_id, session)
 
 __all__ = [
     "LongRunningJobService",
     "RunService",
+    "get_lbs_client",
 ]

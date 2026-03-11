@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from shared.database import get_async_db, Project
-from integrations.lbs import LBSClient, get_lbs_client
+from domains.lbs.client import LBSClient, get_lbs_client
 from api.auth import get_current_user
 
 router = APIRouter(prefix="/api/hub/suggestions", tags=["suggestions"])

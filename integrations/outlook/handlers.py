@@ -7,7 +7,7 @@ def register_outlook():
     """Register Outlook for synchronization."""
     pass
 from .client import get_outlook_client
-from integrations.lbs.client import get_lbs_client
+from integrations._internal_services import get_lbs_client
 
 @task_registry.register("sync_outlook")
 async def sync_outlook(task: Any, db_session: Any):

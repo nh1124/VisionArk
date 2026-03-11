@@ -13,8 +13,8 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from integrations.lbs import LBSClient
-from integrations.lbs.api import get_lbs_client
+from domains.lbs.client import LBSClient
+from api.lbs_routes import get_lbs_client
 from domains.identity.auth import resolve_identity, Identity
 from shared.database import get_async_db, UserSettings
 from shared.encryption import decrypt_string

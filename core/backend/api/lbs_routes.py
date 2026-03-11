@@ -4,11 +4,11 @@ from pydantic import BaseModel
 from datetime import date
 from typing import List, Optional, Dict
 
-from .client import LBSClient, TaskStatus
+from domains.lbs.client import LBSClient, TaskStatus
 from domains.identity.auth import resolve_identity, Identity, bearer_scheme
 from domains.identity.sync_coordinator import SyncCoordinator
 from shared.database import get_async_db
-from .models import LBSTaskExtension
+from shared.database import LBSTaskExtension
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -25,7 +25,7 @@ async def get_lbs_client(
     """Get LBS client with user's registered LBS API key and timezone from ServiceRegistry / UserSettings"""
     from shared.database import ServiceRegistry, UserSettings
     from shared.encryption import decrypt_string
-    from .client import _validate_iana_timezone
+    from domains.lbs.client import _validate_iana_timezone
 
     # Try to get user's registered LBS service config
     lbs_api_key = None

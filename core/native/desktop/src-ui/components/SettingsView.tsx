@@ -82,7 +82,6 @@ export default function SettingsView() {
 
   // Services
   const [services, setServices] = useState<Service[]>([])
-  const [lbsForm, setLbsForm] = useState({ base_url: "", api_key: "" })
 
   // Integrations hub (dynamic, manifest-driven)
   const [hubCatalog, setHubCatalog] = useState<ManifestItem[]>([])
@@ -149,8 +148,6 @@ export default function SettingsView() {
         })
         const svcList: Service[] = data.services || []
         setServices(svcList)
-        const lbs = svcList.find((s: Service) => s.service_name === "lbs")
-        if (lbs) setLbsForm((f) => ({ ...f, base_url: lbs.base_url }))
         if (data.profile) setProfile({ username: data.profile.username, email: data.profile.email || "" })
 
         // Build a map for quick lookup in the integrations tab
@@ -240,23 +237,6 @@ export default function SettingsView() {
   }
 
   // ── Save Service ─────────────────────────────────────────────────────────
-
-  async function saveLBS() {
-    setSaving(true)
-    try {
-      await apiJson("/api/settings/services", {
-        method: "POST",
-        body: JSON.stringify({ service_name: "lbs", base_url: lbsForm.base_url, api_key: lbsForm.api_key || undefined }),
-      })
-      showMsg("success", "LBS service saved")
-      const data = await apiJson<any>("/api/settings")
-      setServices(data.services || [])
-    } catch (e: any) {
-      showMsg("error", e.message || "Failed to save")
-    } finally {
-      setSaving(false)
-    }
-  }
 
   // ── Change Password ───────────────────────────────────────────────────────
 
@@ -649,44 +629,14 @@ export default function SettingsView() {
               </div>
             )}
 
-            {/* LBS form */}
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
               <p className="text-sm font-semibold text-gray-300">LBS Service</p>
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
-                  Base URL
-                </label>
-                <input
-                  value={lbsForm.base_url}
-                  onChange={(e) => setLbsForm({ ...lbsForm, base_url: e.target.value })}
-                  placeholder="http://localhost:8100/api/lbs"
-                  className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-cyan-500 font-mono"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
-                  API Key
-                </label>
-                <input
-                  type="password"
-                  value={lbsForm.api_key}
-                  onChange={(e) => setLbsForm({ ...lbsForm, api_key: e.target.value })}
-                  placeholder="Leave blank to keep existing"
-                  className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-cyan-500 font-mono"
-                />
-              </div>
-              <button
-                onClick={saveLBS}
-                disabled={saving || !lbsForm.base_url}
-                className="px-6 py-2.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white text-sm font-semibold rounded-xl transition-colors"
-              >
-                {saving ? "Saving…" : "Save LBS"}
-              </button>
+              <p className="text-xs text-gray-500 mt-1">
+                LBS is managed by the server administrator via environment variables and server-issued keys.
+              </p>
             </div>
           </div>
         )}
-
-        {/* ── Integrations Tab ─────────────────────────────────────────────── */}
         {tab === "integrations" && (
           <div className="space-y-4 max-w-lg">
             <div>

@@ -157,8 +157,14 @@ export default function SettingsPage() {
     };
 
     const registerService = async () => {
-        if (!newService.service_name || !newService.base_url) {
+        const serviceName = newService.service_name.trim();
+        const baseUrl = newService.base_url.trim();
+        if (!serviceName || !baseUrl) {
             showMessage("error", "Service name and URL are required");
+            return;
+        }
+        if (serviceName === "lbs") {
+            showMessage("error", "LBS is managed by the server administrator and cannot be changed from UI.");
             return;
         }
 
@@ -176,10 +182,12 @@ export default function SettingsPage() {
                 method: "POST",
                 body: JSON.stringify({
                     ...newService,
+                    service_name: serviceName,
+                    base_url: baseUrl,
                     config: parsedConfig
                 })
             });
-            showMessage("success", `Service ${newService.service_name} registered`);
+            showMessage("success", `Service ${serviceName} registered`);
             setNewService({ service_name: "", base_url: "", api_key: "", config: "{}" });
             loadSettings();
         } catch (err: any) {
@@ -191,30 +199,7 @@ export default function SettingsPage() {
 
 
     const updateLbsService = async () => {
-        if (!newService.api_key) {
-            showMessage("error", "LBS API Key is required");
-            return;
-        }
-        setSaving(true);
-        try {
-            // Use default LBS URL
-            const lbsServiceData = {
-                service_name: "lbs",
-                base_url: "http://host.docker.internal:8001/api/lbs",
-                api_key: newService.api_key
-            };
-            await apiJson("/api/settings/services", {
-                method: "POST",
-                body: JSON.stringify(lbsServiceData)
-            });
-            showMessage("success", "LBS configuration updated successfully");
-            setNewService({ service_name: "", base_url: "", api_key: "", config: "{}" });
-            loadSettings();
-        } catch (err: any) {
-            showMessage("error", err.message || "Failed to update LBS");
-        } finally {
-            setSaving(false);
-        }
+        showMessage("error", "LBS is managed by the server administrator and cannot be changed from UI.");
     };
 
     const updateKcService = async () => {
@@ -298,29 +283,7 @@ export default function SettingsPage() {
     };
 
     const testLbsConnection = async () => {
-        if (!newService.api_key) {
-            showMessage("error", "LBS API Key is required for testing");
-            return;
-        }
-        setSaving(true);
-        try {
-            const res = await apiJson<any>("/api/settings/test-connection", {
-                method: "POST",
-                body: JSON.stringify({
-                    base_url: "http://host.docker.internal:8001/api/lbs",
-                    api_key: newService.api_key
-                })
-            });
-            if (res.status === "success") {
-                showMessage("success", res.message);
-            } else {
-                showMessage("error", res.message);
-            }
-        } catch (err: any) {
-            showMessage("error", err.message || "Test failed");
-        } finally {
-            setSaving(false);
-        }
+        showMessage("error", "LBS connection testing is managed by the server administrator.");
     };
 
     const checkHealth = async (id: number) => {

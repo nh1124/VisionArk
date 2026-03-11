@@ -27,5 +27,5 @@ def get_kc_service(user_id: str, session: AsyncSession) -> Any:
 
 async def get_lbs_client(user_id: str, session: AsyncSession) -> Any:
     """Lazy import and return LBS client."""
-    from integrations.lbs.client import get_lbs_client
+    from domains.lbs.client import get_lbs_client
     return await get_lbs_client(user_id, session)

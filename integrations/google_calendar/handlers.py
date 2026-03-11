@@ -8,7 +8,7 @@ def register_google_calendar():
     """Register Google Calendar for synchronization."""
     pass
 from .client import get_google_calendar_client
-from integrations.lbs.client import get_lbs_client
+from integrations._internal_services import get_lbs_client
 
 @task_registry.register("sync_google_calendar")
 async def sync_google_calendar(task: Any, db_session: Any):
