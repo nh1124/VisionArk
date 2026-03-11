@@ -40,7 +40,7 @@ echo "[INFO] Applying LBS base_url from ${ENV_FILE}"
 echo "[INFO] target URL: ${LBS_SERVICE_URL}"
 echo "[INFO] target DB : ${POSTGRES_DB} (user=${POSTGRES_USER})"
 
-docker exec -e PGPASSWORD="${POSTGRES_PASSWORD}" atmos-db \
+docker exec -i -e PGPASSWORD="${POSTGRES_PASSWORD}" atmos-db \
   psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
   -v ON_ERROR_STOP=1 -v lbs_url="${LBS_SERVICE_URL}" <<'SQL'
 BEGIN;
@@ -56,4 +56,3 @@ COMMIT;
 SQL
 
 echo "[INFO] Done."
-
