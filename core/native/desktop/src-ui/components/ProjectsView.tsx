@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from "react"
+import { isTauri } from "@tauri-apps/api/core"
+import { downloadDir } from "@tauri-apps/api/path"
 import { apiFetch, getFileToken } from "../lib/api"
 import {
     Search, MoreVertical, Edit2, Trash2, X, Check, ExternalLink,
@@ -40,7 +42,9 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
     const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false)
     const [lastSelectedProjectId, setLastSelectedProjectId] = useState<string | null>(null)
     const [contextMenu, setContextMenu] = useState<{ projectId: string; top: number; left: number; bulk: boolean } | null>(null)
-    const [exportNotice, setExportNotice] = useState<{ type: "success" | "error"; message: string } | null>(null)
+    const [exportNotice, setExportNotice] = useState<{ type: "success" | "error" | "loading"; message: string } | null>(null)
+    const [projectExportBusy, setProjectExportBusy] = useState(false)
+    const [downloadTargetLabel, setDownloadTargetLabel] = useState("browser default download folder")
 
     useEffect(() => {
         loadProjects()
@@ -62,9 +66,26 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
 
     useEffect(() => {
         if (!exportNotice) return
+        if (exportNotice.type === "loading") return
         const timer = window.setTimeout(() => setExportNotice(null), 3200)
         return () => window.clearTimeout(timer)
     }, [exportNotice])
+
+    useEffect(() => {
+        const resolveDownloadTarget = async () => {
+            if (!isTauri()) {
+                setDownloadTargetLabel("browser default download folder")
+                return
+            }
+            try {
+                const dir = await downloadDir()
+                setDownloadTargetLabel(dir || "Downloads")
+            } catch {
+                setDownloadTargetLabel("Downloads")
+            }
+        }
+        void resolveDownloadTarget()
+    }, [])
 
     const downloadExportFile = async (url: string, filename: string) => {
         const res = await fetch(url)
@@ -149,19 +170,30 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
     }
 
     const bulkExport = async () => {
+        if (projectExportBusy) return
+        const ids = Array.from(selectedProjects)
+        if (ids.length === 0) return
+        setProjectExportBusy(true)
+        setExportNotice({ type: "loading", message: `Preparing ${ids.length} project export(s)...` })
         try {
             const token = await getFileToken()
             let successCount = 0
-            for (const id of Array.from(selectedProjects)) {
+            for (const id of ids) {
                 const project = projects.find(p => p.id === id)
                 if (!project) continue
                 await downloadExportFile(`/api/export/project/${id}?token=${token}`, `${project.display_name || project.name}_export.zip`)
                 successCount += 1
+                setExportNotice({ type: "loading", message: `Preparing... (${successCount}/${ids.length})` })
             }
-            setExportNotice({ type: "success", message: `Exported ${successCount} project${successCount !== 1 ? "s" : ""}.` })
+            setExportNotice({
+                type: "success",
+                message: `Exported ${successCount} project${successCount !== 1 ? "s" : ""}.\nSaved to: ${downloadTargetLabel}`,
+            })
         } catch (err) {
             console.error("Bulk export error:", err)
             setExportNotice({ type: "error", message: "Project export failed." })
+        } finally {
+            setProjectExportBusy(false)
         }
     }
 
@@ -205,14 +237,22 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
     }
 
     const handleExportChat = async (id: string, displayName: string) => {
+        if (projectExportBusy) return
+        setProjectExportBusy(true)
+        setExportNotice({ type: "loading", message: `Preparing export: ${displayName}...` })
         try {
             const token = await getFileToken()
             await downloadExportFile(`/api/export/project/${id}?token=${token}`, `${displayName}_export.zip`)
-            setExportNotice({ type: "success", message: `Exported project: ${displayName}` })
+            setExportNotice({
+                type: "success",
+                message: `Exported project: ${displayName}\nSaved to: ${downloadTargetLabel}`,
+            })
             setActiveMenu(null)
         } catch (err) {
             console.error("Export error:", err)
             setExportNotice({ type: "error", message: "Project export failed." })
+        } finally {
+            setProjectExportBusy(false)
         }
     }
 
@@ -345,7 +385,7 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
                                                             <button onClick={() => startRename(project)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"><Settings size={14} /> Settings</button>
                                                             <button onClick={() => cloneProject(project.id, project.display_name || project.name)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"><Copy size={14} /> Clone</button>
                                                             <button onClick={() => onOpenProject?.(project.id)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"><Rocket size={14} /> Open</button>
-                                                            <button onClick={() => handleExportChat(project.id, project.display_name || project.name)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"><Download size={14} /> Export Project</button>
+                                                            <button disabled={projectExportBusy} onClick={() => handleExportChat(project.id, project.display_name || project.name)} className={`w-full flex items-center gap-3 px-4 py-2 text-sm ${projectExportBusy ? "text-gray-500 cursor-not-allowed" : "text-gray-300 hover:bg-gray-800"}`}><Download size={14} /> {projectExportBusy ? "Preparing..." : "Export Project"}</button>
                                                             <div className="border-t border-gray-800 mx-2 my-1" />
                                                             <button onClick={() => setDeleteConfirm({ id: project.id, name: project.display_name || project.name })} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-500 hover:bg-red-500/10"><Trash2 size={14} /> Delete</button>
                                                         </div>
@@ -465,7 +505,7 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
                                                     <button onClick={() => startRename(project)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"><Settings size={14} /> Settings</button>
                                                     <button onClick={() => cloneProject(project.id, project.display_name || project.name)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"><Copy size={14} /> Clone</button>
                                                     <button onClick={() => { onOpenProject?.(project.id); setActiveMenu(null) }} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"><Rocket size={14} /> Open</button>
-                                                    <button onClick={() => handleExportChat(project.id, project.display_name || project.name)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"><Download size={14} /> Export Project</button>
+                                                    <button disabled={projectExportBusy} onClick={() => handleExportChat(project.id, project.display_name || project.name)} className={`w-full flex items-center gap-3 px-4 py-2 text-sm ${projectExportBusy ? "text-gray-500 cursor-not-allowed" : "text-gray-300 hover:bg-gray-800"}`}><Download size={14} /> {projectExportBusy ? "Preparing..." : "Export Project"}</button>
                                                     <div className="border-t border-gray-800 mx-2 my-1" />
                                                     <button onClick={() => setDeleteConfirm({ id: project.id, name: project.display_name || project.name })} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-500 hover:bg-red-500/10"><Trash2 size={14} /> Delete</button>
                                                 </div>
@@ -519,10 +559,11 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
                                 {selectedProjects.size} selected projects
                             </div>
                             <button
+                                disabled={projectExportBusy}
                                 onClick={() => { void bulkExport(); setContextMenu(null) }}
-                                className="w-full text-left flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-800"
+                                className={`w-full text-left flex items-center gap-2 px-3 py-2 text-sm ${projectExportBusy ? "text-gray-500 cursor-not-allowed" : "text-gray-300 hover:bg-gray-800"}`}
                             >
-                                <Download size={14} /> Export Selected
+                                <Download size={14} /> {projectExportBusy ? "Preparing..." : "Export Selected"}
                             </button>
                             <button
                                 onClick={() => { setBulkDeleteConfirm(true); setContextMenu(null) }}
@@ -563,10 +604,11 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
                                     <Rocket size={14} /> Open
                                 </button>
                                 <button
+                                    disabled={projectExportBusy}
                                     onClick={() => { void handleExportChat(project.id, name); setContextMenu(null) }}
-                                    className="w-full text-left flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-800"
+                                    className={`w-full text-left flex items-center gap-2 px-3 py-2 text-sm ${projectExportBusy ? "text-gray-500 cursor-not-allowed" : "text-gray-300 hover:bg-gray-800"}`}
                                 >
-                                    <Download size={14} /> Export Project
+                                    <Download size={14} /> {projectExportBusy ? "Preparing..." : "Export Project"}
                                 </button>
                                 <div className="my-1 border-t border-gray-800" />
                                 <button
@@ -581,7 +623,7 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
                 </div>
             )}
             {exportNotice && (
-                <div className={`fixed right-6 bottom-6 z-[10000] rounded-lg border px-3 py-2 text-sm shadow-xl ${exportNotice.type === "success" ? "bg-emerald-900/90 border-emerald-700 text-emerald-100" : "bg-red-900/90 border-red-700 text-red-100"}`}>
+                <div className={`fixed right-6 bottom-6 z-[10000] rounded-lg border px-3 py-2 text-sm shadow-xl whitespace-pre-line ${exportNotice.type === "success" ? "bg-emerald-900/90 border-emerald-700 text-emerald-100" : exportNotice.type === "loading" ? "bg-sky-900/90 border-sky-700 text-sky-100" : "bg-red-900/90 border-red-700 text-red-100"}`}>
                     {exportNotice.message}
                 </div>
             )}

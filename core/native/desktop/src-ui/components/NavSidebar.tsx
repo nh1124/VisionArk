@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react"
+import { isTauri } from "@tauri-apps/api/core"
+import { downloadDir } from "@tauri-apps/api/path"
 import {
   Home,
   Folder,
@@ -171,7 +173,9 @@ export default function NavSidebar({
   const [lastSidebarSessionId, setLastSidebarSessionId] = useState<string | null>(null)
   const [sidebarBulkMenu, setSidebarBulkMenu] = useState<{ mode: "projects" | "sessions"; top: number; right: number } | null>(null)
   const sidebarBulkMenuRef = useRef<HTMLDivElement>(null)
-  const [exportNotice, setExportNotice] = useState<{ type: "success" | "error"; message: string } | null>(null)
+  const [exportNotice, setExportNotice] = useState<{ type: "success" | "error" | "loading"; message: string } | null>(null)
+  const [projectExportBusy, setProjectExportBusy] = useState(false)
+  const [downloadTargetLabel, setDownloadTargetLabel] = useState("browser default download folder")
 
   const primaryActive = useMemo(() => mapViewToPrimary(active), [active])
   const todayIso = useMemo(() => {
@@ -335,9 +339,26 @@ export default function NavSidebar({
 
   useEffect(() => {
     if (!exportNotice) return
+    if (exportNotice.type === "loading") return
     const timer = window.setTimeout(() => setExportNotice(null), 3200)
     return () => window.clearTimeout(timer)
   }, [exportNotice])
+
+  useEffect(() => {
+    const resolveDownloadTarget = async () => {
+      if (!isTauri()) {
+        setDownloadTargetLabel("browser default download folder")
+        return
+      }
+      try {
+        const dir = await downloadDir()
+        setDownloadTargetLabel(dir || "Downloads")
+      } catch {
+        setDownloadTargetLabel("Downloads")
+      }
+    }
+    void resolveDownloadTarget()
+  }, [])
 
   async function downloadExportFile(url: string, filename: string) {
     const res = await fetch(url)
@@ -444,7 +465,9 @@ export default function NavSidebar({
 
   async function handleBulkExportSidebarProjects() {
     const ids = Array.from(selectedSidebarProjectIds)
-    if (ids.length === 0) return
+    if (ids.length === 0 || projectExportBusy) return
+    setProjectExportBusy(true)
+    setExportNotice({ type: "loading", message: `Preparing ${ids.length} project export(s)...` })
     try {
       const token = await getFileToken()
       let successCount = 0
@@ -455,11 +478,17 @@ export default function NavSidebar({
         const url = `${BASE_URL}/api/export/project/${project.id}?token=${token}`
         await downloadExportFile(url, fileName)
         successCount += 1
+        setExportNotice({ type: "loading", message: `Preparing... (${successCount}/${ids.length})` })
       }
-      setExportNotice({ type: "success", message: `Exported ${successCount} project${successCount !== 1 ? "s" : ""}.` })
+      setExportNotice({
+        type: "success",
+        message: `Exported ${successCount} project${successCount !== 1 ? "s" : ""}.\nSaved to: ${downloadTargetLabel}`,
+      })
     } catch (e) {
       console.error("Bulk export projects failed:", e)
       setExportNotice({ type: "error", message: "Project export failed." })
+    } finally {
+      setProjectExportBusy(false)
     }
   }
 
@@ -605,14 +634,22 @@ export default function NavSidebar({
   }
 
   async function handleExportChat(project: Project) {
+    if (projectExportBusy) return
+    setProjectExportBusy(true)
+    setExportNotice({ type: "loading", message: `Preparing export: ${project.display_name || project.name}...` })
     try {
       const token = await getFileToken()
       const url = `${BASE_URL}/api/export/project/${project.id}?token=${token}`
       await downloadExportFile(url, `${project.display_name || project.name}_export.zip`)
-      setExportNotice({ type: "success", message: `Exported project: ${project.display_name || project.name}` })
+      setExportNotice({
+        type: "success",
+        message: `Exported project: ${project.display_name || project.name}\nSaved to: ${downloadTargetLabel}`,
+      })
     } catch (e) {
       console.error("Export chat failed:", e)
       setExportNotice({ type: "error", message: "Project export failed." })
+    } finally {
+      setProjectExportBusy(false)
     }
     setProjectMenuOpen(null)
     setProjectMenuPos(null)
@@ -1269,9 +1306,10 @@ export default function NavSidebar({
                   void handleBulkExportSidebarProjects()
                   setSidebarBulkMenu(null)
                 }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
+                disabled={projectExportBusy}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm ${projectExportBusy ? "text-gray-500 cursor-not-allowed" : "text-gray-300 hover:bg-gray-700 hover:text-white"}`}
               >
-                <Download size={14} /> Export Selected
+                <Download size={14} /> {projectExportBusy ? "Preparing..." : "Export Selected"}
               </button>
               <button
                 onClick={() => {
@@ -1356,8 +1394,12 @@ export default function NavSidebar({
           >
             <MessageSquare size={14} /> Open Chat
           </button>
-          <button onClick={() => handleExportChat(openMenuProject)} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white">
-            <Download size={14} /> Export Project
+          <button
+            onClick={() => handleExportChat(openMenuProject)}
+            disabled={projectExportBusy}
+            className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm ${projectExportBusy ? "text-gray-500 cursor-not-allowed" : "text-gray-300 hover:bg-gray-700 hover:text-white"}`}
+          >
+            <Download size={14} /> {projectExportBusy ? "Preparing..." : "Export Project"}
           </button>
           <div className="my-1 border-t border-gray-700" />
           <button onClick={() => handleDeleteProject(openMenuProject)} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10">
@@ -1385,7 +1427,7 @@ export default function NavSidebar({
         </div>
       )}
       {exportNotice && (
-        <div className={`fixed right-6 bottom-6 z-[10000] rounded-lg border px-3 py-2 text-sm shadow-xl ${exportNotice.type === "success" ? "bg-emerald-900/90 border-emerald-700 text-emerald-100" : "bg-red-900/90 border-red-700 text-red-100"}`}>
+        <div className={`fixed right-6 bottom-6 z-[10000] rounded-lg border px-3 py-2 text-sm shadow-xl whitespace-pre-line ${exportNotice.type === "success" ? "bg-emerald-900/90 border-emerald-700 text-emerald-100" : exportNotice.type === "loading" ? "bg-sky-900/90 border-sky-700 text-sky-100" : "bg-red-900/90 border-red-700 text-red-100"}`}>
           {exportNotice.message}
         </div>
       )}
