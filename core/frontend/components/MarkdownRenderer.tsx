@@ -14,6 +14,7 @@ interface MarkdownRendererProps {
     className?: string;
     nodeType?: string;
     nodeName?: string;
+    onOpenLocalLink?: (href: string) => void;
 }
 
 interface CodeBlockProps {
@@ -126,7 +127,8 @@ const MarkdownRenderer = React.memo(({
     content,
     className = "",
     nodeType = "hub",
-    nodeName = "hub"
+    nodeName = "hub",
+    onOpenLocalLink
 }: MarkdownRendererProps) => {
     // State for short-lived file token
     const [fileToken, setFileToken] = useState<string | null>(null);
@@ -138,6 +140,11 @@ const MarkdownRenderer = React.memo(({
     }, []);
 
     const tokenQuery = fileToken ? `?token=${fileToken}` : "";
+    const isWorkspacePath = (href?: string): boolean => {
+        if (!href) return false;
+        const clean = href.split("#")[0].split("?")[0].trim();
+        return /^(?:\/|\.\/)?(?:artifacts?|refs?|files)\//i.test(clean);
+    };
 
     // Pre-process content to catch bare artifact/ref paths and turn them into images
     // Matches patterns like artifacts/image.png or /artifacts/image.png
@@ -242,11 +249,33 @@ const MarkdownRenderer = React.memo(({
                             );
                         }
 
+                        if (isWorkspacePath(href) && onOpenLocalLink) {
+                            return (
+                                <a
+                                    href={href}
+                                    onClick={(e) => {
+                                        e.preventDefault();
+                                        onOpenLocalLink(href);
+                                    }}
+                                    className="text-cyan-400 hover:text-cyan-300 transition-colors underline underline-offset-4"
+                                >
+                                    {children}
+                                </a>
+                            );
+                        }
+
                         return (
                             <a
                                 href={href}
                                 target="_blank"
                                 rel="noopener noreferrer"
+                                onClick={(e) => {
+                                    if (!href) return;
+                                    if (/^https?:\/\//i.test(href)) {
+                                        e.preventDefault();
+                                        window.open(href, "_blank", "noopener,noreferrer");
+                                    }
+                                }}
                                 className="text-cyan-400 hover:text-cyan-300 transition-colors underline underline-offset-4"
                             >
                                 {children}

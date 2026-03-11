@@ -17,7 +17,7 @@ from typing import Optional, List, Dict
 
 
 from domains.identity.auth import resolve_identity, Identity, resolve_identity_for_download
-from shared.database import ProjectAgent, Project, ChatSession, ChatMessage, ChatSubMessage, UploadedFile, get_async_db, Agent, ProjectAgentAssignment, SkillRegistry, GraphRegistry
+from shared.database import ProjectAgent, Project, ChatSession, ChatMessage, ChatSubMessage, UploadedFile, get_async_db, Agent, ProjectAgentAssignment, SkillRegistry, GraphRegistry, OrchestrationRun
 from sqlalchemy import func
 from shared.paths import get_project_dir, get_user_projects_dir, validate_name, secure_path_join, update_project_name_cache as update_cache
 from uuid import uuid4
@@ -227,6 +227,71 @@ async def _get_delta_for_session(
     return [_serialize_message(m) for m in messages]
 
 
+def _is_terminal_task_status(status: Optional[str]) -> bool:
+    normalized = (status or "").lower()
+    return normalized in {"completed", "failed", "cancelled", "canceled"}
+
+
+def _is_terminal_run_status(status: Optional[str]) -> bool:
+    normalized = (status or "").lower()
+    return normalized in {"completed", "failed", "cancelled", "canceled"}
+
+
+def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+    except Exception:
+        return None
+
+
+async def _repair_stale_task_if_needed(task_id: str, manager, db: AsyncSession) -> Optional[dict]:
+    """Repair zombie task states after backend restart and return latest status."""
+    status = await manager.get_status(task_id)
+    if not status:
+        return None
+
+    current = (status.get("status") or "").lower()
+    if _is_terminal_task_status(current):
+        return status
+
+    # If orchestration run is already terminal but Redis task is still processing,
+    # infer terminal task status and repair Redis to stop endless polling/spinners.
+    run_id = await manager.get_run_for_task(task_id)
+    if run_id:
+        run_row = await db.execute(
+            select(OrchestrationRun.status).where(OrchestrationRun.run_id == run_id)
+        )
+        run_status = (run_row.scalar_one_or_none() or "").lower()
+        if _is_terminal_run_status(run_status):
+            inferred = "completed" if run_status == "completed" else ("cancelled" if run_status in {"cancelled", "canceled"} else "failed")
+            phase = "Completed" if inferred == "completed" else ("Cancelled" if inferred == "cancelled" else "Failed")
+            await manager.update_status(
+                task_id,
+                inferred,
+                result=status.get("result"),
+                phase=phase,
+                step="Recovered after backend restart",
+            )
+            return await manager.get_status(task_id)
+
+    # Fallback: stale processing states without a live run mapping.
+    updated_at = _parse_iso_datetime(status.get("updated_at"))
+    if current in {"processing", "running"} and updated_at:
+        if datetime.utcnow() - updated_at > timedelta(minutes=10):
+            await manager.update_status(
+                task_id,
+                "failed",
+                result="Task state became stale after backend restart.",
+                phase="Failed",
+                step="Recovered stale task",
+            )
+            return await manager.get_status(task_id)
+
+    return status
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -352,12 +417,13 @@ async def websocket_task_progress(
 async def get_task_status(
     task_id: str,
     identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Get status of an async task"""
     from infrastructure.queue.manager import QueueManager
 
     manager = QueueManager()
-    status = await manager.get_status(task_id)
+    status = await _repair_stale_task_if_needed(task_id, manager, db)
 
     if not status:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -1240,6 +1306,11 @@ async def list_projects(
         manager = QueueManager()
         # Note: We don't have a per-project counter in Redis yet, but we can check if there's an active task
         active_task = await manager.get_active_task_for_project(proj.id)
+        if active_task:
+            status = await _repair_stale_task_if_needed(active_task, manager, db)
+            if not status or _is_terminal_task_status(status.get("status")):
+                await manager.clear_active_task(proj.id)
+                active_task = None
         queue_count = 1 if active_task else 0
 
         # Enriched Data for Bento UI
@@ -1356,6 +1427,11 @@ async def get_project_active_task(
 
     manager = QueueManager()
     task_id = await manager.get_active_task_for_project(project_id)
+    if task_id:
+        status = await _repair_stale_task_if_needed(task_id, manager, db)
+        if not status or _is_terminal_task_status(status.get("status")):
+            await manager.clear_active_task(project_id)
+            task_id = None
 
     if not task_id:
         # Resolve session: explicit > default
@@ -1378,6 +1454,11 @@ async def get_project_active_task(
         sess = sess_res.scalars().first()
         if sess:
             task_id = await manager.get_active_task_for_session(sess.id)
+            if task_id:
+                status = await _repair_stale_task_if_needed(task_id, manager, db)
+                if not status or _is_terminal_task_status(status.get("status")):
+                    await manager.clear_active_task_for_session(sess.id)
+                    task_id = None
 
     return {"task_id": task_id}
 
@@ -1789,6 +1870,11 @@ async def get_session_active_task(
 
     manager = QueueManager()
     task_id = await manager.get_active_task_for_session(session_id)
+    if task_id:
+        status = await _repair_stale_task_if_needed(task_id, manager, db)
+        if not status or _is_terminal_task_status(status.get("status")):
+            await manager.clear_active_task_for_session(session_id)
+            task_id = None
     return {"task_id": task_id}
 
 

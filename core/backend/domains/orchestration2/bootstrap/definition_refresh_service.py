@@ -209,9 +209,7 @@ async def refresh_integrations(user_id: str, db: AsyncSession) -> dict:
         skill_entries = await load_integration_skills(user_id, db)
         _, active_registered = await _get_service_registry_status(db, user_id)
         # Integrations are active only when explicitly enabled in ServiceRegistry.
-        # LBS is a mandatory system integration, so its skill must stay active.
         active_services = set(active_registered)
-        active_services.add("lbs")
         skills_count = await _upsert_skills_async(
             db, user_id, skill_entries, origin_type="integration",
             active_services=active_services,
@@ -361,7 +359,6 @@ async def _upsert_skills_async(
 
     When active_services is provided (for integration skills), is_active is set to:
       - True  if origin_id IS in active_services (service is active)
-      - True  if origin_id == "lbs" (mandatory integration)
       - False otherwise (missing row or explicitly inactive)
     Core skills always get is_active=True (active_services=None).
     """
@@ -373,7 +370,7 @@ async def _upsert_skills_async(
             # Core skills: always active
             is_active = True
         else:
-            is_active = (origin_id in active_services) or (origin_id == "lbs")
+            is_active = origin_id in active_services
 
         vh = _version_hash({"name": skill_def.name, "tools": skill_def.tools, "instructions": getattr(skill_def, "instructions", None)})
         await db.execute(

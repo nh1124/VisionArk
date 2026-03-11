@@ -90,6 +90,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
     const messagesEndRef = useRef<HTMLDivElement>(null)
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
     const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+    const pollErrorCountRef = useRef(0)
     const isInitialLoad = useRef(true)
     const injectedTaskIdsRef = useRef<Set<string>>(new Set())
     const pendingLocalSendsRef = useRef<PendingLocalSend[]>([])
@@ -286,6 +287,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
     const stopPolling = () => {
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+        pollErrorCountRef.current = 0
     }
 
     const handleStop = async () => {
@@ -474,6 +476,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
             const requestedSessionId = effectiveSessionRef.current ?? sessionId
             const { task_id, session_id: usedSessionId } = await sendChat(projectId, content, requestedSessionId, model, files)
             currentTaskIdRef.current = task_id
+            pollErrorCountRef.current = 0
             if (normalizedContent) {
                 pendingLocalSendsRef.current = pendingLocalSendsRef.current.filter(
                     (s) => normalizeMessageContent(s.content) !== normalizedContent
@@ -513,6 +516,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
             pollRef.current = setInterval(async () => {
                 try {
                     const taskData = await getTaskStatus(task_id)
+                    pollErrorCountRef.current = 0
                     if (taskData.status === "completed") {
                         stopPolling()
                         setLoading(false)
@@ -556,8 +560,25 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                             upsertRealtimeTask(task_id, content, "Processing...")
                         }
                     }
-                } catch {
-                    // polling error, keep trying
+                } catch (e) {
+                    const message = e instanceof Error ? e.message : String(e)
+                    const isNotFound = /API\s*404/i.test(message) || /Task not found/i.test(message)
+                    pollErrorCountRef.current += 1
+                    if (isNotFound || pollErrorCountRef.current >= 8) {
+                        stopPolling()
+                        setLoading(false)
+                        setStatusText("")
+                        setElapsedTime(0)
+                        currentTaskIdRef.current = null
+                        clearSessionCacheTask(projectId, effectiveSessionRef.current ?? sessionId, task_id, false)
+                        setRealtimeTasks((prev) => prev.filter((t) => t.taskId !== task_id))
+                        if (isNotFound) {
+                            setMessages((prev) => [
+                                ...prev,
+                                { role: "assistant", content: "Task state was lost after a backend restart. Please resend your message." },
+                            ])
+                        }
+                    }
                 }
             }, 1000)
         } catch (e) {

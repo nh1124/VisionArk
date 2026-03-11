@@ -9,7 +9,7 @@ import MessageWithAttachments from "@/components/MessageWithAttachments";
 import FilesSidebar from "@/components/FilesSidebar";
 import { startWS, stopWS, onWS } from "@/lib/wsManager";
 import CommandAutocomplete, { CommandAutocompleteHandle } from "../../components/CommandAutocomplete";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, getFileToken } from "@/lib/api";
 import { Settings, Files, X, AlarmClock } from "lucide-react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useModel } from "@/lib/ModelContext";
@@ -38,6 +38,32 @@ interface Message {
     sub_messages?: any[];
     meta_payload?: any;
 }
+
+const LINK_TO_WORKSPACE_PATH = /^(?:\/|\.\/)?(artifacts?|refs?|files)\/(.+)$/i;
+const IMAGE_FILE_EXT = /\.(png|jpe?g|gif|webp|svg|bmp|tiff)$/i;
+const CODE_FILE_EXT = /\.(js|ts|py|tsx|jsx|html|css|json|yaml|yml|c|cpp|h|hpp|rs|go|rb|php|sh|bat|ps1|sql|env|gitignore|dockerfile|makefile)$/i;
+
+const parseWorkspaceLink = (href: string): { directory: "refs" | "artifacts" | "files"; relativePath: string } | null => {
+    const clean = href.split("#")[0].split("?")[0].trim();
+    const match = clean.match(LINK_TO_WORKSPACE_PATH);
+    if (!match) return null;
+
+    const dirRaw = match[1].toLowerCase();
+    const relativePath = decodeURIComponent(match[2]).trim();
+    if (!relativePath) return null;
+
+    const directory: "refs" | "artifacts" | "files" =
+        dirRaw.startsWith("artifact") ? "artifacts" :
+            dirRaw.startsWith("file") ? "files" :
+                "refs";
+
+    return { directory, relativePath };
+};
+
+const inferCanvasFormat = (name: string): "markdown" | "code" => {
+    const lowerName = name.toLowerCase();
+    return CODE_FILE_EXT.test(name) || lowerName.includes("dockerfile") ? "code" : "markdown";
+};
 
 export default function ProjectChatPage({
     params,
@@ -1128,6 +1154,51 @@ export default function ProjectChatPage({
         }
     }, [messages, loading, handleEdit]);
 
+    const handleOpenLocalLink = useCallback(async (href: string) => {
+        const parsed = parseWorkspaceLink(href);
+        if (!parsed) {
+            window.open(href, "_blank", "noopener,noreferrer");
+            return;
+        }
+
+        const { directory, relativePath } = parsed;
+        const encodedPath = relativePath
+            .split("/")
+            .map(segment => encodeURIComponent(segment))
+            .join("/");
+        const fileName = relativePath.split("/").pop() || relativePath;
+        const fileUrl = `/api/files/project/${projectId}/${directory}/${encodedPath}`;
+
+        try {
+            if (IMAGE_FILE_EXT.test(fileName)) {
+                const token = await getFileToken();
+                setPreviewImage({
+                    url: `${fileUrl}?token=${token}`,
+                    name: fileName
+                });
+                return;
+            }
+
+            if (/\.pdf$/i.test(fileName)) {
+                const token = await getFileToken();
+                window.open(`${fileUrl}?token=${token}`, "_blank", "noopener,noreferrer");
+                return;
+            }
+
+            const response = await apiFetch(fileUrl);
+            if (!response.ok) throw new Error("Failed to open file");
+
+            const text = await response.text();
+            setCanvasContent(text);
+            setCanvasFilePath(`${directory}/${relativePath}`);
+            setCanvasFormat(inferCanvasFormat(fileName));
+            setShowCanvas(true);
+        } catch (error) {
+            console.error("Failed to open local link:", error);
+            showToast("Failed to open linked file", "error");
+        }
+    }, [projectId, showToast]);
+
     // Create stable callback refs for message actions - prevents re-renders of MessageWithAttachments
     const messageCallbacks = useMemo(() => {
         return messages.map((msg, idx) => ({
@@ -1269,6 +1340,7 @@ export default function ProjectChatPage({
                                 onDelete={messageCallbacks[idx]?.onDelete}
                                 onSend={(content) => sendMessage(content, [])}
                                 onApprove={handleApprove}
+                                onOpenLocalLink={handleOpenLocalLink}
                             />
                         );
                     })}

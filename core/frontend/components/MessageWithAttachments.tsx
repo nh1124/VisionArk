@@ -43,9 +43,10 @@ interface MessageWithAttachmentsProps {
     onBranch?: () => void;
     onEdit?: () => void;
     onDelete?: () => void;
+    onOpenLocalLink?: (href: string) => void;
 }
 
-const AsyncReport = ({ content, headerText, nodeType, nodeName }: { content: string, headerText: string, nodeType: string, nodeName: string }) => {
+const AsyncReport = ({ content, headerText, nodeType, nodeName, onOpenLocalLink }: { content: string, headerText: string, nodeType: string, nodeName: string, onOpenLocalLink?: (href: string) => void }) => {
     const [isReportExpanded, setIsReportExpanded] = useState(false);
     return (
         <div className="my-2 w-full max-w-full rounded-xl border border-gray-700/50 bg-gray-950/50 overflow-hidden shadow-inner font-sans">
@@ -67,7 +68,7 @@ const AsyncReport = ({ content, headerText, nodeType, nodeName }: { content: str
             {isReportExpanded && (
                 <div className="px-4 pb-4 border-t border-gray-800/50 pt-4 bg-black/20 w-full overflow-x-auto">
                     <div className="max-w-full">
-                        <MarkdownRenderer content={content} nodeType={nodeType} nodeName={nodeName} />
+                        <MarkdownRenderer content={content} nodeType={nodeType} nodeName={nodeName} onOpenLocalLink={onOpenLocalLink} />
                     </div>
                 </div>
             )}
@@ -90,7 +91,8 @@ function MessageWithAttachmentsBase({
     onRegenerate,
     onBranch,
     onEdit,
-    onDelete
+    onDelete,
+    onOpenLocalLink
 }: MessageWithAttachmentsProps) {
     const [stepsExpanded, setStepsExpanded] = useState(false);
     const [isCopied, setIsCopied] = useState(false);
@@ -177,10 +179,10 @@ function MessageWithAttachmentsBase({
                                         const rawHeader = match ? match[0] : "System Report";
                                         const headerText = rawHeader.replace(/\*\*/g, "").replace(/^🤖\s*/, "");
                                         const bodyText = content.replace(match ? match[0] : "", "").trim();
-                                        return <AsyncReport content={bodyText} headerText={headerText} nodeType={nodeType} nodeName={nodeName} />;
+                                        return <AsyncReport content={bodyText} headerText={headerText} nodeType={nodeType} nodeName={nodeName} onOpenLocalLink={onOpenLocalLink} />;
                                     })()
                                 ) : (
-                                    <MarkdownRenderer content={content} nodeType={nodeType} nodeName={nodeName} />
+                                    <MarkdownRenderer content={content} nodeType={nodeType} nodeName={nodeName} onOpenLocalLink={onOpenLocalLink} />
                                 )
                             ) : sub_messages.length === 0 ? (
                                 <span className="text-gray-500 italic font-medium flex items-center gap-2"><Bot size={14} /> Waiting for response...</span>
@@ -225,7 +227,7 @@ function MessageWithAttachmentsBase({
 
                                                 {step.content && (
                                                     <div className="text-[12px] text-gray-400 leading-relaxed pl-3 border-l-2 border-gray-800/40 py-1 font-normal opacity-90">
-                                                        <MarkdownRenderer content={step.content} nodeType={nodeType} nodeName={nodeName} />
+                                                        <MarkdownRenderer content={step.content} nodeType={nodeType} nodeName={nodeName} onOpenLocalLink={onOpenLocalLink} />
                                                     </div>
                                                 )}
 

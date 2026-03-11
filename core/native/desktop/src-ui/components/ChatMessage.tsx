@@ -21,6 +21,7 @@ interface Props {
     onEditValueChange?: (value: string) => void
     onEditSubmit?: () => void
     onEditCancel?: () => void
+    onOpenLocalLink?: (href: string) => void
 }
 
 export default function ChatMessage({
@@ -39,6 +40,7 @@ export default function ChatMessage({
     onEditValueChange,
     onEditSubmit,
     onEditCancel,
+    onOpenLocalLink,
 }: Props) {
     const [thinkingOpen, setThinkingOpen] = useState(false)
     const [isCopied, setIsCopied] = useState(false)
@@ -115,7 +117,13 @@ export default function ChatMessage({
                     ) : (
                         <>
                             <div className={`transition-all duration-300 ${isLongMessage && !isExpanded ? "max-h-[300px] overflow-hidden relative" : ""}`}>
-                                <MarkdownRenderer content={contentStr} nodeType="project" nodeName={projectId} projectId={projectId} />
+                                <MarkdownRenderer
+                                    content={contentStr}
+                                    nodeType="project"
+                                    nodeName={projectId}
+                                    projectId={projectId}
+                                    onOpenLocalLink={onOpenLocalLink}
+                                />
                                 {isLongMessage && !isExpanded && (
                                     <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-gray-950 to-transparent pointer-events-none" />
                                 )}
@@ -165,6 +173,7 @@ export default function ChatMessage({
                                             nodeName={projectId}
                                             projectId={projectId}
                                             autoImagePathConversion={false}
+                                            onOpenLocalLink={onOpenLocalLink}
                                         />
                                     </div>
                                 )}

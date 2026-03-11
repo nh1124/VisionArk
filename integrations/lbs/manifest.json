@@ -1,0 +1,41 @@
+{
+    "id": "lbs",
+    "name": "LBS",
+    "description": "Load Balancing System for task planning, scheduling, and workload adjustment.",
+    "icon": "LB",
+    "color": "bg-cyan-600/10 text-cyan-400",
+    "category": "productivity",
+    "authType": "api_key",
+    "config_fields": [
+        {
+            "key": "base_url",
+            "label": "Base URL",
+            "type": "text",
+            "description": "LBS API base endpoint.",
+            "default": "http://host.docker.internal:8001/api/lbs"
+        },
+        {
+            "key": "__api_key__",
+            "label": "API Key",
+            "type": "password",
+            "description": "API key issued by your LBS service."
+        }
+    ],
+    "setup_instructions": [
+        {
+            "step": 1,
+            "title": "Prepare your LBS endpoint",
+            "content": "Confirm the LBS API is reachable from VisionArk (default: http://host.docker.internal:8001/api/lbs)."
+        },
+        {
+            "step": 2,
+            "title": "Enter your API key",
+            "content": "Paste the LBS API key. It will be stored encrypted."
+        },
+        {
+            "step": 3,
+            "title": "Connect and verify",
+            "content": "Click Connect, then run a health check or ask an agent to list tasks."
+        }
+    ]
+}
