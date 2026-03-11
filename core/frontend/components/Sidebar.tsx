@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useState, useEffect, useRef, ReactNode, useMemo } from "react";
+import { useState, useEffect, useRef, ReactNode, useMemo, useCallback } from "react";
 import { apiFetch, getFileToken } from "@/lib/api";
 import { useProjects } from "@/hooks/useProjects";
 import { useNotification } from "@/lib/NotificationContext";
@@ -167,16 +167,35 @@ export default function Sidebar() {
         );
     }, [sessions, chatSearchQuery]);
 
-    useEffect(() => {
+    const loadSessions = useCallback(async () => {
         if (!currentProjectId) {
             setSessions([]);
             return;
         }
-        apiFetch(`/api/agents/project/${currentProjectId}/sessions`)
-            .then((res) => res.json())
-            .then((data) => setSessions(data.sessions || []))
-            .catch(() => {});
+        try {
+            const res = await apiFetch(`/api/agents/project/${currentProjectId}/sessions`);
+            const data = await res.json();
+            setSessions(data.sessions || []);
+        } catch {
+            // ignore
+        }
     }, [currentProjectId]);
+
+    useEffect(() => {
+        loadSessions();
+    }, [loadSessions]);
+
+    useEffect(() => {
+        const onSessionsUpdated = (event: Event) => {
+            const detail = (event as CustomEvent<any>).detail || {};
+            if (!currentProjectId) return;
+            if (detail.project_id && detail.project_id !== currentProjectId) return;
+            loadSessions();
+        };
+
+        window.addEventListener("va-sessions-updated", onSessionsUpdated as EventListener);
+        return () => window.removeEventListener("va-sessions-updated", onSessionsUpdated as EventListener);
+    }, [currentProjectId, loadSessions]);
 
     useEffect(() => {
         const handleClickOutside = (e: MouseEvent) => {

@@ -99,28 +99,30 @@ class CompressCommand(BaseCommand):
 
             target_session.summary = summary
             target_session.is_archived = True
-            was_default = bool(target_session.is_default)
             target_session.is_default = False
 
-            if was_default:
-                await db_session.execute(
-                    update(ChatSession)
-                    .where(
-                        ChatSession.project_id == project_id,
-                        ChatSession.id != target_session.id,
-                    )
-                    .values(is_default=False)
+            # /compress should continue from the current conversation, so
+            # promote the child session as the single active default.
+            await db_session.execute(
+                update(ChatSession)
+                .where(
+                    ChatSession.project_id == project_id,
+                    ChatSession.id != target_session.id,
                 )
+                .values(is_default=False)
+            )
+
+            base_title = (target_session.title or "").strip() or "New Chat"
 
             new_session_id = str(uuid.uuid4())
             child_session = ChatSession(
                 id=new_session_id,
                 project_id=project_id,
                 parent_session_id=target_session.id,
-                title=f"Continued from {target_session.title or 'archived session'}",
+                title=base_title,
                 summary=summary,
                 is_archived=False,
-                is_default=True if was_default else False,
+                is_default=True,
                 last_message_at=datetime.utcnow(),
             )
             db_session.add(child_session)

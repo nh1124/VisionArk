@@ -177,13 +177,16 @@ export default function ProjectChatPage({
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages]);
 
-    const fetchHistory = useCallback(async () => {
+    const fetchHistory = useCallback(async (sessionIdOverride?: string | null) => {
         const requestId = ++historyFetchId.current;
         const LIMIT = 50;
         try {
+            const effectiveSessionId = sessionIdOverride !== undefined
+                ? sessionIdOverride
+                : activeSessionId;
             // Use session-specific endpoint when an active session is set
-            const baseUrl = activeSessionId
-                ? `/api/agents/sessions/${activeSessionId}/history`
+            const baseUrl = effectiveSessionId
+                ? `/api/agents/sessions/${effectiveSessionId}/history`
                 : `/api/agents/project/${projectId}/history`;
             const historyUrl = `${baseUrl}?limit=${LIMIT}&t=${Date.now()}`;
 
@@ -800,13 +803,20 @@ export default function ProjectChatPage({
                         const nextSessionId = result.data?.new_session_id || result.data?.promoted_session_id || null;
                         setActiveSessionId(nextSessionId);
                         activeSessionIdRef.current = nextSessionId;
+                        setMessages([]);
+                        try {
+                            if (nextSessionId) localStorage.setItem(`va_last_session_${projectId}`, nextSessionId);
+                        } catch {
+                            // ignore
+                        }
                         const nextUrl = nextSessionId
                             ? `/projects/${projectId}?session_id=${nextSessionId}`
                             : `/projects/${projectId}`;
-                        router.replace(nextUrl);
+                        router.replace(nextUrl, { scroll: false });
                         window.dispatchEvent(new CustomEvent("va-sessions-updated", {
                             detail: { project_id: projectId, session_id: nextSessionId },
                         }));
+                        await fetchHistory(nextSessionId);
                     }
 
                     // If command was /mv, the backend might return data for redirect

@@ -447,6 +447,42 @@ export async function sendChat(
     return res.json() as Promise<{ task_id: string; session_id?: string }>
 }
 
+export interface ExecuteCommandResponse {
+    success: boolean
+    message: string
+    command_name?: string
+    data?: Record<string, any> | null
+}
+
+export async function executeCommand(
+    text: string,
+    projectId: string,
+    sessionId?: string | null,
+    model?: string
+): Promise<ExecuteCommandResponse> {
+    const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+    }
+    if (model) headers["X-Preferred-Model"] = model
+
+    const res = await _apiFetch("/api/commands/execute", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+            text,
+            scope: "project",
+            project_id: projectId,
+            session_id: sessionId ?? null,
+        }),
+    })
+
+    if (!res.ok) {
+        const text = await res.text()
+        throw new Error(`Command API ${res.status}: ${text}`)
+    }
+    return res.json() as Promise<ExecuteCommandResponse>
+}
+
 export async function truncateProjectMessages(
     projectId: string,
     messageIndex: number,

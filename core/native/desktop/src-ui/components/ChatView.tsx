@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
 import type { ModelGroup } from "./ChatInput"
-import { fetchHistory, sendChat, getTaskStatus, cancelTask, apiJson, truncateProjectMessages, copyProjectSession, type ChatMessage as ChatMessageType } from "../lib/api"
+import { fetchHistory, sendChat, getTaskStatus, cancelTask, apiJson, truncateProjectMessages, copyProjectSession, executeCommand, type ChatMessage as ChatMessageType } from "../lib/api"
 import ChatMessage, { type MessageVote } from "./ChatMessage"
 import ChatInput from "./ChatInput"
 import FileViewer from "./FileViewer"
@@ -406,6 +406,58 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
 
     const handleSend = async (content: string, files?: File[]) => {
         if ((!content.trim() && (!files || files.length === 0)) || loading) return
+        const trimmedContent = content.trim()
+        const isCommandOnly = !files || files.length === 0
+
+        if (isCommandOnly && (trimmedContent === "/compress" || trimmedContent === "/archive")) {
+            setMessages((prev) => [...prev, { role: "user", content: trimmedContent }])
+            setLoading(true)
+            setStatusText("Executing command...")
+            setElapsedTime(0)
+
+            try {
+                const currentSessionId = effectiveSessionRef.current ?? sessionId
+                const result = await executeCommand(trimmedContent, projectId, currentSessionId, model)
+
+                if (result.success) {
+                    setMessages((prev) => [...prev, {
+                        role: "assistant",
+                        content: `✅ ${result.message}`,
+                    }])
+
+                    if (result.command_name === "compress" || result.command_name === "archive") {
+                        const nextSessionId = result.data?.new_session_id || result.data?.promoted_session_id || null
+                        if (nextSessionId) {
+                            effectiveSessionRef.current = nextSessionId
+                            onSessionChange?.(nextSessionId)
+                            localStorage.setItem(`va_last_session_${projectId}`, nextSessionId)
+                        }
+
+                        window.dispatchEvent(new CustomEvent("va-sessions-updated", {
+                            detail: { project_id: projectId, session_id: nextSessionId },
+                        }))
+
+                        await loadHistory()
+                    }
+                } else {
+                    setMessages((prev) => [...prev, {
+                        role: "assistant",
+                        content: `❌ Command Error: ${result.message}`,
+                    }])
+                }
+            } catch (e: any) {
+                setMessages((prev) => [...prev, {
+                    role: "assistant",
+                    content: `❌ Failed to execute command: ${e?.message || "Unknown error"}`,
+                }])
+            } finally {
+                setLoading(false)
+                setStatusText("")
+                setElapsedTime(0)
+            }
+            return
+        }
+
         const normalizedContent = normalizeMessageContent(content)
         if (normalizedContent) {
             pendingLocalSendsRef.current.push({ content: normalizedContent, createdAt: Date.now() })
