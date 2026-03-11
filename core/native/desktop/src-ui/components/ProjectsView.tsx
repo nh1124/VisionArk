@@ -40,6 +40,7 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
     const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false)
     const [lastSelectedProjectId, setLastSelectedProjectId] = useState<string | null>(null)
     const [contextMenu, setContextMenu] = useState<{ projectId: string; top: number; left: number; bulk: boolean } | null>(null)
+    const [exportNotice, setExportNotice] = useState<{ type: "success" | "error"; message: string } | null>(null)
 
     useEffect(() => {
         loadProjects()
@@ -58,6 +59,29 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
             clearInterval(interval)
         }
     }, [])
+
+    useEffect(() => {
+        if (!exportNotice) return
+        const timer = window.setTimeout(() => setExportNotice(null), 3200)
+        return () => window.clearTimeout(timer)
+    }, [exportNotice])
+
+    const downloadExportFile = async (url: string, filename: string) => {
+        const res = await fetch(url)
+        if (!res.ok) {
+            const text = await res.text().catch(() => "")
+            throw new Error(text || `Export failed (${res.status})`)
+        }
+        const blob = await res.blob()
+        const objectUrl = window.URL.createObjectURL(blob)
+        const link = document.createElement("a")
+        link.href = objectUrl
+        link.setAttribute("download", filename)
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        window.URL.revokeObjectURL(objectUrl)
+    }
 
     const loadProjects = async () => {
         try {
@@ -127,17 +151,18 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
     const bulkExport = async () => {
         try {
             const token = await getFileToken()
+            let successCount = 0
             for (const id of Array.from(selectedProjects)) {
                 const project = projects.find(p => p.id === id)
                 if (!project) continue
-                const link = document.createElement("a")
-                link.href = `/api/export/chat/project/${id}?token=${token}`
-                link.setAttribute("download", `${project.display_name || project.name}_chat.md`)
-                document.body.appendChild(link)
-                link.click()
-                document.body.removeChild(link)
+                await downloadExportFile(`/api/export/project/${id}?token=${token}`, `${project.display_name || project.name}_export.zip`)
+                successCount += 1
             }
-        } catch (err) { console.error("Bulk export error:", err) }
+            setExportNotice({ type: "success", message: `Exported ${successCount} project${successCount !== 1 ? "s" : ""}.` })
+        } catch (err) {
+            console.error("Bulk export error:", err)
+            setExportNotice({ type: "error", message: "Project export failed." })
+        }
     }
 
     const openProjectContextMenu = (e: React.MouseEvent, project: Project) => {
@@ -182,14 +207,13 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
     const handleExportChat = async (id: string, displayName: string) => {
         try {
             const token = await getFileToken()
-            const link = document.createElement("a")
-            link.href = `/api/export/chat/project/${id}?token=${token}`
-            link.setAttribute("download", `${displayName}_chat.md`)
-            document.body.appendChild(link)
-            link.click()
-            document.body.removeChild(link)
+            await downloadExportFile(`/api/export/project/${id}?token=${token}`, `${displayName}_export.zip`)
+            setExportNotice({ type: "success", message: `Exported project: ${displayName}` })
             setActiveMenu(null)
-        } catch (err) { console.error("Export error:", err) }
+        } catch (err) {
+            console.error("Export error:", err)
+            setExportNotice({ type: "error", message: "Project export failed." })
+        }
     }
 
     const filteredProjects = projects.filter(p =>
@@ -321,7 +345,7 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
                                                             <button onClick={() => startRename(project)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"><Settings size={14} /> Settings</button>
                                                             <button onClick={() => cloneProject(project.id, project.display_name || project.name)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"><Copy size={14} /> Clone</button>
                                                             <button onClick={() => onOpenProject?.(project.id)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"><Rocket size={14} /> Open</button>
-                                                            <button onClick={() => handleExportChat(project.id, project.display_name || project.name)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"><Download size={14} /> Export Chat</button>
+                                                            <button onClick={() => handleExportChat(project.id, project.display_name || project.name)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"><Download size={14} /> Export Project</button>
                                                             <div className="border-t border-gray-800 mx-2 my-1" />
                                                             <button onClick={() => setDeleteConfirm({ id: project.id, name: project.display_name || project.name })} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-500 hover:bg-red-500/10"><Trash2 size={14} /> Delete</button>
                                                         </div>
@@ -441,7 +465,7 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
                                                     <button onClick={() => startRename(project)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"><Settings size={14} /> Settings</button>
                                                     <button onClick={() => cloneProject(project.id, project.display_name || project.name)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"><Copy size={14} /> Clone</button>
                                                     <button onClick={() => { onOpenProject?.(project.id); setActiveMenu(null) }} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"><Rocket size={14} /> Open</button>
-                                                    <button onClick={() => handleExportChat(project.id, project.display_name || project.name)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"><Download size={14} /> Export Chat</button>
+                                                    <button onClick={() => handleExportChat(project.id, project.display_name || project.name)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"><Download size={14} /> Export Project</button>
                                                     <div className="border-t border-gray-800 mx-2 my-1" />
                                                     <button onClick={() => setDeleteConfirm({ id: project.id, name: project.display_name || project.name })} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-500 hover:bg-red-500/10"><Trash2 size={14} /> Delete</button>
                                                 </div>
@@ -542,7 +566,7 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
                                     onClick={() => { void handleExportChat(project.id, name); setContextMenu(null) }}
                                     className="w-full text-left flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-800"
                                 >
-                                    <Download size={14} /> Export Chat
+                                    <Download size={14} /> Export Project
                                 </button>
                                 <div className="my-1 border-t border-gray-800" />
                                 <button
@@ -554,6 +578,11 @@ export default function ProjectsView({ onOpenProject }: { onOpenProject?: (id: s
                             </>
                         )
                     })()}
+                </div>
+            )}
+            {exportNotice && (
+                <div className={`fixed right-6 bottom-6 z-[10000] rounded-lg border px-3 py-2 text-sm shadow-xl ${exportNotice.type === "success" ? "bg-emerald-900/90 border-emerald-700 text-emerald-100" : "bg-red-900/90 border-red-700 text-red-100"}`}>
+                    {exportNotice.message}
                 </div>
             )}
         </div>

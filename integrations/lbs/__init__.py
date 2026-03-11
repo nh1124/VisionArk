@@ -1,5 +1,7 @@
 from .client import LBSClient, TaskStatus, get_lbs_client
 from .api import router as lbs_router
+
+
 async def get_tools(user_id: str, db):
     """Return LBS tools if the service is active for the user."""
     from sqlalchemy import select
@@ -27,4 +29,18 @@ async def get_tools(user_id: str, db):
         ]
     return []
 
-__all__ = ["LBSClient", "TaskStatus", "lbs_router", "get_lbs_client", "get_tools"]
+
+def get_skill_defs():
+    """Return SkillDef list for this integration."""
+    from .skills import SKILL_DEFS
+    return SKILL_DEFS
+
+
+__all__ = [
+    "LBSClient",
+    "TaskStatus",
+    "lbs_router",
+    "get_lbs_client",
+    "get_tools",
+    "get_skill_defs",
+]

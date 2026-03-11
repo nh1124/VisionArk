@@ -11,6 +11,7 @@ import ProjectNotes from "./ProjectNotes"
 import AutomationTab from "./AutomationTab"
 import FilesSidebar from "./FilesSidebar"
 import ProjectSettingsPanel from "./ProjectSettingsPanel"
+import ProjectTasksPanel from "./ProjectTasksPanel"
 
 interface Props {
     projectId: string
@@ -664,6 +665,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                         <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">
                             {sidebarMode === "files" ? "Files & Artifacts"
                                 : sidebarMode === "notes" ? "Project Notes"
+                                    : sidebarMode === "tasks" ? "Project Tasks"
                                     : sidebarMode === "settings" ? "Project Settings"
                                         : "Project Automation"}
                         </h2>
@@ -699,6 +701,9 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                         )}
                         {sidebarMode === "automation" && (
                             <AutomationTab projectId={projectId} />
+                        )}
+                        {sidebarMode === "tasks" && (
+                            <ProjectTasksPanel projectId={projectId} projectName={projectName} />
                         )}
                         {sidebarMode === "settings" && (
                             <ProjectSettingsPanel projectId={projectId} />

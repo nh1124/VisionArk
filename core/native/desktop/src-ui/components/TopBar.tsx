@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react"
-import { Bell, Check, ExternalLink, Settings, StickyNote, AlarmClock, Files } from "lucide-react"
+import { Bell, Check, ExternalLink, Settings, StickyNote, AlarmClock, Files, ClipboardList } from "lucide-react"
 import { type ProjectSidebarMode } from "../App"
 import { listNotifications, markAllNotificationsAsRead, markNotificationAsRead, type NotificationItem } from "../lib/api"
 
@@ -185,6 +185,13 @@ export default function TopBar({ projectName, username, sidebarMode, setSidebarM
                             title="Automation"
                         >
                             <AlarmClock size={18} />
+                        </button>
+                        <button
+                            onClick={() => setSidebarMode(sidebarMode === "tasks" ? null : "tasks")}
+                            className={`p-2 rounded-lg transition-colors ${sidebarMode === "tasks" ? "bg-cyan-500/20 text-cyan-400" : "text-gray-400 hover:text-white hover:bg-gray-800"}`}
+                            title="Tasks"
+                        >
+                            <ClipboardList size={18} />
                         </button>
                         <button
                             onClick={() => setSidebarMode(sidebarMode === "files" ? null : "files")}

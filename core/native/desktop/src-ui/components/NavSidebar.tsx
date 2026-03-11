@@ -171,6 +171,7 @@ export default function NavSidebar({
   const [lastSidebarSessionId, setLastSidebarSessionId] = useState<string | null>(null)
   const [sidebarBulkMenu, setSidebarBulkMenu] = useState<{ mode: "projects" | "sessions"; top: number; right: number } | null>(null)
   const sidebarBulkMenuRef = useRef<HTMLDivElement>(null)
+  const [exportNotice, setExportNotice] = useState<{ type: "success" | "error"; message: string } | null>(null)
 
   const primaryActive = useMemo(() => mapViewToPrimary(active), [active])
   const todayIso = useMemo(() => {
@@ -332,6 +333,29 @@ export default function NavSidebar({
     setSidebarBulkMenu(null)
   }, [active, selectedProjectId])
 
+  useEffect(() => {
+    if (!exportNotice) return
+    const timer = window.setTimeout(() => setExportNotice(null), 3200)
+    return () => window.clearTimeout(timer)
+  }, [exportNotice])
+
+  async function downloadExportFile(url: string, filename: string) {
+    const res = await fetch(url)
+    if (!res.ok) {
+      const text = await res.text().catch(() => "")
+      throw new Error(text || `Export failed (${res.status})`)
+    }
+    const blob = await res.blob()
+    const objectUrl = window.URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = objectUrl
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(objectUrl)
+  }
+
   async function handleTaskDropToContext(context: string, e: React.DragEvent<HTMLButtonElement>) {
     e.preventDefault()
     e.stopPropagation()
@@ -423,19 +447,19 @@ export default function NavSidebar({
     if (ids.length === 0) return
     try {
       const token = await getFileToken()
+      let successCount = 0
       for (const id of ids) {
         const project = projects.find((p) => p.id === id)
         if (!project) continue
-        const url = `${BASE_URL}/api/export/chat/project/${project.id}?token=${token}`
-        const a = document.createElement("a")
-        a.href = url
-        a.download = `${project.display_name || project.name}_chat.md`
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
+        const fileName = `${project.display_name || project.name}_export.zip`
+        const url = `${BASE_URL}/api/export/project/${project.id}?token=${token}`
+        await downloadExportFile(url, fileName)
+        successCount += 1
       }
+      setExportNotice({ type: "success", message: `Exported ${successCount} project${successCount !== 1 ? "s" : ""}.` })
     } catch (e) {
       console.error("Bulk export projects failed:", e)
+      setExportNotice({ type: "error", message: "Project export failed." })
     }
   }
 
@@ -466,20 +490,19 @@ export default function NavSidebar({
     if (ids.length === 0) return
     try {
       const token = await getFileToken()
+      let successCount = 0
       for (const id of ids) {
         const session = sessions.find((s) => s.id === id)
         if (!session) continue
         const url = `${BASE_URL}/api/export/chat/session/${session.id}?token=${token}`
-        const a = document.createElement("a")
-        a.href = url
         const titleSlug = (session.title || "Untitled").replace(/ /g, "_").toLowerCase()
-        a.download = `chat_export_${titleSlug}.md`
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
+        await downloadExportFile(url, `chat_export_${titleSlug}.md`)
+        successCount += 1
       }
+      setExportNotice({ type: "success", message: `Exported ${successCount} session${successCount !== 1 ? "s" : ""}.` })
     } catch (e) {
       console.error("Bulk export sessions failed:", e)
+      setExportNotice({ type: "error", message: "Session export failed." })
     }
   }
 
@@ -584,15 +607,12 @@ export default function NavSidebar({
   async function handleExportChat(project: Project) {
     try {
       const token = await getFileToken()
-      const url = `${BASE_URL}/api/export/chat/project/${project.id}?token=${token}`
-      const a = document.createElement("a")
-      a.href = url
-      a.download = `${project.display_name || project.name}_chat.md`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
+      const url = `${BASE_URL}/api/export/project/${project.id}?token=${token}`
+      await downloadExportFile(url, `${project.display_name || project.name}_export.zip`)
+      setExportNotice({ type: "success", message: `Exported project: ${project.display_name || project.name}` })
     } catch (e) {
       console.error("Export chat failed:", e)
+      setExportNotice({ type: "error", message: "Project export failed." })
     }
     setProjectMenuOpen(null)
     setProjectMenuPos(null)
@@ -645,15 +665,12 @@ export default function NavSidebar({
     try {
       const token = await getFileToken()
       const url = `${BASE_URL}/api/export/chat/session/${session.id}?token=${token}`
-      const a = document.createElement("a")
-      a.href = url
       const titleSlug = (session.title || "Untitled").replace(/ /g, "_").toLowerCase()
-      a.download = `chat_export_${titleSlug}.md`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
+      await downloadExportFile(url, `chat_export_${titleSlug}.md`)
+      setExportNotice({ type: "success", message: `Exported session: ${session.title || "Untitled"}` })
     } catch (e) {
       console.error("Export session failed:", e)
+      setExportNotice({ type: "error", message: "Session export failed." })
     }
     setSessionMenuOpen(null)
     setSessionMenuPos(null)
@@ -1340,7 +1357,7 @@ export default function NavSidebar({
             <MessageSquare size={14} /> Open Chat
           </button>
           <button onClick={() => handleExportChat(openMenuProject)} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white">
-            <Download size={14} /> Export Chat
+            <Download size={14} /> Export Project
           </button>
           <div className="my-1 border-t border-gray-700" />
           <button onClick={() => handleDeleteProject(openMenuProject)} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10">
@@ -1365,6 +1382,11 @@ export default function NavSidebar({
           <button onClick={() => handleArchiveSession(openMenuSession.id)} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10">
             <Archive size={14} /> Archive
           </button>
+        </div>
+      )}
+      {exportNotice && (
+        <div className={`fixed right-6 bottom-6 z-[10000] rounded-lg border px-3 py-2 text-sm shadow-xl ${exportNotice.type === "success" ? "bg-emerald-900/90 border-emerald-700 text-emerald-100" : "bg-red-900/90 border-red-700 text-red-100"}`}>
+          {exportNotice.message}
         </div>
       )}
     </>
