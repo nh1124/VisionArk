@@ -262,7 +262,7 @@ const MarkdownRenderer = React.memo(({
                             );
                         }
 
-                        if (isWorkspacePath(href) && onOpenLocalLink) {
+                        if (href && isWorkspacePath(href) && onOpenLocalLink) {
                             return (
                                 <a
                                     href={href}
