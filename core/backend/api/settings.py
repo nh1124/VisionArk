@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional, Dict
 from pydantic import BaseModel, Field
 from datetime import datetime
+import uuid
 import httpx
 import logging
 
@@ -61,6 +62,9 @@ class ServiceResponse(BaseModel):
 class PasswordChange(BaseModel):
     current_password: str
     new_password: str
+
+class AccountDeleteRequest(BaseModel):
+    current_password: str
 
 class UserProfile(BaseModel):
     id: str
@@ -382,6 +386,82 @@ async def change_password(
     user.password_hash = hash_password(pc.new_password)
     await db.commit()
     return {"message": "Password changed successfully"}
+
+
+@router.delete("/account")
+async def delete_account(
+    req: AccountDeleteRequest,
+    identity: Identity = Depends(resolve_identity),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Delete the current VisionArk account and linked LBS account."""
+    user_result = await db.execute(select(User).filter(User.id == identity.user_id))
+    user = user_result.scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not verify_password(req.current_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Invalid current password")
+
+    # 1) Delete linked LBS user first (strict).
+    lbs_result = await db.execute(
+        select(ServiceRegistry).filter(
+            ServiceRegistry.user_id == identity.user_id,
+            ServiceRegistry.service_name == "lbs",
+        )
+    )
+    lbs_service = lbs_result.scalars().first()
+    if lbs_service and user.email:
+        try:
+            from domains.lbs.client import LBSClient
+
+            lbs_api_key = None
+            if lbs_service.api_key_encrypted:
+                lbs_api_key = decrypt_string(lbs_service.api_key_encrypted)
+            lbs_base_url = lbs_service.base_url or settings.lbs_service_url
+            lbs_client = LBSClient(base_url=lbs_base_url, api_key=lbs_api_key)
+            await lbs_client.delete_user_by_email(user.email)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Failed to delete linked LBS account. "
+                    f"Please resolve LBS deletion first. ({exc})"
+                ),
+            )
+
+    # 2) Soft-delete local account records to avoid FK fan-out issues.
+    # Keep historical data but fully disable login and detach service connections.
+    user.is_active = False
+    user.username = f"deleted_{uuid.uuid4().hex[:12]}"
+    user.email = None
+    user.password_hash = hash_password(uuid.uuid4().hex)
+
+    settings_row = (await db.execute(select(UserSettings).filter(UserSettings.user_id == identity.user_id))).scalars().first()
+    if settings_row:
+        settings_row.ai_config = {}
+        settings_row.general_settings = {}
+        flag_modified(settings_row, "ai_config")
+        flag_modified(settings_row, "general_settings")
+
+    svc_rows = (
+        await db.execute(
+            select(ServiceRegistry).filter(ServiceRegistry.user_id == identity.user_id)
+        )
+    ).scalars().all()
+    for row in svc_rows:
+        await db.delete(row)
+
+    ext_rows = (
+        await db.execute(
+            select(ExternalIdentity).filter(ExternalIdentity.user_id == identity.user_id)
+        )
+    ).scalars().all()
+    for row in ext_rows:
+        await db.delete(row)
+
+    await db.commit()
+    return {"message": "Account deleted successfully"}
 
 @router.get("/status")
 async def get_system_status(

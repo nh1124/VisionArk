@@ -27,6 +27,10 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
+class LBSProvisioningEmailConflictError(Exception):
+    """Raised when LBS user creation fails due to duplicate email."""
+
+
 def _resolve_service_url(url: str) -> str:
     """Normalize service URL and apply Docker hostname substitution."""
     if "localhost" in url and os.path.exists("/.dockerenv"):
@@ -55,6 +59,9 @@ async def _auto_provision_lbs(username: str, service_email: str, service_passwor
         result = await user_client.provision_api_key(scopes=["read", "write"])
         return result.get("api_key") or result.get("key")
     except Exception as e:
+        msg = str(e)
+        if "400" in msg and "Email already registered" in msg:
+            raise LBSProvisioningEmailConflictError(service_email) from e
         logger.warning("LBS auto-provisioning failed for %s: %s", username, e)
         return None
 
@@ -87,7 +94,7 @@ router = APIRouter(prefix="/api/auth", tags=["Auth"])
 class RegisterRequest(BaseModel):
     username: str
     password: str
-    email: str | None = None
+    email: EmailStr
     gemini_api_key: str | None = None
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
@@ -159,17 +166,16 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Username already taken")
 
-    # Check if email already exists (if provided)
-    if req.email:
-        existing_email = db.query(User).filter(User.email == req.email).first()
-        if existing_email:
-            raise HTTPException(status_code=400, detail="Email already registered")
+    # Check if email already exists
+    existing_email = db.query(User).filter(User.email == req.email).first()
+    if existing_email:
+        raise HTTPException(status_code=400, detail="Email already registered")
 
     # Validate at least one LLM key is provided
     if not any([req.gemini_api_key, req.openai_api_key, req.anthropic_api_key]):
         raise HTTPException(status_code=400, detail="At least one LLM API key is required (Gemini, OpenAI, or Anthropic)")
 
-    # Create user
+    # Build user (commit later, after external provisioning checks)
     user_id = str(uuid.uuid4())
     try:
         password_hash = hash_password(req.password)
@@ -179,7 +185,7 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
     user = User(
         id=user_id,
         username=req.username,
-        email=req.email,
+        email=str(req.email),
         password_hash=password_hash,
         is_active=True
     )
@@ -210,28 +216,32 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
         status="active",
     )
 
-    try:
-        db.add(user)
-        db.add(user_settings)
-        db.add(default_agent)
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to create account: {str(e)}")
-
     # --- Auto-provision LBS and KnowledgeCore accounts ---
     # Use a dedicated service email and a generated strong password.
-    service_email = req.email or f"{req.username}@visionark.local"
+    service_email = str(req.email)
     service_password = secrets.token_urlsafe(24)
 
     lbs_url = _resolve_service_url(settings.lbs_service_url or "http://localhost:8001/api/lbs")
     kc_url = _resolve_service_url(settings.knowledge_core_url or "http://localhost:8200")
 
-    lbs_api_key = await _auto_provision_lbs(req.username, service_email, service_password, lbs_url)
+    try:
+        lbs_api_key = await _auto_provision_lbs(req.username, service_email, service_password, lbs_url)
+    except LBSProvisioningEmailConflictError:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The email address is already registered on LBS. "
+                "Please use a different email address."
+            ),
+        )
     kc_api_key = await _auto_provision_kc(req.username, service_email, service_password, kc_url, req.gemini_api_key)
 
-    # Store service registry entries (active only if key was provisioned)
+    # Persist VisionArk user and service registry entries
     try:
+        db.add(user)
+        db.add(user_settings)
+        db.add(default_agent)
+
         lbs_service = ServiceRegistry(
             user_id=user_id,
             service_name="lbs",

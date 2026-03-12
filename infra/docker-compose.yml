@@ -83,6 +83,8 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
       - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
       - ATMOS_SERVICE_KEY=${ATMOS_SERVICE_KEY:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ../core/backend:/app
       - ../va_sdk:/app/va_sdk

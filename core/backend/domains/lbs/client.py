@@ -177,6 +177,12 @@ class LBSClient:
         """Get profile details."""
         return await self._request("GET", "users/me")
 
+    async def delete_user_by_email(self, email: str) -> Dict:
+        """Delete a user account by email (admin/internal endpoint)."""
+        from urllib.parse import quote
+        encoded = quote(email, safe="")
+        return await self._request("DELETE", f"users/by-email/{encoded}")
+
 
     # --- Task Operations ---
 
