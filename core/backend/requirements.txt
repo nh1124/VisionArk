@@ -31,3 +31,4 @@ msal
 # Skill Pack + MCP integration
 pyyaml
 mcp
+email-validator
