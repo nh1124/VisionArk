@@ -1036,6 +1036,17 @@ async def create_project(
             status="active"
         )
         db.add(new_agent)
+
+        # 4a. Always provision a visible default chat session for new projects.
+        default_session_id = str(uuid4())
+        default_session = ChatSession(
+            id=default_session_id,
+            project_id=project_id,
+            title="New Chat",
+            is_archived=False,
+            is_default=True,
+        )
+        db.add(default_session)
         update_cache(identity.user_id, project_id, project.project_name)
 
         # 4b. Assign user's default Agent to this project
@@ -1051,6 +1062,7 @@ async def create_project(
         return {
             "project_name": project.project_name,
             "project_id": project_id,
+            "session_id": default_session_id,
             "message": f"Project '{project.project_name}' created successfully"
         }
     except HTTPException:
@@ -1185,6 +1197,17 @@ async def create_project_from_prompt(
             status="active"
         )
         db.add(new_agent)
+
+        # Always create the initial visible chat session for the project.
+        default_session_id = str(uuid4())
+        default_session = ChatSession(
+            id=default_session_id,
+            project_id=project_id,
+            title="New Chat",
+            is_archived=False,
+            is_default=True,
+        )
+        db.add(default_session)
         update_cache(identity.user_id, project_id, display_name)
 
         # Create default Agent + assignment so engine_builder always finds a DB record
@@ -1226,13 +1249,15 @@ async def create_project_from_prompt(
             "preferred_model": x_preferred_model,
             "env": "v4",
             "project_id": project_id,
-            "files": uploaded_file_ids
+            "files": uploaded_file_ids,
+            "session_id": default_session_id,
         }
         task_id = await manager.enqueue(identity.user_id, prompt, queue_context, task_type=TaskType.USER_MESSAGE)
 
         return {
             "project_name": display_name,
             "project_id": project_id,
+            "session_id": default_session_id,
             "task_id": task_id,
             "message": f"Project '{display_name}' created and initial message queued"
         }
