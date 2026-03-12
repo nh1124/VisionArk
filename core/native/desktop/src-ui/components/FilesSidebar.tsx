@@ -525,23 +525,13 @@ export default function FilesSidebar({ nodeType, nodeName, onSyncComplete, onOpe
         formData.append("file", file);
 
         try {
-            // Use fetch with proper authorization - use atmos_access_token key
-            const token = localStorage.getItem("atmos_access_token");
-            const headers: HeadersInit = {};
-            if (token) {
-                headers["Authorization"] = `Bearer ${token}`;
-            } else {
-                console.warn("[FilesSidebar] No auth token found in localStorage");
-            }
-
             // Progress simulation since fetch doesn't support progress
             const progressInterval = setInterval(() => {
                 setUploadProgress((prev) => Math.min(prev + 10, 90));
             }, 200);
 
-            const response = await fetch(`/api/files/project/${nodeName}/${activeTab}/upload`, {
+            const response = await apiFetch(`/api/files/project/${nodeName}/${activeTab}/upload`, {
                 method: "POST",
-                headers,
                 body: formData,
             });
 

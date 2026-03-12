@@ -20,6 +20,8 @@ interface Props {
     model: string
     onModelChange: (model: string) => void
     modelGroups?: ModelGroup[]
+    droppedFiles?: File[] | null
+    onDroppedFilesHandled?: () => void
 }
 
 // ── Slash Commands ──────────────────────────────────────────────────────────
@@ -65,7 +67,17 @@ const formatFileSize = (bytes: number): string => {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-export default function ChatInput({ onSend, onStop, loading, statusText, model, onModelChange, modelGroups: modelGroupsProp }: Props) {
+export default function ChatInput({
+    onSend,
+    onStop,
+    loading,
+    statusText,
+    model,
+    onModelChange,
+    modelGroups: modelGroupsProp,
+    droppedFiles,
+    onDroppedFilesHandled,
+}: Props) {
     const modelGroups = modelGroupsProp && modelGroupsProp.length > 0 ? modelGroupsProp : FALLBACK_MODEL_GROUPS
     const [value, setValue] = useState("")
     const [showModels, setShowModels] = useState(false)
@@ -79,6 +91,20 @@ export default function ChatInput({ onSend, onStop, loading, statusText, model, 
     const modelMenuRef = useRef<HTMLDivElement>(null)
     const slashMenuRef = useRef<HTMLDivElement>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
+
+    const mergeUniqueFiles = (current: File[], incoming: File[]): File[] => {
+        if (incoming.length === 0) return current
+        const seen = new Set(current.map((f) => `${f.name}::${f.size}::${f.lastModified}::${f.type}`))
+        const next = [...current]
+        for (const file of incoming) {
+            const key = `${file.name}::${file.size}::${file.lastModified}::${file.type}`
+            if (!seen.has(key)) {
+                seen.add(key)
+                next.push(file)
+            }
+        }
+        return next
+    }
 
     // ── Filtered slash commands ─────────────────────────────────────────
     const filteredCommands = SLASH_COMMANDS.filter(c =>
@@ -167,7 +193,7 @@ export default function ChatInput({ onSend, onStop, loading, statusText, model, 
     // ── File handling ───────────────────────────────────────────────────
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files) {
-            setAttachedFiles(prev => [...prev, ...Array.from(e.target.files!)])
+            setAttachedFiles(prev => mergeUniqueFiles(prev, Array.from(e.target.files!)))
         }
         // Reset input so re-selecting the same file works
         e.target.value = ""
@@ -180,17 +206,20 @@ export default function ChatInput({ onSend, onStop, loading, statusText, model, 
     // ── Drag & Drop ─────────────────────────────────────────────────────
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault()
+        e.stopPropagation()
         setIsDragOver(true)
     }
     const handleDragLeave = (e: React.DragEvent) => {
         e.preventDefault()
+        e.stopPropagation()
         setIsDragOver(false)
     }
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault()
+        e.stopPropagation()
         setIsDragOver(false)
         if (e.dataTransfer.files.length > 0) {
-            setAttachedFiles(prev => [...prev, ...Array.from(e.dataTransfer.files)])
+            setAttachedFiles(prev => mergeUniqueFiles(prev, Array.from(e.dataTransfer.files)))
         }
     }
 
@@ -215,7 +244,7 @@ export default function ChatInput({ onSend, onStop, loading, statusText, model, 
         }
 
         if (imageFiles.length > 0) {
-            setAttachedFiles((prev) => [...prev, ...imageFiles])
+            setAttachedFiles((prev) => mergeUniqueFiles(prev, imageFiles))
         }
     }
 
@@ -241,6 +270,12 @@ export default function ChatInput({ onSend, onStop, loading, statusText, model, 
         document.addEventListener("mousedown", handler)
         return () => document.removeEventListener("mousedown", handler)
     }, [])
+
+    useEffect(() => {
+        if (!droppedFiles || droppedFiles.length === 0) return
+        setAttachedFiles((prev) => mergeUniqueFiles(prev, droppedFiles))
+        onDroppedFilesHandled?.()
+    }, [droppedFiles, onDroppedFilesHandled])
 
     const currentModelLabel = getModelDisplayName(model, modelGroups)
     const hasContent = value.trim() || attachedFiles.length > 0

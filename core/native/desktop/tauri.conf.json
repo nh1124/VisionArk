@@ -20,6 +20,7 @@
         "minHeight": 520,
         "resizable": true,
         "fullscreen": false,
+        "dragDropEnabled": false,
         "decorations": true,
         "alwaysOnTop": false,
         "visible": false,

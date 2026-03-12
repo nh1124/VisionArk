@@ -73,6 +73,16 @@ function clearSessionCacheTask(projectId: string, sessionId: string | null | und
     state.realtimeByTaskId.delete(taskId)
 }
 
+function clearTaskFromAllSessionCaches(projectId: string, taskId: string, dropPendingUser = false) {
+    if (!taskId) return
+    const prefix = `${projectId}::`
+    for (const [key, state] of sessionRuntimeCache.entries()) {
+        if (!key.startsWith(prefix)) continue
+        if (dropPendingUser) state.pendingUserByTaskId.delete(taskId)
+        state.realtimeByTaskId.delete(taskId)
+    }
+}
+
 const normalizeMessageContent = (content: string): string =>
     (content || "").trim().replace(/\s+/g, " ")
 
@@ -98,6 +108,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
     const [messageVotes, setMessageVotes] = useState<Record<number, MessageVote>>({})
     const [editingMessageIndex, setEditingMessageIndex] = useState<number | null>(null)
     const [editingMessageText, setEditingMessageText] = useState("")
+    const [pendingDroppedFiles, setPendingDroppedFiles] = useState<File[] | null>(null)
     const prevProjectIdRef = useRef<string>(projectId)
 
     // effectiveSessionId: session confirmed by backend (may differ from prop when
@@ -267,7 +278,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                 }
 
                 if (status === "completed" || status === "failed" || status === "cancelled") {
-                    clearSessionCacheTask(projectId, eventSessionId, taskId, false)
+                    clearTaskFromAllSessionCaches(projectId, taskId, true)
                     if (sameSession) {
                         setRealtimeTasks((prev) => prev.filter((t) => t.taskId !== taskId))
                         loadHistory()
@@ -297,7 +308,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
         setStatusText("")
         setElapsedTime(0)
         if (taskId) {
-            clearSessionCacheTask(projectId, effectiveSessionRef.current ?? sessionId, taskId, false)
+            clearTaskFromAllSessionCaches(projectId, taskId, true)
             setRealtimeTasks((prev) => prev.filter((t) => t.taskId !== taskId))
             try { await cancelTask(taskId) } catch { /* best-effort */ }
         }
@@ -523,7 +534,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                         setStatusText("")
                         setElapsedTime(0)
                         currentTaskIdRef.current = null
-                        clearSessionCacheTask(projectId, effectiveSessionRef.current ?? sessionId, task_id, false)
+                        clearTaskFromAllSessionCaches(projectId, task_id, true)
                         setRealtimeTasks((prev) => prev.filter((t) => t.taskId !== task_id))
                         await loadHistory()
                     } else if (taskData.status === "failed" || taskData.status === "cancelled") {
@@ -532,7 +543,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                         setStatusText("")
                         setElapsedTime(0)
                         currentTaskIdRef.current = null
-                        clearSessionCacheTask(projectId, effectiveSessionRef.current ?? sessionId, task_id, false)
+                        clearTaskFromAllSessionCaches(projectId, task_id, true)
                         setRealtimeTasks((prev) => prev.filter((t) => t.taskId !== task_id))
                         if (taskData.status === "failed") {
                             setMessages((prev) => [
@@ -570,7 +581,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                         setStatusText("")
                         setElapsedTime(0)
                         currentTaskIdRef.current = null
-                        clearSessionCacheTask(projectId, effectiveSessionRef.current ?? sessionId, task_id, false)
+                        clearTaskFromAllSessionCaches(projectId, task_id, true)
                         setRealtimeTasks((prev) => prev.filter((t) => t.taskId !== task_id))
                         if (isNotFound) {
                             setMessages((prev) => [
@@ -595,7 +606,7 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
             const failedTaskId = currentTaskIdRef.current
             currentTaskIdRef.current = null
             if (failedTaskId) {
-                clearSessionCacheTask(projectId, effectiveSessionRef.current ?? sessionId, failedTaskId, false)
+                clearTaskFromAllSessionCaches(projectId, failedTaskId, true)
                 setRealtimeTasks((prev) => prev.filter((t) => t.taskId !== failedTaskId))
             }
             setMessages((prev) => [
@@ -605,10 +616,26 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
         }
     }
 
+    const handleChatAreaDragOver = useCallback((e: React.DragEvent) => {
+        e.preventDefault()
+        e.dataTransfer.dropEffect = "copy"
+    }, [])
+
+    const handleChatAreaDrop = useCallback((e: React.DragEvent) => {
+        const droppedFiles = Array.from(e.dataTransfer.files || [])
+        if (droppedFiles.length === 0) return
+        e.preventDefault()
+        setPendingDroppedFiles(droppedFiles)
+    }, [])
+
     return (
         <div className="flex h-full w-full overflow-hidden bg-gray-950 min-w-0">
             {/* ── Chat column (shrinks when inline panel is open) ── */}
-            <div className={`flex flex-col h-full overflow-hidden ${fileViewer?.mode === "inline" ? "flex-1 min-w-0" : "flex-1"}`}>
+            <div
+                className={`flex flex-col h-full overflow-hidden ${fileViewer?.mode === "inline" ? "flex-1 min-w-0" : "flex-1"}`}
+                onDragOver={handleChatAreaDragOver}
+                onDrop={handleChatAreaDrop}
+            >
                 {/* Messages area */}
                 <div className="flex-1 overflow-y-auto overflow-x-hidden px-6">
                     <div className="max-w-3xl mx-auto py-6">
@@ -675,6 +702,8 @@ export default function ChatView({ projectId, sessionId, projectName, sidebarMod
                     model={model}
                     onModelChange={setModel}
                     modelGroups={modelGroups}
+                    droppedFiles={pendingDroppedFiles}
+                    onDroppedFilesHandled={() => setPendingDroppedFiles(null)}
                 />
             </div>
 

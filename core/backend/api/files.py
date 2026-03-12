@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import List, Optional, Dict
 import mimetypes
 from uuid import uuid4
+import logging
 
 from domains.identity.auth import resolve_identity, Identity, resolve_identity_for_download
 from shared.database import UploadedFile, Project, Note, get_async_db, UserSettings
@@ -20,6 +21,7 @@ import asyncio
 
 # --- Main File Router ---
 files_router = APIRouter(prefix="/api/files", tags=["Files"])
+logger = logging.getLogger(__name__)
 
 
 async def _get_user_api_key(db: AsyncSession, user_id: str) -> Optional[str]:
@@ -42,36 +44,47 @@ async def upload_global_file(
     db: AsyncSession = Depends(get_async_db)
 ):
     """Upload a file to global storage (e.g., personal notes audio)"""
-    if directory not in ["refs", "artifacts", "files", "notes"]:
-         raise HTTPException(status_code=400, detail="Directory must be 'refs', 'artifacts', 'files', or 'notes'")
+    try:
+        if directory not in ["refs", "artifacts", "files", "notes"]:
+            raise HTTPException(status_code=400, detail="Directory must be 'refs', 'artifacts', 'files', or 'notes'")
 
-    # Read file content
-    content = await file.read()
-    
-    # Get MIME type
-    mime_type, _ = mimetypes.guess_type(file.filename)
-    mime_type = mime_type or file.content_type or "application/octet-stream"
-    
-    # FileService handles storage and DB recording
-    service = FileService(db, identity.user_id)
-    
-    # FileService now accepts directory
-    db_file = await service.save_file(
-        content=content,
-        filename=file.filename,
-        mime_type=mime_type,
-        project_id=None,
-        directory=directory
-    )
-    
-    return {
-        "id": db_file.id,
-        "filename": db_file.filename,
-        "size_bytes": db_file.size_bytes,
-        "mime_type": db_file.mime_type,
-        "directory": db_file.directory,
-        "is_directory": db_file.is_directory
-    }
+        # Read file content
+        content = await file.read()
+        
+        # Get MIME type
+        mime_type, _ = mimetypes.guess_type(file.filename)
+        mime_type = mime_type or file.content_type or "application/octet-stream"
+        
+        # FileService handles storage and DB recording
+        service = FileService(db, identity.user_id)
+        
+        # FileService now accepts directory
+        db_file = await service.save_file(
+            content=content,
+            filename=file.filename,
+            mime_type=mime_type,
+            project_id=None,
+            directory=directory
+        )
+        
+        return {
+            "id": db_file.id,
+            "filename": db_file.filename,
+            "size_bytes": db_file.size_bytes,
+            "mime_type": db_file.mime_type,
+            "directory": db_file.directory,
+            "is_directory": db_file.is_directory
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "Global file upload failed: user_id=%s directory=%s filename=%s",
+            identity.user_id,
+            directory,
+            getattr(file, "filename", None),
+        )
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 @files_router.post("/project/{project_id}/{directory}/upload")
 @files_router.post("/project/{project_id}/upload")
@@ -83,44 +96,56 @@ async def upload_node_file(
     db: AsyncSession = Depends(get_async_db)
 ):
     """Upload a file to Project storage"""
-    if directory not in ["refs", "artifacts", "files", "notes"]:
-         raise HTTPException(status_code=400, detail="Directory must be 'refs', 'artifacts', 'files', or 'notes'")
+    try:
+        if directory not in ["refs", "artifacts", "files", "notes"]:
+            raise HTTPException(status_code=400, detail="Directory must be 'refs', 'artifacts', 'files', or 'notes'")
 
-    # Verify Project Exists
-    result = await db.execute(select(Project.id).filter(
-        Project.user_id == identity.user_id,
-        Project.id == project_id
-    ))
-    if not result.scalars().first():
-        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+        # Verify Project Exists
+        result = await db.execute(select(Project.id).filter(
+            Project.user_id == identity.user_id,
+            Project.id == project_id
+        ))
+        if not result.scalars().first():
+            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
 
-    # Read file content
-    content = await file.read()
-    
-    # Get MIME type
-    mime_type, _ = mimetypes.guess_type(file.filename)
-    mime_type = mime_type or file.content_type or "application/octet-stream"
-    
-    # FileService handles storage and DB recording
-    service = FileService(db, identity.user_id)
-    
-    # FileService now accepts directory
-    db_file = await service.save_file(
-        content=content,
-        filename=file.filename,
-        mime_type=mime_type,
-        project_id=project_id,
-        directory=directory
-    )
-    
-    return {
-        "id": db_file.id,
-        "filename": db_file.filename,
-        "size_bytes": db_file.size_bytes,
-        "mime_type": db_file.mime_type,
-        "directory": db_file.directory,
-        "is_directory": db_file.is_directory
-    }
+        # Read file content
+        content = await file.read()
+        
+        # Get MIME type
+        mime_type, _ = mimetypes.guess_type(file.filename)
+        mime_type = mime_type or file.content_type or "application/octet-stream"
+        
+        # FileService handles storage and DB recording
+        service = FileService(db, identity.user_id)
+        
+        # FileService now accepts directory
+        db_file = await service.save_file(
+            content=content,
+            filename=file.filename,
+            mime_type=mime_type,
+            project_id=project_id,
+            directory=directory
+        )
+        
+        return {
+            "id": db_file.id,
+            "filename": db_file.filename,
+            "size_bytes": db_file.size_bytes,
+            "mime_type": db_file.mime_type,
+            "directory": db_file.directory,
+            "is_directory": db_file.is_directory
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "Project file upload failed: user_id=%s project_id=%s directory=%s filename=%s",
+            identity.user_id,
+            project_id,
+            directory,
+            getattr(file, "filename", None),
+        )
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
 
